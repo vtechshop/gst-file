@@ -1,0 +1,321 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>HSN Summary - GST Management System</title>
+  <link rel="stylesheet" href="css/style.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="https://cdn.sheetjs.com/xlsx-latest/package/dist/xlsx.full.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.31/jspdf.plugin.autotable.min.js"></script>
+  <script src="js/localdb.js"></script>
+  <script src="js/config.js"></script>
+  <script src="js/auth.js"></script>
+  <script src="js/utils.js"></script>
+  <script src="js/search.js"></script>
+  <script src="js/profile.js"></script>
+  <script src="js/export.js"></script>
+  <script src="js/products.js"></script>
+  <script src="js/hsn.js"></script>
+</head>
+<body>
+<div class="app-layout">
+
+  <aside class="sidebar">
+    <a class="sidebar-brand" href="dashboard.html">
+      <div class="brand-icon"><i class="fas fa-file-invoice-dollar"></i></div>
+      <span>GST Invoice<br>Management</span>
+    </a>
+    <nav class="sidebar-menu">
+      <div class="menu-section">Main</div>
+      <a href="dashboard.html" class="menu-item"><i class="fas fa-tachometer-alt"></i> Dashboard</a>
+      <div class="menu-section">GSTR-1</div>
+      <a href="gstr1.html"   class="menu-item"><i class="fas fa-file-alt"></i> B2B Invoices</a>
+      <a href="b2c.html"     class="menu-item"><i class="fas fa-users"></i> B2C Invoices</a>
+      <a href="cdnotes.html" class="menu-item"><i class="fas fa-file-minus"></i> Credit/Debit Notes</a>
+      <div class="menu-section">HSN</div>
+      <a href="#" class="menu-item" id="sideB2BHSN" onclick="hsnTabClick('b2b');return false;"><i class="fas fa-barcode"></i> B2B HSN</a>
+      <a href="#" class="menu-item" id="sideB2CHSN" onclick="hsnTabClick('b2c');return false;"><i class="fas fa-tags"></i> B2C HSN</a>
+      <div class="menu-section">Masters</div>
+      <a href="customers.html" class="menu-item"><i class="fas fa-address-book"></i> Customers</a>
+      <a href="products.html" class="menu-item"><i class="fas fa-box"></i> Products</a>
+      <div class="menu-section">Reports</div>
+      <a href="reports.html" class="menu-item"><i class="fas fa-chart-bar"></i> Reports &amp; Export</a>
+      <a href="gstr3b.html"  class="menu-item"><i class="fas fa-calculator"></i> GSTR-3B Summary</a>
+      <div class="menu-section">Settings</div>
+      <a href="#" class="menu-item" onclick="openProfileModal();return false;"><i class="fas fa-building"></i> Business Profile</a>
+    </nav>
+    <div class="sidebar-user">
+      <div class="user-avatar"><i class="fas fa-user"></i></div>
+      <div class="user-info" onclick="openSettingsModal()" title="Click to open settings">
+        <div class="user-name" id="navUserName">User</div>
+        <div class="user-role">GST Manager</div>
+      </div>
+      <button type="button" class="btn-logout btn-settings" onclick="openSettingsModal()" title="Settings"><i class="fas fa-cog"></i></button>
+      <button type="button" class="btn-logout" id="logoutBtn" title="Logout"><i class="fas fa-sign-out-alt"></i></button>
+    </div>
+  </aside>
+
+  <div class="main-content">
+    <div class="top-bar">
+      <button type="button" class="menu-toggle" id="menuToggle" aria-label="Toggle sidebar menu"><i class="fas fa-bars"></i></button>
+      <span class="page-title"><i class="fas fa-barcode"></i>HSN Summary</span>
+      <div class="ml-auto d-flex gap-10">
+        <button type="button" class="btn btn-secondary btn-sm btn-icon" onclick="openGlobalSearch()" title="Search everywhere (Ctrl+K)" aria-label="Global search"><i class="fas fa-search"></i></button>
+        <a href="b2c.html" class="btn btn-secondary btn-sm"><i class="fas fa-arrow-left"></i> Back to B2C</a>
+        <a href="reports.html" class="btn btn-info btn-sm"><i class="fas fa-arrow-right"></i> Reports</a>
+      </div>
+    </div>
+
+    <div class="content">
+      <!-- Stepper -->
+      <div class="stepper">
+        <div class="step done"><div class="step-circle"><i class="fas fa-check"></i></div><div class="step-info"><div class="step-num">Step 1</div><div class="step-name">B2B Invoices</div></div></div>
+        <div class="step-line line-success"></div>
+        <div class="step done"><div class="step-circle"><i class="fas fa-check"></i></div><div class="step-info"><div class="step-num">Step 2</div><div class="step-name">B2C Invoices</div></div></div>
+        <div class="step-line line-success"></div>
+        <div class="step active"><div class="step-circle">3</div><div class="step-info"><div class="step-num">Step 3</div><div class="step-name">HSN Summary</div></div></div>
+      </div>
+
+      <!-- Tabs -->
+      <div class="tab-bar">
+        <button type="button" class="tab-btn active" id="tabB2B" onclick="hsnTabClick('b2b')"><i class="fas fa-building"></i> B2B HSN</button>
+        <button type="button" class="tab-btn"        id="tabB2C" onclick="hsnTabClick('b2c')"><i class="fas fa-users"></i> B2C HSN</button>
+      </div>
+
+      <!-- B2B HSN Tab -->
+      <div class="tab-pane active">
+        <div class="card mb-20">
+          <div class="card-header">
+            <span class="card-title"><i class="fas fa-plus-circle"></i> B2B HSN Entry</span>
+          </div>
+          <div class="card-body">
+            <div class="form-grid cols-3 mb-16">
+              <div class="form-group">
+                <label for="hsnB2BCode">HSN Code <span class="text-required">*</span></label>
+                <input type="text" id="hsnB2BCode" class="form-control" placeholder="e.g. 8471">
+              </div>
+              <div class="form-group">
+                <label for="hsnB2BProd">Product / Service Name <span class="text-required">*</span></label>
+                <input type="text" id="hsnB2BProd" class="form-control" placeholder="Type or select product" list="productDatalistB2B" oninput="onHSNProductSelect('b2b')" autocomplete="off">
+                <datalist id="productDatalistB2B"></datalist>
+              </div>
+              <div class="form-group">
+                <label for="hsnB2BType">Type <span class="text-required">*</span></label>
+                <select id="hsnB2BType" class="form-control">
+                  <option value="goods">Goods</option>
+                  <option value="service">Service</option>
+                </select>
+              </div>
+            </div>
+            <div class="form-grid cols-3 mb-16">
+              <div class="form-group">
+                <label for="hsnB2BQty">Quantity</label>
+                <input type="number" id="hsnB2BQty" class="form-control" placeholder="0" min="0" step="0.001">
+              </div>
+              <div class="form-group">
+                <label for="hsnB2BTaxable">Taxable Value (&#8377;) <span class="text-required">*</span></label>
+                <input type="number" id="hsnB2BTaxable" class="form-control" placeholder="0.00" min="0" step="0.01">
+              </div>
+              <div class="form-group">
+                <label for="hsnB2BGstPct">GST Percentage <span class="text-required">*</span></label>
+                <select id="hsnB2BGstPct" class="form-control">
+                  <option value="0">0%</option><option value="5">5%</option>
+                  <option value="12">12%</option><option value="18" selected>18%</option><option value="28">28%</option>
+                </select>
+              </div>
+            </div>
+            <div class="form-grid cols-2 mb-16">
+              <div class="form-group">
+                <label for="hsnB2BSupply">Supply Type <span class="text-required">*</span></label>
+                <select id="hsnB2BSupply" class="form-control">
+                  <option value="intrastate">Intrastate</option>
+                  <option value="interstate">Interstate</option>
+                </select>
+              </div>
+            </div>
+            <div class="calc-box mb-20">
+              <div class="calc-row">
+                <span class="label">IGST</span>
+                <span class="value"><input type="text" id="hsnB2BIGST" class="form-control calc-input-md" readonly aria-label="IGST"></span>
+              </div>
+              <div class="calc-row">
+                <span class="label">CGST</span>
+                <span class="value"><input type="text" id="hsnB2BCGST" class="form-control calc-input-md" readonly aria-label="CGST"></span>
+              </div>
+              <div class="calc-row">
+                <span class="label">SGST</span>
+                <span class="value"><input type="text" id="hsnB2BSGST" class="form-control calc-input-md" readonly aria-label="SGST"></span>
+              </div>
+              <div class="calc-row">
+                <span class="label">Total GST</span>
+                <span class="value"><input type="text" id="hsnB2BTotalGST" class="form-control calc-input-sm" readonly aria-label="Total GST"></span>
+              </div>
+              <div class="calc-row total">
+                <span class="label">Total Invoice Value</span>
+                <span class="value"><input type="text" id="hsnB2BTotalInv" class="form-control calc-input-total-plain" readonly aria-label="Total Invoice Value"></span>
+              </div>
+            </div>
+            <div class="btn-group">
+              <button type="button" class="btn btn-primary" onclick="saveHSN('b2b')"><i class="fas fa-save"></i> Save HSN</button>
+              <button type="button" class="btn btn-secondary" onclick="resetHSN('b2b')"><i class="fas fa-redo"></i> Reset</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-header">
+            <span class="card-title"><i class="fas fa-list"></i> B2B HSN Records</span>
+            <div class="d-flex gap-10">
+              <button type="button" class="btn btn-success btn-sm" onclick="exportHSNExcel(hsnB2BData, [])"><i class="fas fa-file-excel"></i> Excel</button>
+            </div>
+          </div>
+          <div class="card-body p-0">
+            <div class="table-wrapper">
+              <table class="data-table">
+                <thead>
+                  <tr><th>#</th><th>HSN Code</th><th>Product Name</th><th>Type</th><th>Qty</th><th>Taxable Value</th><th>GST%</th><th>Supply</th><th>IGST</th><th>CGST/SGST</th><th>Total GST</th><th>Total Invoice</th><th>Actions</th></tr>
+                </thead>
+                <tbody id="hsnB2BTableBody">
+                  <tr><td colspan="13" class="empty-state"><i class="fas fa-spinner fa-spin table-loading-icon"></i>Loading...</td></tr>
+                </tbody>
+                <tfoot id="hsnB2BTableTotal"></tfoot>
+              </table>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- B2C HSN Tab -->
+      <div class="tab-pane">
+        <div class="card mb-20">
+          <div class="card-header">
+            <span class="card-title"><i class="fas fa-plus-circle"></i> B2C HSN Entry</span>
+          </div>
+          <div class="card-body">
+            <div class="form-grid cols-3 mb-16">
+              <div class="form-group">
+                <label for="hsnB2CCode">HSN Code <span class="text-required">*</span></label>
+                <input type="text" id="hsnB2CCode" class="form-control" placeholder="e.g. 8471">
+              </div>
+              <div class="form-group">
+                <label for="hsnB2CProd">Product Name <span class="text-required">*</span></label>
+                <input type="text" id="hsnB2CProd" class="form-control" placeholder="Type or select product" list="productDatalistB2C" oninput="onHSNProductSelect('b2c')" autocomplete="off">
+                <datalist id="productDatalistB2C"></datalist>
+              </div>
+              <div class="form-group">
+                <label for="hsnB2CType">Type <span class="text-required">*</span></label>
+                <select id="hsnB2CType" class="form-control">
+                  <option value="goods">Goods</option>
+                  <option value="service">Service</option>
+                </select>
+              </div>
+            </div>
+            <div class="form-grid cols-3 mb-16">
+              <div class="form-group">
+                <label for="hsnB2CTaxable">Taxable Value (&#8377;) <span class="text-required">*</span></label>
+                <input type="number" id="hsnB2CTaxable" class="form-control" placeholder="0.00" min="0" step="0.01">
+              </div>
+              <div class="form-group">
+                <label for="hsnB2CGstPct">GST Percentage <span class="text-required">*</span></label>
+                <select id="hsnB2CGstPct" class="form-control">
+                  <option value="0">0%</option><option value="5">5%</option>
+                  <option value="12">12%</option><option value="18" selected>18%</option><option value="28">28%</option>
+                </select>
+              </div>
+              <div class="form-group">
+                <label for="hsnB2CSupply">Supply Type <span class="text-required">*</span></label>
+                <select id="hsnB2CSupply" class="form-control">
+                  <option value="intrastate">Intrastate</option>
+                  <option value="interstate">Interstate</option>
+                </select>
+              </div>
+            </div>
+            <div class="calc-box mb-20">
+              <div class="calc-row"><span class="label">IGST</span><span class="value"><input type="text" id="hsnB2CIGST" class="form-control calc-input-md" readonly aria-label="IGST"></span></div>
+              <div class="calc-row"><span class="label">CGST</span><span class="value"><input type="text" id="hsnB2CCGST" class="form-control calc-input-md" readonly aria-label="CGST"></span></div>
+              <div class="calc-row"><span class="label">SGST</span><span class="value"><input type="text" id="hsnB2CSGST" class="form-control calc-input-md" readonly aria-label="SGST"></span></div>
+              <div class="calc-row"><span class="label">Total GST</span><span class="value"><input type="text" id="hsnB2CTotalGST" class="form-control calc-input-sm" readonly aria-label="Total GST"></span></div>
+              <div class="calc-row total"><span class="label">Total Invoice Value</span><span class="value"><input type="text" id="hsnB2CTotalInv" class="form-control calc-input-total-plain" readonly aria-label="Total Invoice Value"></span></div>
+            </div>
+            <div class="btn-group">
+              <button type="button" class="btn btn-primary" onclick="saveHSN('b2c')"><i class="fas fa-save"></i> Save HSN</button>
+              <button type="button" class="btn btn-secondary" onclick="resetHSN('b2c')"><i class="fas fa-redo"></i> Reset</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-header">
+            <span class="card-title"><i class="fas fa-list"></i> B2C HSN Records</span>
+            <div class="d-flex gap-10">
+              <button type="button" class="btn btn-success btn-sm" onclick="exportHSNExcel([], hsnB2CData)"><i class="fas fa-file-excel"></i> Excel</button>
+            </div>
+          </div>
+          <div class="card-body p-0">
+            <div class="table-wrapper">
+              <table class="data-table">
+                <thead>
+                  <tr><th>#</th><th>HSN Code</th><th>Product Name</th><th>Type</th><th>Taxable Value</th><th>GST%</th><th>Supply</th><th>IGST</th><th>CGST/SGST</th><th>Total GST</th><th>Total Invoice</th><th>Actions</th></tr>
+                </thead>
+                <tbody id="hsnB2CTableBody">
+                  <tr><td colspan="12" class="empty-state"><i class="fas fa-spinner fa-spin table-loading-icon"></i>Loading...</td></tr>
+                </tbody>
+                <tfoot id="hsnB2CTableTotal"></tfoot>
+              </table>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+document.addEventListener('DOMContentLoaded', () => {
+  // Read URL hash to decide which tab to open
+  const hash = window.location.hash || '#b2b';
+  const isB2C = hash === '#b2c';
+
+  // Set active sidebar link
+  document.getElementById('sideB2BHSN')?.classList.toggle('active', !isB2C);
+  document.getElementById('sideB2CHSN')?.classList.toggle('active',  isB2C);
+
+  // Update page title
+  const titleEl = document.querySelector('.page-title');
+  if (titleEl) {
+    titleEl.innerHTML = isB2C
+      ? '<i class="fas fa-tags"></i>HSN Summary &mdash; B2C'
+      : '<i class="fas fa-barcode"></i>HSN Summary &mdash; B2B';
+  }
+
+  // Switch to correct tab
+  if (isB2C) {
+    switchHSNTab('b2c');
+    document.getElementById('tabB2B')?.classList.remove('active');
+    document.getElementById('tabB2C')?.classList.add('active');
+  }
+
+  initHSN();
+});
+</script>
+
+<!-- Global Search Modal -->
+<div class="modal-overlay" id="globalSearchModal">
+  <div class="modal modal-lg">
+    <div class="modal-header">
+      <span class="modal-title"><i class="fas fa-search"></i> Search Everywhere</span>
+      <button type="button" class="modal-close" onclick="closeGlobalSearch()" aria-label="Close"><i class="fas fa-times"></i></button>
+    </div>
+    <div class="modal-body">
+      <input type="text" id="globalSearchInput" class="form-control mb-16" placeholder="Search invoices, customers, products, HSN..." oninput="onGlobalSearchInput(this.value)" aria-label="Global search input">
+      <div id="globalSearchResults"><p class="text-muted-sm">Type at least 2 characters&hellip;</p></div>
+    </div>
+  </div>
+</div>
+
+</body>
+</html>
+

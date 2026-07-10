@@ -1,0 +1,226 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>GST Invoice & GSTR-1 Management System â€“ Login</title>
+  <link rel="stylesheet" href="css/style.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="js/localdb.js"></script>
+  <script src="js/config.js"></script>
+</head>
+<body>
+<div class="auth-page">
+
+  <!-- Left Branding Panel -->
+  <div class="auth-left">
+    <div class="brand-logo"><i class="fas fa-file-invoice-dollar"></i></div>
+    <h1>GST Invoice &amp;<br>GSTR-1 Management</h1>
+    <p>Complete GST compliance solution for Indian businesses. Manage invoices, file GSTR-1, and generate reports effortlessly.</p>
+    <div class="auth-features">
+      <div class="auth-feature"><i class="fas fa-check-circle"></i> B2B &amp; B2C Invoice Management</div>
+      <div class="auth-feature"><i class="fas fa-check-circle"></i> Auto GST Calculations (IGST/CGST/SGST)</div>
+      <div class="auth-feature"><i class="fas fa-check-circle"></i> HSN Summary &amp; GSTR-1 Reports</div>
+      <div class="auth-feature"><i class="fas fa-check-circle"></i> Export to Excel &amp; PDF</div>
+      <div class="auth-feature"><i class="fas fa-check-circle"></i> Cloud Storage &amp; Secure Access</div>
+    </div>
+  </div>
+
+  <!-- Right Auth Panel -->
+  <div class="auth-right">
+    <h2>Welcome Back</h2>
+    <p class="sub">Sign in to access your GST dashboard</p>
+
+    <div class="auth-tabs">
+      <button type="button" class="auth-tab active" onclick="switchTab('login')">Sign In</button>
+      <button type="button" class="auth-tab" onclick="switchTab('register')">Register</button>
+    </div>
+
+    <!-- Login Form -->
+    <form class="auth-form active" id="loginForm" onsubmit="handleLogin(event)">
+      <div class="form-group mb-14">
+        <label for="loginEmail">Email Address</label>
+        <input type="email" id="loginEmail" class="form-control" placeholder="Enter your email" required>
+      </div>
+      <div class="form-group mb-6">
+        <label for="loginPassword">Password</label>
+        <div class="input-group">
+          <input type="password" id="loginPassword" class="form-control" placeholder="Enter your password" required>
+          <button type="button" class="btn btn-secondary btn-icon btn-rounded-right" onclick="togglePwd('loginPassword',this)" aria-label="Show password">
+            <i class="fas fa-eye"></i>
+          </button>
+        </div>
+      </div>
+      <div class="text-right mb-20">
+        <a href="#" onclick="switchTab('forgot')" class="link-sm">Forgot password?</a>
+      </div>
+      <button type="submit" class="btn btn-primary btn-lg btn-full" id="loginBtn">
+        <i class="fas fa-sign-in-alt"></i> Sign In
+      </button>
+      <div id="loginError" class="status-msg text-danger"></div>
+    </form>
+
+    <!-- Register Form -->
+    <form class="auth-form" id="registerForm" onsubmit="handleRegister(event)">
+      <div class="form-group mb-14">
+        <label for="regName">Full Name</label>
+        <input type="text" id="regName" class="form-control" placeholder="Enter your full name" required>
+      </div>
+      <div class="form-group mb-14">
+        <label for="regEmail">Email Address</label>
+        <input type="email" id="regEmail" class="form-control" placeholder="Enter your email" required>
+      </div>
+      <div class="form-group mb-14">
+        <label for="regPassword">Password</label>
+        <div class="input-group">
+          <input type="password" id="regPassword" class="form-control" placeholder="Min 6 characters" required minlength="6">
+          <button type="button" class="btn btn-secondary btn-icon btn-rounded-right" onclick="togglePwd('regPassword',this)" aria-label="Show password">
+            <i class="fas fa-eye"></i>
+          </button>
+        </div>
+      </div>
+      <div class="form-group mb-20">
+        <label for="regConfirm">Confirm Password</label>
+        <input type="password" id="regConfirm" class="form-control" placeholder="Re-enter password" required>
+      </div>
+      <button type="submit" class="btn btn-primary btn-lg btn-full" id="regBtn">
+        <i class="fas fa-user-plus"></i> Create Account
+      </button>
+      <div id="regError" class="status-msg text-danger"></div>
+      <div id="regSuccess" class="status-msg text-success"></div>
+    </form>
+
+    <!-- Forgot Password Form -->
+    <form class="auth-form" id="forgotForm" onsubmit="handleForgot(event)">
+      <p class="fs-13 text-muted mb-18">Enter your email address and we'll send you a password reset link.</p>
+      <div class="form-group mb-20">
+        <label for="forgotEmail">Email Address</label>
+        <input type="email" id="forgotEmail" class="form-control" placeholder="Enter your email" required>
+      </div>
+      <button type="submit" class="btn btn-primary btn-lg btn-full">
+        <i class="fas fa-paper-plane"></i> Send Reset Link
+      </button>
+      <div class="text-center mt-16">
+        <a href="#" onclick="switchTab('login')" class="link-sm">Back to Sign In</a>
+      </div>
+      <div id="forgotMsg" class="status-msg"></div>
+    </form>
+  </div>
+</div>
+
+<script>
+function switchTab(tab) {
+  document.querySelectorAll('.auth-tab').forEach((t,i) => t.classList.toggle('active', ['login','register'].indexOf(tab) === i));
+  document.querySelectorAll('.auth-form').forEach(f => f.classList.remove('active'));
+  const map = { login: 'loginForm', register: 'registerForm', forgot: 'forgotForm' };
+  document.getElementById(map[tab]).classList.add('active');
+  document.querySelector('h2').textContent = tab === 'forgot' ? 'Reset Password' : tab === 'register' ? 'Create Account' : 'Welcome Back';
+  document.querySelector('.sub').textContent = tab === 'forgot' ? 'We\'ll send you a reset link' : tab === 'register' ? 'Start managing your GST today' : 'Sign in to access your GST dashboard';
+}
+
+function togglePwd(id, btn) {
+  const inp = document.getElementById(id);
+  const icon = btn.querySelector('i');
+  if (inp.type === 'password') { inp.type = 'text'; icon.className = 'fas fa-eye-slash'; btn.setAttribute('aria-label', 'Hide password'); }
+  else { inp.type = 'password'; icon.className = 'fas fa-eye'; btn.setAttribute('aria-label', 'Show password'); }
+}
+
+async function handleLogin(e) {
+  e.preventDefault();
+  const btn = document.getElementById('loginBtn');
+  const errEl = document.getElementById('loginError');
+  errEl.style.display = 'none';
+
+  if (SUPABASE_URL === 'YOUR_SUPABASE_PROJECT_URL') {
+    errEl.textContent = 'Supabase not configured! Open js/config.js and add your project URL and API key.';
+    errEl.style.display = 'block';
+    return;
+  }
+
+  btn.disabled = true;
+  btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Signing inâ€¦';
+
+  try {
+    const { error } = await _supabase.auth.signInWithPassword({
+      email: document.getElementById('loginEmail').value.trim(),
+      password: document.getElementById('loginPassword').value
+    });
+    if (error) {
+      errEl.textContent = error.message;
+      errEl.style.display = 'block';
+    } else {
+      window.location.href = 'dashboard.html';
+    }
+  } catch (err) {
+    errEl.textContent = 'Connection failed: ' + (err.message || 'Check your Supabase URL in js/config.js');
+    errEl.style.display = 'block';
+  }
+
+  btn.disabled = false;
+  btn.innerHTML = '<i class="fas fa-sign-in-alt"></i> Sign In';
+}
+
+async function handleRegister(e) {
+  e.preventDefault();
+  const btn = document.getElementById('regBtn');
+  const errEl = document.getElementById('regError');
+  const sucEl = document.getElementById('regSuccess');
+  errEl.style.display = 'none';
+  sucEl.style.display = 'none';
+  const pwd = document.getElementById('regPassword').value;
+  const conf = document.getElementById('regConfirm').value;
+  if (pwd !== conf) { errEl.textContent = 'Passwords do not match.'; errEl.style.display = 'block'; return; }
+  if (SUPABASE_URL === 'YOUR_SUPABASE_PROJECT_URL') {
+    errEl.textContent = 'Supabase not configured! Open js/config.js and add your project URL and API key.';
+    errEl.style.display = 'block';
+    return;
+  }
+
+  btn.disabled = true;
+  btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Creating accountâ€¦';
+
+  try {
+    const { error } = await _supabase.auth.signUp({
+      email: document.getElementById('regEmail').value.trim(),
+      password: pwd,
+      options: { data: { name: document.getElementById('regName').value.trim() } }
+    });
+    if (error) {
+      errEl.textContent = error.message;
+      errEl.style.display = 'block';
+    } else {
+      sucEl.textContent = 'Account created! Check your email to confirm, then sign in.';
+      sucEl.style.display = 'block';
+      document.getElementById('registerForm').reset();
+    }
+  } catch (err) {
+    errEl.textContent = 'Connection failed: ' + (err.message || 'Check your Supabase URL in js/config.js');
+    errEl.style.display = 'block';
+  }
+
+  btn.disabled = false;
+  btn.innerHTML = '<i class="fas fa-user-plus"></i> Create Account';
+}
+
+async function handleForgot(e) {
+  e.preventDefault();
+  const msgEl = document.getElementById('forgotMsg');
+  const { error } = await _supabase.auth.resetPasswordForEmail(document.getElementById('forgotEmail').value.trim());
+  msgEl.style.display = 'block';
+  if (error) { msgEl.style.color = 'var(--danger)'; msgEl.textContent = error.message; }
+  else { msgEl.style.color = 'var(--success)'; msgEl.textContent = 'Reset link sent! Check your email inbox.'; }
+}
+
+(async () => {
+  // Local mode: skip login, go straight to dashboard
+  if (IS_LOCAL_MODE) {
+    window.location.href = 'dashboard.html';
+    return;
+  }
+  const { data: { session } } = await _supabase.auth.getSession();
+  if (session) window.location.href = 'dashboard.html';
+})();
+</script>
+</body>
+</html>

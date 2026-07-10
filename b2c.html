@@ -1,0 +1,234 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>B2C Invoices - GST Management System</title>
+  <link rel="stylesheet" href="css/style.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="https://cdn.sheetjs.com/xlsx-latest/package/dist/xlsx.full.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.31/jspdf.plugin.autotable.min.js"></script>
+  <script src="js/localdb.js"></script>
+  <script src="js/config.js"></script>
+  <script src="js/auth.js"></script>
+  <script src="js/utils.js"></script>
+  <script src="js/search.js"></script>
+  <script src="js/profile.js"></script>
+  <script src="js/export.js"></script>
+  <script src="js/drafts.js"></script>
+  <script src="js/b2c.js"></script>
+</head>
+<body>
+<div class="app-layout">
+
+  <aside class="sidebar">
+    <a class="sidebar-brand" href="dashboard.html">
+      <div class="brand-icon"><i class="fas fa-file-invoice-dollar"></i></div>
+      <span>GST Invoice<br>Management</span>
+    </a>
+    <nav class="sidebar-menu">
+      <div class="menu-section">Main</div>
+      <a href="dashboard.html" class="menu-item"><i class="fas fa-tachometer-alt"></i> Dashboard</a>
+      <div class="menu-section">GSTR-1</div>
+      <a href="gstr1.html"   class="menu-item"><i class="fas fa-file-alt"></i> B2B Invoices</a>
+      <a href="b2c.html"     class="menu-item active"><i class="fas fa-users"></i> B2C Invoices</a>
+      <a href="cdnotes.html" class="menu-item"><i class="fas fa-file-minus"></i> Credit/Debit Notes</a>
+      <div class="menu-section">HSN</div>
+      <a href="hsn.html#b2b" class="menu-item"><i class="fas fa-barcode"></i> B2B HSN</a>
+      <a href="hsn.html#b2c" class="menu-item"><i class="fas fa-tags"></i> B2C HSN</a>
+      <div class="menu-section">Masters</div>
+      <a href="customers.html" class="menu-item"><i class="fas fa-address-book"></i> Customers</a>
+      <a href="products.html" class="menu-item"><i class="fas fa-box"></i> Products</a>
+      <div class="menu-section">Reports</div>
+      <a href="reports.html" class="menu-item"><i class="fas fa-chart-bar"></i> Reports &amp; Export</a>
+      <a href="gstr3b.html"  class="menu-item"><i class="fas fa-calculator"></i> GSTR-3B Summary</a>
+      <div class="menu-section">Settings</div>
+      <a href="#" class="menu-item" onclick="openProfileModal();return false;"><i class="fas fa-building"></i> Business Profile</a>
+    </nav>
+    <div class="sidebar-user">
+      <div class="user-avatar"><i class="fas fa-user"></i></div>
+      <div class="user-info" onclick="openSettingsModal()" title="Click to open settings">
+        <div class="user-name" id="navUserName">User</div>
+        <div class="user-role">GST Manager</div>
+      </div>
+      <button type="button" class="btn-logout btn-settings" onclick="openSettingsModal()" title="Settings"><i class="fas fa-cog"></i></button>
+      <button type="button" class="btn-logout" id="logoutBtn" title="Logout"><i class="fas fa-sign-out-alt"></i></button>
+    </div>
+  </aside>
+
+  <div class="main-content">
+    <div class="top-bar">
+      <button type="button" class="menu-toggle" id="menuToggle" aria-label="Toggle sidebar menu"><i class="fas fa-bars"></i></button>
+      <span class="page-title"><i class="fas fa-users"></i>GSTR-1 &mdash; B2C Invoice Entry</span>
+      <div class="ml-auto d-flex gap-10">
+        <button type="button" class="btn btn-secondary btn-sm btn-icon" onclick="openGlobalSearch()" title="Search everywhere (Ctrl+K)" aria-label="Global search"><i class="fas fa-search"></i></button>
+        <a href="gstr1.html" class="btn btn-secondary btn-sm"><i class="fas fa-arrow-left"></i> Back to B2B</a>
+        <a href="hsn.html"   class="btn btn-info btn-sm"><i class="fas fa-arrow-right"></i> Go to HSN</a>
+      </div>
+    </div>
+
+    <div class="content">
+      <!-- Stepper -->
+      <div class="stepper">
+        <div class="step done">
+          <div class="step-circle"><i class="fas fa-check"></i></div>
+          <div class="step-info"><div class="step-num">Step 1</div><div class="step-name">B2B Invoices</div></div>
+        </div>
+        <div class="step-line line-success"></div>
+        <div class="step active">
+          <div class="step-circle">2</div>
+          <div class="step-info"><div class="step-num">Step 2</div><div class="step-name">B2C Invoices</div></div>
+        </div>
+        <div class="step-line"></div>
+        <div class="step">
+          <div class="step-circle">3</div>
+          <div class="step-info"><div class="step-num">Step 3</div><div class="step-name">HSN Summary</div></div>
+        </div>
+      </div>
+
+      <!-- Entry Form -->
+      <div class="card mb-20">
+        <div class="card-header">
+          <span class="card-title"><i class="fas fa-plus-circle"></i> <span id="b2cFormTitle">B2C Invoice Entry</span></span>
+        </div>
+        <div class="card-body">
+          <div id="b2cDraftBanner"></div>
+          <div class="form-grid cols-3 mb-16">
+            <div class="form-group">
+              <label for="b2cState">State <span class="text-required">*</span></label>
+              <select id="b2cState" class="form-control"><option value="">Select State</option></select>
+            </div>
+            <div class="form-group">
+              <label for="b2cSupply">Supply Type <span class="text-required">*</span></label>
+              <select id="b2cSupply" class="form-control">
+                <option value="intrastate">Intrastate</option>
+                <option value="interstate">Interstate</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label for="b2cInvDate">Invoice Date <span class="text-required">*</span></label>
+              <input type="date" id="b2cInvDate" class="form-control">
+            </div>
+          </div>
+
+          <div class="form-grid cols-2 mb-16">
+            <div class="form-group">
+              <label for="b2cTaxable">Taxable Amount (&#8377;) <span class="text-required">*</span></label>
+              <input type="number" id="b2cTaxable" class="form-control" placeholder="0.00" min="0" step="0.01">
+            </div>
+            <div class="form-group">
+              <label for="b2cGstPct">GST Percentage <span class="text-required">*</span></label>
+              <select id="b2cGstPct" class="form-control">
+                <option value="0">0%</option>
+                <option value="5">5%</option>
+                <option value="12">12%</option>
+                <option value="18" selected>18%</option>
+                <option value="28">28%</option>
+              </select>
+            </div>
+          </div>
+
+          <!-- Calculated Values -->
+          <div class="calc-box mb-20">
+            <div class="calc-row">
+              <span class="label">Tax Breakdown</span>
+              <div class="calc-tax-row">
+                <span class="text-muted-sm">IGST: <b id="b2cIGST">0.00</b></span>
+                <span class="text-muted-sm">CGST: <b id="b2cCGST">0.00</b></span>
+                <span class="text-muted-sm">SGST: <b id="b2cSGST">0.00</b></span>
+              </div>
+              <span class="value"><input type="text" id="b2cGstAmt" class="form-control calc-input-sm" readonly aria-label="GST Amount"></span>
+            </div>
+            <div class="calc-row total">
+              <span class="label">Total Invoice Amount</span>
+              <span class="value"><input type="text" id="b2cTotalAmt" class="form-control calc-input-total" readonly aria-label="Total Invoice Amount"></span>
+            </div>
+          </div>
+
+          <div class="btn-group">
+            <button type="button" class="btn btn-primary" id="b2cSaveBtn" onclick="saveB2C()"><i class="fas fa-save"></i> Save Invoice</button>
+            <button type="button" class="btn btn-secondary" onclick="resetB2C()"><i class="fas fa-redo"></i> Reset</button>
+            <a href="hsn.html#b2b" class="btn btn-info"><i class="fas fa-arrow-right"></i> Next: HSN Summary</a>
+          </div>
+        </div>
+      </div>
+
+      <!-- Table -->
+      <div class="card">
+        <div class="card-header">
+          <span class="card-title"><i class="fas fa-list"></i> B2C Invoice Records</span>
+          <div class="d-flex gap-10 flex-wrap">
+            <div class="search-input-wrap w-200">
+              <i class="fas fa-search"></i>
+              <input type="text" id="b2cSearch" class="form-control" placeholder="Search state..." aria-label="Search state">
+            </div>
+            <select id="b2cRateFilter" class="form-control w-130" onchange="applyB2CFilters()" aria-label="Filter by GST rate">
+              <option value="">All GST Rates</option>
+              <option value="0">0%</option>
+              <option value="5">5%</option>
+              <option value="12">12%</option>
+              <option value="18">18%</option>
+              <option value="28">28%</option>
+            </select>
+            <button type="button" class="btn btn-success btn-sm" onclick="exportB2CExcel(b2cAllData)"><i class="fas fa-file-excel"></i> Excel</button>
+            <button type="button" class="btn btn-danger btn-sm" onclick="exportB2CPDF(b2cAllData)"><i class="fas fa-file-pdf"></i> PDF</button>
+          </div>
+        </div>
+        <div class="card-body p-0">
+          <div class="table-wrapper">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th>#</th>
+                  <th>State</th>
+                  <th>Supply Type</th>
+                  <th>Date</th>
+                  <th>Taxable Amt</th>
+                  <th>GST%</th>
+                  <th>IGST</th>
+                  <th>CGST / SGST</th>
+                  <th>Total Amount</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody id="b2cTableBody">
+                <tr><td colspan="10" class="empty-state"><i class="fas fa-spinner fa-spin table-loading-icon"></i>Loading...</td></tr>
+              </tbody>
+              <tfoot id="b2cTableTotal"></tfoot>
+            </table>
+          </div>
+          <div class="table-pagination-row">
+            <div id="b2cPagination" class="pagination"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+document.addEventListener('DOMContentLoaded', () => {
+  document.getElementById('b2cInvDate').value = new Date().toISOString().split('T')[0];
+  initB2C();
+});
+</script>
+
+<!-- Global Search Modal -->
+<div class="modal-overlay" id="globalSearchModal">
+  <div class="modal modal-lg">
+    <div class="modal-header">
+      <span class="modal-title"><i class="fas fa-search"></i> Search Everywhere</span>
+      <button type="button" class="modal-close" onclick="closeGlobalSearch()" aria-label="Close"><i class="fas fa-times"></i></button>
+    </div>
+    <div class="modal-body">
+      <input type="text" id="globalSearchInput" class="form-control mb-16" placeholder="Search invoices, customers, products, HSN..." oninput="onGlobalSearchInput(this.value)" aria-label="Global search input">
+      <div id="globalSearchResults"><p class="text-muted-sm">Type at least 2 characters&hellip;</p></div>
+    </div>
+  </div>
+</div>
+
+</body>
+</html>
+

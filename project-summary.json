@@ -1,0 +1,417 @@
+{
+  "_meta": {
+    "project": "GST Invoice & GSTR-1 Management System",
+    "version": "2.0",
+    "generated": "2026-06-06",
+    "author": "ledvtech@gmail.com",
+    "description": "Offline-first GST Invoice & GSTR-1 web app for India. Works fully in browser with localStorage. No login required. Supabase-ready when credentials are added.",
+    "base_path": "c:/Users/admin/OneDrive/Desktop/gst.file/"
+  },
+
+  "tech_stack": {
+    "frontend": "Vanilla HTML + CSS + JavaScript (no framework)",
+    "database": "localStorage (offline) / Supabase PostgreSQL (cloud-ready)",
+    "charts": "Chart.js (CDN)",
+    "excel_export": "SheetJS / xlsx (CDN)",
+    "pdf_export": "jsPDF + jsPDF-AutoTable (CDN)",
+    "icons": "Font Awesome 6.5 (CDN)",
+    "auth": "Supabase Auth (bypassed in local mode — LOCAL_USER used)",
+    "routing": "URL hash (#b2b / #b2c) for HSN tabs"
+  },
+
+  "pages": {
+    "dashboard.html": {
+      "title": "Dashboard",
+      "js": ["js/dashboard.js"],
+      "features": [
+        "Stat cards: B2B count, B2C count, Total GST, Grand Total",
+        "Year dropdown (5 years) + Month dropdown (All / Jan–Dec)",
+        "Bar chart: Monthly Revenue",
+        "Doughnut chart: GST Distribution (IGST/CGST/SGST)",
+        "12-month summary table for selected year",
+        "Storage status bar: B2B/B2C/HSN record counts",
+        "Backup and Restore buttons",
+        "Business profile setup on first visit",
+        "Settings gear icon"
+      ]
+    },
+    "gstr1.html": {
+      "title": "B2B Invoices",
+      "js": ["js/gstr1.js"],
+      "features": [
+        "B2B Invoice entry: GSTIN, Customer Name, Invoice No, Date, Taxable Amount, GST%, Supply Type",
+        "Auto GST calculation: IGST (interstate) / CGST+SGST (intrastate)",
+        "Invoice Number Auto-generate: INV-2026-001 (toggle ON/OFF)",
+        "Customer autocomplete datalist from Customer Master",
+        "Save customer to master (+ button)",
+        "Duplicate invoice number check",
+        "GSTIN format validation (warning only)",
+        "WhatsApp share button per invoice",
+        "Excel + PDF export",
+        "Search by GSTIN / Customer / Invoice No",
+        "Pagination (10 per page)"
+      ]
+    },
+    "b2c.html": {
+      "title": "B2C Invoices",
+      "js": ["js/b2c.js"],
+      "features": [
+        "B2C Invoice entry: State, Supply Type, Date, Taxable Amount, GST%",
+        "Auto GST calculation",
+        "Excel + PDF export",
+        "Search by state",
+        "Pagination"
+      ]
+    },
+    "hsn.html": {
+      "title": "HSN Summary",
+      "js": ["js/hsn.js"],
+      "features": [
+        "Two tabs: B2B HSN and B2C HSN",
+        "URL hash routing: hsn.html#b2b / hsn.html#b2c",
+        "Sidebar links independently open correct tab",
+        "HSN Code, Product Name, Type (Goods/Service), Quantity, Taxable Value, GST%, Supply Type",
+        "Auto GST calculation",
+        "Totals row in table footer",
+        "Excel export per tab"
+      ]
+    },
+    "reports.html": {
+      "title": "Reports & Export",
+      "js": ["js/reports.js"],
+      "features": [
+        "Month filter dropdown",
+        "Summary stat cards: B2B, B2C, Total GST, IGST, CGST, SGST, Grand Total",
+        "GSTR-1 Summary table",
+        "B2B Detail table",
+        "B2C Detail table",
+        "Month-wise GST report",
+        "HSN Summary report",
+        "Export: Full GSTR-1 Excel (multi-sheet)",
+        "Export: Summary PDF (with letterhead)",
+        "Export: B2B Excel, B2C Excel, HSN Excel",
+        "Export: GSTR-1 JSON (Government Portal format)",
+        "Print with professional company letterhead"
+      ]
+    },
+    "customers.html": {
+      "title": "Customer Master",
+      "js": ["js/customers.js"],
+      "features": [
+        "Add/Edit/Delete customers",
+        "Fields: Name, GSTIN, Phone, Email, State, Address",
+        "Search by name / GSTIN / phone",
+        "Use in B2B: click to open B2B form with customer pre-filled",
+        "Pagination (15 per page)"
+      ]
+    },
+    "cdnotes.html": {
+      "title": "Credit / Debit Notes",
+      "js": ["js/cdnotes.js"],
+      "features": [
+        "Credit Note and Debit Note entry",
+        "Fields: Note Type, Note Number, Note Date, Original Invoice, Customer, GSTIN, Reason, Taxable Amount, GST%, Supply Type",
+        "Auto GST calculation",
+        "Search by note number / customer / original invoice",
+        "Totals row",
+        "Pagination"
+      ]
+    }
+  },
+
+  "js_modules": {
+    "js/localdb.js": {
+      "purpose": "localStorage-based Supabase API replacement",
+      "key_classes": ["LocalSupabase", "QueryBuilder"],
+      "key_functions": [
+        "getStorageStats()",
+        "exportLocalBackup()",
+        "importLocalBackup(file)",
+        "clearAllData()",
+        "refreshStorageStatus()"
+      ],
+      "tables": ["b2b_invoices", "b2c_invoices", "b2b_hsn", "b2c_hsn", "customers", "cdn_notes"],
+      "notes": "QueryBuilder supports: select, insert, update, delete, eq, gte, lte, order, single. INSERT preserves payload.id if provided (profiles). UPDATE matches by all eq filters."
+    },
+    "js/config.js": {
+      "purpose": "Supabase vs LocalSupabase switch",
+      "key_vars": ["IS_LOCAL_MODE", "_supabase"],
+      "notes": "IS_LOCAL_MODE = true when SUPABASE_URL is placeholder. Must load localdb.js BEFORE config.js."
+    },
+    "js/auth.js": {
+      "purpose": "Authentication helpers",
+      "key_functions": ["requireAuth()", "getCurrentUser()", "logout()"],
+      "notes": "In local mode returns LOCAL_USER = { id: 'local-demo-user-001' } immediately"
+    },
+    "js/profile.js": {
+      "purpose": "Business profile setup, settings modal, PDF/print letterhead",
+      "key_functions": [
+        "loadUserProfile(userId)",
+        "saveUserProfile(userId, fields)",
+        "checkAndShowProfileSetup(userId)",
+        "openProfileModal(isRequired)",
+        "openSettingsModal()",
+        "getBusinessPDFHeader(doc, title, period)",
+        "getBusinessPrintHTML()",
+        "getCachedProfile()"
+      ],
+      "localStorage_key": "gst_profiles",
+      "notes": "Auto-migrates profile saved with wrong UUID. Profile popup has X button and Skip for Now button (always dismissable)."
+    },
+    "js/export.js": {
+      "purpose": "Excel, PDF, Print, JSON export",
+      "key_functions": [
+        "exportToExcel(data, sheetName, fileName)",
+        "exportMultiSheetExcel(sheets, fileName)",
+        "exportToPDF(title, columns, rows, fileName)",
+        "exportB2BExcel(invoices)",
+        "exportB2CExcel(invoices)",
+        "exportHSNExcel(b2bHsn, b2cHsn)",
+        "exportB2BPDF(invoices)",
+        "exportB2CPDF(invoices)",
+        "exportGSTR1JSON(b2b, b2c, b2bHsn)",
+        "printReport(elementId, reportTitle)"
+      ],
+      "notes": "exportGSTR1JSON produces standard Indian GSTR-1 format with b2b (grouped by GSTIN), b2cs (grouped by state+rate), hsn sections."
+    },
+    "js/gstr1.js": {
+      "purpose": "B2B Invoice CRUD + Auto Invoice No + WhatsApp Share",
+      "key_functions": [
+        "initB2B()",
+        "saveB2B()",
+        "resetB2B()",
+        "loadB2B(userId)",
+        "generateInvoiceNo(userId, force)",
+        "isAutoInvoiceOn()",
+        "onAutoToggleChange()",
+        "updateAutoToggleUI()",
+        "loadCustomersList(userId)",
+        "onCustomerSelect()",
+        "saveCustomerFromForm()",
+        "shareWhatsApp(id)",
+        "editB2B(id)",
+        "deleteB2B(id)"
+      ],
+      "localStorage_key_toggle": "gst_auto_invoice",
+      "notes": "generateInvoiceNo: scans existing invoice numbers, finds max, increments. force=true bypasses toggle check. sessionStorage 'prefill_customer' used for Customer Master → B2B redirect."
+    },
+    "js/customers.js": {
+      "purpose": "Customer Master CRUD",
+      "key_functions": ["initCustomers()", "saveCustomer()", "loadCustomers(userId)", "editCustomer(id)", "deleteCustomer(id)", "useInB2B(id)"]
+    },
+    "js/cdnotes.js": {
+      "purpose": "Credit/Debit Notes CRUD",
+      "key_functions": ["initCDNotes()", "saveCDNote()", "loadCDNotes(userId)", "editCDNote(id)", "deleteCDNote(id)"]
+    },
+    "js/utils.js": {
+      "purpose": "Shared utilities",
+      "key_functions": [
+        "formatNum(n)",
+        "formatDate(d)",
+        "calcGST(taxableAmount, gstPct, supplyType)",
+        "showToast(message, type)",
+        "showConfirm(message)",
+        "initNavUser(user)",
+        "setupLogoutBtn()",
+        "setupMobileMenu()",
+        "INDIAN_STATES (array)"
+      ],
+      "notes": "calcGST returns { igst, cgst, sgst, gstAmount, totalAmount }. IGST for interstate, CGST+SGST for intrastate."
+    },
+    "js/dashboard.js": {
+      "purpose": "Chart rendering only",
+      "key_functions": ["renderCharts(b2b, b2c)"],
+      "notes": "Data loading and year/month filter logic is in dashboard.html inline script."
+    },
+    "js/reports.js": {
+      "purpose": "Reports page data loading and export",
+      "key_functions": ["initReports()", "loadReports(month)", "exportFullGSTR1()", "exportSummaryPDF()"]
+    },
+    "js/hsn.js": {
+      "purpose": "HSN Summary CRUD + tab switching",
+      "key_functions": ["initHSN()", "saveHSN(prefix)", "loadB2BHSN(userId)", "loadB2CHSN(userId)", "switchHSNTab(tab)", "hsnTabClick(tab)"]
+    }
+  },
+
+  "localStorage_keys": {
+    "gst_b2b_invoices":  "B2B invoice records (array)",
+    "gst_b2c_invoices":  "B2C invoice records (array)",
+    "gst_b2b_hsn":       "B2B HSN entries (array)",
+    "gst_b2c_hsn":       "B2C HSN entries (array)",
+    "gst_customers":     "Customer master records (array)",
+    "gst_cdn_notes":     "Credit/Debit note records (array)",
+    "gst_profiles":      "Business profile (array, id = 'local-demo-user-001')",
+    "gst_last_backup":   "ISO timestamp of last backup",
+    "gst_auto_invoice":  "Boolean string: 'true'/'false' — auto invoice number toggle"
+  },
+
+  "data_schemas": {
+    "b2b_invoice": {
+      "id": "UUID",
+      "user_id": "string",
+      "gst_number": "string (15-char GSTIN)",
+      "customer_name": "string",
+      "invoice_number": "string",
+      "invoice_date": "YYYY-MM-DD",
+      "taxable_amount": "number",
+      "gst_percentage": "number (0/5/12/18/28)",
+      "gst_amount": "number",
+      "total_amount": "number",
+      "supply_type": "intrastate | interstate",
+      "igst": "number",
+      "cgst": "number",
+      "sgst": "number",
+      "created_at": "ISO datetime",
+      "updated_at": "ISO datetime"
+    },
+    "b2c_invoice": {
+      "id": "UUID",
+      "user_id": "string",
+      "state": "string",
+      "supply_type": "intrastate | interstate",
+      "invoice_date": "YYYY-MM-DD",
+      "taxable_amount": "number",
+      "gst_percentage": "number",
+      "gst_amount": "number",
+      "total_amount": "number",
+      "igst": "number",
+      "cgst": "number",
+      "sgst": "number"
+    },
+    "b2b_hsn": {
+      "id": "UUID",
+      "user_id": "string",
+      "hsn_code": "string",
+      "product_name": "string",
+      "type": "goods | service",
+      "quantity": "number",
+      "taxable_value": "number",
+      "gst_percentage": "number",
+      "supply_type": "intrastate | interstate",
+      "igst": "number",
+      "cgst": "number",
+      "sgst": "number",
+      "total_gst": "number",
+      "total_invoice_value": "number",
+      "entry_date": "YYYY-MM-DD"
+    },
+    "customer": {
+      "id": "UUID",
+      "user_id": "string",
+      "name": "string",
+      "gstin": "string (optional)",
+      "phone": "string",
+      "email": "string",
+      "address": "string",
+      "state": "string"
+    },
+    "cdn_note": {
+      "id": "UUID",
+      "user_id": "string",
+      "note_type": "credit | debit",
+      "note_number": "string",
+      "note_date": "YYYY-MM-DD",
+      "original_invoice": "string (optional)",
+      "customer_name": "string",
+      "gstin": "string (optional)",
+      "reason": "string",
+      "taxable_amount": "number",
+      "gst_percentage": "number",
+      "supply_type": "intrastate | interstate",
+      "igst": "number",
+      "cgst": "number",
+      "sgst": "number",
+      "gst_amount": "number",
+      "total_amount": "number"
+    },
+    "profile": {
+      "id": "local-demo-user-001 (local mode)",
+      "business_name": "string",
+      "gstin": "string (15-char)",
+      "phone": "string",
+      "address": "string",
+      "state": "string",
+      "email": "string"
+    }
+  },
+
+  "sidebar_structure": {
+    "Main":     ["Dashboard"],
+    "GSTR-1":   ["B2B Invoices", "B2C Invoices", "Credit/Debit Notes"],
+    "HSN":      ["B2B HSN (hsn.html#b2b)", "B2C HSN (hsn.html#b2c)"],
+    "Masters":  ["Customers"],
+    "Reports":  ["Reports & Export"],
+    "Settings": ["Business Profile"]
+  },
+
+  "features_summary": {
+    "core": [
+      "B2B Invoice entry with auto IGST/CGST/SGST calculation",
+      "B2C Invoice entry",
+      "HSN Summary (B2B & B2C tabs with URL hash routing)",
+      "Dashboard with year/month filter, charts, 12-month summary",
+      "Reports page with all export options",
+      "Offline localStorage (no server needed)"
+    ],
+    "recently_added": [
+      "Invoice Number Auto-generate (INV-2026-001) with ON/OFF toggle",
+      "Customer Master with autocomplete in B2B form",
+      "WhatsApp Share button per B2B invoice",
+      "GSTR-1 JSON Export (Indian Government portal format)",
+      "Credit/Debit Notes page",
+      "Business Profile: Skip for Now + X close button",
+      "HSN sidebar: B2B HSN and B2C HSN as separate links with tab sync"
+    ],
+    "print_pdf": [
+      "Professional print with company letterhead (business name, GSTIN badge, address, phone, email)",
+      "PDF export with letterhead using jsPDF",
+      "Print auto-triggers window.print() in new tab"
+    ],
+    "data_management": [
+      "localStorage backup (JSON download)",
+      "Restore from backup JSON",
+      "Storage stats in settings modal",
+      "Clear all data option"
+    ]
+  },
+
+  "script_load_order": {
+    "all_pages": [
+      "supabase@2 (CDN)",
+      "xlsx (CDN, if page uses Excel export)",
+      "jspdf (CDN, if page uses PDF export)",
+      "jspdf-autotable (CDN, if page uses PDF export)",
+      "js/localdb.js",
+      "js/config.js",
+      "js/auth.js",
+      "js/utils.js",
+      "js/profile.js",
+      "js/export.js (if needed)",
+      "js/[page-specific].js"
+    ],
+    "note": "localdb.js MUST load before config.js — config.js uses LocalSupabase class defined in localdb.js"
+  },
+
+  "supabase_migration": {
+    "steps": [
+      "1. Create Supabase project at supabase.com",
+      "2. Run supabase-schema.sql in SQL editor",
+      "3. In js/config.js replace YOUR_SUPABASE_PROJECT_URL and YOUR_SUPABASE_ANON_KEY",
+      "4. IS_LOCAL_MODE auto-switches to false — real Supabase used",
+      "5. All pages work identically — no other changes needed"
+    ]
+  },
+
+  "known_bugs_fixed": [
+    "Profile deleted on refresh: INSERT overwrote payload.id with crypto.randomUUID() — fixed by spread order",
+    "UPDATE only matched by 'id' field — fixed to iterate all eq filters",
+    "HSN sidebar links didn't switch tabs when already on hsn.html — fixed by using onclick=hsnTabClick() instead of href navigation"
+  ],
+
+  "files_list": {
+    "html": ["index.html", "dashboard.html", "gstr1.html", "b2c.html", "hsn.html", "reports.html", "customers.html", "cdnotes.html"],
+    "js":   ["js/localdb.js", "js/config.js", "js/auth.js", "js/utils.js", "js/profile.js", "js/export.js", "js/dashboard.js", "js/gstr1.js", "js/b2c.js", "js/hsn.js", "js/reports.js", "js/customers.js", "js/cdnotes.js"],
+    "css":  ["css/style.css"],
+    "sql":  ["supabase-schema.sql"]
+  }
+}

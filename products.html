@@ -1,0 +1,170 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Product Master - GST Management System</title>
+  <link rel="stylesheet" href="css/style.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="js/localdb.js"></script>
+  <script src="js/config.js"></script>
+  <script src="js/auth.js"></script>
+  <script src="js/utils.js"></script>
+  <script src="js/search.js"></script>
+  <script src="js/profile.js"></script>
+  <script src="js/products.js"></script>
+</head>
+<body>
+<div class="app-layout">
+
+  <aside class="sidebar">
+    <a class="sidebar-brand" href="dashboard.html">
+      <div class="brand-icon"><i class="fas fa-file-invoice-dollar"></i></div>
+      <span>GST Invoice<br>Management</span>
+    </a>
+    <nav class="sidebar-menu">
+      <div class="menu-section">Main</div>
+      <a href="dashboard.html" class="menu-item"><i class="fas fa-tachometer-alt"></i> Dashboard</a>
+      <div class="menu-section">GSTR-1</div>
+      <a href="gstr1.html"   class="menu-item"><i class="fas fa-file-alt"></i> B2B Invoices</a>
+      <a href="b2c.html"     class="menu-item"><i class="fas fa-users"></i> B2C Invoices</a>
+      <a href="cdnotes.html" class="menu-item"><i class="fas fa-file-minus"></i> Credit/Debit Notes</a>
+      <div class="menu-section">HSN</div>
+      <a href="hsn.html#b2b" class="menu-item"><i class="fas fa-barcode"></i> B2B HSN</a>
+      <a href="hsn.html#b2c" class="menu-item"><i class="fas fa-tags"></i> B2C HSN</a>
+      <div class="menu-section">Masters</div>
+      <a href="customers.html" class="menu-item"><i class="fas fa-address-book"></i> Customers</a>
+      <a href="products.html" class="menu-item active"><i class="fas fa-box"></i> Products</a>
+      <div class="menu-section">Reports</div>
+      <a href="reports.html" class="menu-item"><i class="fas fa-chart-bar"></i> Reports &amp; Export</a>
+      <a href="gstr3b.html"  class="menu-item"><i class="fas fa-calculator"></i> GSTR-3B Summary</a>
+      <div class="menu-section">Settings</div>
+      <a href="#" class="menu-item" onclick="openProfileModal();return false;"><i class="fas fa-building"></i> Business Profile</a>
+    </nav>
+    <div class="sidebar-user">
+      <div class="user-avatar"><i class="fas fa-user"></i></div>
+      <div class="user-info" onclick="openSettingsModal()" title="Click to open settings">
+        <div class="user-name" id="navUserName">User</div>
+        <div class="user-role">GST Manager</div>
+      </div>
+      <button type="button" class="btn-logout btn-settings" onclick="openSettingsModal()" title="Settings"><i class="fas fa-cog"></i></button>
+      <button type="button" class="btn-logout" id="logoutBtn" title="Logout"><i class="fas fa-sign-out-alt"></i></button>
+    </div>
+  </aside>
+
+  <div class="main-content">
+    <div class="top-bar">
+      <button type="button" class="menu-toggle" id="menuToggle" aria-label="Toggle sidebar menu"><i class="fas fa-bars"></i></button>
+      <span class="page-title"><i class="fas fa-box"></i>Product Master</span>
+      <button type="button" class="btn btn-secondary btn-sm btn-icon ml-auto" onclick="openGlobalSearch()" title="Search everywhere (Ctrl+K)" aria-label="Global search"><i class="fas fa-search"></i></button>
+    </div>
+
+    <div class="content">
+
+      <!-- Add / Edit Form -->
+      <div class="card mb-20">
+        <div class="card-header">
+          <span class="card-title"><i class="fas fa-plus-circle"></i> <span id="prodFormTitle">Add Product</span></span>
+        </div>
+        <div class="card-body">
+          <div class="form-grid cols-2 mb-16">
+            <div class="form-group">
+              <label for="prodName">Product / Service Name <span class="text-required">*</span></label>
+              <input type="text" id="prodName" class="form-control" placeholder="Enter product or service name">
+            </div>
+            <div class="form-group">
+              <label for="prodHSN">HSN Code</label>
+              <input type="text" id="prodHSN" class="form-control" placeholder="e.g. 8471">
+            </div>
+          </div>
+          <div class="form-grid cols-3 mb-16">
+            <div class="form-group">
+              <label for="prodType">Type</label>
+              <select id="prodType" class="form-control">
+                <option value="goods">Goods</option>
+                <option value="service">Service</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label for="prodGstPct">GST Percentage</label>
+              <select id="prodGstPct" class="form-control">
+                <option value="0">0%</option>
+                <option value="5">5%</option>
+                <option value="12">12%</option>
+                <option value="18" selected>18%</option>
+                <option value="28">28%</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label for="prodRate">Default Rate (&#8377;)</label>
+              <input type="number" id="prodRate" class="form-control" placeholder="0.00" min="0" step="0.01">
+            </div>
+          </div>
+          <div class="btn-group">
+            <button type="button" class="btn btn-primary" id="prodSaveBtn" onclick="saveProduct()"><i class="fas fa-save"></i> Save Product</button>
+            <button type="button" class="btn btn-secondary" onclick="resetProduct()"><i class="fas fa-redo"></i> Reset</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Product List -->
+      <div class="card">
+        <div class="card-header">
+          <span class="card-title"><i class="fas fa-list"></i> Product List</span>
+          <div class="d-flex gap-10">
+            <div class="search-input-wrap w-240">
+              <i class="fas fa-search"></i>
+              <input type="text" id="prodSearch" class="form-control" placeholder="Search name, HSN..." aria-label="Search products">
+            </div>
+          </div>
+        </div>
+        <div class="card-body p-0">
+          <div class="table-wrapper">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th>#</th>
+                  <th>Product / Service Name</th>
+                  <th>HSN Code</th>
+                  <th>Type</th>
+                  <th>GST%</th>
+                  <th>Default Rate</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody id="prodTableBody">
+                <tr><td colspan="7" class="empty-state"><i class="fas fa-spinner fa-spin table-loading-icon"></i>Loading...</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="table-pagination-row">
+            <div id="prodPagination" class="pagination"></div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+</div>
+
+<script>
+document.addEventListener('DOMContentLoaded', initProducts);
+</script>
+
+<!-- Global Search Modal -->
+<div class="modal-overlay" id="globalSearchModal">
+  <div class="modal modal-lg">
+    <div class="modal-header">
+      <span class="modal-title"><i class="fas fa-search"></i> Search Everywhere</span>
+      <button type="button" class="modal-close" onclick="closeGlobalSearch()" aria-label="Close"><i class="fas fa-times"></i></button>
+    </div>
+    <div class="modal-body">
+      <input type="text" id="globalSearchInput" class="form-control mb-16" placeholder="Search invoices, customers, products, HSN..." oninput="onGlobalSearchInput(this.value)" aria-label="Global search input">
+      <div id="globalSearchResults"><p class="text-muted-sm">Type at least 2 characters&hellip;</p></div>
+    </div>
+  </div>
+</div>
+
+</body>
+</html>

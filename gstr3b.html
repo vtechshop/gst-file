@@ -1,0 +1,239 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>GSTR-3B Summary - GST Management System</title>
+  <link rel="stylesheet" href="css/style.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="https://cdn.sheetjs.com/xlsx-latest/package/dist/xlsx.full.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.31/jspdf.plugin.autotable.min.js"></script>
+  <script src="js/localdb.js"></script>
+  <script src="js/config.js"></script>
+  <script src="js/auth.js"></script>
+  <script src="js/utils.js"></script>
+  <script src="js/search.js"></script>
+  <script src="js/profile.js"></script>
+  <script src="js/export.js"></script>
+  <script src="js/gstr3b.js"></script>
+</head>
+<body>
+<div class="app-layout">
+
+  <aside class="sidebar">
+    <a class="sidebar-brand" href="dashboard.html">
+      <div class="brand-icon"><i class="fas fa-file-invoice-dollar"></i></div>
+      <span>GST Invoice<br>Management</span>
+    </a>
+    <nav class="sidebar-menu">
+      <div class="menu-section">Main</div>
+      <a href="dashboard.html" class="menu-item"><i class="fas fa-tachometer-alt"></i> Dashboard</a>
+      <div class="menu-section">GSTR-1</div>
+      <a href="gstr1.html"   class="menu-item"><i class="fas fa-file-alt"></i> B2B Invoices</a>
+      <a href="b2c.html"     class="menu-item"><i class="fas fa-users"></i> B2C Invoices</a>
+      <a href="cdnotes.html" class="menu-item"><i class="fas fa-file-minus"></i> Credit/Debit Notes</a>
+      <div class="menu-section">HSN</div>
+      <a href="hsn.html#b2b" class="menu-item"><i class="fas fa-barcode"></i> B2B HSN</a>
+      <a href="hsn.html#b2c" class="menu-item"><i class="fas fa-tags"></i> B2C HSN</a>
+      <div class="menu-section">Masters</div>
+      <a href="customers.html" class="menu-item"><i class="fas fa-address-book"></i> Customers</a>
+      <a href="products.html" class="menu-item"><i class="fas fa-box"></i> Products</a>
+      <div class="menu-section">Reports</div>
+      <a href="reports.html"  class="menu-item"><i class="fas fa-chart-bar"></i> Reports &amp; Export</a>
+      <a href="gstr3b.html"   class="menu-item active"><i class="fas fa-calculator"></i> GSTR-3B Summary</a>
+      <div class="menu-section">Settings</div>
+      <a href="#" class="menu-item" onclick="openProfileModal();return false;"><i class="fas fa-building"></i> Business Profile</a>
+    </nav>
+    <div class="sidebar-user">
+      <div class="user-avatar"><i class="fas fa-user"></i></div>
+      <div class="user-info" onclick="openSettingsModal()" title="Click to open settings">
+        <div class="user-name" id="navUserName">User</div>
+        <div class="user-role">GST Manager</div>
+      </div>
+      <button type="button" class="btn-logout btn-settings" onclick="openSettingsModal()" title="Settings"><i class="fas fa-cog"></i></button>
+      <button type="button" class="btn-logout" id="logoutBtn" title="Logout"><i class="fas fa-sign-out-alt"></i></button>
+    </div>
+  </aside>
+
+  <div class="main-content">
+    <div class="top-bar">
+      <button type="button" class="menu-toggle" id="menuToggle" aria-label="Toggle sidebar menu"><i class="fas fa-bars"></i></button>
+      <span class="page-title"><i class="fas fa-calculator"></i>GSTR-3B Summary Return</span>
+      <div class="ml-auto d-flex gap-10 align-center">
+        <button type="button" class="btn btn-secondary btn-sm btn-icon" onclick="openGlobalSearch()" title="Search everywhere (Ctrl+K)" aria-label="Global search"><i class="fas fa-search"></i></button>
+        <select id="gstr3bMonth" class="form-control toolbar-select" onchange="loadGSTR3B()" aria-label="Select month"></select>
+      </div>
+    </div>
+
+    <div class="content">
+
+      <!-- Info Banner -->
+      <div class="banner-success">
+        <i class="fas fa-info-circle"></i>
+        <div class="banner-text">
+          <b>GSTR-3B</b> is auto-calculated from your B2B &amp; B2C invoice data for the selected month.
+          ITC (Input Tax Credit) fields are shown as &#8377;0 â€” enter manually on GST portal if applicable.
+        </div>
+      </div>
+
+      <!-- Stat Cards -->
+      <div class="stat-grid mb-20">
+        <div class="stat-card border-green">
+          <div class="stat-icon green"><i class="fas fa-rupee-sign"></i></div>
+          <div class="stat-info"><div class="stat-label">Total Taxable Value</div><div class="stat-value" id="g3bTotTaxable">&#8377;0</div></div>
+        </div>
+        <div class="stat-card border-blue">
+          <div class="stat-icon blue"><i class="fas fa-globe"></i></div>
+          <div class="stat-info"><div class="stat-label">IGST Payable</div><div class="stat-value" id="g3bTotIGST">&#8377;0</div></div>
+        </div>
+        <div class="stat-card border-orange">
+          <div class="stat-icon orange"><i class="fas fa-map-marker-alt"></i></div>
+          <div class="stat-info"><div class="stat-label">CGST Payable</div><div class="stat-value" id="g3bTotCGST">&#8377;0</div></div>
+        </div>
+        <div class="stat-card border-purple">
+          <div class="stat-icon purple"><i class="fas fa-map-pin"></i></div>
+          <div class="stat-info"><div class="stat-label">SGST Payable</div><div class="stat-value" id="g3bTotSGST">&#8377;0</div></div>
+        </div>
+        <div class="stat-card border-dark">
+          <div class="stat-icon green"><i class="fas fa-money-bill-wave"></i></div>
+          <div class="stat-info"><div class="stat-label">Total GST Payable</div><div class="stat-value" id="g3bTotGST">&#8377;0</div></div>
+        </div>
+        <div class="stat-card border-teal">
+          <div class="stat-icon teal"><i class="fas fa-file-invoice"></i></div>
+          <div class="stat-info"><div class="stat-label">Total Invoices</div><div class="stat-value" id="g3bInvCount">0</div></div>
+        </div>
+      </div>
+
+      <!-- Export Buttons -->
+      <div class="card mb-20">
+        <div class="card-header">
+          <span class="card-title"><i class="fas fa-download"></i> Export GSTR-3B</span>
+        </div>
+        <div class="card-body d-flex gap-10 flex-wrap">
+          <button type="button" class="btn btn-success" onclick="exportGSTR3BExcel()"><i class="fas fa-file-excel"></i> Excel</button>
+          <button type="button" class="btn btn-info btn-info-alt" onclick="exportGSTR3BJSON()"><i class="fas fa-file-code"></i> JSON (Portal)</button>
+          <button type="button" class="btn btn-secondary" onclick="printGSTR3B()"><i class="fas fa-print"></i> Print</button>
+        </div>
+      </div>
+
+      <div id="gstr3bPrintArea">
+
+        <!-- Table 3.1 -->
+        <div class="card mb-20">
+          <div class="card-header">
+            <span class="card-title"><i class="fas fa-table"></i> Table 3.1 &mdash; Outward Supplies &amp; Tax Liability</span>
+          </div>
+          <div class="card-body p-0">
+            <div class="table-wrapper">
+              <table class="data-table">
+                <thead>
+                  <tr>
+                    <th class="min-w-280">Nature of Supplies</th>
+                    <th class="text-right">Taxable Value (&#8377;)</th>
+                    <th class="text-right">IGST (&#8377;)</th>
+                    <th class="text-right">CGST (&#8377;)</th>
+                    <th class="text-right">SGST/UTGST (&#8377;)</th>
+                    <th class="text-right">Total GST (&#8377;)</th>
+                  </tr>
+                </thead>
+                <tbody id="table31Body">
+                  <tr><td colspan="6" class="empty-state"><i class="fas fa-spinner fa-spin table-loading-icon-sm"></i>Calculating...</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        <!-- Table 3.2 -->
+        <div class="card mb-20">
+          <div class="card-header">
+            <span class="card-title"><i class="fas fa-globe"></i> Table 3.2 &mdash; Inter-State Supplies (from 3.1a)</span>
+          </div>
+          <div class="card-body p-0">
+            <div class="table-wrapper">
+              <table class="data-table">
+                <thead>
+                  <tr>
+                    <th class="min-w-320">Type of Supply</th>
+                    <th class="text-right">Taxable Value (&#8377;)</th>
+                    <th class="text-right">IGST Payable (&#8377;)</th>
+                  </tr>
+                </thead>
+                <tbody id="table32Body">
+                  <tr><td colspan="3" class="empty-state">Calculating...</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        <!-- Rate-wise Breakup -->
+        <div class="card mb-20">
+          <div class="card-header">
+            <span class="card-title"><i class="fas fa-percentage"></i> GST Rate-wise Breakup</span>
+          </div>
+          <div class="card-body p-0">
+            <div class="table-wrapper">
+              <table class="data-table">
+                <thead>
+                  <tr>
+                    <th class="text-center">GST Rate</th>
+                    <th class="text-right">Taxable Value (&#8377;)</th>
+                    <th class="text-right">IGST (&#8377;)</th>
+                    <th class="text-right">CGST (&#8377;)</th>
+                    <th class="text-right">SGST (&#8377;)</th>
+                    <th class="text-right">Total Invoice (&#8377;)</th>
+                  </tr>
+                </thead>
+                <tbody id="rateWiseBody">
+                  <tr><td colspan="6" class="empty-state">Calculating...</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        <!-- Table 4 ITC Placeholder -->
+        <div class="card mb-20">
+          <div class="card-header">
+            <span class="card-title"><i class="fas fa-minus-circle"></i> Table 4 &mdash; Eligible ITC (Input Tax Credit)</span>
+          </div>
+          <div class="card-body">
+            <div class="banner-warning">
+              <i class="fas fa-exclamation-triangle"></i>
+              <b>ITC data not tracked in this app.</b>
+              Enter ITC values manually on the GST Portal &rarr; GSTR-3B filing.
+              <div class="banner-note">
+                IGST ITC: &#8377;0 &nbsp;|&nbsp; CGST ITC: &#8377;0 &nbsp;|&nbsp; SGST ITC: &#8377;0
+              </div>
+            </div>
+          </div>
+        </div>
+
+      </div><!-- /gstr3bPrintArea -->
+    </div>
+  </div>
+</div>
+
+<script>
+document.addEventListener('DOMContentLoaded', initGSTR3B);
+</script>
+
+<!-- Global Search Modal -->
+<div class="modal-overlay" id="globalSearchModal">
+  <div class="modal modal-lg">
+    <div class="modal-header">
+      <span class="modal-title"><i class="fas fa-search"></i> Search Everywhere</span>
+      <button type="button" class="modal-close" onclick="closeGlobalSearch()" aria-label="Close"><i class="fas fa-times"></i></button>
+    </div>
+    <div class="modal-body">
+      <input type="text" id="globalSearchInput" class="form-control mb-16" placeholder="Search invoices, customers, products, HSN..." oninput="onGlobalSearchInput(this.value)" aria-label="Global search input">
+      <div id="globalSearchResults"><p class="text-muted-sm">Type at least 2 characters&hellip;</p></div>
+    </div>
+  </div>
+</div>
+
+</body>
+</html>

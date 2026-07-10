@@ -1,0 +1,503 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Dashboard - GST Management System</title>
+  <link rel="stylesheet" href="css/style.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <script src="js/localdb.js"></script>
+  <script src="js/config.js"></script>
+  <script src="js/auth.js"></script>
+  <script src="js/utils.js"></script>
+  <script src="js/search.js"></script>
+  <script src="js/profile.js"></script>
+  <script src="js/dashboard.js"></script>
+</head>
+<body>
+<div class="app-layout">
+
+  <!-- Sidebar -->
+  <aside class="sidebar">
+    <a class="sidebar-brand" href="dashboard.html">
+      <div class="brand-icon"><i class="fas fa-file-invoice-dollar"></i></div>
+      <span>GST Invoice<br>Management</span>
+    </a>
+    <nav class="sidebar-menu">
+      <div class="menu-section">Main</div>
+      <a href="dashboard.html" class="menu-item active"><i class="fas fa-tachometer-alt"></i> Dashboard</a>
+      <div class="menu-section">GSTR-1</div>
+      <a href="gstr1.html"   class="menu-item"><i class="fas fa-file-alt"></i> B2B Invoices</a>
+      <a href="b2c.html"     class="menu-item"><i class="fas fa-users"></i> B2C Invoices</a>
+      <a href="cdnotes.html" class="menu-item"><i class="fas fa-file-minus"></i> Credit/Debit Notes</a>
+      <div class="menu-section">HSN</div>
+      <a href="hsn.html#b2b" class="menu-item"><i class="fas fa-barcode"></i> B2B HSN</a>
+      <a href="hsn.html#b2c" class="menu-item"><i class="fas fa-tags"></i> B2C HSN</a>
+      <div class="menu-section">Masters</div>
+      <a href="customers.html" class="menu-item"><i class="fas fa-address-book"></i> Customers</a>
+      <a href="products.html" class="menu-item"><i class="fas fa-box"></i> Products</a>
+      <div class="menu-section">Reports</div>
+      <a href="reports.html" class="menu-item"><i class="fas fa-chart-bar"></i> Reports &amp; Export</a>
+      <a href="gstr3b.html"  class="menu-item"><i class="fas fa-calculator"></i> GSTR-3B Summary</a>
+      <div class="menu-section">Settings</div>
+      <a href="#" class="menu-item" onclick="openProfileModal();return false;"><i class="fas fa-building"></i> Business Profile</a>
+    </nav>
+    <div class="sidebar-user">
+      <div class="user-avatar"><i class="fas fa-user"></i></div>
+      <div class="user-info" onclick="openSettingsModal()" title="Click to open settings">
+        <div class="user-name" id="navUserName">User</div>
+        <div class="user-role">GST Manager</div>
+      </div>
+      <button type="button" class="btn-logout btn-settings" onclick="openSettingsModal()" title="Settings"><i class="fas fa-cog"></i></button>
+      <button type="button" class="btn-logout" id="logoutBtn" title="Logout"><i class="fas fa-sign-out-alt"></i></button>
+    </div>
+  </aside>
+
+  <!-- Main Content -->
+  <div class="main-content">
+    <div class="top-bar">
+      <button type="button" class="menu-toggle" id="menuToggle" aria-label="Toggle sidebar menu"><i class="fas fa-bars"></i></button>
+      <span class="page-title"><i class="fas fa-tachometer-alt"></i>Dashboard</span>
+      <div class="dash-header-controls">
+        <button type="button" class="btn btn-secondary btn-sm btn-icon" onclick="openGlobalSearch()" title="Search everywhere (Ctrl+K)" aria-label="Global search"><i class="fas fa-search"></i></button>
+        <select class="form-control dash-select-year" id="yearSelect" onchange="onYearMonthChange()" aria-label="Select year"></select>
+        <select class="form-control dash-select-month" id="monthSelect" onchange="onYearMonthChange()" aria-label="Select month">
+          <option value="all">All Months</option>
+          <option value="01">January</option>
+          <option value="02">February</option>
+          <option value="03">March</option>
+          <option value="04">April</option>
+          <option value="05">May</option>
+          <option value="06">June</option>
+          <option value="07">July</option>
+          <option value="08">August</option>
+          <option value="09">September</option>
+          <option value="10">October</option>
+          <option value="11">November</option>
+          <option value="12">December</option>
+        </select>
+        <span id="activePeriodLabel" class="period-badge"></span>
+      </div>
+    </div>
+
+    <div class="content">
+
+      <!-- Storage Status Bar -->
+      <div class="storage-bar">
+        <div class="storage-bar-left">
+          <span id="storeDot" class="storage-dot"></span>
+          <span class="fs-13 fw-600 text-primary-dark">Local Storage</span>
+        </div>
+        <div class="storage-stats">
+          <span>&#128193; B2B: <b id="storeB2B" class="text-primary-dark">0 records</b></span>
+          <span>&#128193; B2C: <b id="storeB2C" class="text-primary-dark">0 records</b></span>
+          <span>&#128193; HSN: <b id="storeHSN" class="text-primary-dark">0 records</b></span>
+          <span>&#128190; Total: <b id="storeTotal" class="text-primary-dark">0 total records</b></span>
+          <span>&#128197; Last Backup: <b id="storeBackup" class="text-muted">Never</b></span>
+        </div>
+        <div class="storage-actions">
+          <button type="button" class="btn btn-success btn-sm" onclick="exportLocalBackup()" title="Download backup file">
+            <i class="fas fa-download"></i> Backup
+          </button>
+          <label class="btn btn-secondary btn-sm btn-file-label" title="Restore from backup file">
+            <i class="fas fa-upload"></i> Restore
+            <input type="file" accept=".json" class="file-input-hidden" onchange="importLocalBackup(this.files[0])">
+          </label>
+          <button type="button" class="btn btn-sm btn-clear-data" onclick="confirmClearData()" title="Clear all data" aria-label="Clear all data">
+            <i class="fas fa-trash-alt"></i>
+          </button>
+        </div>
+      </div>
+
+      <!-- Stat Cards -->
+      <div class="stat-grid">
+        <div class="stat-card border-green">
+          <div class="stat-icon green"><i class="fas fa-building"></i></div>
+          <div class="stat-info"><div class="stat-label">Total B2B Sales</div><div class="stat-value" id="statB2B">&#8377;0.00</div></div>
+        </div>
+        <div class="stat-card border-teal">
+          <div class="stat-icon teal"><i class="fas fa-users"></i></div>
+          <div class="stat-info"><div class="stat-label">Total B2C Sales</div><div class="stat-value" id="statB2C">&#8377;0.00</div></div>
+        </div>
+        <div class="stat-card border-blue">
+          <div class="stat-icon blue"><i class="fas fa-rupee-sign"></i></div>
+          <div class="stat-info"><div class="stat-label">Total Taxable Amount</div><div class="stat-value" id="statTaxable">&#8377;0.00</div></div>
+        </div>
+        <div class="stat-card border-orange">
+          <div class="stat-icon orange"><i class="fas fa-percentage"></i></div>
+          <div class="stat-info"><div class="stat-label">Total GST Collected</div><div class="stat-value" id="statGST">&#8377;0.00</div></div>
+        </div>
+        <div class="stat-card border-blue">
+          <div class="stat-icon blue"><i class="fas fa-globe"></i></div>
+          <div class="stat-info"><div class="stat-label">Total IGST</div><div class="stat-value" id="statIGST">&#8377;0.00</div></div>
+        </div>
+        <div class="stat-card border-orange">
+          <div class="stat-icon orange"><i class="fas fa-map-marker-alt"></i></div>
+          <div class="stat-info"><div class="stat-label">Total CGST</div><div class="stat-value" id="statCGST">&#8377;0.00</div></div>
+        </div>
+        <div class="stat-card border-purple">
+          <div class="stat-icon purple"><i class="fas fa-map-pin"></i></div>
+          <div class="stat-info"><div class="stat-label">Total SGST</div><div class="stat-value" id="statSGST">&#8377;0.00</div></div>
+        </div>
+        <div class="stat-card border-success">
+          <div class="stat-icon green"><i class="fas fa-file-invoice"></i></div>
+          <div class="stat-info"><div class="stat-label">Total Invoices</div><div class="stat-value" id="statCount">0</div></div>
+        </div>
+        <div class="stat-card border-dark">
+          <div class="stat-icon green"><i class="fas fa-money-bill-wave"></i></div>
+          <div class="stat-info"><div class="stat-label">Grand Total</div><div class="stat-value" id="statTotal">&#8377;0.00</div></div>
+        </div>
+      </div>
+
+      <!-- Quick Actions -->
+      <div class="card mb-20">
+        <div class="card-header">
+          <span class="card-title"><i class="fas fa-bolt"></i> Quick Actions</span>
+        </div>
+        <div class="card-body d-flex gap-12 flex-wrap">
+          <a href="gstr1.html" class="btn btn-primary"><i class="fas fa-plus"></i> New B2B Invoice</a>
+          <a href="b2c.html"   class="btn btn-secondary"><i class="fas fa-plus"></i> New B2C Invoice</a>
+          <a href="hsn.html"   class="btn btn-secondary"><i class="fas fa-barcode"></i> HSN Entry</a>
+          <a href="reports.html" class="btn btn-info"><i class="fas fa-chart-bar"></i> View Reports</a>
+        </div>
+      </div>
+
+      <!-- Charts -->
+      <div class="chart-grid">
+        <div class="chart-card">
+          <h3><i class="fas fa-chart-bar"></i> Monthly Sales (Last 6 Months)</h3>
+          <canvas id="chartSales"></canvas>
+        </div>
+        <div class="chart-card">
+          <h3><i class="fas fa-chart-line"></i> GST Collection Trend</h3>
+          <canvas id="chartGST"></canvas>
+        </div>
+        <div class="chart-card">
+          <h3><i class="fas fa-chart-pie"></i> B2B vs B2C Split</h3>
+          <canvas id="chartB2BvsB2C"></canvas>
+        </div>
+        <div class="chart-card">
+          <h3><i class="fas fa-chart-pie"></i> Tax Type Summary</h3>
+          <canvas id="chartTaxType"></canvas>
+        </div>
+      </div>
+
+      <!-- Insights: Top Customers / Top Products / Import Stats -->
+      <div class="chart-grid mt-24">
+        <div class="chart-card">
+          <h3><i class="fas fa-crown"></i> Top Customers</h3>
+          <div id="topCustomersList"><p class="text-muted-sm">Loading...</p></div>
+        </div>
+        <div class="chart-card">
+          <h3><i class="fas fa-star"></i> Top Products</h3>
+          <div id="topProductsList"><p class="text-muted-sm">Loading...</p></div>
+        </div>
+        <div class="chart-card">
+          <h3><i class="fas fa-file-import"></i> Import Statistics</h3>
+          <div id="importStatsBox"><p class="text-muted-sm">Loading...</p></div>
+        </div>
+      </div>
+
+      <!-- 12 Month Summary Table -->
+      <div class="card mt-24">
+        <div class="card-header">
+          <span class="card-title"><i class="fas fa-calendar-alt"></i> 12 Month GST Summary</span>
+          <span class="text-muted-sm">Last 12 months overview</span>
+        </div>
+        <div class="card-body p-0">
+          <div class="table-wrapper">
+            <table class="data-table" id="monthSummaryTable">
+              <thead>
+                <tr>
+                  <th>Month</th>
+                  <th class="text-center">Invoices</th>
+                  <th class="text-right">B2B Taxable</th>
+                  <th class="text-right">B2C Taxable</th>
+                  <th class="text-right">IGST</th>
+                  <th class="text-right">CGST</th>
+                  <th class="text-right">SGST</th>
+                  <th class="text-right">Total GST</th>
+                  <th class="text-right">Grand Total</th>
+                </tr>
+              </thead>
+              <tbody id="monthSummaryBody">
+                <tr><td colspan="9" class="table-loading-row"><i class="fas fa-spinner fa-spin"></i> Loading...</td></tr>
+              </tbody>
+              <tfoot id="monthSummaryFoot"></tfoot>
+            </table>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+</div>
+
+<div class="loading-overlay d-none" id="dashLoader">
+  <div class="text-center">
+    <div class="spinner"></div>
+    <p class="mt-12 text-primary fw-600">Loading dashboard...</p>
+  </div>
+</div>
+
+<script>
+// ── Year & Month dropdowns ──────────────────────────────
+function populateYearDropdown() {
+  const sel = document.getElementById('yearSelect');
+  const curY = new Date().getFullYear();
+  let html = '';
+  // Show 5 years: current + 4 previous
+  for (let y = curY; y >= curY - 4; y--) {
+    html += `<option value="${y}" ${y === curY ? 'selected' : ''}>${y}</option>`;
+  }
+  sel.innerHTML = html;
+}
+
+function getSelectedYear()  { return parseInt(document.getElementById('yearSelect').value); }
+function getSelectedMonth() { return document.getElementById('monthSelect').value; }
+
+function getYearMonthRange() {
+  const y = getSelectedYear();
+  const m = getSelectedMonth();
+  if (m === 'all') {
+    return { start: `${y}-01-01`, end: `${y}-12-31` };
+  }
+  const moNum = parseInt(m);
+  return {
+    start: toISO(new Date(y, moNum - 1, 1)),
+    end:   toISO(new Date(y, moNum, 0))
+  };
+}
+
+function updatePeriodLabel() {
+  const y = getSelectedYear();
+  const m = getSelectedMonth();
+  const el = document.getElementById('activePeriodLabel');
+  if (!el) return;
+  if (m === 'all') {
+    el.textContent = `Full Year ${y}`;
+  } else {
+    const d = new Date(y, parseInt(m) - 1, 1);
+    el.textContent = d.toLocaleString('default', { month: 'long', year: 'numeric' });
+  }
+}
+
+async function onYearMonthChange() {
+  updatePeriodLabel();
+  const { start, end } = getYearMonthRange();
+  const user = await getCurrentUser();
+  if (!user) return;
+  showLoader();
+  await loadDashboardData(user.id, start, end);
+  await loadYearMonthSummary(user.id);
+  hideLoader();
+}
+
+// ── Dashboard data load ─────────────────────────────────
+async function loadDashboardData(userId, start, end) {
+  const [b2bRes, b2cRes] = await Promise.all([
+    _supabase.from('b2b_invoices').select('*').eq('user_id', userId).gte('invoice_date', start).lte('invoice_date', end),
+    _supabase.from('b2c_invoices').select('*').eq('user_id', userId).gte('invoice_date', start).lte('invoice_date', end)
+  ]);
+  const b2b = b2bRes.data || [];
+  const b2c = b2cRes.data || [];
+  const all = [...b2b, ...b2c];
+
+  const totalB2BTax = b2b.reduce((s,r)=>s+ +r.taxable_amount,0);
+  const totalB2CTax = b2c.reduce((s,r)=>s+ +r.taxable_amount,0);
+  const totalIGST   = all.reduce((s,r)=>s+ +r.igst,0);
+  const totalCGST   = all.reduce((s,r)=>s+ +r.cgst,0);
+  const totalSGST   = all.reduce((s,r)=>s+ +r.sgst,0);
+  const totalGST    = all.reduce((s,r)=>s+ +r.gst_amount,0);
+  const totalAmt    = all.reduce((s,r)=>s+ +r.total_amount,0);
+
+  const set = (id, v) => { const el=document.getElementById(id); if(el) el.textContent=v; };
+  set('statB2B',     formatCurrency(totalB2BTax));
+  set('statB2C',     formatCurrency(totalB2CTax));
+  set('statTaxable', formatCurrency(totalB2BTax + totalB2CTax));
+  set('statGST',     formatCurrency(totalGST));
+  set('statIGST',    formatCurrency(totalIGST));
+  set('statCGST',    formatCurrency(totalCGST));
+  set('statSGST',    formatCurrency(totalSGST));
+  set('statCount',   all.length);
+  set('statTotal',   formatCurrency(totalAmt));
+
+  renderCharts(b2b, b2c);
+  renderTopCustomers(b2b);
+}
+
+// ── Top Customers (from B2B invoices in the selected period) ──
+function renderTopCustomers(b2b) {
+  const el = document.getElementById('topCustomersList');
+  if (!el) return;
+  const totals = {};
+  b2b.forEach(r => { totals[r.customer_name] = (totals[r.customer_name] || 0) + (+r.total_amount || 0); });
+  const top = Object.entries(totals).sort((a, b) => b[1] - a[1]).slice(0, 5);
+  el.innerHTML = top.length
+    ? top.map(([name, amt], i) => `<div class="mini-list-row"><span>${i + 1}. ${name}</span><b>&#8377;${formatNum(amt)}</b></div>`).join('')
+    : '<p class="text-muted-sm">No B2B invoices in this period.</p>';
+}
+
+// ── Top Products & Import Statistics (all-time, loaded once) ──
+async function loadInsights(userId) {
+  const [b2bHsnRes, b2cHsnRes] = await Promise.all([
+    _supabase.from('b2b_hsn').select('product_name,total_invoice_value').eq('user_id', userId),
+    _supabase.from('b2c_hsn').select('product_name,total_invoice_value').eq('user_id', userId)
+  ]);
+  const totals = {};
+  [...(b2bHsnRes.data || []), ...(b2cHsnRes.data || [])].forEach(r => {
+    totals[r.product_name] = (totals[r.product_name] || 0) + (+r.total_invoice_value || 0);
+  });
+  const top = Object.entries(totals).sort((a, b) => b[1] - a[1]).slice(0, 5);
+  const el = document.getElementById('topProductsList');
+  if (el) {
+    el.innerHTML = top.length
+      ? top.map(([name, amt], i) => `<div class="mini-list-row"><span>${i + 1}. ${name}</span><b>&#8377;${formatNum(amt)}</b></div>`).join('')
+      : '<p class="text-muted-sm">No HSN entries yet.</p>';
+  }
+
+  const statsEl = document.getElementById('importStatsBox');
+  if (statsEl) {
+    let stats = {};
+    try { stats = JSON.parse(localStorage.getItem('gst_import_stats') || '{}'); } catch {}
+    statsEl.innerHTML = `
+      <div class="mini-list-row"><span>Total records imported</span><b>${stats.totalImported || 0}</b></div>
+      <div class="mini-list-row"><span>Last import</span><b>${stats.lastImportDate ? new Date(stats.lastImportDate).toLocaleString('en-IN') : 'Never'}</b></div>
+      <div class="mini-list-row"><span>Last import size</span><b>${stats.lastImportCount || 0} row(s)</b></div>`;
+  }
+}
+
+// ── 12-month summary for selected year ─────────────────
+async function loadYearMonthSummary(userId) {
+  const y = getSelectedYear();
+  const mo = getSelectedMonth();
+
+  // Build month list for selected year (or just selected month)
+  const months = [];
+  if (mo === 'all') {
+    for (let i = 1; i <= 12; i++) {
+      months.push({
+        label: new Date(y, i-1, 1).toLocaleString('default', { month: 'long' }),
+        start: toISO(new Date(y, i-1, 1)),
+        end:   toISO(new Date(y, i, 0))
+      });
+    }
+  } else {
+    const mi = parseInt(mo);
+    months.push({
+      label: new Date(y, mi-1, 1).toLocaleString('default', { month: 'long', year: 'numeric' }),
+      start: toISO(new Date(y, mi-1, 1)),
+      end:   toISO(new Date(y, mi, 0))
+    });
+  }
+
+  const [b2bAll, b2cAll] = await Promise.all([
+    _supabase.from('b2b_invoices').select('*').eq('user_id', userId).gte('invoice_date', `${y}-01-01`).lte('invoice_date', `${y}-12-31`),
+    _supabase.from('b2c_invoices').select('*').eq('user_id', userId).gte('invoice_date', `${y}-01-01`).lte('invoice_date', `${y}-12-31`)
+  ]);
+  const b2b = b2bAll.data || [];
+  const b2c = b2cAll.data || [];
+
+  const tbody = document.getElementById('monthSummaryBody');
+  const tfoot = document.getElementById('monthSummaryFoot');
+
+  // Update table heading
+  const th = document.querySelector('#monthSummaryTable caption, .card-title i.fa-calendar-alt');
+  const tableTitle = document.querySelector('#monthSummaryTable')?.closest('.card')?.querySelector('.card-title');
+  if (tableTitle) tableTitle.innerHTML = `<i class="fas fa-calendar-alt"></i> ${mo === 'all' ? y + ' — Month-wise GST Summary' : months[0]?.label + ' — GST Summary'}`;
+
+  let gB2B=0,gB2C=0,gIGST=0,gCGST=0,gSGST=0,gGST=0,gTotal=0,gCount=0;
+
+  const rows = months.map(m => {
+    const mb2b = b2b.filter(r => r.invoice_date >= m.start && r.invoice_date <= m.end);
+    const mb2c = b2c.filter(r => r.invoice_date >= m.start && r.invoice_date <= m.end);
+    const all  = [...mb2b, ...mb2c];
+
+    const b2bTax = mb2b.reduce((s,r)=>s+ +r.taxable_amount,0);
+    const b2cTax = mb2c.reduce((s,r)=>s+ +r.taxable_amount,0);
+    const igst   = all.reduce((s,r)=>s+ +r.igst,0);
+    const cgst   = all.reduce((s,r)=>s+ +r.cgst,0);
+    const sgst   = all.reduce((s,r)=>s+ +r.sgst,0);
+    const gst    = all.reduce((s,r)=>s+ +r.gst_amount,0);
+    const total  = all.reduce((s,r)=>s+ +r.total_amount,0);
+
+    gB2B+=b2bTax; gB2C+=b2cTax; gIGST+=igst; gCGST+=cgst;
+    gSGST+=sgst;  gGST+=gst;    gTotal+=total; gCount+=all.length;
+
+    const hasData = all.length > 0;
+    return `<tr class="${hasData ? '' : 'row-dim'}">
+      <td><b>${m.label}</b>${!hasData ? ' <span class="fs-10 text-muted">(no data)</span>' : ''}</td>
+      <td class="text-center">${all.length}</td>
+      <td class="text-right">&#8377;${formatNum(b2bTax)}</td>
+      <td class="text-right">&#8377;${formatNum(b2cTax)}</td>
+      <td class="text-right">&#8377;${formatNum(igst)}</td>
+      <td class="text-right">&#8377;${formatNum(cgst)}</td>
+      <td class="text-right">&#8377;${formatNum(sgst)}</td>
+      <td class="text-right fw-600 ${hasData?'text-primary':''}">&#8377;${formatNum(gst)}</td>
+      <td class="text-right fw-700 ${hasData?'text-primary-dark':''}">&#8377;${formatNum(total)}</td>
+    </tr>`;
+  });
+
+  tbody.innerHTML = rows.join('') || '<tr><td colspan="9" class="table-loading-row">No data</td></tr>';
+  tfoot.innerHTML = `<tr>
+    <td class="fw-700">TOTAL — ${y}</td>
+    <td class="text-center fw-700">${gCount}</td>
+    <td class="text-right fw-700">&#8377;${formatNum(gB2B)}</td>
+    <td class="text-right fw-700">&#8377;${formatNum(gB2C)}</td>
+    <td class="text-right fw-700">&#8377;${formatNum(gIGST)}</td>
+    <td class="text-right fw-700">&#8377;${formatNum(gCGST)}</td>
+    <td class="text-right fw-700">&#8377;${formatNum(gSGST)}</td>
+    <td class="text-right fw-800 fs-15 text-primary">&#8377;${formatNum(gGST)}</td>
+    <td class="text-right fw-800 fs-15 text-primary-dark">&#8377;${formatNum(gTotal)}</td>
+  </tr>`;
+}
+
+function showLoader() { const l=document.getElementById('dashLoader'); if(l) l.style.display='flex'; }
+function hideLoader() { const l=document.getElementById('dashLoader'); if(l) l.style.display='none'; }
+
+function confirmClearData() {
+  showConfirm('Delete ALL stored data? This cannot be undone!').then(ok => {
+    if (ok) clearAllData();
+  });
+}
+
+// ── Init ────────────────────────────────────────────────
+document.addEventListener('DOMContentLoaded', async () => {
+  populateYearDropdown();
+  updatePeriodLabel();
+  setupMobileMenu();
+  setupLogoutBtn();
+  refreshStorageStatus();          // show storage counts immediately
+  showLoader();
+  const user = await getCurrentUser();
+  if (user) {
+    initNavUser(user);
+    await checkAndShowProfileSetup(user.id);   // ask GST details if first time
+    const { start, end } = getYearMonthRange();
+    await loadDashboardData(user.id, start, end);
+    await loadYearMonthSummary(user.id);
+    await loadInsights(user.id);
+  }
+  hideLoader();
+});
+</script>
+
+<!-- Global Search Modal -->
+<div class="modal-overlay" id="globalSearchModal">
+  <div class="modal modal-lg">
+    <div class="modal-header">
+      <span class="modal-title"><i class="fas fa-search"></i> Search Everywhere</span>
+      <button type="button" class="modal-close" onclick="closeGlobalSearch()" aria-label="Close"><i class="fas fa-times"></i></button>
+    </div>
+    <div class="modal-body">
+      <input type="text" id="globalSearchInput" class="form-control mb-16" placeholder="Search invoices, customers, products, HSN..." oninput="onGlobalSearchInput(this.value)" aria-label="Global search input">
+      <div id="globalSearchResults"><p class="text-muted-sm">Type at least 2 characters&hellip;</p></div>
+    </div>
+  </div>
+</div>
+
+</body>
+</html>
+
