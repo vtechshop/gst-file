@@ -74,10 +74,14 @@ class QueryBuilder {
       return { data: updated.find(r => updatedIds.has(r.id)), error: null };
     }
 
-    // DELETE
+    // DELETE — match by all eq filters (not just id)
     if (this._op === 'delete') {
-      const idFilter = this._filters.id;
-      this._saveAll(records.filter(r => r.id !== idFilter));
+      let filtered = [...records];
+      Object.entries(this._filters).forEach(([f, v]) => {
+        filtered = filtered.filter(r => String(r[f]) === String(v));
+      });
+      const deletedIds = new Set(filtered.map(r => r.id));
+      this._saveAll(records.filter(r => !deletedIds.has(r.id)));
       return { data: null, error: null };
     }
 

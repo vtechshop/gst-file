@@ -25,6 +25,10 @@ async function loadUserProfile(userId) {
 }
 
 // ── Save profile (upsert) ──────────────────
+// Callers pass only the fields relevant to the form they're saving
+// (e.g. Business Profile identity fields vs. Company Branding
+// assets) — merge onto the cache rather than replacing it, so a
+// save from one form never drops fields owned by another.
 async function saveUserProfile(userId, fields) {
   const payload = { id: userId, ...fields };
   const existing = await _supabase.from('profiles').select('id').eq('id', userId).single();
@@ -35,9 +39,9 @@ async function saveUserProfile(userId, fields) {
     ({ error } = await _supabase.from('profiles').insert(payload));
   }
   if (!error) {
-    _currentProfile = payload;
-    updateNavFromProfile(payload);
-    showToast('Business profile saved!', 'success');
+    _currentProfile = { ..._currentProfile, ...payload };
+    updateNavFromProfile(_currentProfile);
+    showToast('Saved!', 'success');
   }
   return { error };
 }
@@ -96,6 +100,10 @@ function buildProfileModal(profile, isRequired) {
             <input type="text" id="profGSTIN" class="form-control" placeholder="e.g. 27AAPFU0939F1ZV" value="${e(profile?.gstin)}" maxlength="15" style="text-transform:uppercase;letter-spacing:1px;">
           </div>
           <div class="form-group">
+            <label>PAN</label>
+            <input type="text" id="profPAN" class="form-control uppercase" placeholder="e.g. AARFV8415B" maxlength="10" value="${e(profile?.pan)}">
+          </div>
+          <div class="form-group">
             <label>Phone Number</label>
             <input type="tel" id="profPhone" class="form-control" placeholder="+91 98765 43210" value="${e(profile?.phone)}">
           </div>
@@ -114,7 +122,12 @@ function buildProfileModal(profile, isRequired) {
             <label>Email</label>
             <input type="email" id="profEmail" class="form-control" placeholder="business@email.com" value="${e(profile?.email)}">
           </div>
+          <div class="form-group" style="grid-column:1/-1;">
+            <label>Website</label>
+            <input type="text" id="profWebsite" class="form-control" placeholder="e.g. www.yourbusiness.com" value="${e(profile?.website)}">
+          </div>
         </div>
+        <p class="text-muted-sm mt-16"><i class="fas fa-info-circle"></i> Logo, seal, signature, bank/UPI details and invoice footer text are set once under <b>Settings &rarr; Company Branding</b> and apply to every invoice automatically.</p>
       </div>
       <div class="modal-footer">
         <button class="btn btn-secondary" onclick="document.getElementById('profileModalWrap').remove()">
@@ -126,9 +139,32 @@ function buildProfileModal(profile, isRequired) {
 
   document.body.appendChild(wrap);
   document.getElementById('profGSTIN').addEventListener('input', function() { this.value = this.value.toUpperCase(); });
+  document.getElementById('profPAN').addEventListener('input', function() { this.value = this.value.toUpperCase(); });
 }
 
 function e(v) { return (v || '').toString().replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;'); }
+
+// ── Generic base64 image upload/clear (reused for logo/seal/signature/QR) ──
+function handleImageUpload(file, hiddenId, previewWrapId, iconClass) {
+  if (!file) return;
+  if (file.size > 500 * 1024) { showToast('Image too large — please use a file under 500KB.', 'error'); return; }
+  const reader = new FileReader();
+  reader.onload = (e) => {
+    const dataUrl = e.target.result;
+    const hidden = document.getElementById(hiddenId);
+    if (hidden) hidden.value = dataUrl;
+    const wrap = document.getElementById(previewWrapId);
+    if (wrap) wrap.innerHTML = `<img src="${dataUrl}" style="width:100%;height:100%;object-fit:contain;">`;
+  };
+  reader.readAsDataURL(file);
+}
+
+function clearImageUpload(hiddenId, previewWrapId, iconClass) {
+  const hidden = document.getElementById(hiddenId);
+  if (hidden) hidden.value = '';
+  const wrap = document.getElementById(previewWrapId);
+  if (wrap) wrap.innerHTML = `<i class="fas ${iconClass} text-gray-mid"></i>`;
+}
 
 // ── Settings Modal ─────────────────────────
 async function openSettingsModal() {
@@ -145,7 +181,7 @@ async function openSettingsModal() {
   wrap.id = 'settingsModalWrap';
   wrap.className = 'modal-overlay open';
   wrap.innerHTML = `
-    <div class="modal" style="max-width:520px;border-radius:14px;overflow:hidden;">
+    <div class="modal" style="max-width:620px;border-radius:14px;overflow:hidden;">
 
       <!-- Header -->
       <div style="background:linear-gradient(135deg,var(--primary-dark),var(--primary));padding:18px 22px;display:flex;align-items:center;justify-content:space-between;">
@@ -195,6 +231,64 @@ async function openSettingsModal() {
         <button class="btn btn-primary btn-sm" onclick="document.getElementById('settingsModalWrap').remove();openProfileModal();" style="margin-top:6px;">
           <i class="fas fa-${noProfile?'plus':'edit'}"></i> ${noProfile ? 'Setup Profile' : 'Edit Profile'}
         </button>
+      </div>
+
+      <!-- Company Branding -->
+      <div style="padding:18px 22px;border-bottom:1px solid var(--border);">
+        <div style="font-size:11px;font-weight:700;color:var(--text-muted);letter-spacing:1px;text-transform:uppercase;margin-bottom:8px;">
+          <i class="fas fa-palette" style="color:var(--primary);margin-right:5px;"></i> Company Branding
+        </div>
+        <p class="text-muted-sm mb-14">Set these once &mdash; every invoice PDF generated from B2B or B2C Invoice Entry uses them automatically. No need to re-upload per invoice.</p>
+
+        <div class="form-grid cols-2" style="gap:14px;margin-bottom:14px;">
+          ${_brandUpload('Company Logo', 'brandLogoBase64', 'brandLogoPreview', profile?.logo_base64, 'fa-image')}
+          ${_brandUpload('Company Seal', 'brandSealBase64', 'brandSealPreview', profile?.seal_base64, 'fa-stamp')}
+          ${_brandUpload('Authorized Signature', 'brandSignatureBase64', 'brandSignaturePreview', profile?.signature_base64, 'fa-signature')}
+          ${_brandUpload('QR Code', 'brandQRBase64', 'brandQRPreview', profile?.qr_base64, 'fa-qrcode')}
+        </div>
+
+        <div class="form-grid cols-2" style="gap:14px;margin-bottom:14px;">
+          <div class="form-group">
+            <label>Company Header Color</label>
+            <input type="color" id="brandHeaderColor" class="form-control" value="${profile?.header_color || '#004d40'}" style="height:38px;padding:4px;">
+          </div>
+          <div class="form-group">
+            <label>UPI ID</label>
+            <input type="text" id="brandUPI" class="form-control" placeholder="e.g. business@okhdfcbank" value="${e(profile?.upi_id)}">
+          </div>
+        </div>
+
+        <div class="section-title mb-14" style="font-size:11px;">Bank Details</div>
+        <div class="form-grid cols-2" style="gap:14px;margin-bottom:14px;">
+          <div class="form-group">
+            <label>Bank Name</label>
+            <input type="text" id="brandBankName" class="form-control" placeholder="e.g. HDFC Bank" value="${e(profile?.bank_name)}">
+          </div>
+          <div class="form-group">
+            <label>Account Number</label>
+            <input type="text" id="brandBankAccount" class="form-control" placeholder="Account number" value="${e(profile?.bank_account_no)}">
+          </div>
+          <div class="form-group">
+            <label>IFSC Code</label>
+            <input type="text" id="brandBankIFSC" class="form-control uppercase" placeholder="e.g. HDFC0001234" value="${e(profile?.bank_ifsc)}">
+          </div>
+          <div class="form-group">
+            <label>Branch</label>
+            <input type="text" id="brandBankBranch" class="form-control" placeholder="Branch name" value="${e(profile?.bank_branch)}">
+          </div>
+        </div>
+
+        <div class="form-group mb-14">
+          <label>Invoice Footer Text</label>
+          <textarea id="brandFooterText" class="form-control" rows="2" placeholder="e.g. Thank you for your business!">${e(profile?.footer_text)}</textarea>
+        </div>
+
+        <div class="form-group mb-14">
+          <label>Terms &amp; Conditions</label>
+          <textarea id="brandTerms" class="form-control" rows="3" placeholder="e.g. Warranty Information: covers manufacturing defects only...&#10;Return Policy: returns accepted within 15 days if unused.">${e(profile?.terms_conditions)}</textarea>
+        </div>
+
+        <button class="btn btn-primary btn-sm" onclick="submitCompanyBranding()"><i class="fas fa-save"></i> Save Branding</button>
       </div>
 
       <!-- Data Management -->
@@ -261,6 +355,7 @@ async function openSettingsModal() {
 
   document.body.appendChild(wrap);
   wrap.addEventListener('click', e => { if (e.target === wrap) wrap.remove(); });
+  document.getElementById('brandBankIFSC')?.addEventListener('input', function() { this.value = this.value.toUpperCase(); });
 }
 
 function defaultFinancialYear() {
@@ -285,6 +380,25 @@ function _storeTile(label, count, color) {
   </div>`;
 }
 
+function _brandUpload(label, hiddenId, previewId, currentValue, iconClass) {
+  return `<div class="form-group">
+    <label>${label}</label>
+    <div class="d-flex align-center gap-10">
+      <div id="${previewId}" style="width:48px;height:48px;border:1.5px dashed var(--border);border-radius:8px;display:flex;align-items:center;justify-content:center;overflow:hidden;flex-shrink:0;background:var(--bg);">
+        ${currentValue ? `<img src="${currentValue}" style="width:100%;height:100%;object-fit:contain;">` : `<i class="fas ${iconClass} text-gray-mid"></i>`}
+      </div>
+      <div>
+        <label class="btn btn-secondary btn-sm btn-file-label" style="font-size:11px;padding:5px 10px;">
+          <i class="fas fa-upload"></i> Upload
+          <input type="file" accept="image/*" class="file-input-hidden" onchange="handleImageUpload(this.files[0],'${hiddenId}','${previewId}','${iconClass}')" aria-label="Upload ${label}">
+        </label>
+        ${currentValue ? `<button type="button" class="btn btn-secondary btn-sm" style="font-size:11px;padding:5px 8px;margin-left:4px;" onclick="clearImageUpload('${hiddenId}','${previewId}','${iconClass}')" aria-label="Remove ${label}"><i class="fas fa-times"></i></button>` : ''}
+      </div>
+    </div>
+    <input type="hidden" id="${hiddenId}" value="${e(currentValue)}">
+  </div>`;
+}
+
 async function submitProfile() {
   const bizName = document.getElementById('profBizName')?.value?.trim();
   const gstin   = document.getElementById('profGSTIN')?.value?.trim().toUpperCase();
@@ -300,10 +414,35 @@ async function submitProfile() {
     phone:   document.getElementById('profPhone')?.value?.trim() || '',
     address: document.getElementById('profAddress')?.value?.trim() || '',
     state:   document.getElementById('profState')?.value || '',
-    email:   document.getElementById('profEmail')?.value?.trim() || ''
+    email:   document.getElementById('profEmail')?.value?.trim() || '',
+    pan:     document.getElementById('profPAN')?.value?.trim().toUpperCase() || '',
+    website: document.getElementById('profWebsite')?.value?.trim() || ''
   });
 
   if (!error) document.getElementById('profileModalWrap')?.remove();
+}
+
+// ── Company Branding (Settings) ────────────
+async function submitCompanyBranding() {
+  const user = await getCurrentUser();
+  if (!user) return;
+
+  const { error } = await saveUserProfile(user.id, {
+    logo_base64:      document.getElementById('brandLogoBase64')?.value || '',
+    seal_base64:      document.getElementById('brandSealBase64')?.value || '',
+    signature_base64: document.getElementById('brandSignatureBase64')?.value || '',
+    qr_base64:        document.getElementById('brandQRBase64')?.value || '',
+    header_color:     document.getElementById('brandHeaderColor')?.value || '#004d40',
+    footer_text:      document.getElementById('brandFooterText')?.value?.trim() || '',
+    terms_conditions: document.getElementById('brandTerms')?.value?.trim() || '',
+    bank_name:        document.getElementById('brandBankName')?.value?.trim() || '',
+    bank_account_no:  document.getElementById('brandBankAccount')?.value?.trim() || '',
+    bank_ifsc:        document.getElementById('brandBankIFSC')?.value?.trim() || '',
+    bank_branch:      document.getElementById('brandBankBranch')?.value?.trim() || '',
+    upi_id:           document.getElementById('brandUPI')?.value?.trim() || ''
+  });
+
+  if (!error) showToast('Company branding saved — every invoice PDF will use it automatically.', 'success');
 }
 
 // ── Business header for PDF ────────────────

@@ -143,3 +143,35 @@ const INDIAN_STATES = [
   'Chandigarh','Dadra and Nagar Haveli and Daman and Diu','Delhi',
   'Jammu and Kashmir','Ladakh','Lakshadweep','Puducherry'
 ];
+
+// ── Number to words (Indian numbering: lakh/crore) ──
+function numberToWordsINR(n) {
+  const num = Math.round(Math.abs(+n || 0));
+  const ones = ['','One','Two','Three','Four','Five','Six','Seven','Eight','Nine','Ten',
+    'Eleven','Twelve','Thirteen','Fourteen','Fifteen','Sixteen','Seventeen','Eighteen','Nineteen'];
+  const tens = ['','','Twenty','Thirty','Forty','Fifty','Sixty','Seventy','Eighty','Ninety'];
+
+  function twoDigits(v) {
+    if (v < 20) return ones[v];
+    return tens[Math.floor(v / 10)] + (v % 10 ? ' ' + ones[v % 10] : '');
+  }
+  function threeDigits(v) {
+    if (v < 100) return twoDigits(v);
+    return ones[Math.floor(v / 100)] + ' Hundred' + (v % 100 ? ' and ' + twoDigits(v % 100) : '');
+  }
+
+  if (num === 0) return 'Zero Rupees Only';
+
+  const crore = Math.floor(num / 10000000);
+  const lakh  = Math.floor((num % 10000000) / 100000);
+  const thousand = Math.floor((num % 100000) / 1000);
+  const hundred   = num % 1000;
+
+  const parts = [];
+  if (crore)    parts.push(threeDigits(crore) + ' Crore');
+  if (lakh)     parts.push(threeDigits(lakh) + ' Lakh');
+  if (thousand) parts.push(threeDigits(thousand) + ' Thousand');
+  if (hundred)  parts.push(threeDigits(hundred));
+
+  return parts.join(' ') + ' Rupees Only';
+}

@@ -15,6 +15,20 @@ CREATE TABLE IF NOT EXISTS profiles (
   phone TEXT,
   address TEXT,
   state TEXT,
+  bank_name TEXT,
+  bank_account_no TEXT,
+  bank_ifsc TEXT,
+  bank_branch TEXT,
+  upi_id TEXT,
+  logo_base64 TEXT,
+  seal_base64 TEXT,
+  signature_base64 TEXT,
+  qr_base64 TEXT,
+  header_color TEXT,
+  footer_text TEXT,
+  terms_conditions TEXT,
+  pan TEXT,
+  website TEXT,
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
