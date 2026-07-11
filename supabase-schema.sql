@@ -14,6 +14,7 @@ CREATE TABLE IF NOT EXISTS profiles (
   business_name TEXT,
   phone TEXT,
   address TEXT,
+  state TEXT,
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 

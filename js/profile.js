@@ -340,25 +340,3 @@ function getBusinessPDFHeader(doc, reportTitle, period) {
   return 34;
 }
 
-// ── Business header for Print ──────────────
-function getBusinessPrintHTML() {
-  const p = _currentProfile;
-  if (!p || !p.business_name) return '';
-  return `
-    <div style="border:2px solid #004d40;border-radius:8px;padding:14px 18px;margin-bottom:18px;background:#f0faf9;page-break-inside:avoid;">
-      <table style="width:100%;border:none;">
-        <tr>
-          <td style="vertical-align:top;border:none;padding:0;">
-            <div style="font-size:18px;font-weight:700;color:#004d40;">${p.business_name}</div>
-            <div style="font-size:12px;color:#333;margin-top:3px;"><b>GSTIN:</b> ${p.gstin || '-'}</div>
-            ${p.address ? `<div style="font-size:11px;color:#555;margin-top:2px;">${p.address}${p.state?', '+p.state:''}</div>` : ''}
-          </td>
-          <td style="text-align:right;vertical-align:top;border:none;padding:0;">
-            ${p.phone ? `<div style="font-size:11px;color:#555;">&#128222; ${p.phone}</div>` : ''}
-            ${p.email ? `<div style="font-size:11px;color:#555;">&#9993; ${p.email}</div>` : ''}
-            <div style="margin-top:6px;font-size:10px;color:#888;">GST Invoice & GSTR-1 Management</div>
-          </td>
-        </tr>
-      </table>
-    </div>`;
-}

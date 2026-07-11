@@ -67,13 +67,6 @@ function formatDate(d) {
   return dt.toLocaleDateString('en-IN', { day: '2-digit', month: '2-digit', year: 'numeric' });
 }
 
-function currentMonthRange() {
-  const now = new Date();
-  const start = new Date(now.getFullYear(), now.getMonth(), 1);
-  const end   = new Date(now.getFullYear(), now.getMonth() + 1, 0);
-  return { start: toISO(start), end: toISO(end) };
-}
-
 function toISO(d) {
   return d.toISOString().split('T')[0];
 }

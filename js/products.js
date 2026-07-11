@@ -160,8 +160,3 @@ function findProductByName(list, name) {
   const n = name.trim().toLowerCase();
   return list.find(p => p.name.toLowerCase() === n) || null;
 }
-
-function findProductByHSN(list, hsn) {
-  if (!hsn) return null;
-  return list.find(p => (p.hsn_code || '').toLowerCase() === String(hsn).trim().toLowerCase()) || null;
-}

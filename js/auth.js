@@ -28,16 +28,6 @@ async function logout() {
   window.location.href = 'index.html';
 }
 
-async function getProfile(userId) {
-  const { data, error } = await _supabase.from('profiles').select('*').eq('id', userId).single();
-  if (error) return null;
-  return data;
-}
-
-async function updateProfile(userId, updates) {
-  return await _supabase.from('profiles').update(updates).eq('id', userId);
-}
-
 function initNavUser(user) {
   const el = document.getElementById('navUserName');
   if (el && user) {
