@@ -3,21 +3,17 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Invoice List - GST Management System</title>
+  <title>Recycle Bin - GST Management System</title>
   <link rel="stylesheet" href="css/style.css">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.31/jspdf.plugin.autotable.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/qrcode@1.4.4/build/qrcode.min.js"></script>
   <script src="js/localdb.js"></script>
   <script src="js/config.js"></script>
   <script src="js/auth.js"></script>
   <script src="js/utils.js"></script>
   <script src="js/search.js"></script>
   <script src="js/profile.js"></script>
-  <script src="js/invoice-pdf.js"></script>
-  <script src="js/invoice-list.js"></script>
+  <script src="js/recycle-bin.js"></script>
 </head>
 <body>
 <div class="app-layout">
@@ -32,7 +28,7 @@
       <div class="menu-section">Main</div>
       <a href="dashboard.html" class="menu-item"><i class="fas fa-tachometer-alt"></i> Dashboard</a>
       <div class="menu-section">Invoices</div>
-      <a href="invoice-list.html" class="menu-item active"><i class="fas fa-list-alt"></i> Invoice List</a>
+      <a href="invoice-list.html" class="menu-item"><i class="fas fa-list-alt"></i> Invoice List</a>
       <div class="menu-section">GSTR-1</div>
       <a href="gstr1.html"   class="menu-item"><i class="fas fa-file-alt"></i> B2B Invoices</a>
       <a href="b2c.html"     class="menu-item"><i class="fas fa-users"></i> B2C Invoices</a>
@@ -48,7 +44,7 @@
       <a href="gstr3b.html"  class="menu-item"><i class="fas fa-calculator"></i> GSTR-3B Summary</a>
       <div class="menu-section">Settings</div>
       <a href="#" class="menu-item" onclick="openProfileModal();return false;"><i class="fas fa-building"></i> Business Profile</a>
-      <a href="recycle-bin.html" class="menu-item"><i class="fas fa-trash-restore"></i> Recycle Bin</a>
+      <a href="recycle-bin.html" class="menu-item active"><i class="fas fa-trash-restore"></i> Recycle Bin</a>
     </nav>
     <div class="sidebar-user">
       <div class="user-avatar"><i class="fas fa-user"></i></div>
@@ -64,32 +60,34 @@
   <div class="main-content">
     <div class="top-bar">
       <button type="button" class="menu-toggle" id="menuToggle" aria-label="Toggle sidebar menu"><i class="fas fa-bars"></i></button>
-      <span class="page-title"><i class="fas fa-list-alt"></i>Invoice List</span>
+      <span class="page-title"><i class="fas fa-trash-restore"></i>Recycle Bin</span>
       <div class="ml-auto d-flex gap-10">
         <button type="button" class="btn btn-secondary btn-sm btn-icon" onclick="openGlobalSearch()" title="Search everywhere (Ctrl+K)" aria-label="Global search"><i class="fas fa-search"></i></button>
-        <a href="gstr1.html" class="btn btn-secondary btn-sm"><i class="fas fa-plus"></i> New B2B Invoice</a>
-        <a href="b2c.html" class="btn btn-secondary btn-sm"><i class="fas fa-plus"></i> New B2C Invoice</a>
       </div>
     </div>
 
     <div class="content">
-      <p class="text-muted-sm mb-16"><i class="fas fa-info-circle"></i> This lists every invoice already saved via B2B or B2C Invoice Entry. To add a new invoice, use those pages — this list is for viewing, printing, and sharing invoices you've already entered.</p>
+      <p class="text-muted-sm mb-16"><i class="fas fa-info-circle"></i> When you delete an invoice, customer, product, HSN entry, or note anywhere in the app, it lands here first &mdash; nothing is permanently removed until you choose "Delete Forever".</p>
 
       <div class="card">
         <div class="card-header">
-          <span class="card-title"><i class="fas fa-list"></i> All Invoices</span>
+          <span class="card-title"><i class="fas fa-trash-restore"></i> Deleted Items <span id="binCount" class="badge badge-orange">0</span></span>
           <div class="d-flex gap-10 flex-wrap">
             <div class="search-input-wrap w-220">
               <i class="fas fa-search"></i>
-              <input type="text" id="invListSearch" class="form-control" placeholder="Search invoice no, customer, GSTIN..." aria-label="Search invoices">
+              <input type="text" id="binSearch" class="form-control" placeholder="Search deleted items..." aria-label="Search recycle bin">
             </div>
-            <select id="invListMonthFilter" class="form-control w-130" onchange="applyInvoiceListFilters()" aria-label="Filter by month"></select>
-            <select id="invListYearFilter" class="form-control w-100" onchange="applyInvoiceListFilters()" aria-label="Filter by year"></select>
-            <select id="invListTypeFilter" class="form-control w-130" onchange="applyInvoiceListFilters()" aria-label="Filter by type">
+            <select id="binTypeFilter" class="form-control w-150" aria-label="Filter by type">
               <option value="">All Types</option>
-              <option value="b2b">B2B</option>
-              <option value="b2c">B2C</option>
+              <option value="b2b_invoices">B2B Invoices</option>
+              <option value="b2c_invoices">B2C Invoices</option>
+              <option value="b2b_hsn">B2B HSN</option>
+              <option value="b2c_hsn">B2C HSN</option>
+              <option value="customers">Customers</option>
+              <option value="products">Products</option>
+              <option value="cdn_notes">Credit/Debit Notes</option>
             </select>
+            <button type="button" class="btn btn-danger btn-sm" onclick="emptyRecycleBin()"><i class="fas fa-trash-alt"></i> Empty Bin</button>
           </div>
         </div>
         <div class="card-body p-0">
@@ -97,18 +95,13 @@
             <table class="data-table">
               <thead>
                 <tr>
-                  <th>#</th><th>Invoice No</th><th>Date</th><th>Customer</th><th>Type</th>
-                  <th>Total</th><th>Actions</th>
+                  <th>Type</th><th>Name</th><th>Details</th><th>Amount</th><th>Deleted On</th><th>Actions</th>
                 </tr>
               </thead>
-              <tbody id="invListTableBody">
-                <tr><td colspan="7" class="empty-state"><i class="fas fa-spinner fa-spin table-loading-icon"></i>Loading...</td></tr>
+              <tbody id="binTableBody">
+                <tr><td colspan="6" class="empty-state"><i class="fas fa-spinner fa-spin table-loading-icon"></i>Loading...</td></tr>
               </tbody>
-              <tfoot id="invListTableTotal"></tfoot>
             </table>
-          </div>
-          <div class="table-pagination-row">
-            <div id="invListPagination" class="pagination"></div>
           </div>
         </div>
       </div>
@@ -118,7 +111,7 @@
 
 <script>
 document.addEventListener('DOMContentLoaded', () => {
-  initInvoiceList();
+  initRecycleBin();
 });
 </script>
 

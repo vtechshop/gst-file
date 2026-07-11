@@ -48,6 +48,8 @@ CREATE TABLE IF NOT EXISTS b2b_invoices (
   igst DECIMAL(15,2) DEFAULT 0,
   cgst DECIMAL(15,2) DEFAULT 0,
   sgst DECIMAL(15,2) DEFAULT 0,
+  is_deleted BOOLEAN NOT NULL DEFAULT FALSE,
+  deleted_at TIMESTAMPTZ,
   created_at TIMESTAMPTZ DEFAULT NOW(),
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
@@ -66,6 +68,8 @@ CREATE TABLE IF NOT EXISTS b2c_invoices (
   cgst DECIMAL(15,2) DEFAULT 0,
   sgst DECIMAL(15,2) DEFAULT 0,
   invoice_date DATE DEFAULT CURRENT_DATE,
+  is_deleted BOOLEAN NOT NULL DEFAULT FALSE,
+  deleted_at TIMESTAMPTZ,
   created_at TIMESTAMPTZ DEFAULT NOW(),
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
@@ -87,6 +91,8 @@ CREATE TABLE IF NOT EXISTS b2b_hsn (
   total_gst DECIMAL(15,2) NOT NULL,
   total_invoice_value DECIMAL(15,2) NOT NULL,
   entry_date DATE DEFAULT CURRENT_DATE,
+  is_deleted BOOLEAN NOT NULL DEFAULT FALSE,
+  deleted_at TIMESTAMPTZ,
   created_at TIMESTAMPTZ DEFAULT NOW(),
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
@@ -107,6 +113,8 @@ CREATE TABLE IF NOT EXISTS b2c_hsn (
   total_gst DECIMAL(15,2) NOT NULL,
   total_invoice_value DECIMAL(15,2) NOT NULL,
   entry_date DATE DEFAULT CURRENT_DATE,
+  is_deleted BOOLEAN NOT NULL DEFAULT FALSE,
+  deleted_at TIMESTAMPTZ,
   created_at TIMESTAMPTZ DEFAULT NOW(),
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
@@ -121,6 +129,8 @@ CREATE TABLE IF NOT EXISTS customers (
   email TEXT,
   address TEXT,
   state TEXT,
+  is_deleted BOOLEAN NOT NULL DEFAULT FALSE,
+  deleted_at TIMESTAMPTZ,
   created_at TIMESTAMPTZ DEFAULT NOW(),
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
@@ -144,6 +154,8 @@ CREATE TABLE IF NOT EXISTS cdn_notes (
   sgst DECIMAL(15,2) DEFAULT 0,
   gst_amount DECIMAL(15,2) NOT NULL,
   total_amount DECIMAL(15,2) NOT NULL,
+  is_deleted BOOLEAN NOT NULL DEFAULT FALSE,
+  deleted_at TIMESTAMPTZ,
   created_at TIMESTAMPTZ DEFAULT NOW(),
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
@@ -157,6 +169,8 @@ CREATE TABLE IF NOT EXISTS products (
   type TEXT NOT NULL DEFAULT 'goods' CHECK (type IN ('goods','service')),
   gst_percentage DECIMAL(5,2) NOT NULL DEFAULT 18,
   default_rate DECIMAL(15,2) DEFAULT 0,
+  is_deleted BOOLEAN NOT NULL DEFAULT FALSE,
+  deleted_at TIMESTAMPTZ,
   created_at TIMESTAMPTZ DEFAULT NOW(),
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );

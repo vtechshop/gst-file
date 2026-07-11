@@ -76,7 +76,7 @@ async function generateInvoiceNo(userId, force) {
 // ── Customer Master helpers ───────────────────────
 async function loadCustomersList(userId) {
   const { data } = await _supabase.from('customers').select('*').eq('user_id', userId);
-  customersList = data || [];
+  customersList = (data || []).filter(c => !c.is_deleted);
   const dl = document.getElementById('customerDatalist');
   if (dl) {
     dl.innerHTML = customersList.map(c => `<option value="${c.name}" data-gstin="${c.gstin}" data-id="${c.id}">${c.gstin ? '(' + c.gstin + ')' : ''}</option>`).join('');
@@ -189,7 +189,7 @@ function resetB2B() {
 
 async function loadB2B(userId) {
   const { data } = await _supabase.from('b2b_invoices').select('*').eq('user_id', userId).order('invoice_date', { ascending: false });
-  b2bAllData = data || [];
+  b2bAllData = (data || []).filter(r => !r.is_deleted);
   b2bPage = 1;
   renderB2BTable(b2bAllData);
 }
@@ -286,13 +286,13 @@ function getSelectedB2BRecords() {
 
 async function bulkDeleteB2B() {
   if (!b2bSelectedIds.size) return;
-  const ok = await showConfirm(`Delete ${b2bSelectedIds.size} selected invoice(s)? This cannot be undone.`);
+  const ok = await showConfirm(`Move ${b2bSelectedIds.size} selected invoice(s) to Recycle Bin?`);
   if (!ok) return;
   const ids = [...b2bSelectedIds];
   for (const id of ids) {
-    await _supabase.from('b2b_invoices').delete().eq('id', id);
+    await _supabase.from('b2b_invoices').update({ is_deleted: true, deleted_at: new Date().toISOString() }).eq('id', id);
   }
-  showToast(`Deleted ${ids.length} invoice(s).`);
+  showToast(`Moved ${ids.length} invoice(s) to Recycle Bin.`);
   b2bSelectedIds.clear();
   const user = await getCurrentUser();
   if (user) await loadB2B(user.id);
@@ -323,11 +323,11 @@ async function editB2B(id) {
 }
 
 async function deleteB2B(id) {
-  const ok = await showConfirm('Delete this invoice? This action cannot be undone.');
+  const ok = await showConfirm('Move this invoice to Recycle Bin? You can restore it later.');
   if (!ok) return;
-  const { error } = await _supabase.from('b2b_invoices').delete().eq('id', id);
+  const { error } = await _supabase.from('b2b_invoices').update({ is_deleted: true, deleted_at: new Date().toISOString() }).eq('id', id);
   if (error) { showToast('Error: ' + error.message, 'error'); return; }
-  showToast('Invoice deleted successfully!');
+  showToast('Invoice moved to Recycle Bin.');
   b2bAllData = b2bAllData.filter(r => r.id !== id);
   renderB2BTable(b2bAllData);
   if (typeof refreshStorageStatus === 'function') refreshStorageStatus();

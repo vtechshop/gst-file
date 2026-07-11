@@ -98,7 +98,7 @@ function resetCDNote() {
 
 async function loadCDNotes(userId) {
   const { data } = await _supabase.from('cdn_notes').select('*').eq('user_id', userId).order('note_date', { ascending: false });
-  cdAllData = data || [];
+  cdAllData = (data || []).filter(r => !r.is_deleted);
   cdPage = 1;
   renderCDTable(cdAllData);
 }
@@ -173,11 +173,11 @@ function editCDNote(id) {
 }
 
 async function deleteCDNote(id) {
-  const ok = await showConfirm('Delete this note?');
+  const ok = await showConfirm('Move this note to Recycle Bin? You can restore it later.');
   if (!ok) return;
-  const { error } = await _supabase.from('cdn_notes').delete().eq('id', id);
+  const { error } = await _supabase.from('cdn_notes').update({ is_deleted: true, deleted_at: new Date().toISOString() }).eq('id', id);
   if (error) { showToast('Error: ' + error.message, 'error'); return; }
-  showToast('Note deleted!');
+  showToast('Note moved to Recycle Bin.');
   cdAllData = cdAllData.filter(r => r.id !== id);
   renderCDTable(cdAllData);
 }

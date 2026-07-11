@@ -27,11 +27,11 @@ async function loadInvoiceList(userId) {
     _supabase.from('b2c_invoices').select('*').eq('user_id', userId)
   ]);
 
-  const b2bRows = (b2b || []).map(r => ({
+  const b2bRows = (b2b || []).filter(r => !r.is_deleted).map(r => ({
     type: 'b2b', id: r.id, invoice_number: r.invoice_number, invoice_date: r.invoice_date,
     customer_name: r.customer_name, gstin: r.gst_number, total_amount: +r.total_amount
   }));
-  const b2cRows = (b2c || []).map(r => ({
+  const b2cRows = (b2c || []).filter(r => !r.is_deleted).map(r => ({
     type: 'b2c', id: r.id, invoice_number: 'B2C-' + r.id.slice(0, 8).toUpperCase(), invoice_date: r.invoice_date,
     customer_name: 'Walk-in Customer (B2C)', gstin: '', total_amount: +r.total_amount
   }));
@@ -122,12 +122,12 @@ function renderInvoiceListTable(data) {
 }
 
 async function deleteInvoiceFromList(type, id) {
-  const ok = await showConfirm('Delete this invoice? This action cannot be undone.');
+  const ok = await showConfirm('Move this invoice to Recycle Bin? You can restore it later.');
   if (!ok) return;
   const table = type === 'b2b' ? 'b2b_invoices' : 'b2c_invoices';
-  const { error } = await _supabase.from(table).delete().eq('id', id);
+  const { error } = await _supabase.from(table).update({ is_deleted: true, deleted_at: new Date().toISOString() }).eq('id', id);
   if (error) { showToast('Error: ' + error.message, 'error'); return; }
-  showToast('Invoice deleted.', 'success');
+  showToast('Invoice moved to Recycle Bin.', 'success');
   if (typeof refreshStorageStatus === 'function') refreshStorageStatus();
   const user = await getCurrentUser();
   if (user) await loadInvoiceList(user.id);

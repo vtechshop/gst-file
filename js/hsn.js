@@ -134,13 +134,13 @@ function resetHSN(prefix) {
 
 async function loadB2BHSN(userId) {
   const { data } = await _supabase.from('b2b_hsn').select('*').eq('user_id', userId).order('created_at', { ascending: false });
-  hsnB2BData = data || [];
+  hsnB2BData = (data || []).filter(r => !r.is_deleted);
   renderHSNTable('b2b', hsnB2BData);
 }
 
 async function loadB2CHSN(userId) {
   const { data } = await _supabase.from('b2c_hsn').select('*').eq('user_id', userId).order('created_at', { ascending: false });
-  hsnB2CData = data || [];
+  hsnB2CData = (data || []).filter(r => !r.is_deleted);
   renderHSNTable('b2c', hsnB2CData);
 }
 
@@ -214,12 +214,12 @@ async function editHSN(prefix, id) {
 }
 
 async function deleteHSN(prefix, id) {
-  const ok = await showConfirm('Delete this HSN entry?');
+  const ok = await showConfirm('Move this HSN entry to Recycle Bin? You can restore it later.');
   if (!ok) return;
   const table = prefix === 'b2b' ? 'b2b_hsn' : 'b2c_hsn';
-  const { error } = await _supabase.from(table).delete().eq('id', id);
+  const { error } = await _supabase.from(table).update({ is_deleted: true, deleted_at: new Date().toISOString() }).eq('id', id);
   if (error) { showToast('Error: ' + error.message, 'error'); return; }
-  showToast('HSN entry deleted!');
+  showToast('HSN entry moved to Recycle Bin.');
   if (prefix === 'b2b') { hsnB2BData = hsnB2BData.filter(r=>r.id!==id); renderHSNTable('b2b', hsnB2BData); }
   else { hsnB2CData = hsnB2CData.filter(r=>r.id!==id); renderHSNTable('b2c', hsnB2CData); }
 }

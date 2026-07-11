@@ -64,7 +64,7 @@ function resetCustomer() {
 
 async function loadCustomers(userId) {
   const { data } = await _supabase.from('customers').select('*').eq('user_id', userId).order('name', { ascending: true });
-  custAllData = data || [];
+  custAllData = (data || []).filter(r => !r.is_deleted);
   custPage = 1;
   renderCustTable(custAllData);
 }
@@ -131,11 +131,11 @@ function editCustomer(id) {
 }
 
 async function deleteCustomer(id) {
-  const ok = await showConfirm('Delete this customer?');
+  const ok = await showConfirm('Move this customer to Recycle Bin? You can restore it later.');
   if (!ok) return;
-  const { error } = await _supabase.from('customers').delete().eq('id', id);
+  const { error } = await _supabase.from('customers').update({ is_deleted: true, deleted_at: new Date().toISOString() }).eq('id', id);
   if (error) { showToast('Error: ' + error.message, 'error'); return; }
-  showToast('Customer deleted!');
+  showToast('Customer moved to Recycle Bin.');
   custAllData = custAllData.filter(r => r.id !== id);
   renderCustTable(custAllData);
 }

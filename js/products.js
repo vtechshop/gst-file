@@ -63,7 +63,7 @@ function resetProduct() {
 
 async function loadProducts(userId) {
   const { data } = await _supabase.from('products').select('*').eq('user_id', userId).order('name', { ascending: true });
-  prodAllData = data || [];
+  prodAllData = (data || []).filter(r => !r.is_deleted);
   prodPage = 1;
   renderProdTable(prodAllData);
 }
@@ -128,11 +128,11 @@ function editProduct(id) {
 }
 
 async function deleteProduct(id) {
-  const ok = await showConfirm('Delete this product?');
+  const ok = await showConfirm('Move this product to Recycle Bin? You can restore it later.');
   if (!ok) return;
-  const { error } = await _supabase.from('products').delete().eq('id', id);
+  const { error } = await _supabase.from('products').update({ is_deleted: true, deleted_at: new Date().toISOString() }).eq('id', id);
   if (error) { showToast('Error: ' + error.message, 'error'); return; }
-  showToast('Product deleted!');
+  showToast('Product moved to Recycle Bin.');
   prodAllData = prodAllData.filter(r => r.id !== id);
   renderProdTable(prodAllData);
 }
@@ -152,7 +152,7 @@ function setupProdSearch() {
 // Exposed for other pages (B2B/B2C/HSN auto-fill, Excel import auto-classification)
 async function loadProductsList(userId) {
   const { data } = await _supabase.from('products').select('*').eq('user_id', userId);
-  return data || [];
+  return (data || []).filter(r => !r.is_deleted);
 }
 
 function findProductByName(list, name) {

@@ -101,7 +101,7 @@ function resetB2C() {
 
 async function loadB2C(userId) {
   const { data } = await _supabase.from('b2c_invoices').select('*').eq('user_id', userId).order('invoice_date', { ascending: false });
-  b2cAllData = data || [];
+  b2cAllData = (data || []).filter(r => !r.is_deleted);
   b2cPage = 1;
   renderB2CTable(b2cAllData);
 }
@@ -173,11 +173,11 @@ async function editB2C(id) {
 }
 
 async function deleteB2C(id) {
-  const ok = await showConfirm('Delete this B2C invoice?');
+  const ok = await showConfirm('Move this B2C invoice to Recycle Bin? You can restore it later.');
   if (!ok) return;
-  const { error } = await _supabase.from('b2c_invoices').delete().eq('id', id);
+  const { error } = await _supabase.from('b2c_invoices').update({ is_deleted: true, deleted_at: new Date().toISOString() }).eq('id', id);
   if (error) { showToast('Error: ' + error.message, 'error'); return; }
-  showToast('Invoice deleted!');
+  showToast('Invoice moved to Recycle Bin.');
   b2cAllData = b2cAllData.filter(r => r.id !== id);
   renderB2CTable(b2cAllData);
 }

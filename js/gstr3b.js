@@ -42,8 +42,8 @@ async function loadGSTR3B() {
     _supabase.from('b2c_invoices').select('*').eq('user_id', gstr3bUser.id).gte('invoice_date', start).lte('invoice_date', end)
   ]);
 
-  const b2b = b2bRes.data || [];
-  const b2c = b2cRes.data || [];
+  const b2b = (b2bRes.data || []).filter(r => !r.is_deleted);
+  const b2c = (b2cRes.data || []).filter(r => !r.is_deleted);
 
   renderGSTR3B(b2b, b2c, month);
 }

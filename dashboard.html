@@ -45,6 +45,7 @@
       <a href="gstr3b.html"  class="menu-item"><i class="fas fa-calculator"></i> GSTR-3B Summary</a>
       <div class="menu-section">Settings</div>
       <a href="#" class="menu-item" onclick="openProfileModal();return false;"><i class="fas fa-building"></i> Business Profile</a>
+      <a href="recycle-bin.html" class="menu-item"><i class="fas fa-trash-restore"></i> Recycle Bin</a>
     </nav>
     <div class="sidebar-user">
       <div class="user-avatar"><i class="fas fa-user"></i></div>
@@ -303,8 +304,8 @@ async function loadDashboardData(userId, start, end) {
     _supabase.from('b2b_invoices').select('*').eq('user_id', userId).gte('invoice_date', start).lte('invoice_date', end),
     _supabase.from('b2c_invoices').select('*').eq('user_id', userId).gte('invoice_date', start).lte('invoice_date', end)
   ]);
-  const b2b = b2bRes.data || [];
-  const b2c = b2cRes.data || [];
+  const b2b = (b2bRes.data || []).filter(r => !r.is_deleted);
+  const b2c = (b2cRes.data || []).filter(r => !r.is_deleted);
   const all = [...b2b, ...b2c];
 
   const totalB2BTax = b2b.reduce((s,r)=>s+ +r.taxable_amount,0);
@@ -345,11 +346,11 @@ function renderTopCustomers(b2b) {
 // ── Top Products & Import Statistics (all-time, loaded once) ──
 async function loadInsights(userId) {
   const [b2bHsnRes, b2cHsnRes] = await Promise.all([
-    _supabase.from('b2b_hsn').select('product_name,total_invoice_value').eq('user_id', userId),
-    _supabase.from('b2c_hsn').select('product_name,total_invoice_value').eq('user_id', userId)
+    _supabase.from('b2b_hsn').select('product_name,total_invoice_value,is_deleted').eq('user_id', userId),
+    _supabase.from('b2c_hsn').select('product_name,total_invoice_value,is_deleted').eq('user_id', userId)
   ]);
   const totals = {};
-  [...(b2bHsnRes.data || []), ...(b2cHsnRes.data || [])].forEach(r => {
+  [...(b2bHsnRes.data || []), ...(b2cHsnRes.data || [])].filter(r => !r.is_deleted).forEach(r => {
     totals[r.product_name] = (totals[r.product_name] || 0) + (+r.total_invoice_value || 0);
   });
   const top = Object.entries(totals).sort((a, b) => b[1] - a[1]).slice(0, 5);
@@ -399,8 +400,8 @@ async function loadYearMonthSummary(userId) {
     _supabase.from('b2b_invoices').select('*').eq('user_id', userId).gte('invoice_date', `${y}-01-01`).lte('invoice_date', `${y}-12-31`),
     _supabase.from('b2c_invoices').select('*').eq('user_id', userId).gte('invoice_date', `${y}-01-01`).lte('invoice_date', `${y}-12-31`)
   ]);
-  const b2b = b2bAll.data || [];
-  const b2c = b2cAll.data || [];
+  const b2b = (b2bAll.data || []).filter(r => !r.is_deleted);
+  const b2c = (b2cAll.data || []).filter(r => !r.is_deleted);
 
   const tbody = document.getElementById('monthSummaryBody');
   const tfoot = document.getElementById('monthSummaryFoot');

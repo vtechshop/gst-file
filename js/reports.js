@@ -37,10 +37,10 @@ async function loadReports(filter) {
     _supabase.from('b2c_hsn').select('*').eq('user_id', currentUser.id).order('created_at', { ascending: false })
   ]);
 
-  repB2B    = b2bRes.data    || [];
-  repB2C    = b2cRes.data    || [];
-  repB2BHSN = hsnB2BRes.data || [];
-  repB2CHSN = hsnB2CRes.data || [];
+  repB2B    = (b2bRes.data    || []).filter(r => !r.is_deleted);
+  repB2C    = (b2cRes.data    || []).filter(r => !r.is_deleted);
+  repB2BHSN = (hsnB2BRes.data || []).filter(r => !r.is_deleted);
+  repB2CHSN = (hsnB2CRes.data || []).filter(r => !r.is_deleted);
 
   renderSummaryCards();
   renderGSTR1Summary();
