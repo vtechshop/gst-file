@@ -237,8 +237,41 @@ body {
 .segmented-option input { margin: 0; accent-color: #fff; }
 .segmented-option.active { background: var(--primary); color: #fff; }
 .segmented-option:not(.active):hover { background: var(--bg); }
+/* B2B = green, B2C = blue — matches the mode header and top-bar badge
+   so the whole page agrees on one color language for "which mode". */
+.segmented-option.seg-b2b.active { background: #2e7d32; }
+.segmented-option.seg-b2c.active { background: #1565c0; }
 :root[data-theme="dark"] .segmented-option { background: #1b2523; color: #999; }
 :root[data-theme="dark"] .segmented-option:not(.active):hover { background: #16302c; }
+
+/* ---- Invoice mode banner (B2B/B2C) ---- */
+.inv-mode-header {
+  display: flex; align-items: center; gap: 10px; padding: 10px 16px;
+  border-radius: 8px; margin-bottom: 18px; font-weight: 700; font-size: 13px;
+  border: 1.5px solid transparent;
+  transition: background-color 0.25s ease, color 0.25s ease, border-color 0.25s ease;
+}
+.inv-mode-header.inv-mode-b2b { background: #e8f5e9; color: #2e7d32; border-color: #a5d6a7; }
+.inv-mode-header.inv-mode-b2c { background: #e3f2fd; color: #1565c0; border-color: #90caf9; }
+:root[data-theme="dark"] .inv-mode-header.inv-mode-b2b { background: #16302c; border-color: #2e7d32; }
+:root[data-theme="dark"] .inv-mode-header.inv-mode-b2c { background: #16302c; border-color: #1565c0; }
+
+/* ---- Smooth collapse for mode-specific fields (B2B's GST/State,
+   Payment's conditional Amount field) — max-height/opacity rather than
+   display:none so the show/hide animates instead of snapping. ---- */
+.inv-collapsible {
+  overflow: hidden;
+  max-height: 200px;
+  opacity: 1;
+  transition: max-height 0.3s ease, opacity 0.25s ease, margin 0.3s ease;
+}
+.inv-collapsible.collapsed {
+  max-height: 0;
+  opacity: 0;
+  margin-top: 0;
+  margin-bottom: 0;
+  pointer-events: none;
+}
 
 /* ---- Main Content ---- */
 .main-content {

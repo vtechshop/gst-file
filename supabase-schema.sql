@@ -449,3 +449,13 @@ CREATE POLICY "Own payments select" ON payments FOR SELECT USING (auth.uid() = u
 CREATE POLICY "Own payments insert" ON payments FOR INSERT WITH CHECK (auth.uid() = user_id);
 CREATE POLICY "Own payments update" ON payments FOR UPDATE USING (auth.uid() = user_id);
 CREATE POLICY "Own payments delete" ON payments FOR DELETE USING (auth.uid() = user_id);
+
+-- =============================================
+-- B2B/B2C visually distinct Invoice Entry forms
+-- State is now hidden entirely on B2C's form and silently defaulted
+-- from the business's own profile (js/invoice-entry.js) rather than
+-- collected from the user — safety net for the rare case a business
+-- hasn't set their own profile state yet, so that default can
+-- legitimately be blank without blocking Save.
+-- =============================================
+ALTER TABLE b2c_invoices ALTER COLUMN state DROP NOT NULL;

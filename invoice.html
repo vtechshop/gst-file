@@ -21,6 +21,7 @@
   <script src="js/drafts.js"></script>
   <script src="js/invoice-items.js?v=20260717"></script>
   <script src="js/invoice-pdf.js"></script>
+  <script src="js/payments.js"></script>
   <script src="js/invoice-entry.js"></script>
 </head>
 <body>
@@ -82,16 +83,22 @@
           <div class="form-group mb-16">
             <label>Invoice Type</label>
             <div class="segmented-toggle" role="radiogroup" aria-label="Invoice Type">
-              <label class="segmented-option" id="invTypeB2BOption">
+              <label class="segmented-option seg-b2b" id="invTypeB2BOption">
                 <input type="radio" name="invType" id="invTypeB2B" value="b2b" onchange="onInvoiceTypeToggle()">
                 <span>B2B</span>
               </label>
-              <label class="segmented-option" id="invTypeB2COption">
+              <label class="segmented-option seg-b2c" id="invTypeB2COption">
                 <input type="radio" name="invType" id="invTypeB2C" value="b2c" checked onchange="onInvoiceTypeToggle()">
                 <span>B2C</span>
               </label>
             </div>
-            <span class="fs-11 text-muted-sm d-block mt-6">Switches automatically when you enter or clear a GST Number &mdash; you can also switch it manually.</span>
+          </div>
+
+          <!-- Mode banner — the visible, always-on indicator of which
+               form is active; also swaps color/text the instant the
+               toggle above changes. -->
+          <div id="invModeHeader" class="inv-mode-header inv-mode-b2c">
+            <i class="fas fa-users" id="invModeHeaderIcon"></i> <span id="invModeHeaderText">B2C &mdash; Walk-in / Retail Sale</span>
           </div>
 
           <!-- Customer -->
@@ -106,21 +113,28 @@
               </div>
             </div>
             <div class="form-group">
-              <label for="invGstin">GST Number <span class="fs-11 text-muted-sm">(leave blank for a B2C / walk-in sale)</span></label>
-              <input type="text" id="invGstin" class="form-control uppercase" maxlength="15" placeholder="e.g. 27AAPFU0939F1ZV" oninput="onInvoiceGstinInput(this)" onblur="onInvoiceGstinBlur(this)">
-            </div>
-            <div class="form-group">
               <label for="invPhone">Phone</label>
               <input type="text" id="invPhone" class="form-control" placeholder="Optional">
             </div>
+          </div>
+
+          <!-- B2B-only: GST Number + State. Hidden completely (not just
+               disabled) in B2C mode, with a smooth collapse rather than
+               an abrupt display:none. -->
+          <div id="invB2BFields" class="form-grid cols-2 mb-16 inv-collapsible collapsed">
+            <div class="form-group">
+              <label for="invGstin">GST Number <span class="text-required">*</span></label>
+              <input type="text" id="invGstin" class="form-control uppercase" maxlength="15" placeholder="e.g. 27AAPFU0939F1ZV" oninput="onInvoiceGstinInput(this)" onblur="onInvoiceGstinBlur(this)" disabled>
+            </div>
             <div class="form-group">
               <label for="invState">State <span class="text-required">*</span></label>
-              <select id="invState" class="form-control" onchange="detectSupplyType()"><option value="">Select State</option></select>
+              <select id="invState" class="form-control" onchange="detectSupplyType()" disabled><option value="">Select State</option></select>
             </div>
-            <div class="form-group">
-              <label for="invAddress">Address</label>
-              <input type="text" id="invAddress" class="form-control" placeholder="Optional">
-            </div>
+          </div>
+
+          <div class="form-group mb-16">
+            <label for="invAddress">Address</label>
+            <input type="text" id="invAddress" class="form-control" placeholder="Optional">
           </div>
 
           <!-- Invoice Info -->
@@ -198,6 +212,24 @@
               <input type="date" id="invLrDate" class="form-control">
             </div>
           </div>
+
+          <!-- Payment -->
+          <div class="section-title mb-14 mt-20">Payment</div>
+          <div class="form-grid cols-2 mb-16" id="invPaymentEditableFields">
+            <div class="form-group">
+              <label for="invPaymentStatus">Payment Status</label>
+              <select id="invPaymentStatus" class="form-control" onchange="onInvPaymentStatusChange()">
+                <option value="unpaid" selected>Unpaid</option>
+                <option value="paid">Paid in Full</option>
+                <option value="partial">Partially Paid</option>
+              </select>
+            </div>
+            <div class="form-group inv-collapsible collapsed" id="invPaymentAmountGroup">
+              <label for="invPaymentAmount">Amount Received (&#8377;)</label>
+              <input type="number" id="invPaymentAmount" class="form-control" min="0" step="0.01" placeholder="0.00" disabled>
+            </div>
+          </div>
+          <p class="text-muted-sm fs-12 mb-16 d-none" id="invPaymentEditNote">Payment status: <b id="invPaymentEditStatusText">Unpaid</b>. Record further payments from <a href="invoice-list.html">Invoice List</a>.</p>
 
           <!-- Save -->
           <div class="btn-group">

@@ -110,17 +110,61 @@ function setInvoiceTypeToggle(type) {
   syncInvoiceTypeUI();
 }
 
-// Keeps the segmented toggle's active styling and the top-bar badge in
-// sync with whichever radio is actually checked — called after both
-// automatic (GSTIN-driven) and manual (user click) changes.
+// Keeps the segmented toggle's active styling, the top-bar badge, the
+// mode banner, and which fields are even visible all in sync with
+// whichever radio is actually checked — called after both automatic
+// (GSTIN-driven) and manual (user click) changes, and on every load
+// path (init/edit/duplicate/reset) so the two modes are never a mix of
+// stale field visibility from whatever the previous mode showed.
+// B2B = green throughout, B2C = blue — one color language, everywhere.
 function syncInvoiceTypeUI() {
   const isB2B = getSelectedInvoiceType() === 'b2b';
+
   document.getElementById('invTypeB2BOption')?.classList.toggle('active', isB2B);
   document.getElementById('invTypeB2COption')?.classList.toggle('active', !isB2B);
+
   const badge = document.getElementById('invClassifyBadge');
   if (badge) {
     badge.textContent = isB2B ? 'B2B' : 'B2C';
-    badge.className = 'badge ' + (isB2B ? 'badge-blue' : 'badge-green');
+    badge.className = 'badge ' + (isB2B ? 'badge-green' : 'badge-blue');
+  }
+
+  const header = document.getElementById('invModeHeader');
+  if (header) {
+    header.classList.toggle('inv-mode-b2b', isB2B);
+    header.classList.toggle('inv-mode-b2c', !isB2B);
+  }
+  const headerText = document.getElementById('invModeHeaderText');
+  if (headerText) headerText.textContent = isB2B ? 'B2B — Business Invoice (GST Number Required)' : 'B2C — Walk-in / Retail Sale';
+  const headerIcon = document.getElementById('invModeHeaderIcon');
+  if (headerIcon) headerIcon.className = isB2B ? 'fas fa-building' : 'fas fa-users';
+
+  // GST Number + State only exist in B2B's form — a completely
+  // different-looking page for the two modes, not the same fields with
+  // one relabeled hint, per the redesign. The collapse animation is
+  // max-height/opacity, not display:none, so the inputs must also be
+  // explicitly disabled here — otherwise they're invisible but still
+  // reachable by Tab (and by Enter's field-to-field advance), which
+  // breaks keyboard navigation and doesn't really "hide" them.
+  document.getElementById('invB2BFields')?.classList.toggle('collapsed', !isB2B);
+  const gstInputEl = document.getElementById('invGstin');
+  const stateInputEl = document.getElementById('invState');
+  if (gstInputEl) gstInputEl.disabled = !isB2B;
+  if (stateInputEl) stateInputEl.disabled = !isB2B;
+
+  if (!isB2B) {
+    // State is hidden in B2C, but b2c_invoices.state and supply-type
+    // detection both still need a real value — silently use the
+    // business's own registered state, matching the overwhelmingly
+    // common case for a walk-in sale (same state -> Intrastate). Only
+    // fills an EMPTY field: loading an existing B2C invoice for edit
+    // sets its real saved state before this runs, and that must win,
+    // not get silently overwritten by today's business profile default.
+    const stEl = document.getElementById('invState');
+    if (stEl && !stEl.value) {
+      const profile = (typeof getCachedProfile === 'function') ? getCachedProfile() : null;
+      if (profile?.state) stEl.value = profile.state;
+    }
   }
 }
 
@@ -129,7 +173,18 @@ function syncInvoiceTypeUI() {
 function updateClassifyBadge() { syncInvoiceTypeUI(); }
 
 function onInvoiceTypeToggle() {
+  // Manually switching to B2C means "this isn't a GST sale" — clear
+  // whatever GST Number and State were there so they don't linger,
+  // hidden, behind the collapsed B2B fields (a leftover B2B customer's
+  // state would otherwise silently carry over instead of resetting to
+  // the business's own default). syncInvoiceTypeUI() below re-fills
+  // State from the business profile since it's now genuinely empty.
+  if (getSelectedInvoiceType() === 'b2c') {
+    setInvValue('invGstin', '');
+    setInvValue('invState', '');
+  }
   syncInvoiceTypeUI();
+  detectSupplyType();
 }
 
 function onInvoiceGstinInput(el) {
@@ -154,65 +209,28 @@ function isCustNameUntouched() {
   return !v || v === 'Walk-in Customer';
 }
 
-async function onInvoiceGstinBlur(el) {
+// GST Number only exists in the B2B form now (hidden entirely in B2C),
+// so by construction this can only fire while already on B2B — no
+// confirmation dialog needed for "should this become B2B?" the way it
+// did when the field was visible-but-optional in a single shared form.
+// What's still genuinely useful: recognizing a GSTIN that matches an
+// existing customer and pulling in their details automatically.
+function onInvoiceGstinBlur(el) {
   const value = el.value.trim();
   if (!value) return;
 
-  // A half-typed or malformed GSTIN shouldn't interrupt with a dialog
-  // or silently pull in the wrong customer — only act once it's a
-  // complete, correctly-formatted 15-character GSTIN.
+  // A half-typed or malformed GSTIN shouldn't silently pull in the
+  // wrong customer — only act once it's a complete, correctly-formatted
+  // 15-character GSTIN.
   if (!isValidGstinFormat(value)) return;
 
-  // Auto-load a known customer's details the moment their GSTIN is
-  // recognized — independent of B2B/B2C, and regardless of how the
-  // field got its value (typed here, or filled via customer-name match).
   const match = invoiceCustomersList.find(c => (c.gstin || '').toUpperCase() === value);
-  if (match) {
-    if (isCustNameUntouched()) setInvValue('invCustName', match.name);
-    const phEl = document.getElementById('invPhone');   if (phEl && !phEl.value && match.phone)   phEl.value = match.phone;
-    const adEl = document.getElementById('invAddress'); if (adEl && !adEl.value && match.address) adEl.value = match.address;
-    const stEl = document.getElementById('invState');   if (stEl && !stEl.value && match.state)   stEl.value = match.state;
-    detectSupplyType();
-  }
-
-  if (getSelectedInvoiceType() !== 'b2c') return;
-
-  const choice = await showGstinConvertPrompt();
-  if (choice === 'convert') {
-    setInvoiceTypeToggle('b2b');
-  } else if (choice === 'remove') {
-    setInvValue('invGstin', '');
-    detectSupplyType();
-  }
-  // The modal's own button is what had focus when it was removed from
-  // the DOM, so the browser drops focus to <body> — breaking the
-  // keyboard flow this app is built around. Hand it back to wherever
-  // Enter would have taken the user next.
-  if (document.activeElement === document.body || !document.activeElement) {
-    focusNextFormField(el);
-  }
-}
-
-function showGstinConvertPrompt() {
-  return new Promise(resolve => {
-    const overlay = document.createElement('div');
-    overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:10000;display:flex;align-items:center;justify-content:center;';
-    overlay.innerHTML = `
-      <div style="background:#fff;border-radius:12px;padding:28px 32px;max-width:380px;width:90%;box-shadow:0 8px 30px rgba(0,0,0,0.2);">
-        <div style="display:flex;align-items:center;gap:12px;margin-bottom:16px;">
-          <i class="fas fa-question-circle" style="color:#00796b;font-size:22px;"></i>
-          <h3 style="margin:0;color:#333;font-size:17px;">GST Number Entered</h3>
-        </div>
-        <p style="margin:0 0 24px;color:#666;font-size:14px;">Do you want to convert this invoice to B2B?</p>
-        <div style="display:flex;gap:10px;justify-content:flex-end;flex-wrap:wrap;">
-          <button id="gstPromptRemove" style="padding:8px 16px;border:1px solid #ddd;background:#fff;border-radius:6px;cursor:pointer;font-size:14px;white-space:nowrap;">Remove GST Number</button>
-          <button id="gstPromptConvert" style="padding:8px 16px;background:#00796b;color:#fff;border:none;border-radius:6px;cursor:pointer;font-size:14px;white-space:nowrap;">Convert to B2B</button>
-        </div>
-      </div>`;
-    document.body.appendChild(overlay);
-    overlay.querySelector('#gstPromptConvert').onclick = () => { overlay.remove(); resolve('convert'); };
-    overlay.querySelector('#gstPromptRemove').onclick  = () => { overlay.remove(); resolve('remove'); };
-  });
+  if (!match) return;
+  if (isCustNameUntouched()) setInvValue('invCustName', match.name);
+  const phEl = document.getElementById('invPhone');   if (phEl && !phEl.value && match.phone)   phEl.value = match.phone;
+  const adEl = document.getElementById('invAddress'); if (adEl && !adEl.value && match.address) adEl.value = match.address;
+  const stEl = document.getElementById('invState');   if (stEl && !stEl.value && match.state)   stEl.value = match.state;
+  detectSupplyType();
 }
 
 // ── Auto Supply Type detection (replaces the old manual dropdown) ──
@@ -302,6 +320,27 @@ function onTransportToggleChange() {
   if (lbl) { lbl.textContent = on ? 'Required' : 'Not Required'; lbl.style.color = on ? 'var(--primary)' : '#9e9e9e'; }
 }
 
+// ── Payment section (new-invoice only — editing an existing invoice's
+// payments happens on Invoice List, see loadInvoiceForEdit() below) ──
+function onInvPaymentStatusChange() {
+  const status = document.getElementById('invPaymentStatus')?.value;
+  const show = status === 'partial';
+  document.getElementById('invPaymentAmountGroup')?.classList.toggle('collapsed', !show);
+  const amountEl = document.getElementById('invPaymentAmount');
+  if (amountEl) amountEl.disabled = !show; // keep collapsed field out of Tab order, see syncInvoiceTypeUI()
+  if (!show) setInvValue('invPaymentAmount', '');
+}
+
+function setPaymentSectionMode(editable, statusLabel) {
+  document.getElementById('invPaymentEditableFields')?.classList.toggle('d-none', !editable);
+  document.getElementById('invPaymentEditNote')?.classList.toggle('d-none', editable);
+  if (!editable) {
+    const label = { unpaid: 'Unpaid', partial: 'Partially Paid', paid: 'Paid in Full' }[statusLabel] || 'Unpaid';
+    const el = document.getElementById('invPaymentEditStatusText');
+    if (el) el.textContent = label;
+  }
+}
+
 // ── Customer Master helpers ─────────────────────────
 async function loadInvoiceCustomersList(userId) {
   const { data } = await _supabase.from('customers').select('*').eq('user_id', userId);
@@ -318,15 +357,15 @@ function onInvoiceCustomerInput() {
   const name = getInvText('invCustName');
   const cust = invoiceCustomersList.find(c => c.name.toLowerCase() === name.toLowerCase());
   if (!cust) return;
-  const gstEl = document.getElementById('invGstin');
+  // A matched customer with a GSTIN on file is a B2B customer — switch
+  // modes (revealing the GST Number field) before filling it in, so the
+  // reveal animates in with the value already there instead of an
+  // empty field popping in first.
+  if (cust.gstin && getSelectedInvoiceType() !== 'b2b') setInvoiceTypeToggle('b2b');
+  const gstEl = document.getElementById('invGstin');   if (gstEl && !gstEl.value && cust.gstin)   gstEl.value = cust.gstin.toUpperCase();
   const phEl  = document.getElementById('invPhone');   if (phEl  && !phEl.value  && cust.phone)   phEl.value  = cust.phone;
   const adEl  = document.getElementById('invAddress'); if (adEl  && !adEl.value  && cust.address) adEl.value  = cust.address;
   const stEl  = document.getElementById('invState');   if (stEl  && !stEl.value  && cust.state)   stEl.value  = cust.state;
-  if (gstEl && !gstEl.value && cust.gstin) {
-    gstEl.value = cust.gstin.toUpperCase();
-    onInvoiceGstinBlur(gstEl); // same "convert to B2B?" prompt as typing it manually
-  }
-  updateClassifyBadge();
   detectSupplyType();
 }
 
@@ -380,6 +419,7 @@ async function loadInvoiceForEdit(type, id) {
   setInvValue('invDate', rec.invoice_date || '');
   setInvValue('invSupply', rec.supply_type || 'intrastate');
   setInvoiceTypeToggle(type);
+  setPaymentSectionMode(false, rec.payment_status);
 
   const toggle = document.getElementById('transportToggle');
   if (toggle) toggle.checked = !!rec.transport_required;
@@ -419,6 +459,11 @@ async function loadInvoiceDuplicateDraft() {
   setInvValue('invDate', toISO(new Date()));
   setInvValue('invSupply', draft.supply_type || 'intrastate');
   setInvoiceTypeToggle(draft.gst_number ? 'b2b' : 'b2c');
+  // A duplicate is a brand-new sale, not a copy of the old one's
+  // payment state — starts fresh at Unpaid, editable, same as any new invoice.
+  setInvValue('invPaymentStatus', 'unpaid');
+  onInvPaymentStatusChange();
+  setPaymentSectionMode(true);
 
   const toggle = document.getElementById('transportToggle');
   if (toggle) toggle.checked = !!draft.transport_required;
@@ -456,7 +501,9 @@ async function saveInvoice() {
   const wasNewInvoice = !invoiceEditId;
 
   if (!custName) { showToast('Please enter the customer name.', 'error'); return; }
-  if (!state)    { showToast('Please select a state.', 'error'); return; }
+  // State is only user-facing (and required) in B2B's form — B2C's is
+  // hidden and auto-filled from the business profile by syncInvoiceTypeUI().
+  if (type === 'b2b' && !state) { showToast('Please select a state.', 'error'); return; }
   if (!invNum)   { showToast('Please enter an invoice number.', 'error'); return; }
   if (!invDate)  { showToast('Please enter the invoice date.', 'error'); return; }
   if (type === 'b2b' && !gstin) { showToast('B2B is selected — enter the customer\'s GST Number, or switch to B2C.', 'error'); return; }
@@ -516,6 +563,21 @@ async function saveInvoice() {
   }
   if (!invoiceId) return;
 
+  // Initial payment, if the user marked one on the creation form — goes
+  // through the same payments ledger Invoice List's Receive Payment
+  // uses (js/payments.js), so it shows up in Payment History too rather
+  // than being a number with no record behind it. Only for a brand-new
+  // invoice — editing an existing one manages payments from Invoice
+  // List instead (see loadInvoiceForEdit()).
+  if (wasNewInvoice && !isTypeChange) {
+    const payStatus = document.getElementById('invPaymentStatus')?.value || 'unpaid';
+    if (payStatus !== 'unpaid') {
+      const rollups = computeInvoiceRollups();
+      const amount = payStatus === 'paid' ? rollups.total_amount : (parseFloat(getInvText('invPaymentAmount')) || 0);
+      if (amount > 0) await recordPayment(type, invoiceId, user.id, { amount, method: 'cash', date: invDate, note: 'Recorded at invoice creation' });
+    }
+  }
+
   showToast(wasNewInvoice ? 'Invoice saved successfully!' : 'Invoice updated successfully!');
   clearDraft(INVOICE_FORM_KEY);
   clearItemsDraft(INVOICE_FORM_KEY);
@@ -573,6 +635,10 @@ function clearInvoiceFormFields() {
   if (toggle) toggle.checked = false;
   onTransportToggleChange();
   ['invVehicleNo','invTransporter','invLrNumber','invTransportMode','invDistance','invLrDate'].forEach(id => setInvValue(id, ''));
+
+  setInvValue('invPaymentStatus', 'unpaid');
+  onInvPaymentStatusChange();
+  setPaymentSectionMode(true);
 
   resetInvoiceItems();
   invoiceEditId = null;
