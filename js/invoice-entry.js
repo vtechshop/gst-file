@@ -51,6 +51,7 @@ async function initInvoiceEntry() {
         if (c.phone) setInvValue('invPhone', c.phone);
         if (c.address) setInvValue('invAddress', c.address);
         if (c.state) setInvValue('invState', c.state);
+        setInvoiceTypeToggle(c.gstin ? 'b2b' : 'b2c');
       } catch {}
       sessionStorage.removeItem('prefill_customer');
     }
@@ -63,19 +64,49 @@ async function initInvoiceEntry() {
 function getInvText(id) { return document.getElementById(id)?.value?.trim() || ''; }
 function setInvValue(id, v) { const el = document.getElementById(id); if (el) el.value = v ?? ''; }
 
-// ── B2B / B2C live classification badge (display only — the real
-// decision happens at Save time from whether GSTIN is filled in) ──
-function updateClassifyBadge() {
+// ── B2B / B2C — visible, always-both-shown segmented toggle. GST Number
+// drives it automatically (entered -> B2B, cleared -> B2C) on every
+// edit to that field, but the user can click the toggle directly at any
+// other time to override it (e.g. treat a walk-in sale as B2C even
+// though a GSTIN happens to be on the form). Whichever the toggle says
+// at Save time is authoritative — see saveInvoice()'s validation.
+function getSelectedInvoiceType() {
+  return document.querySelector('input[name="invType"]:checked')?.value || 'b2c';
+}
+
+function setInvoiceTypeToggle(type) {
+  const b2b = document.getElementById('invTypeB2B');
+  const b2c = document.getElementById('invTypeB2C');
+  if (b2b) b2b.checked = type === 'b2b';
+  if (b2c) b2c.checked = type === 'b2c';
+  syncInvoiceTypeUI();
+}
+
+// Keeps the segmented toggle's active styling and the top-bar badge in
+// sync with whichever radio is actually checked — called after both
+// automatic (GSTIN-driven) and manual (user click) changes.
+function syncInvoiceTypeUI() {
+  const isB2B = getSelectedInvoiceType() === 'b2b';
+  document.getElementById('invTypeB2BOption')?.classList.toggle('active', isB2B);
+  document.getElementById('invTypeB2COption')?.classList.toggle('active', !isB2B);
   const badge = document.getElementById('invClassifyBadge');
-  if (!badge) return;
-  const isB2B = !!getInvText('invGstin');
-  badge.textContent = isB2B ? 'B2B' : 'B2C';
-  badge.className = 'badge ' + (isB2B ? 'badge-blue' : 'badge-green');
+  if (badge) {
+    badge.textContent = isB2B ? 'B2B' : 'B2C';
+    badge.className = 'badge ' + (isB2B ? 'badge-blue' : 'badge-green');
+  }
+}
+
+// Kept as an alias — several call sites already say "update the badge"
+// after changing GSTIN/state/etc.; it now just means "resync the toggle."
+function updateClassifyBadge() { syncInvoiceTypeUI(); }
+
+function onInvoiceTypeToggle() {
+  syncInvoiceTypeUI();
 }
 
 function onInvoiceGstinInput(el) {
   el.value = el.value.toUpperCase();
-  updateClassifyBadge();
+  setInvoiceTypeToggle(el.value.trim() ? 'b2b' : 'b2c');
   detectSupplyType();
 }
 
@@ -238,6 +269,7 @@ async function loadInvoiceForEdit(type, id) {
   setInvValue('invNum', rec.invoice_number || '');
   setInvValue('invDate', rec.invoice_date || '');
   setInvValue('invSupply', rec.supply_type || 'intrastate');
+  setInvoiceTypeToggle(type);
 
   const toggle = document.getElementById('transportToggle');
   if (toggle) toggle.checked = !!rec.transport_required;
@@ -276,6 +308,7 @@ async function loadInvoiceDuplicateDraft() {
   setInvValue('invNum', ''); // must be unique — left blank for auto-generate or manual entry
   setInvValue('invDate', toISO(new Date()));
   setInvValue('invSupply', draft.supply_type || 'intrastate');
+  setInvoiceTypeToggle(draft.gst_number ? 'b2b' : 'b2c');
 
   const toggle = document.getElementById('transportToggle');
   if (toggle) toggle.checked = !!draft.transport_required;
@@ -309,10 +342,13 @@ async function saveInvoice() {
   const invDate  = getInvText('invDate');
   const supply   = document.getElementById('invSupply')?.value || 'intrastate';
 
+  const type = getSelectedInvoiceType();
+
   if (!custName) { showToast('Please enter the customer name.', 'error'); return; }
   if (!state)    { showToast('Please select a state.', 'error'); return; }
   if (!invNum)   { showToast('Please enter an invoice number.', 'error'); return; }
   if (!invDate)  { showToast('Please enter the invoice date.', 'error'); return; }
+  if (type === 'b2b' && !gstin) { showToast('B2B is selected — enter the customer\'s GST Number, or switch to B2C.', 'error'); return; }
   if (gstin) {
     if (gstin.length < 15) { showToast('GST Number must be 15 characters.', 'error'); return; }
     if (!/^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z]{1}[1-9A-Z]{1}Z[0-9A-Z]{1}$/.test(gstin)) {
@@ -320,7 +356,6 @@ async function saveInvoice() {
     }
   }
 
-  const type = gstin ? 'b2b' : 'b2c';
   const isTypeChange = invoiceEditId && invoiceEditType && invoiceEditType !== type;
 
   if (!invoiceEditId || isTypeChange) {
@@ -352,9 +387,10 @@ async function saveInvoice() {
 
   let invoiceId;
   if (isTypeChange) {
-    // GSTIN was added/removed since the original save — the invoice
-    // belongs on the OTHER table now. saveInvoiceWithItems() only ever
-    // updates in place on the table it's given, so a classification
+    // The B2B/B2C toggle (auto-driven by GSTIN, or manually switched)
+    // now points at the OTHER table than this invoice was originally
+    // saved under. saveInvoiceWithItems() only ever updates in place on
+    // the table it's given, so a classification
     // change is handled as insert-into-new-table + soft-delete-old
     // (recoverable via Recycle Bin, same as any other delete).
     invoiceId = await saveInvoiceWithItems(type, headerBase, null, user.id);
@@ -402,6 +438,7 @@ function resetInvoiceForm() {
   setInvValue('invState', '');
   setInvValue('invDate', toISO(new Date()));
   setInvValue('invSupply', 'intrastate');
+  setInvoiceTypeToggle('b2c');
 
   const toggle = document.getElementById('transportToggle');
   if (toggle) toggle.checked = false;

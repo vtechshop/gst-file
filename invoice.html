@@ -78,6 +78,22 @@
         <div class="card-body">
           <div id="invDraftBanner"></div>
 
+          <!-- Invoice Type -->
+          <div class="form-group mb-16">
+            <label>Invoice Type</label>
+            <div class="segmented-toggle" role="radiogroup" aria-label="Invoice Type">
+              <label class="segmented-option" id="invTypeB2BOption">
+                <input type="radio" name="invType" id="invTypeB2B" value="b2b" onchange="onInvoiceTypeToggle()">
+                <span>B2B</span>
+              </label>
+              <label class="segmented-option" id="invTypeB2COption">
+                <input type="radio" name="invType" id="invTypeB2C" value="b2c" checked onchange="onInvoiceTypeToggle()">
+                <span>B2C</span>
+              </label>
+            </div>
+            <span class="fs-11 text-muted-sm d-block mt-6">Switches automatically when you enter or clear a GST Number &mdash; you can also switch it manually.</span>
+          </div>
+
           <!-- Customer -->
           <div class="section-title mb-14">Customer Details</div>
           <datalist id="customerDatalist"></datalist>

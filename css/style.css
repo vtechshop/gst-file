@@ -224,6 +224,22 @@ body {
 .inv-toggle input:checked + .inv-toggle-track { background: var(--primary); }
 .inv-toggle input:checked + .inv-toggle-track .inv-toggle-thumb { transform: translateX(16px); }
 
+/* ---- Invoice Type segmented toggle (B2B / B2C) ---- */
+.segmented-toggle {
+  display: inline-flex; border: 1.5px solid var(--border); border-radius: 22px;
+  overflow: hidden; width: fit-content;
+}
+.segmented-option {
+  display: flex; align-items: center; gap: 6px; padding: 8px 22px;
+  cursor: pointer; font-size: 13px; font-weight: 700; color: #888;
+  background: #fff; transition: background 0.2s, color 0.2s; user-select: none;
+}
+.segmented-option input { margin: 0; accent-color: #fff; }
+.segmented-option.active { background: var(--primary); color: #fff; }
+.segmented-option:not(.active):hover { background: var(--bg); }
+:root[data-theme="dark"] .segmented-option { background: #1b2523; color: #999; }
+:root[data-theme="dark"] .segmented-option:not(.active):hover { background: #16302c; }
+
 /* ---- Main Content ---- */
 .main-content {
   margin-left: var(--sidebar-w);
