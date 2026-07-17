@@ -79,8 +79,33 @@ function isProductSyncStale(meta) {
 // up a since-fixed backend automatically. Never awaited by callers —
 // sync always happens in the background and never blocks a page
 // (requirement 4/7).
-function syncProductsIfNeeded(userId) {
+//
+// One more override on top of that: if there are no products in the
+// local cache at all (gst_products missing, or zero rows for this
+// user — e.g. first-ever run, or after a Clear All), every invoice
+// page is completely blocked regardless of how "fresh" that empty
+// state technically is. There's nothing to lose by retrying immediately
+// in that case, so both the 24h staleness check AND the cooldown are
+// skipped entirely until the cache actually has something in it.
+async function syncProductsIfNeeded(userId) {
   if (!userId) return;
+
+  let hasNoProducts = true;
+  try {
+    const { data } = await _supabase.from('products').select('id').eq('user_id', userId);
+    hasNoProducts = !data || data.length === 0;
+  } catch {
+    // Can't tell — fall through to the normal staleness/cooldown path
+    // rather than assuming empty and hammering the backend.
+    hasNoProducts = false;
+  }
+
+  if (hasNoProducts) {
+    sessionStorage.setItem(PRODUCT_SYNC_LAST_ATTEMPT_KEY, String(Date.now()));
+    syncProducts(userId);
+    return;
+  }
+
   if (!isProductSyncStale()) return;
 
   const lastAttemptAt = +sessionStorage.getItem(PRODUCT_SYNC_LAST_ATTEMPT_KEY) || 0;

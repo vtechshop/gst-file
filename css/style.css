@@ -783,6 +783,7 @@ table.data-table {
   box-shadow: var(--shadow-md);
   max-height: 280px;
   overflow-y: auto;
+  overscroll-behavior: contain;
   z-index: 9000;
 }
 .item-product-dropdown.open { display: block; }

@@ -205,7 +205,8 @@ function renderItemsTable() {
           value="${escItemHtml(row.product_name)}"
           oninput="onItemProductInput('${row.rowId}', this.value); showProductDropdown('${row.rowId}', this, this.value)"
           onfocus="showProductDropdown('${row.rowId}', this, this.value)"
-          onblur="onItemProductBlur('${row.rowId}', this.value)">
+          onblur="onItemProductBlur('${row.rowId}', this.value)"
+          onkeydown="if(event.key==='Escape'){hideProductDropdown();}">
       </td>
       <td><input type="text" class="form-control" value="${escItemHtml(row.hsn_code)}" ${row.locked ? 'readonly' : ''}
           onchange="onItemFieldChange('${row.rowId}','hsn_code',this.value)"></td>
@@ -219,8 +220,8 @@ function renderItemsTable() {
           oninput="onItemFieldChange('${row.rowId}','discount_percentage',this.value)"></td>
       <td><input type="number" class="form-control text-center" min="0" step="0.01" value="${row.gst_percentage}" ${row.locked ? 'readonly' : ''}
           onchange="onItemFieldChange('${row.rowId}','gst_percentage',this.value)"></td>
-      <td class="text-right fw-600">&#8377;${formatNum(row.taxable_value)}</td>
-      <td class="text-right fw-700">&#8377;${formatNum(row.total_amount)}</td>
+      <td class="text-right fw-600 item-taxable-cell">&#8377;${formatNum(row.taxable_value)}</td>
+      <td class="text-right fw-700 item-total-cell">&#8377;${formatNum(row.total_amount)}</td>
       <td><button type="button" class="btn btn-danger btn-sm btn-icon" onclick="removeItemRow('${row.rowId}')" title="Remove row"><i class="fas fa-trash"></i></button></td>
     </tr>`).join('');
 }
@@ -256,7 +257,19 @@ function ensureProductDropdownElement() {
   dd.id = 'itemProductDropdown';
   dd.className = 'item-product-dropdown';
   document.body.appendChild(dd);
-  window.addEventListener('scroll', () => hideProductDropdown(), true);
+  // Capture-phase so we also hear scrolling on ancestor containers (e.g.
+  // the page or the item table's own scroll wrapper) whose movement
+  // would leave the dropdown's fixed position stale relative to its
+  // input. But 'scroll' events don't bubble, and a capture listener on
+  // window still receives them from ANY descendant — including the
+  // dropdown's own list scrolling via mouse wheel or scrollbar drag.
+  // Without checking the event target, the dropdown was closing itself
+  // the instant you tried to scroll it. Only close for scroll events
+  // that didn't originate on the dropdown itself.
+  window.addEventListener('scroll', (e) => {
+    if (e.target === dd) return;
+    hideProductDropdown();
+  }, true);
   window.addEventListener('resize', () => hideProductDropdown());
 }
 
@@ -375,7 +388,12 @@ function onItemFieldChange(rowId, field, value) {
   } else {
     row[field] = Math.max(0, parseFloat(value) || 0);
   }
-  recalcItemRow(rowId);
+  // Field edits fire on every keystroke (oninput) — recalculate and patch
+  // only the read-only computed cells in place. Never call renderItemsTable()
+  // here: that replaces every <input> in the row with a fresh DOM node,
+  // which drops focus and cursor position mid-keystroke (the input being
+  // typed into isn't even the one losing value — it's destroyed outright).
+  recalcItemRowLive(rowId);
 }
 
 // ── Quick Add Product modal ─────────────────────────
@@ -506,6 +524,33 @@ function recalcItemRow(rowId) {
   renderItemsTable();
   computeInvoiceRollups();
   persistItemsDraft();
+}
+
+// Same math as recalcItemRow(), but patches only the two computed cells
+// (Taxable Value / Total) via textContent instead of calling
+// renderItemsTable() — keeps every <input> element (and the user's focus,
+// cursor position, and in-progress keystroke) untouched.
+function recalcItemRowLive(rowId) {
+  const row = currentItems.find(r => r.rowId === rowId);
+  if (!row) return;
+  const gross = (row.quantity || 0) * (row.rate || 0);
+  row.taxable_value = round2(gross * (1 - (row.discount_percentage || 0) / 100));
+  const calc = calcGST(row.taxable_value, row.gst_percentage || 0, getInvoiceSupplyType());
+  row.gst_amount = calc.gstAmount;
+  row.igst = calc.igst; row.cgst = calc.cgst; row.sgst = calc.sgst;
+  row.total_amount = round2(row.taxable_value + calc.gstAmount);
+  updateRowComputedCells(row);
+  computeInvoiceRollups();
+  persistItemsDraft();
+}
+
+function updateRowComputedCells(row) {
+  const tr = document.querySelector(`#itemsTableBody tr[data-row="${row.rowId}"]`);
+  if (!tr) return;
+  const taxableCell = tr.querySelector('.item-taxable-cell');
+  const totalCell = tr.querySelector('.item-total-cell');
+  if (taxableCell) taxableCell.textContent = '₹' + formatNum(row.taxable_value);
+  if (totalCell) totalCell.textContent = '₹' + formatNum(row.total_amount);
 }
 
 function recalcAllRows() {
