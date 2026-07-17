@@ -211,7 +211,7 @@ function renderItemsTable() {
           oninput="onItemProductInput('${row.rowId}', this.value); showProductDropdown('${row.rowId}', this, this.value)"
           onfocus="showProductDropdown('${row.rowId}', this, this.value)"
           onblur="onItemProductBlur('${row.rowId}', this.value)"
-          onkeydown="if(event.key==='Escape'){hideProductDropdown();}">
+          onkeydown="onItemProductKeydown(event, '${row.rowId}')">
       </td>
       <td><input type="text" class="form-control" value="${escItemHtml(row.hsn_code)}" ${row.locked ? 'readonly' : ''}
           onchange="onItemFieldChange('${row.rowId}','hsn_code',this.value)"></td>
@@ -255,6 +255,8 @@ function onItemProductInput(rowId, name) {
 // inside the <td> so it's never clipped/misplaced by the item table's
 // own horizontal-scroll wrapper.
 let activeDropdownRowId = null;
+let activeDropdownIndex = -1; // which option Arrow keys have highlighted; Enter selects this one
+let activeDropdownInputEl = null;
 
 function ensureProductDropdownElement() {
   if (document.getElementById('itemProductDropdown')) return;
@@ -262,47 +264,29 @@ function ensureProductDropdownElement() {
   dd.id = 'itemProductDropdown';
   dd.className = 'item-product-dropdown';
   document.body.appendChild(dd);
-  // Capture-phase so we also hear scrolling on ancestor containers (e.g.
-  // the page or the item table's own scroll wrapper) whose movement
-  // would leave the dropdown's fixed position stale relative to its
-  // input. But 'scroll' events don't bubble, and a capture listener on
-  // window still receives them from ANY descendant — including the
-  // dropdown's own list scrolling via mouse wheel or scrollbar drag.
-  // Without checking the event target, the dropdown was closing itself
-  // the instant you tried to scroll it. Only close for scroll events
-  // that didn't originate on the dropdown itself.
+  // Reposition — not close — on scroll, so the dropdown keeps tracking
+  // its input's on-screen position instead of going stale. This used to
+  // close on any scroll, but that included the browser's OWN
+  // scroll-into-view firing right as the input gains focus, which raced
+  // with opening the dropdown and could close it an instant after it
+  // opened. Capture-phase so ancestor scroll containers are heard too;
+  // scroll events on the dropdown's own list (wheel/scrollbar) are
+  // excluded so scrolling the results doesn't fight itself.
   window.addEventListener('scroll', (e) => {
     if (e.target === dd) return;
-    hideProductDropdown();
+    if (dd.classList.contains('open') && activeDropdownInputEl) positionProductDropdown(activeDropdownInputEl);
   }, true);
-  window.addEventListener('resize', () => hideProductDropdown());
+  window.addEventListener('resize', () => {
+    if (dd.classList.contains('open') && activeDropdownInputEl) positionProductDropdown(activeDropdownInputEl);
+  });
 }
 
-function showProductDropdown(rowId, inputEl, query) {
-  ensureProductDropdownElement();
-  activeDropdownRowId = rowId;
+// Flip above the input when there isn't room below (the Products section
+// can sit well down the page, especially on shorter screens) — otherwise
+// the dropdown renders past the viewport and becomes unreachable.
+function positionProductDropdown(inputEl) {
   const dd = document.getElementById('itemProductDropdown');
-  const q = (query || '').trim().toLowerCase();
-  const matches = (q
-    ? itemsProductsList.filter(p =>
-        (p.name || '').toLowerCase().includes(q) ||
-        (p.sku || '').toLowerCase().includes(q) ||
-        (p.hsn_code || '').toLowerCase().includes(q))
-    : itemsProductsList
-  ).slice(0, 30);
-
-  if (!matches.length) { dd.classList.remove('open'); return; }
-
-  dd.innerHTML = matches.map(p => `
-    <div class="item-product-option" onmousedown="selectProductFromDropdown('${rowId}', '${escItemHtml(String(p.id))}')">
-      <div class="fw-600 fs-13">${escItemHtml(p.name)}</div>
-      <div class="fs-11 text-muted-sm">${[p.sku ? 'SKU: ' + escItemHtml(p.sku) : '', p.hsn_code ? 'HSN: ' + escItemHtml(p.hsn_code) : ''].filter(Boolean).join(' &middot; ') || '&mdash;'}</div>
-    </div>`).join('');
-
-  // Flip above the input when there isn't room below (the Products
-  // section can sit well down the page, especially on shorter screens)
-  // — otherwise the dropdown renders past the viewport and becomes
-  // unreachable, which is exactly the bug this replaced.
+  if (!dd) return;
   const rect = inputEl.getBoundingClientRect();
   const maxDropdownHeight = 280; // keep in sync with .item-product-dropdown max-height
   const spaceBelow = window.innerHeight - rect.bottom;
@@ -314,6 +298,32 @@ function showProductDropdown(rowId, inputEl, query) {
   dd.style.width = rect.width + 'px';
   dd.style.maxHeight = height + 'px';
   dd.style.top = openBelow ? (rect.bottom + 2) + 'px' : (rect.top - height - 2) + 'px';
+}
+
+function showProductDropdown(rowId, inputEl, query) {
+  ensureProductDropdownElement();
+  activeDropdownRowId = rowId;
+  activeDropdownInputEl = inputEl;
+  const dd = document.getElementById('itemProductDropdown');
+  const q = (query || '').trim().toLowerCase();
+  const matches = (q
+    ? itemsProductsList.filter(p =>
+        (p.name || '').toLowerCase().includes(q) ||
+        (p.sku || '').toLowerCase().includes(q) ||
+        (p.hsn_code || '').toLowerCase().includes(q))
+    : itemsProductsList
+  ).slice(0, 30);
+
+  if (!matches.length) { dd.classList.remove('open'); activeDropdownIndex = -1; return; }
+
+  activeDropdownIndex = 0; // highlight the top match by default — Enter with no arrow-key use still picks it
+  dd.innerHTML = matches.map((p, i) => `
+    <div class="item-product-option${i === 0 ? ' highlighted' : ''}" onmousedown="selectProductFromDropdown('${rowId}', '${escItemHtml(String(p.id))}')" onmouseenter="setProductDropdownHighlight(${i})">
+      <div class="fw-600 fs-13">${escItemHtml(p.name)}</div>
+      <div class="fs-11 text-muted-sm">${[p.sku ? 'SKU: ' + escItemHtml(p.sku) : '', p.hsn_code ? 'HSN: ' + escItemHtml(p.hsn_code) : ''].filter(Boolean).join(' &middot; ') || '&mdash;'}</div>
+    </div>`).join('');
+
+  positionProductDropdown(inputEl);
   dd.classList.add('open');
 }
 
@@ -321,6 +331,50 @@ function hideProductDropdown() {
   const dd = document.getElementById('itemProductDropdown');
   if (dd) dd.classList.remove('open');
   activeDropdownRowId = null;
+  activeDropdownIndex = -1;
+  activeDropdownInputEl = null;
+}
+
+// Arrow-key navigation, and hover keeping the keyboard highlight in
+// sync with the mouse so the two never disagree about which option
+// Enter/click would pick.
+function setProductDropdownHighlight(index) {
+  const dd = document.getElementById('itemProductDropdown');
+  if (!dd) return;
+  const options = dd.querySelectorAll('.item-product-option');
+  if (!options.length) return;
+  if (index < 0) index = 0;
+  if (index >= options.length) index = options.length - 1;
+  activeDropdownIndex = index;
+  options.forEach((opt, i) => opt.classList.toggle('highlighted', i === index));
+  options[index].scrollIntoView({ block: 'nearest' });
+}
+
+function moveProductDropdownHighlight(delta) {
+  const dd = document.getElementById('itemProductDropdown');
+  if (!dd || !dd.classList.contains('open')) return;
+  setProductDropdownHighlight((activeDropdownIndex < 0 ? 0 : activeDropdownIndex) + delta);
+}
+
+// Invoked by Enter (see js/invoice-entry.js's document keydown handler)
+// — picks whichever option Arrow keys (or mouse hover) last highlighted,
+// defaulting to the top match if the user never touched Arrow/hover.
+function selectHighlightedProductOption(rowId) {
+  const dd = document.getElementById('itemProductDropdown');
+  if (!dd || !dd.classList.contains('open')) return false;
+  const options = dd.querySelectorAll('.item-product-option');
+  if (!options.length) return false;
+  const idx = activeDropdownIndex >= 0 && activeDropdownIndex < options.length ? activeDropdownIndex : 0;
+  options[idx].dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+  return true;
+}
+
+function onItemProductKeydown(event, rowId) {
+  if (event.key === 'Escape') { hideProductDropdown(); return; }
+  if (event.key === 'ArrowDown') { event.preventDefault(); moveProductDropdownHighlight(1); return; }
+  if (event.key === 'ArrowUp') { event.preventDefault(); moveProductDropdownHighlight(-1); return; }
+  // Enter is handled by the document-level keydown listener in
+  // js/invoice-entry.js, which calls selectHighlightedProductOption().
 }
 
 function selectProductFromDropdown(rowId, productId) {

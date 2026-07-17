@@ -101,7 +101,7 @@
             <div class="form-group">
               <label for="invCustName">Customer Name</label>
               <div class="d-flex gap-8">
-                <input type="text" id="invCustName" class="form-control" placeholder="Type or select customer" list="customerDatalist" oninput="onInvoiceCustomerInput()" autocomplete="off">
+                <input type="text" id="invCustName" class="form-control" placeholder="Type or select customer" list="customerDatalist" oninput="onInvoiceCustomerInput()" onfocus="onInvCustNameFocus(this)" onmousedown="onInvCustNameMouseDown(event, this)" autocomplete="off">
                 <button type="button" class="btn btn-secondary btn-sm text-nowrap" onclick="saveCustomerFromInvoiceForm()" title="Save to Customer Master"><i class="fas fa-user-plus"></i></button>
               </div>
             </div>

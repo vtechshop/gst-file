@@ -37,6 +37,7 @@ async function initInvoiceEntry() {
   } else if (params.get('duplicate') === '1') {
     await loadInvoiceDuplicateDraft();
   } else {
+    setInvValue('invCustName', 'Walk-in Customer');
     generateInvoiceNo(user.id);
     setupDraftAutosave(INVOICE_FORM_KEY, INVOICE_DRAFT_FIELDS);
     checkForDraft(INVOICE_FORM_KEY, INVOICE_DRAFT_FIELDS, 'invDraftBanner', 'restoreInvoiceDraftFull', 'discardInvoiceDraftFull');
@@ -55,6 +56,10 @@ async function initInvoiceEntry() {
       } catch {}
       sessionStorage.removeItem('prefill_customer');
     }
+
+    // Keyboard-only billing starts here: land ready to type immediately,
+    // default name pre-selected so the very first keystroke replaces it.
+    document.getElementById('invCustName')?.focus();
   }
 
   updateClassifyBadge();
@@ -63,6 +68,29 @@ async function initInvoiceEntry() {
 
 function getInvText(id) { return document.getElementById(id)?.value?.trim() || ''; }
 function setInvValue(id, v) { const el = document.getElementById(id); if (el) el.value = v ?? ''; }
+
+// Re-selects the default "Walk-in Customer" text on every (re)focus —
+// covers Tab/programmatic focus, where there's no click to fight with.
+// Never re-selects once the user has typed a real name of their own.
+function onInvCustNameFocus(el) {
+  if (el.value === 'Walk-in Customer') el.select();
+}
+
+// A plain onfocus select() isn't enough for a mouse click specifically:
+// the browser's own native "position the cursor at the click point"
+// behavior for that same click runs AFTER the focus event, silently
+// collapsing whatever selection was just made — so a click-then-type
+// was inserting into "Walk-in Customer" instead of replacing it.
+// Pre-empting it on mousedown (before the browser's default action
+// fires) and taking over focus+select ourselves fixes this at the root,
+// rather than racing it with a delayed re-select.
+function onInvCustNameMouseDown(event, el) {
+  if (el.value === 'Walk-in Customer') {
+    event.preventDefault();
+    el.focus();
+    el.select();
+  }
+}
 
 // ── B2B / B2C — visible, always-both-shown segmented toggle. GST Number
 // drives it automatically (entered -> B2B, cleared -> B2C) on every
@@ -114,9 +142,41 @@ function onInvoiceGstinInput(el) {
   detectSupplyType();
 }
 
+function isValidGstinFormat(value) {
+  return value.length === 15 && /^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z]{1}[1-9A-Z]{1}Z[0-9A-Z]{1}$/.test(value);
+}
+
+// "Untouched" covers both a genuinely empty field and the default
+// "Walk-in Customer" placeholder value — either way, auto-fill is safe
+// to overwrite because the user hasn't typed a real name of their own.
+function isCustNameUntouched() {
+  const v = getInvText('invCustName');
+  return !v || v === 'Walk-in Customer';
+}
+
 async function onInvoiceGstinBlur(el) {
   const value = el.value.trim();
-  if (!value || getSelectedInvoiceType() !== 'b2c') return;
+  if (!value) return;
+
+  // A half-typed or malformed GSTIN shouldn't interrupt with a dialog
+  // or silently pull in the wrong customer — only act once it's a
+  // complete, correctly-formatted 15-character GSTIN.
+  if (!isValidGstinFormat(value)) return;
+
+  // Auto-load a known customer's details the moment their GSTIN is
+  // recognized — independent of B2B/B2C, and regardless of how the
+  // field got its value (typed here, or filled via customer-name match).
+  const match = invoiceCustomersList.find(c => (c.gstin || '').toUpperCase() === value);
+  if (match) {
+    if (isCustNameUntouched()) setInvValue('invCustName', match.name);
+    const phEl = document.getElementById('invPhone');   if (phEl && !phEl.value && match.phone)   phEl.value = match.phone;
+    const adEl = document.getElementById('invAddress'); if (adEl && !adEl.value && match.address) adEl.value = match.address;
+    const stEl = document.getElementById('invState');   if (stEl && !stEl.value && match.state)   stEl.value = match.state;
+    detectSupplyType();
+  }
+
+  if (getSelectedInvoiceType() !== 'b2c') return;
+
   const choice = await showGstinConvertPrompt();
   if (choice === 'convert') {
     setInvoiceTypeToggle('b2b');
@@ -393,6 +453,7 @@ async function saveInvoice() {
   const supply   = document.getElementById('invSupply')?.value || 'intrastate';
 
   const type = getSelectedInvoiceType();
+  const wasNewInvoice = !invoiceEditId;
 
   if (!custName) { showToast('Please enter the customer name.', 'error'); return; }
   if (!state)    { showToast('Please select a state.', 'error'); return; }
@@ -401,7 +462,7 @@ async function saveInvoice() {
   if (type === 'b2b' && !gstin) { showToast('B2B is selected — enter the customer\'s GST Number, or switch to B2C.', 'error'); return; }
   if (gstin) {
     if (gstin.length < 15) { showToast('GST Number must be 15 characters.', 'error'); return; }
-    if (!/^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z]{1}[1-9A-Z]{1}Z[0-9A-Z]{1}$/.test(gstin)) {
+    if (!isValidGstinFormat(gstin)) {
       showToast('GST Number format warning — saving anyway.', 'warning');
     }
   }
@@ -455,17 +516,28 @@ async function saveInvoice() {
   }
   if (!invoiceId) return;
 
-  showToast(invoiceEditId ? 'Invoice updated successfully!' : 'Invoice saved successfully!');
+  showToast(wasNewInvoice ? 'Invoice saved successfully!' : 'Invoice updated successfully!');
   clearDraft(INVOICE_FORM_KEY);
   clearItemsDraft(INVOICE_FORM_KEY);
   const banner = document.getElementById('invDraftBanner'); if (banner) banner.innerHTML = '';
   if (typeof refreshStorageStatus === 'function') refreshStorageStatus();
-
-  invoiceEditId = invoiceId;
-  invoiceEditType = type;
-  document.getElementById('invSaveBtn').innerHTML = '<i class="fas fa-save"></i> Update Invoice';
-  document.getElementById('invPageTitle').textContent = 'Edit Invoice';
   showInvoiceSavedPanel(type, invoiceId, custName);
+
+  if (wasNewInvoice) {
+    // Workflow speed: don't make the user click "New Invoice" for every
+    // sale — the form is instantly ready for the next one, with the
+    // just-saved invoice's Print/WhatsApp/Email actions still available
+    // in the panel above (clearInvoiceFormFields() never touches it).
+    clearInvoiceFormFields();
+    document.getElementById('invCustName')?.focus();
+  } else {
+    // Editing an existing invoice: stay on it rather than jumping to a
+    // blank form — the user likely wants to review what they just saved.
+    invoiceEditId = invoiceId;
+    invoiceEditType = type;
+    document.getElementById('invSaveBtn').innerHTML = '<i class="fas fa-save"></i> Update Invoice';
+    document.getElementById('invPageTitle').textContent = 'Edit Invoice';
+  }
 }
 
 // ── Post-save: Print/PDF/WhatsApp/Email right here, no navigation ──
@@ -483,8 +555,15 @@ function showInvoiceSavedPanel(type, id, custName) {
 }
 
 // ── Reset ────────────────────────────────────────────
-function resetInvoiceForm() {
-  ['invGstin','invCustName','invPhone','invAddress','invNum'].forEach(id => setInvValue(id, ''));
+// Clears every field back to a ready-for-the-next-invoice state —
+// shared by the explicit Reset button and the automatic clear that
+// happens right after saving a new invoice. Callers decide separately
+// whether to hide the just-saved invoice's share panel (the explicit
+// Reset button does; the auto-clear-after-save path deliberately
+// doesn't, so Print/WhatsApp/Email stay reachable for what was just saved).
+function clearInvoiceFormFields() {
+  ['invGstin','invPhone','invAddress','invNum'].forEach(id => setInvValue(id, ''));
+  setInvValue('invCustName', 'Walk-in Customer');
   setInvValue('invState', '');
   setInvValue('invDate', toISO(new Date()));
   setInvValue('invSupply', 'intrastate');
@@ -500,7 +579,6 @@ function resetInvoiceForm() {
   invoiceEditType = null;
   document.getElementById('invPageTitle').textContent = 'New Invoice';
   document.getElementById('invSaveBtn').innerHTML = '<i class="fas fa-save"></i> Save Invoice';
-  document.getElementById('invSavedPanel')?.classList.add('d-none');
   updateClassifyBadge();
   detectSupplyType();
 
@@ -509,6 +587,12 @@ function resetInvoiceForm() {
   const banner = document.getElementById('invDraftBanner'); if (banner) banner.innerHTML = '';
 
   getCurrentUser().then(u => { if (u) generateInvoiceNo(u.id); });
+}
+
+function resetInvoiceForm() {
+  clearInvoiceFormFields();
+  document.getElementById('invSavedPanel')?.classList.add('d-none');
+  document.getElementById('invCustName')?.focus();
 }
 
 // ── Keyboard-friendly invoice entry ─────────────────
@@ -553,13 +637,13 @@ document.addEventListener('keydown', (e) => {
     focusNewItemRowProduct();
     return;
   }
-  // Product field: Enter = pick the top dropdown match (equivalent to
-  // clicking it) — selectProductFromDropdown() itself focuses Qty next.
+  // Product field: Enter = pick whichever option Arrow keys highlighted
+  // (top match by default) — selectProductFromDropdown() itself focuses
+  // Qty next. See js/invoice-items.js for the Arrow-key highlight logic.
   if (el.matches('#itemsTableBody input[oninput*="onItemProductInput"]')) {
     e.preventDefault();
-    const dd = document.getElementById('itemProductDropdown');
-    const firstOption = dd && dd.classList.contains('open') ? dd.querySelector('.item-product-option') : null;
-    if (firstOption) firstOption.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+    const tr = el.closest('tr[data-row]');
+    if (tr) selectHighlightedProductOption(tr.getAttribute('data-row'));
     return;
   }
   // Every other text input: Enter = move to the next field.

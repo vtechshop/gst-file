@@ -808,7 +808,8 @@ table.data-table {
 .item-product-dropdown.open { display: block; }
 .item-product-option { padding: 8px 12px; cursor: pointer; border-bottom: 1px solid var(--bg); }
 .item-product-option:last-child { border-bottom: none; }
-.item-product-option:hover { background: var(--primary-xlight); }
+.item-product-option:hover,
+.item-product-option.highlighted { background: var(--primary-xlight); }
 
 .dash-header-controls { display: flex; align-items: center; gap: 8px; margin-left: auto; flex-wrap: wrap; }
 .dash-select-year  { width: 100px; padding: 7px 10px; font-weight: 600; }
@@ -850,6 +851,7 @@ tr.row-skip { opacity: 0.5; }
 :root[data-theme="dark"] .auth-right { background: #1b2523; }
 :root[data-theme="dark"] .modal, :root[data-theme="dark"] .auth-tab { background: #1b2523; color: var(--text); }
 :root[data-theme="dark"] .item-product-dropdown { background: #1b2523; color: var(--text); }
-:root[data-theme="dark"] .item-product-option:hover { background: var(--primary-xlight); }
+:root[data-theme="dark"] .item-product-option:hover,
+:root[data-theme="dark"] .item-product-option.highlighted { background: var(--primary-xlight); }
 :root[data-theme="dark"] .data-table tbody tr:hover { background: #16302c; }
 :root[data-theme="dark"] .page-btn { background: #1b2523; color: var(--text); }
