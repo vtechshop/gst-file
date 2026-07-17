@@ -107,7 +107,7 @@
             </div>
             <div class="form-group">
               <label for="invGstin">GST Number <span class="fs-11 text-muted-sm">(leave blank for a B2C / walk-in sale)</span></label>
-              <input type="text" id="invGstin" class="form-control uppercase" maxlength="15" placeholder="e.g. 27AAPFU0939F1ZV" oninput="onInvoiceGstinInput(this)">
+              <input type="text" id="invGstin" class="form-control uppercase" maxlength="15" placeholder="e.g. 27AAPFU0939F1ZV" oninput="onInvoiceGstinInput(this)" onblur="onInvoiceGstinBlur(this)">
             </div>
             <div class="form-group">
               <label for="invPhone">Phone</label>

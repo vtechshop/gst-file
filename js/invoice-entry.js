@@ -106,8 +106,53 @@ function onInvoiceTypeToggle() {
 
 function onInvoiceGstinInput(el) {
   el.value = el.value.toUpperCase();
-  setInvoiceTypeToggle(el.value.trim() ? 'b2b' : 'b2c');
+  // Reverting to B2C is the "safe" direction — clearing the field while
+  // B2B is selected switches back silently, same as before. Switching
+  // TO B2B is the consequential direction, so that one asks first (see
+  // onInvoiceGstinBlur) instead of flipping on every keystroke.
+  if (!el.value.trim() && getSelectedInvoiceType() === 'b2b') setInvoiceTypeToggle('b2c');
   detectSupplyType();
+}
+
+async function onInvoiceGstinBlur(el) {
+  const value = el.value.trim();
+  if (!value || getSelectedInvoiceType() !== 'b2c') return;
+  const choice = await showGstinConvertPrompt();
+  if (choice === 'convert') {
+    setInvoiceTypeToggle('b2b');
+  } else if (choice === 'remove') {
+    setInvValue('invGstin', '');
+    detectSupplyType();
+  }
+  // The modal's own button is what had focus when it was removed from
+  // the DOM, so the browser drops focus to <body> — breaking the
+  // keyboard flow this app is built around. Hand it back to wherever
+  // Enter would have taken the user next.
+  if (document.activeElement === document.body || !document.activeElement) {
+    focusNextFormField(el);
+  }
+}
+
+function showGstinConvertPrompt() {
+  return new Promise(resolve => {
+    const overlay = document.createElement('div');
+    overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:10000;display:flex;align-items:center;justify-content:center;';
+    overlay.innerHTML = `
+      <div style="background:#fff;border-radius:12px;padding:28px 32px;max-width:380px;width:90%;box-shadow:0 8px 30px rgba(0,0,0,0.2);">
+        <div style="display:flex;align-items:center;gap:12px;margin-bottom:16px;">
+          <i class="fas fa-question-circle" style="color:#00796b;font-size:22px;"></i>
+          <h3 style="margin:0;color:#333;font-size:17px;">GST Number Entered</h3>
+        </div>
+        <p style="margin:0 0 24px;color:#666;font-size:14px;">Do you want to convert this invoice to B2B?</p>
+        <div style="display:flex;gap:10px;justify-content:flex-end;flex-wrap:wrap;">
+          <button id="gstPromptRemove" style="padding:8px 16px;border:1px solid #ddd;background:#fff;border-radius:6px;cursor:pointer;font-size:14px;white-space:nowrap;">Remove GST Number</button>
+          <button id="gstPromptConvert" style="padding:8px 16px;background:#00796b;color:#fff;border:none;border-radius:6px;cursor:pointer;font-size:14px;white-space:nowrap;">Convert to B2B</button>
+        </div>
+      </div>`;
+    document.body.appendChild(overlay);
+    overlay.querySelector('#gstPromptConvert').onclick = () => { overlay.remove(); resolve('convert'); };
+    overlay.querySelector('#gstPromptRemove').onclick  = () => { overlay.remove(); resolve('remove'); };
+  });
 }
 
 // ── Auto Supply Type detection (replaces the old manual dropdown) ──
@@ -213,11 +258,16 @@ function onInvoiceCustomerInput() {
   const name = getInvText('invCustName');
   const cust = invoiceCustomersList.find(c => c.name.toLowerCase() === name.toLowerCase());
   if (!cust) return;
-  const gstEl = document.getElementById('invGstin');   if (gstEl && !gstEl.value && cust.gstin)   gstEl.value = cust.gstin.toUpperCase();
+  const gstEl = document.getElementById('invGstin');
   const phEl  = document.getElementById('invPhone');   if (phEl  && !phEl.value  && cust.phone)   phEl.value  = cust.phone;
   const adEl  = document.getElementById('invAddress'); if (adEl  && !adEl.value  && cust.address) adEl.value  = cust.address;
   const stEl  = document.getElementById('invState');   if (stEl  && !stEl.value  && cust.state)   stEl.value  = cust.state;
+  if (gstEl && !gstEl.value && cust.gstin) {
+    gstEl.value = cust.gstin.toUpperCase();
+    onInvoiceGstinBlur(gstEl); // same "convert to B2B?" prompt as typing it manually
+  }
   updateClassifyBadge();
+  detectSupplyType();
 }
 
 async function saveCustomerFromInvoiceForm() {
