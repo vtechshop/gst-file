@@ -2,6 +2,7 @@
 // Reports Logic
 // =============================================
 let repB2B = [], repB2C = [], repB2BHSN = [], repB2CHSN = [];
+let repItemsByInvoice = {};
 let currentUser = null;
 
 async function initReports() {
@@ -30,17 +31,37 @@ async function loadReports(filter) {
   showRepLoader(true);
   const { start, end } = getReportDateRange(filter);
 
-  const [b2bRes, b2cRes, hsnB2BRes, hsnB2CRes] = await Promise.all([
+  const [b2bRes, b2cRes, hsnB2BRes, hsnB2CRes, itemsRes] = await Promise.all([
     _supabase.from('b2b_invoices').select('*').eq('user_id', currentUser.id).gte('invoice_date', start).lte('invoice_date', end).order('invoice_date', { ascending: false }),
     _supabase.from('b2c_invoices').select('*').eq('user_id', currentUser.id).gte('invoice_date', start).lte('invoice_date', end).order('invoice_date', { ascending: false }),
     _supabase.from('b2b_hsn').select('*').eq('user_id', currentUser.id).order('created_at', { ascending: false }),
-    _supabase.from('b2c_hsn').select('*').eq('user_id', currentUser.id).order('created_at', { ascending: false })
+    _supabase.from('b2c_hsn').select('*').eq('user_id', currentUser.id).order('created_at', { ascending: false }),
+    _supabase.from('invoice_items').select('*').eq('user_id', currentUser.id)
   ]);
 
-  repB2B    = (b2bRes.data    || []).filter(r => !r.is_deleted);
-  repB2C    = (b2cRes.data    || []).filter(r => !r.is_deleted);
-  repB2BHSN = (hsnB2BRes.data || []).filter(r => !r.is_deleted);
-  repB2CHSN = (hsnB2CRes.data || []).filter(r => !r.is_deleted);
+  repB2B = (b2bRes.data || []).filter(r => !r.is_deleted);
+  repB2C = (b2cRes.data || []).filter(r => !r.is_deleted);
+
+  // HSN/Product reports are driven by invoice line items now — the
+  // invoice is the only source of truth. 'source' !== 'auto' historical
+  // rows (manual entries / Excel imports from before this was a live
+  // report) are kept alongside so no past data disappears.
+  const allItems = (itemsRes.data || []).filter(r => !r.is_deleted);
+  const toHSNRow = it => ({
+    hsn_code: it.hsn_code, product_name: it.product_name, type: 'goods',
+    quantity: it.quantity, taxable_value: +it.taxable_value, gst_percentage: it.gst_percentage,
+    igst: +it.igst, cgst: +it.cgst, sgst: +it.sgst, total_gst: +it.gst_amount, total_invoice_value: +it.total_amount
+  });
+  const legacyB2BHSN = (hsnB2BRes.data || []).filter(r => !r.is_deleted && r.source !== 'auto');
+  const legacyB2CHSN = (hsnB2CRes.data || []).filter(r => !r.is_deleted && r.source !== 'auto');
+  repB2BHSN = [...allItems.filter(it => it.invoice_type === 'b2b' && it.hsn_code).map(toHSNRow), ...legacyB2BHSN];
+  repB2CHSN = [...allItems.filter(it => it.invoice_type === 'b2c' && it.hsn_code).map(toHSNRow), ...legacyB2CHSN];
+
+  repItemsByInvoice = {};
+  allItems.forEach(r => {
+    const key = r.invoice_type + ':' + r.invoice_id;
+    (repItemsByInvoice[key] = repItemsByInvoice[key] || []).push(r);
+  });
 
   renderSummaryCards();
   renderGSTR1Summary();
@@ -112,17 +133,29 @@ function renderHSNWiseSummary() {
 }
 
 // ── GST rate-wise (across B2B + B2C invoices in the selected period) ──
+// Itemized invoices are broken down by each line's own rate (an invoice
+// can legitimately contain more than one rate); legacy invoices with no
+// line items fall back to their single header rate exactly as before.
 function renderGSTRateWiseReport() {
   const tbody = document.getElementById('gstRateWiseBody');
   if (!tbody) return;
   const byRate = {};
-  [...repB2B, ...repB2C].forEach(r => {
-    const key = r.gst_percentage;
-    if (!byRate[key]) byRate[key] = { rate: key, count: 0, taxable: 0, gst: 0, total: 0 };
-    byRate[key].count++;
-    byRate[key].taxable += +r.taxable_amount;
-    byRate[key].gst += +r.gst_amount;
-    byRate[key].total += +r.total_amount;
+  const bump = (rate, taxable, gst, total) => {
+    if (!byRate[rate]) byRate[rate] = { rate, count: 0, taxable: 0, gst: 0, total: 0 };
+    byRate[rate].count++;
+    byRate[rate].taxable += taxable;
+    byRate[rate].gst += gst;
+    byRate[rate].total += total;
+  };
+  [['b2b', repB2B], ['b2c', repB2C]].forEach(([type, list]) => {
+    list.forEach(r => {
+      const items = repItemsByInvoice[type + ':' + r.id];
+      if (items && items.length) {
+        items.forEach(it => bump(+it.gst_percentage, +it.taxable_value, +it.gst_amount, +it.total_amount));
+      } else {
+        bump(+r.gst_percentage, +r.taxable_amount, +r.gst_amount, +r.total_amount);
+      }
+    });
   });
   const rows = Object.values(byRate).sort((a, b) => a.rate - b.rate);
   tbody.innerHTML = rows.length

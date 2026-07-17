@@ -67,8 +67,17 @@ function formatDate(d) {
   return dt.toLocaleDateString('en-IN', { day: '2-digit', month: '2-digit', year: 'numeric' });
 }
 
+// Local calendar date as YYYY-MM-DD. Deliberately NOT d.toISOString() —
+// that converts to UTC first, which silently rolls the date (or even
+// the month) backward by one for any timezone ahead of UTC (e.g. IST)
+// whenever d was built from local parts like new Date(y, m, 1) at local
+// midnight. Every caller here wants "the calendar date this Date
+// represents", not a UTC instant.
 function toISO(d) {
-  return d.toISOString().split('T')[0];
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
 }
 
 function monthYearOptions() {
@@ -121,6 +130,47 @@ function showConfirm(msg) {
     overlay.querySelector('#confirmYes').onclick = () => { overlay.remove(); resolve(true); };
     overlay.querySelector('#confirmNo').onclick  = () => { overlay.remove(); resolve(false); };
   });
+}
+
+// Same shape as showConfirm, but for neutral Yes/No questions (not
+// destructive actions) — no red "Delete" button, a primary-colored "Yes".
+function showYesNo(msg, title) {
+  return new Promise(resolve => {
+    const overlay = document.createElement('div');
+    overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:10000;display:flex;align-items:center;justify-content:center;';
+    overlay.innerHTML = `
+      <div style="background:#fff;border-radius:12px;padding:28px 32px;max-width:380px;width:90%;box-shadow:0 8px 30px rgba(0,0,0,0.2);">
+        <div style="display:flex;align-items:center;gap:12px;margin-bottom:16px;">
+          <i class="fas fa-question-circle" style="color:#00796b;font-size:22px;"></i>
+          <h3 style="margin:0;color:#333;font-size:17px;">${title || 'Confirm'}</h3>
+        </div>
+        <p style="margin:0 0 24px;color:#666;font-size:14px;">${msg}</p>
+        <div style="display:flex;gap:10px;justify-content:flex-end;">
+          <button id="yesNoNo" style="padding:8px 20px;border:1px solid #ddd;background:#fff;border-radius:6px;cursor:pointer;font-size:14px;">No</button>
+          <button id="yesNoYes" style="padding:8px 20px;background:#00796b;color:#fff;border:none;border-radius:6px;cursor:pointer;font-size:14px;">Yes</button>
+        </div>
+      </div>`;
+    document.body.appendChild(overlay);
+    overlay.querySelector('#yesNoYes').onclick = () => { overlay.remove(); resolve(true); };
+    overlay.querySelector('#yesNoNo').onclick  = () => { overlay.remove(); resolve(false); };
+  });
+}
+
+// ── Background scroll lock while a modal is open ──
+// Call lockBodyScroll() right after showing a modal, and
+// unlockBodyScrollIfNoModalsOpen() on every path that closes one — it
+// only actually restores scrolling once no modal is left open, so
+// chained close+reopen calls (e.g. Settings → Business Profile) never
+// flicker the page scrollbar on and off.
+function lockBodyScroll() {
+  document.body.style.overflow = 'hidden';
+}
+
+function unlockBodyScrollIfNoModalsOpen() {
+  const anyOpen = document.getElementById('profileModalWrap')
+    || document.getElementById('settingsModalWrap')
+    || document.querySelector('.modal-overlay.open');
+  if (!anyOpen) document.body.style.overflow = '';
 }
 
 function setupMobileMenu() {

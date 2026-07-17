@@ -580,6 +580,10 @@ table.data-table {
 
 .modal-overlay.open { display: flex; }
 
+/* Header and footer stay put; only .modal-body scrolls. .modal itself
+   no longer scrolls as one block (that made header/footer scroll away
+   with the content and, in modals with no distinct header/footer
+   markup, could clip lower content entirely). */
 .modal {
   background: #fff;
   border-radius: var(--radius);
@@ -587,7 +591,9 @@ table.data-table {
   max-width: 500px;
   box-shadow: var(--shadow-md);
   max-height: 90vh;
-  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
 }
 
 .modal-header {
@@ -596,6 +602,7 @@ table.data-table {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  flex-shrink: 0;
 }
 
 .modal-title { font-size: 16px; font-weight: 600; color: var(--primary-dark); }
@@ -607,8 +614,8 @@ table.data-table {
 }
 
 .modal-close:hover { background: var(--bg); color: var(--danger); }
-.modal-body { padding: 20px; }
-.modal-footer { padding: 14px 20px; border-top: 1px solid var(--border); display: flex; justify-content: flex-end; gap: 10px; }
+.modal-body { padding: 20px; overflow-y: auto; max-height: 80vh; flex: 1 1 auto; }
+.modal-footer { padding: 14px 20px; border-top: 1px solid var(--border); display: flex; justify-content: flex-end; gap: 10px; flex-shrink: 0; }
 
 /* ---- Profile modal ---- */
 .profile-section { margin-bottom: 20px; }
@@ -764,6 +771,25 @@ table.data-table {
 .storage-actions { display: flex; gap: 8px; flex-shrink: 0; }
 .btn-clear-data { background: #fff; border: 1px solid #ddd; color: var(--danger); }
 
+/* ---- Product search dropdown (invoice line-item Product field) ---- */
+/* position:fixed on document.body, not nested in the table, so it's
+   never clipped by .table-wrapper's overflow-x scroll container. */
+.item-product-dropdown {
+  position: fixed;
+  display: none;
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-md);
+  max-height: 280px;
+  overflow-y: auto;
+  z-index: 9000;
+}
+.item-product-dropdown.open { display: block; }
+.item-product-option { padding: 8px 12px; cursor: pointer; border-bottom: 1px solid var(--bg); }
+.item-product-option:last-child { border-bottom: none; }
+.item-product-option:hover { background: var(--primary-xlight); }
+
 .dash-header-controls { display: flex; align-items: center; gap: 8px; margin-left: auto; flex-wrap: wrap; }
 .dash-select-year  { width: 100px; padding: 7px 10px; font-weight: 600; }
 .dash-select-month { width: 150px; padding: 7px 10px; }
@@ -803,5 +829,7 @@ tr.row-skip { opacity: 0.5; }
 :root[data-theme="dark"] .form-control[readonly] { background: #182422; }
 :root[data-theme="dark"] .auth-right { background: #1b2523; }
 :root[data-theme="dark"] .modal, :root[data-theme="dark"] .auth-tab { background: #1b2523; color: var(--text); }
+:root[data-theme="dark"] .item-product-dropdown { background: #1b2523; color: var(--text); }
+:root[data-theme="dark"] .item-product-option:hover { background: var(--primary-xlight); }
 :root[data-theme="dark"] .data-table tbody tr:hover { background: #16302c; }
 :root[data-theme="dark"] .page-btn { background: #1b2523; color: var(--text); }

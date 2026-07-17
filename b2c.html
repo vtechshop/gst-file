@@ -12,12 +12,15 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.31/jspdf.plugin.autotable.min.js"></script>
   <script src="js/localdb.js"></script>
   <script src="js/config.js"></script>
+  <script src="js/product-sync.js"></script>
   <script src="js/auth.js"></script>
   <script src="js/utils.js"></script>
   <script src="js/search.js"></script>
   <script src="js/profile.js"></script>
   <script src="js/export.js"></script>
+  <script src="js/products.js"></script>
   <script src="js/drafts.js"></script>
+  <script src="js/invoice-items.js"></script>
   <script src="js/b2c.js"></script>
 </head>
 <body>
@@ -116,39 +119,8 @@
             </div>
           </div>
 
-          <div class="form-grid cols-2 mb-16">
-            <div class="form-group">
-              <label for="b2cTaxable">Taxable Amount (&#8377;) <span class="text-required">*</span></label>
-              <input type="number" id="b2cTaxable" class="form-control" placeholder="0.00" min="0" step="0.01">
-            </div>
-            <div class="form-group">
-              <label for="b2cGstPct">GST Percentage <span class="text-required">*</span></label>
-              <select id="b2cGstPct" class="form-control">
-                <option value="0">0%</option>
-                <option value="5">5%</option>
-                <option value="12">12%</option>
-                <option value="18" selected>18%</option>
-                <option value="28">28%</option>
-              </select>
-            </div>
-          </div>
-
-          <!-- Calculated Values -->
-          <div class="calc-box mb-20">
-            <div class="calc-row">
-              <span class="label">Tax Breakdown</span>
-              <div class="calc-tax-row">
-                <span class="text-muted-sm">IGST: <b id="b2cIGST">0.00</b></span>
-                <span class="text-muted-sm">CGST: <b id="b2cCGST">0.00</b></span>
-                <span class="text-muted-sm">SGST: <b id="b2cSGST">0.00</b></span>
-              </div>
-              <span class="value"><input type="text" id="b2cGstAmt" class="form-control calc-input-sm" readonly aria-label="GST Amount"></span>
-            </div>
-            <div class="calc-row total">
-              <span class="label">Total Invoice Amount</span>
-              <span class="value"><input type="text" id="b2cTotalAmt" class="form-control calc-input-total" readonly aria-label="Total Invoice Amount"></span>
-            </div>
-          </div>
+          <!-- Product Line Items (Product Master driven) -->
+          <div id="itemsSection"></div>
 
           <div class="btn-group">
             <button type="button" class="btn btn-primary" id="b2cSaveBtn" onclick="saveB2C()"><i class="fas fa-save"></i> Save Invoice</button>

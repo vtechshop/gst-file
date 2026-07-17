@@ -22,7 +22,7 @@ class QueryBuilder {
     this._payload    = null;
   }
 
-  select()  { this._op = 'select';  return this; }
+  select()  { if (this._op !== 'insert' && this._op !== 'update') this._op = 'select'; return this; }
   insert(d) { this._op = 'insert';  this._payload = d; return this; }
   update(d) { this._op = 'update';  this._payload = d; return this; }
   delete()  { this._op = 'delete';  return this; }
@@ -156,7 +156,7 @@ class LocalSupabase {
 // =============================================
 // Storage Status & Backup / Restore
 // =============================================
-const DB_TABLES = ['b2b_invoices', 'b2c_invoices', 'b2b_hsn', 'b2c_hsn', 'customers', 'cdn_notes', 'products', 'import_mappings'];
+const DB_TABLES = ['b2b_invoices', 'b2c_invoices', 'b2b_hsn', 'b2c_hsn', 'customers', 'cdn_notes', 'products', 'import_mappings', 'invoice_items'];
 
 function getStorageStats() {
   const stats = {};

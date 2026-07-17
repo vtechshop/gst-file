@@ -101,9 +101,17 @@ function renderRecycleBin(items) {
 
 function escBin(v) { return (v || '').toString().replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;'); }
 
+function invoiceTypeForTable(table) {
+  if (table === 'b2b_invoices') return 'b2b';
+  if (table === 'b2c_invoices') return 'b2c';
+  return null;
+}
+
 async function restoreBinItem(table, id) {
   const { error } = await _supabase.from(table).update({ is_deleted: false, deleted_at: null }).eq('id', id);
   if (error) { showToast('Error: ' + error.message, 'error'); return; }
+  const invType = invoiceTypeForTable(table);
+  if (invType) await cascadeInvoiceItemsRestore(invType, id);
   showToast('Restored!', 'success');
   if (typeof refreshStorageStatus === 'function') refreshStorageStatus();
   const user = await getCurrentUser();
@@ -115,6 +123,8 @@ async function deleteBinItemForever(table, id) {
   if (!ok) return;
   const { error } = await _supabase.from(table).delete().eq('id', id);
   if (error) { showToast('Error: ' + error.message, 'error'); return; }
+  const invType = invoiceTypeForTable(table);
+  if (invType) await cascadeInvoiceItemsHardDelete(invType, id);
   showToast('Permanently deleted.', 'success');
   const user = await getCurrentUser();
   if (user) await loadRecycleBin(user.id);
@@ -126,6 +136,8 @@ async function emptyRecycleBin() {
   if (!ok) return;
   for (const it of binAllItems) {
     await _supabase.from(it.table).delete().eq('id', it.id);
+    const invType = invoiceTypeForTable(it.table);
+    if (invType) await cascadeInvoiceItemsHardDelete(invType, it.id);
   }
   showToast('Recycle Bin emptied.', 'success');
   const user = await getCurrentUser();

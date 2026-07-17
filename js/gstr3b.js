@@ -22,7 +22,8 @@ function populateMonthDropdown() {
   const now = new Date();
   for (let i = 0; i < 12; i++) {
     const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
-    const val = d.toISOString().slice(0, 7);
+    // Local getters, not toISOString() — see js/utils.js's toISO() for why.
+    const val = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0');
     const lbl = d.toLocaleString('en-IN', { month: 'long', year: 'numeric' });
     const opt = document.createElement('option');
     opt.value = val; opt.textContent = lbl;
@@ -33,25 +34,33 @@ function populateMonthDropdown() {
 
 async function loadGSTR3B() {
   const sel   = document.getElementById('gstr3bMonth');
-  const month = sel?.value || new Date().toISOString().slice(0, 7);
+  const now = new Date();
+  const month = sel?.value || (now.getFullYear() + '-' + String(now.getMonth() + 1).padStart(2, '0'));
   const start = month + '-01';
   const end   = month + '-31';
 
-  const [b2bRes, b2cRes] = await Promise.all([
+  const [b2bRes, b2cRes, itemsRes] = await Promise.all([
     _supabase.from('b2b_invoices').select('*').eq('user_id', gstr3bUser.id).gte('invoice_date', start).lte('invoice_date', end),
-    _supabase.from('b2c_invoices').select('*').eq('user_id', gstr3bUser.id).gte('invoice_date', start).lte('invoice_date', end)
+    _supabase.from('b2c_invoices').select('*').eq('user_id', gstr3bUser.id).gte('invoice_date', start).lte('invoice_date', end),
+    _supabase.from('invoice_items').select('*').eq('user_id', gstr3bUser.id)
   ]);
 
   const b2b = (b2bRes.data || []).filter(r => !r.is_deleted);
   const b2c = (b2cRes.data || []).filter(r => !r.is_deleted);
 
-  renderGSTR3B(b2b, b2c, month);
+  const itemsByInvoice = {};
+  (itemsRes.data || []).filter(r => !r.is_deleted).forEach(r => {
+    const key = r.invoice_type + ':' + r.invoice_id;
+    (itemsByInvoice[key] = itemsByInvoice[key] || []).push(r);
+  });
+
+  renderGSTR3B(b2b, b2c, month, itemsByInvoice);
 }
 
 function sum(arr, key) { return arr.reduce((s, r) => s + (+r[key] || 0), 0); }
 function r2(n) { return Math.round((+n || 0) * 100) / 100; }
 
-function renderGSTR3B(b2b, b2c, month) {
+function renderGSTR3B(b2b, b2c, month, itemsByInvoice) {
   const all = [...b2b, ...b2c];
 
   // ── 3.1(a) Outward Taxable Supplies ──────────────
@@ -83,18 +92,32 @@ function renderGSTR3B(b2b, b2c, month) {
   const unregInterIGST = r2(sum(b2cInter, 'igst'));
 
   // ── Rate-wise breakup ─────────────────────────────
-  const rates = [0, 5, 12, 18, 28];
-  const rateWise = rates.map(rt => {
-    const rows = all.filter(r => +r.gst_percentage === rt);
-    return {
-      rate: rt,
-      taxable: r2(sum(rows, 'taxable_amount')),
-      igst:    r2(sum(rows, 'igst')),
-      cgst:    r2(sum(rows, 'cgst')),
-      sgst:    r2(sum(rows, 'sgst')),
-      total:   r2(sum(rows, 'total_amount'))
-    };
-  }).filter(r => r.taxable > 0);
+  // Itemized invoices are broken down by each line's own rate (one
+  // invoice can legitimately mix rates); legacy invoices with no line
+  // items fall back to their single header rate exactly as before.
+  const byRate = {};
+  const bumpRate = (rate, taxable, igst, cgst, sgst, total) => {
+    if (!byRate[rate]) byRate[rate] = { rate, taxable: 0, igst: 0, cgst: 0, sgst: 0, total: 0 };
+    byRate[rate].taxable += taxable;
+    byRate[rate].igst += igst;
+    byRate[rate].cgst += cgst;
+    byRate[rate].sgst += sgst;
+    byRate[rate].total += total;
+  };
+  [['b2b', b2b], ['b2c', b2c]].forEach(([type, list]) => {
+    list.forEach(r => {
+      const items = (itemsByInvoice || {})[type + ':' + r.id];
+      if (items && items.length) {
+        items.forEach(it => bumpRate(+it.gst_percentage, +it.taxable_value, +it.igst, +it.cgst, +it.sgst, +it.total_amount));
+      } else {
+        bumpRate(+r.gst_percentage, +r.taxable_amount, +r.igst, +r.cgst, +r.sgst, +r.total_amount);
+      }
+    });
+  });
+  const rateWise = Object.values(byRate)
+    .map(r => ({ rate: r.rate, taxable: r2(r.taxable), igst: r2(r.igst), cgst: r2(r.cgst), sgst: r2(r.sgst), total: r2(r.total) }))
+    .filter(r => r.taxable > 0)
+    .sort((a, b) => a.rate - b.rate);
 
   // ── Save for export ───────────────────────────────
   window._gstr3bData = { b2b, b2c, month, totTax, totIGST, totCGST, totSGST, totGST, rateWise, regInterTax, regInterIGST, unregInterTax, unregInterIGST };

@@ -15,17 +15,17 @@ async function initB2B() {
   setupLogoutBtn();
   setupMobileMenu();
   loadUserProfile(user.id);
-  setupB2BCalc();
   setupB2BSearch();
   updateAutoToggleUI();
   await loadCustomersList(user.id);
+  await initInvoiceItems(user.id, 'b2b');
   await loadB2B(user.id);
   applyIncomingSearchQuery('b2bSearch');
   generateInvoiceNo(user.id);
 
-  const draftFields = ['b2bGstNum','b2bCustName','b2bInvNum','b2bInvDate','b2bTaxable','b2bGstPct','b2bSupply'];
+  const draftFields = ['b2bGstNum','b2bCustName','b2bInvNum','b2bInvDate','b2bSupply'];
   setupDraftAutosave('b2b_invoice', draftFields);
-  if (!b2bEditId) checkForDraft('b2b_invoice', draftFields, 'b2bDraftBanner');
+  if (!b2bEditId) checkForDraft('b2b_invoice', draftFields, 'b2bDraftBanner', 'restoreB2BDraftFull', 'discardB2BDraftFull');
   // Prefill from Customer Master redirect
   const pf = sessionStorage.getItem('prefill_customer');
   if (pf) {
@@ -36,6 +36,19 @@ async function initB2B() {
     } catch {}
     sessionStorage.removeItem('prefill_customer');
   }
+}
+
+const B2B_DRAFT_FIELDS = ['b2bGstNum','b2bCustName','b2bInvNum','b2bInvDate','b2bSupply'];
+
+function restoreB2BDraftFull(formKey) {
+  restoreDraft(formKey, B2B_DRAFT_FIELDS);
+  restoreItemsFromDraft(formKey);
+  const banner = document.getElementById('b2bDraftBanner'); if (banner) banner.innerHTML = '';
+}
+
+function discardB2BDraftFull(formKey) {
+  discardDraft(formKey, 'b2bDraftBanner');
+  clearItemsDraft(formKey);
 }
 
 // ── Invoice Number Auto-generate ──────────────────
@@ -106,25 +119,6 @@ async function saveCustomerFromForm() {
   await loadCustomersList(user.id);
 }
 
-function setupB2BCalc() {
-  ['b2bTaxable','b2bGstPct','b2bSupply'].forEach(id => {
-    document.getElementById(id)?.addEventListener('change', recalcB2B);
-    document.getElementById(id)?.addEventListener('input',  recalcB2B);
-  });
-}
-
-function recalcB2B() {
-  const amt   = parseFloat(document.getElementById('b2bTaxable')?.value) || 0;
-  const pct   = parseFloat(document.getElementById('b2bGstPct')?.value)  || 0;
-  const type  = document.getElementById('b2bSupply')?.value || 'intrastate';
-  const r     = calcGST(amt, pct, type);
-  setValue('b2bGstAmt',   formatNum(r.gstAmount));
-  setValue('b2bTotalAmt', formatNum(r.totalAmount));
-  setValue('b2bIGST',     formatNum(r.igst));
-  setValue('b2bCGST',     formatNum(r.cgst));
-  setValue('b2bSGST',     formatNum(r.sgst));
-}
-
 function setValue(id, v) { const el = document.getElementById(id); if (el) el.value = v; }
 function getText(id)  { return document.getElementById(id)?.value?.trim() || ''; }
 
@@ -136,51 +130,42 @@ async function saveB2B() {
   const custName = getText('b2bCustName');
   const invNum   = getText('b2bInvNum');
   const invDate  = getText('b2bInvDate');
-  const taxable  = parseFloat(getText('b2bTaxable')) || 0;
-  const gstPct   = parseFloat(getText('b2bGstPct')) || 0;
   const supply   = getText('b2bSupply');
 
   if (!gstNum || !custName || !invNum || !invDate) { showToast('Please fill all required fields.', 'error'); return; }
-  if (taxable <= 0) { showToast('Taxable amount must be positive.', 'error'); return; }
   if (gstNum.length < 15) { showToast('GST Number must be 15 characters.', 'error'); return; }
   if (!/^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z]{1}[1-9A-Z]{1}Z[0-9A-Z]{1}$/.test(gstNum)) {
     showToast('GST Number format warning — saving anyway.', 'warning');
   }
 
-  const r = calcGST(taxable, gstPct, supply);
-  const payload = {
-    user_id: user.id, gst_number: gstNum, customer_name: custName,
-    invoice_number: invNum, invoice_date: invDate,
-    taxable_amount: taxable, gst_percentage: gstPct,
-    gst_amount: r.gstAmount, total_amount: r.totalAmount,
-    supply_type: supply, igst: r.igst, cgst: r.cgst, sgst: r.sgst
-  };
-
-  let error;
-  if (b2bEditId) {
-    ({ error } = await _supabase.from('b2b_invoices').update(payload).eq('id', b2bEditId));
-  } else {
+  if (!b2bEditId) {
     const dup = await _supabase.from('b2b_invoices').select('id').eq('user_id', user.id).eq('invoice_number', invNum).single();
     if (dup.data) { showToast('Invoice number already exists!', 'error'); return; }
-    ({ error } = await _supabase.from('b2b_invoices').insert(payload));
   }
 
-  if (error) { showToast('Error: ' + error.message, 'error'); return; }
+  const headerBase = {
+    user_id: user.id, gst_number: gstNum, customer_name: custName,
+    invoice_number: invNum, invoice_date: invDate, supply_type: supply
+  };
+
+  const result = await saveInvoiceWithItems('b2b', headerBase, b2bEditId, user.id);
+  if (!result) return;
+
   showToast(b2bEditId ? 'Invoice updated successfully!' : 'Invoice saved successfully!');
   b2bEditId = null;
   resetB2B();
   clearDraft('b2b_invoice');
+  clearItemsDraft('b2b_invoice');
   const banner = document.getElementById('b2bDraftBanner'); if (banner) banner.innerHTML = '';
   await loadB2B(user.id);
   if (typeof refreshStorageStatus === 'function') refreshStorageStatus();
 }
 
 function resetB2B() {
-  ['b2bGstNum','b2bCustName','b2bInvNum','b2bTaxable'].forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
+  ['b2bGstNum','b2bCustName','b2bInvNum'].forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
   document.getElementById('b2bInvDate').value = new Date().toISOString().split('T')[0];
-  document.getElementById('b2bGstPct').value = getDefaultGstPct();
   document.getElementById('b2bSupply').value = 'intrastate';
-  recalcB2B();
+  resetInvoiceItems();
   b2bEditId = null;
   document.getElementById('formTitle').textContent = 'B2B Invoice Entry';
   document.getElementById('saveBtn').innerHTML = '<i class="fas fa-save"></i> Save Invoice';
@@ -291,6 +276,7 @@ async function bulkDeleteB2B() {
   const ids = [...b2bSelectedIds];
   for (const id of ids) {
     await _supabase.from('b2b_invoices').update({ is_deleted: true, deleted_at: new Date().toISOString() }).eq('id', id);
+    await cascadeInvoiceItemsDelete('b2b', id);
   }
   showToast(`Moved ${ids.length} invoice(s) to Recycle Bin.`);
   b2bSelectedIds.clear();
@@ -313,10 +299,13 @@ async function editB2B(id) {
   document.getElementById('b2bCustName').value  = rec.customer_name;
   document.getElementById('b2bInvNum').value    = rec.invoice_number;
   document.getElementById('b2bInvDate').value   = rec.invoice_date;
-  document.getElementById('b2bTaxable').value   = rec.taxable_amount;
-  document.getElementById('b2bGstPct').value    = rec.gst_percentage;
   document.getElementById('b2bSupply').value    = rec.supply_type;
-  recalcB2B();
+
+  const { data: items } = await _supabase.from('invoice_items').select('*').eq('invoice_id', id).eq('invoice_type', 'b2b');
+  const activeItems = (items || []).filter(r => !r.is_deleted).sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0));
+  if (activeItems.length) loadItemsIntoTable(activeItems);
+  else synthesizeLegacyItemRow(rec);
+
   document.getElementById('formTitle').textContent = 'Edit B2B Invoice';
   document.getElementById('saveBtn').innerHTML = '<i class="fas fa-save"></i> Update Invoice';
   document.getElementById('b2bGstNum').scrollIntoView({ behavior: 'smooth', block: 'center' });
@@ -327,6 +316,7 @@ async function deleteB2B(id) {
   if (!ok) return;
   const { error } = await _supabase.from('b2b_invoices').update({ is_deleted: true, deleted_at: new Date().toISOString() }).eq('id', id);
   if (error) { showToast('Error: ' + error.message, 'error'); return; }
+  await cascadeInvoiceItemsDelete('b2b', id);
   showToast('Invoice moved to Recycle Bin.');
   b2bAllData = b2bAllData.filter(r => r.id !== id);
   renderB2BTable(b2bAllData);

@@ -1,11 +1,13 @@
 // =============================================
-// HSN Summary Logic
+// HSN Summary — read-only report
+// Generated automatically from B2B/B2C invoice line items
+// (js/invoice-items.js). There is no manual HSN entry anywhere in
+// the app any more — invoices are the single source of truth.
+// Rows saved here in the past (before this became a report) are
+// still shown, read-only, as historical entries so no data is lost.
 // =============================================
-let hsnB2BEditId = null;
-let hsnB2CEditId = null;
 let hsnB2BData = [];
 let hsnB2CData = [];
-let hsnProductsList = [];
 
 async function initHSN() {
   const user = await requireAuth();
@@ -14,133 +16,80 @@ async function initHSN() {
   setupLogoutBtn();
   loadUserProfile(user.id);
   setupMobileMenu();
-  setupHSNCalc('b2b');
-  setupHSNCalc('b2c');
-  await loadHSNProductsList(user.id);
   await Promise.all([loadB2BHSN(user.id), loadB2CHSN(user.id)]);
 }
 
-// ── Product Master auto-fill ──────────────────────
-async function loadHSNProductsList(userId) {
-  hsnProductsList = await loadProductsList(userId);
-  const opts = hsnProductsList.map(p => `<option value="${p.name}">${p.hsn_code ? '(' + p.hsn_code + ')' : ''}</option>`).join('');
-  const dlB2B = document.getElementById('productDatalistB2B');
-  const dlB2C = document.getElementById('productDatalistB2C');
-  if (dlB2B) dlB2B.innerHTML = opts;
-  if (dlB2C) dlB2C.innerHTML = opts;
-}
+// ── Build the summary: live aggregation from invoice_items,
+// unioned with whatever pre-existing historical rows already exist
+// in b2b_hsn / b2c_hsn (from before this page became read-only). ──
+async function buildHSNSummary(userId, type) {
+  const invTable = type === 'b2b' ? 'b2b_invoices' : 'b2c_invoices';
+  const hsnTable = type === 'b2b' ? 'b2b_hsn' : 'b2c_hsn';
 
-function onHSNProductSelect(prefix) {
-  const p = prefix.toUpperCase();
-  const name = document.getElementById(`hsn${p}Prod`)?.value?.trim();
-  const prod = findProductByName(hsnProductsList, name);
-  if (!prod) return;
+  const [invRes, itemsRes, hsnRes] = await Promise.all([
+    _supabase.from(invTable).select('*').eq('user_id', userId),
+    _supabase.from('invoice_items').select('*').eq('user_id', userId).eq('invoice_type', type),
+    _supabase.from(hsnTable).select('*').eq('user_id', userId)
+  ]);
 
-  const codeEl = document.getElementById(`hsn${p}Code`);
-  if (codeEl && !codeEl.value) codeEl.value = prod.hsn_code || '';
-
-  const typeEl = document.getElementById(`hsn${p}Type`);
-  if (typeEl) typeEl.value = prod.type || 'goods';
-
-  const pctEl = document.getElementById(`hsn${p}GstPct`);
-  if (pctEl) pctEl.value = prod.gst_percentage ?? 18;
-
-  const taxableEl = document.getElementById(`hsn${p}Taxable`);
-  if (taxableEl && !taxableEl.value && prod.default_rate) taxableEl.value = prod.default_rate;
-
-  recalcHSN(prefix);
-}
-
-function setupHSNCalc(prefix) {
-  ['Taxable','GstPct','Supply'].forEach(s => {
-    const id = `hsn${prefix.toUpperCase()}${s}`;
-    document.getElementById(id)?.addEventListener('change', () => recalcHSN(prefix));
-    document.getElementById(id)?.addEventListener('input',  () => recalcHSN(prefix));
+  const invSupply = {};
+  const activeInvoiceIds = new Set();
+  (invRes.data || []).forEach(r => {
+    invSupply[r.id] = r.supply_type;
+    if (!r.is_deleted) activeInvoiceIds.add(r.id);
   });
-}
 
-function recalcHSN(prefix) {
-  const p = prefix.toUpperCase();
-  const amt  = parseFloat(document.getElementById(`hsn${p}Taxable`)?.value) || 0;
-  const pct  = parseFloat(document.getElementById(`hsn${p}GstPct`)?.value)  || 0;
-  const type = document.getElementById(`hsn${p}Supply`)?.value || 'intrastate';
-  const r    = calcGST(amt, pct, type);
-  const sv   = (id, v) => { const el = document.getElementById(id); if (el) el.value = v; };
-  sv(`hsn${p}IGST`,  formatNum(r.igst));
-  sv(`hsn${p}CGST`,  formatNum(r.cgst));
-  sv(`hsn${p}SGST`,  formatNum(r.sgst));
-  sv(`hsn${p}TotalGST`, formatNum(r.totalGst));
-  sv(`hsn${p}TotalInv`, formatNum(r.totalAmount));
-}
+  const activeItems = (itemsRes.data || []).filter(r => !r.is_deleted && activeInvoiceIds.has(r.invoice_id) && r.hsn_code);
 
-async function saveHSN(prefix) {
-  const user = await getCurrentUser();
-  if (!user) return;
-  const p = prefix.toUpperCase();
-  const gt = (id) => document.getElementById(id)?.value?.trim() || '';
+  const groups = {};
+  activeItems.forEach(it => {
+    const supply = invSupply[it.invoice_id] || 'intrastate';
+    const key = it.hsn_code + '|' + it.gst_percentage + '|' + supply;
+    if (!groups[key]) {
+      groups[key] = {
+        id: 'computed:' + key, source: 'computed', hsn_code: it.hsn_code, productNames: new Set(),
+        type: 'goods', quantity: 0, taxable_value: 0, gst_percentage: +it.gst_percentage,
+        supply_type: supply, igst: 0, cgst: 0, sgst: 0, total_gst: 0, total_invoice_value: 0,
+        invoiceIds: new Set()
+      };
+    }
+    const g = groups[key];
+    g.productNames.add(it.product_name);
+    g.quantity += +it.quantity || 0;
+    g.taxable_value = round2(g.taxable_value + (+it.taxable_value || 0));
+    g.igst = round2(g.igst + (+it.igst || 0));
+    g.cgst = round2(g.cgst + (+it.cgst || 0));
+    g.sgst = round2(g.sgst + (+it.sgst || 0));
+    g.total_gst = round2(g.total_gst + (+it.gst_amount || 0));
+    g.total_invoice_value = round2(g.total_invoice_value + (+it.total_amount || 0));
+    g.invoiceIds.add(it.invoice_id);
+  });
 
-  const hsnCode  = gt(`hsn${p}Code`);
-  const prodName = gt(`hsn${p}Prod`);
-  const type     = gt(`hsn${p}Type`);
-  const taxable  = parseFloat(gt(`hsn${p}Taxable`)) || 0;
-  const gstPct   = parseFloat(gt(`hsn${p}GstPct`))  || 0;
-  const supply   = gt(`hsn${p}Supply`);
+  const computedRows = Object.values(groups).map(g => ({
+    ...g,
+    product_name: [...g.productNames].join(', '),
+    invoiceCount: g.invoiceIds.size
+  }));
 
-  if (!hsnCode || !prodName || !type) { showToast('Please fill HSN Code, Product Name and Type.', 'error'); return; }
-  if (taxable <= 0) { showToast('Taxable value must be positive.', 'error'); return; }
+  // 'auto' rows were written by an earlier version of this feature that
+  // persisted a synced copy into this table on every invoice save; that
+  // mechanism is gone now (HSN Summary computes live from invoice_items
+  // instead), so any leftover 'auto' rows are stale caches — excluded
+  // here to avoid double-counting against the live computation above.
+  const legacyRows = (hsnRes.data || [])
+    .filter(r => !r.is_deleted && r.source !== 'auto')
+    .map(r => ({ ...r, source: r.source || 'legacy' }));
 
-  const r = calcGST(taxable, gstPct, supply);
-
-  const table = prefix === 'b2b' ? 'b2b_hsn' : 'b2c_hsn';
-  const editId = prefix === 'b2b' ? hsnB2BEditId : hsnB2CEditId;
-
-  const payload = {
-    user_id: user.id, hsn_code: hsnCode, product_name: prodName,
-    type, taxable_value: taxable, gst_percentage: gstPct,
-    supply_type: supply, igst: r.igst, cgst: r.cgst, sgst: r.sgst,
-    total_gst: r.totalGst, total_invoice_value: r.totalAmount,
-    entry_date: new Date().toISOString().split('T')[0]
-  };
-
-  if (prefix === 'b2b') {
-    payload.quantity = parseFloat(gt('hsnB2BQty')) || 0;
-  }
-
-  let error;
-  if (editId) {
-    ({ error } = await _supabase.from(table).update(payload).eq('id', editId));
-  } else {
-    ({ error } = await _supabase.from(table).insert(payload));
-  }
-
-  if (error) { showToast('Error: ' + error.message, 'error'); return; }
-  showToast(editId ? 'HSN entry updated!' : 'HSN entry saved!');
-
-  if (prefix === 'b2b') { hsnB2BEditId = null; resetHSN('b2b'); await loadB2BHSN(user.id); }
-  else { hsnB2CEditId = null; resetHSN('b2c'); await loadB2CHSN(user.id); }
-}
-
-function resetHSN(prefix) {
-  const p = prefix.toUpperCase();
-  ['Code','Prod','Taxable'].forEach(s => { const el = document.getElementById(`hsn${p}${s}`); if (el) el.value = ''; });
-  if (prefix === 'b2b') { const q = document.getElementById('hsnB2BQty'); if (q) q.value = ''; }
-  document.getElementById(`hsn${p}Type`)?.querySelector('option')?.parentElement && (document.getElementById(`hsn${p}Type`).value = 'goods');
-  document.getElementById(`hsn${p}GstPct`).value  = getDefaultGstPct();
-  document.getElementById(`hsn${p}Supply`).value  = 'intrastate';
-  recalcHSN(prefix);
-  if (prefix === 'b2b') hsnB2BEditId = null;
-  else hsnB2CEditId = null;
+  return [...computedRows, ...legacyRows].sort((a, b) => b.total_invoice_value - a.total_invoice_value);
 }
 
 async function loadB2BHSN(userId) {
-  const { data } = await _supabase.from('b2b_hsn').select('*').eq('user_id', userId).order('created_at', { ascending: false });
-  hsnB2BData = (data || []).filter(r => !r.is_deleted);
+  hsnB2BData = await buildHSNSummary(userId, 'b2b');
   renderHSNTable('b2b', hsnB2BData);
 }
 
 async function loadB2CHSN(userId) {
-  const { data } = await _supabase.from('b2c_hsn').select('*').eq('user_id', userId).order('created_at', { ascending: false });
-  hsnB2CData = (data || []).filter(r => !r.is_deleted);
+  hsnB2CData = await buildHSNSummary(userId, 'b2c');
   renderHSNTable('b2c', hsnB2CData);
 }
 
@@ -150,7 +99,7 @@ function renderHSNTable(prefix, data) {
   if (!tbody) return;
 
   if (!data.length) {
-    tbody.innerHTML = `<tr><td colspan="11" class="empty-state"><i class="fas fa-barcode" style="display:block;font-size:40px;margin-bottom:10px;"></i>No HSN entries found</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="13" class="empty-state"><i class="fas fa-barcode" style="display:block;font-size:40px;margin-bottom:10px;"></i>No HSN data yet &mdash; add products to an invoice and it will appear here automatically.</td></tr>`;
     if (tfoot) tfoot.innerHTML = '';
     return;
   }
@@ -170,10 +119,10 @@ function renderHSNTable(prefix, data) {
       <td style="text-align:right;font-weight:700;">₹${formatNum(r.total_gst)}</td>
       <td style="text-align:right;font-weight:700;color:var(--primary-dark);">₹${formatNum(r.total_invoice_value)}</td>
       <td>
-        <div class="action-btns">
-          <button class="btn btn-secondary btn-sm btn-icon" onclick="editHSN('${prefix}','${r.id}')" title="Edit"><i class="fas fa-edit"></i></button>
-          <button class="btn btn-danger btn-sm btn-icon" onclick="deleteHSN('${prefix}','${r.id}')" title="Delete"><i class="fas fa-trash"></i></button>
-        </div>
+        ${r.source === 'computed'
+          ? `<span class="badge badge-blue" title="Live total from ${r.invoiceCount} invoice(s) — edit those invoices to change this"><i class="fas fa-link"></i> ${r.invoiceCount} Invoice${r.invoiceCount === 1 ? '' : 's'}</span>`
+          : `<span class="badge" style="background:#eceff1;color:#546e7a;margin-right:6px;" title="Historical entry saved before HSN Summary became an automatic report">Historical</span>
+             <button class="btn btn-danger btn-sm btn-icon" onclick="deleteHSN('${prefix}','${r.id}')" title="Delete"><i class="fas fa-trash"></i></button>`}
       </td>
     </tr>`).join('');
 
@@ -189,39 +138,21 @@ function renderHSNTable(prefix, data) {
   if (tfoot) tfoot.innerHTML = `<tr><td colspan="${cols}" style="font-weight:700;">TOTALS (${data.length})</td><td></td><td></td><td style="text-align:right;font-weight:700;">₹${formatNum(totals.igst)}</td><td style="text-align:right;font-weight:700;">C+S: ₹${formatNum(totals.cgst + totals.sgst)}</td><td style="text-align:right;font-weight:700;">₹${formatNum(totals.totalGst)}</td><td style="text-align:right;font-weight:700;">₹${formatNum(totals.totalInv)}</td><td></td></tr>`;
 }
 
-async function editHSN(prefix, id) {
-  const data = prefix === 'b2b' ? hsnB2BData : hsnB2CData;
-  const rec  = data.find(r => r.id === id);
-  if (!rec) return;
-  const p = prefix.toUpperCase();
-  if (prefix === 'b2b') { hsnB2BEditId = id; document.getElementById('hsnB2BQty').value = rec.quantity || 0; }
-  else hsnB2CEditId = id;
-
-  document.getElementById(`hsn${p}Code`).value   = rec.hsn_code;
-  document.getElementById(`hsn${p}Prod`).value   = rec.product_name;
-  document.getElementById(`hsn${p}Type`).value   = rec.type;
-  document.getElementById(`hsn${p}Taxable`).value = rec.taxable_value;
-  document.getElementById(`hsn${p}GstPct`).value  = rec.gst_percentage;
-  document.getElementById(`hsn${p}Supply`).value  = rec.supply_type;
-  recalcHSN(prefix);
-
-  if (prefix === 'b2b') {
-    document.querySelectorAll('.tab-btn')[0].click();
-  } else {
-    document.querySelectorAll('.tab-btn')[1].click();
-  }
-  window.scrollTo({ top: 0, behavior: 'smooth' });
-}
-
+// Only historical rows (source !== 'computed') can be deleted — a
+// computed row has nothing of its own to delete, it's a live total.
 async function deleteHSN(prefix, id) {
-  const ok = await showConfirm('Move this HSN entry to Recycle Bin? You can restore it later.');
+  const data = prefix === 'b2b' ? hsnB2BData : hsnB2CData;
+  const rec = data.find(r => r.id === id);
+  if (!rec || rec.source === 'computed') return;
+
+  const ok = await showConfirm('Move this historical HSN entry to Recycle Bin? You can restore it later.');
   if (!ok) return;
   const table = prefix === 'b2b' ? 'b2b_hsn' : 'b2c_hsn';
   const { error } = await _supabase.from(table).update({ is_deleted: true, deleted_at: new Date().toISOString() }).eq('id', id);
   if (error) { showToast('Error: ' + error.message, 'error'); return; }
   showToast('HSN entry moved to Recycle Bin.');
-  if (prefix === 'b2b') { hsnB2BData = hsnB2BData.filter(r=>r.id!==id); renderHSNTable('b2b', hsnB2BData); }
-  else { hsnB2CData = hsnB2CData.filter(r=>r.id!==id); renderHSNTable('b2c', hsnB2CData); }
+  const user = await getCurrentUser();
+  if (user) { if (prefix === 'b2b') await loadB2BHSN(user.id); else await loadB2CHSN(user.id); }
 }
 
 function switchHSNTab(tab) {

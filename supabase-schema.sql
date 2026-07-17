@@ -268,6 +268,89 @@ CREATE TRIGGER cdn_notes_upd      BEFORE UPDATE ON cdn_notes      FOR EACH ROW E
 CREATE TRIGGER products_upd       BEFORE UPDATE ON products       FOR EACH ROW EXECUTE FUNCTION update_updated_at();
 CREATE TRIGGER import_mappings_upd BEFORE UPDATE ON import_mappings FOR EACH ROW EXECUTE FUNCTION update_updated_at();
 
+-- =============================================
+-- Product Master-Driven Itemized Invoicing
+-- (adds line items + Product Master unit/description +
+-- HSN Summary source tracking; additive only)
+-- =============================================
+
+-- Product Master: Unit + optional Description
+ALTER TABLE products ADD COLUMN IF NOT EXISTS unit TEXT;
+ALTER TABLE products ADD COLUMN IF NOT EXISTS description TEXT;
+
+-- =============================================
+-- Product Sync (js/product-sync.js)
+-- The company website's Product Master is the only source of truth;
+-- this app mirrors it. 'source' distinguishes synced rows from local
+-- Quick-Add drafts (created inline during invoice entry when a typed
+-- product isn't found — the one deliberately-kept local-creation path).
+-- 'external_id' is the website's own product id and the dedup key —
+-- sync never creates a duplicate row for a product it's already seen.
+-- Website-removed products are soft-deleted via the existing
+-- is_deleted/deleted_at columns rather than a separate active flag,
+-- so Recycle Bin keeps working unchanged.
+-- =============================================
+ALTER TABLE products ADD COLUMN IF NOT EXISTS sku TEXT;
+ALTER TABLE products ADD COLUMN IF NOT EXISTS category TEXT;
+ALTER TABLE products ADD COLUMN IF NOT EXISTS warranty TEXT;
+ALTER TABLE products ADD COLUMN IF NOT EXISTS image_url TEXT;
+ALTER TABLE products ADD COLUMN IF NOT EXISTS external_id TEXT;
+ALTER TABLE products ADD COLUMN IF NOT EXISTS source TEXT NOT NULL DEFAULT 'local' CHECK (source IN ('local','synced'));
+ALTER TABLE products ADD COLUMN IF NOT EXISTS stock DECIMAL(15,3);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_products_user_external ON products(user_id, external_id) WHERE external_id IS NOT NULL;
+
+-- Invoice Line Items (shared by b2b_invoices and b2c_invoices via
+-- invoice_type discriminator — same no-real-FK pattern already used
+-- between b2b_hsn/b2c_hsn and the invoice tables)
+CREATE TABLE IF NOT EXISTS invoice_items (
+  id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
+  user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE NOT NULL,
+  invoice_id UUID NOT NULL,
+  invoice_type TEXT NOT NULL CHECK (invoice_type IN ('b2b','b2c')),
+  product_id UUID REFERENCES products(id) ON DELETE SET NULL,
+  product_name TEXT NOT NULL,
+  hsn_code TEXT,
+  unit TEXT,
+  quantity DECIMAL(15,3) NOT NULL DEFAULT 1,
+  rate DECIMAL(15,2) NOT NULL DEFAULT 0,
+  discount_percentage DECIMAL(5,2) NOT NULL DEFAULT 0,
+  gst_percentage DECIMAL(5,2) NOT NULL DEFAULT 0,
+  taxable_value DECIMAL(15,2) NOT NULL DEFAULT 0,
+  gst_amount DECIMAL(15,2) NOT NULL DEFAULT 0,
+  igst DECIMAL(15,2) DEFAULT 0,
+  cgst DECIMAL(15,2) DEFAULT 0,
+  sgst DECIMAL(15,2) DEFAULT 0,
+  total_amount DECIMAL(15,2) NOT NULL DEFAULT 0,
+  sort_order INTEGER NOT NULL DEFAULT 0,
+  is_deleted BOOLEAN NOT NULL DEFAULT FALSE,
+  deleted_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_invoice_items_invoice ON invoice_items(invoice_id, invoice_type);
+
+ALTER TABLE invoice_items ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "Own invoice_items select" ON invoice_items FOR SELECT USING (auth.uid() = user_id);
+CREATE POLICY "Own invoice_items insert" ON invoice_items FOR INSERT WITH CHECK (auth.uid() = user_id);
+CREATE POLICY "Own invoice_items update" ON invoice_items FOR UPDATE USING (auth.uid() = user_id);
+CREATE POLICY "Own invoice_items delete" ON invoice_items FOR DELETE USING (auth.uid() = user_id);
+CREATE TRIGGER invoice_items_upd BEFORE UPDATE ON invoice_items FOR EACH ROW EXECUTE FUNCTION update_updated_at();
+
+-- HSN Summary: distinguish auto-generated (from invoice line items) rows
+-- from manually-entered / Excel-imported ones, and trace auto rows back
+-- to the invoice that produced them so they can be wholesale-replaced
+-- whenever that invoice is re-saved, without touching other rows.
+ALTER TABLE b2b_hsn ADD COLUMN IF NOT EXISTS source TEXT NOT NULL DEFAULT 'manual' CHECK (source IN ('manual','import','auto'));
+ALTER TABLE b2b_hsn ADD COLUMN IF NOT EXISTS source_invoice_id UUID;
+ALTER TABLE b2b_hsn ADD COLUMN IF NOT EXISTS source_invoice_type TEXT CHECK (source_invoice_type IN ('b2b','b2c'));
+ALTER TABLE b2c_hsn ADD COLUMN IF NOT EXISTS source TEXT NOT NULL DEFAULT 'manual' CHECK (source IN ('manual','import','auto'));
+ALTER TABLE b2c_hsn ADD COLUMN IF NOT EXISTS source_invoice_id UUID;
+ALTER TABLE b2c_hsn ADD COLUMN IF NOT EXISTS source_invoice_type TEXT CHECK (source_invoice_type IN ('b2b','b2c'));
+
+CREATE INDEX IF NOT EXISTS idx_b2b_hsn_source_invoice ON b2b_hsn(source_invoice_id, source_invoice_type);
+CREATE INDEX IF NOT EXISTS idx_b2c_hsn_source_invoice ON b2c_hsn(source_invoice_id, source_invoice_type);
+
 -- Auto-create profile on user signup
 CREATE OR REPLACE FUNCTION handle_new_user()
 RETURNS TRIGGER AS $$

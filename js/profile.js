@@ -83,7 +83,7 @@ function buildProfileModal(profile, isRequired) {
         <span class="modal-title" style="color:#fff;display:flex;align-items:center;gap:8px;">
           <i class="fas fa-building"></i> Business GST Profile
         </span>
-        <button class="modal-close" onclick="document.getElementById('profileModalWrap').remove()" style="color:rgba(255,255,255,0.7);font-size:20px;">&#10005;</button>
+        <button class="modal-close" onclick="closeProfileModal()" style="color:rgba(255,255,255,0.7);font-size:20px;">&#10005;</button>
       </div>
       <div class="modal-body">
         ${isRequired ? `<div style="background:#fff3e0;border:1px solid #ffb300;border-radius:6px;padding:10px 14px;margin-bottom:16px;font-size:13px;color:#e65100;display:flex;gap:8px;align-items:flex-start;">
@@ -130,7 +130,7 @@ function buildProfileModal(profile, isRequired) {
         <p class="text-muted-sm mt-16"><i class="fas fa-info-circle"></i> Logo, seal, signature, bank/UPI details and invoice footer text are set once under <b>Settings &rarr; Company Branding</b> and apply to every invoice automatically.</p>
       </div>
       <div class="modal-footer">
-        <button class="btn btn-secondary" onclick="document.getElementById('profileModalWrap').remove()">
+        <button class="btn btn-secondary" onclick="closeProfileModal()">
           ${isRequired ? '<i class="fas fa-times"></i> Skip for Now' : 'Cancel'}
         </button>
         <button class="btn btn-primary" onclick="submitProfile()"><i class="fas fa-save"></i> Save Profile</button>
@@ -138,8 +138,14 @@ function buildProfileModal(profile, isRequired) {
     </div>`;
 
   document.body.appendChild(wrap);
+  lockBodyScroll();
   document.getElementById('profGSTIN').addEventListener('input', function() { this.value = this.value.toUpperCase(); });
   document.getElementById('profPAN').addEventListener('input', function() { this.value = this.value.toUpperCase(); });
+}
+
+function closeProfileModal() {
+  document.getElementById('profileModalWrap')?.remove();
+  unlockBodyScrollIfNoModalsOpen();
 }
 
 function e(v) { return (v || '').toString().replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;'); }
@@ -181,10 +187,10 @@ async function openSettingsModal() {
   wrap.id = 'settingsModalWrap';
   wrap.className = 'modal-overlay open';
   wrap.innerHTML = `
-    <div class="modal" style="max-width:620px;border-radius:14px;overflow:hidden;">
+    <div class="modal" style="max-width:620px;border-radius:14px;">
 
-      <!-- Header -->
-      <div style="background:linear-gradient(135deg,var(--primary-dark),var(--primary));padding:18px 22px;display:flex;align-items:center;justify-content:space-between;">
+      <!-- Header (sticky — stays fixed while the body below scrolls) -->
+      <div style="background:linear-gradient(135deg,var(--primary-dark),var(--primary));padding:18px 22px;display:flex;align-items:center;justify-content:space-between;flex-shrink:0;">
         <div style="display:flex;align-items:center;gap:10px;color:#fff;">
           <div style="width:36px;height:36px;background:rgba(255,255,255,0.15);border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:16px;">
             <i class="fas fa-cog"></i>
@@ -194,8 +200,11 @@ async function openSettingsModal() {
             <div style="font-size:11px;opacity:0.75;">Profile & Data Management</div>
           </div>
         </div>
-        <button onclick="document.getElementById('settingsModalWrap').remove()" style="background:rgba(255,255,255,0.15);border:none;color:#fff;width:30px;height:30px;border-radius:50%;cursor:pointer;font-size:16px;display:flex;align-items:center;justify-content:center;">&times;</button>
+        <button onclick="closeSettingsModal()" style="background:rgba(255,255,255,0.15);border:none;color:#fff;width:30px;height:30px;border-radius:50%;cursor:pointer;font-size:16px;display:flex;align-items:center;justify-content:center;">&times;</button>
       </div>
+
+      <!-- Body (only this area scrolls) -->
+      <div class="modal-body" style="padding:0;">
 
       <!-- Business Profile Card -->
       <div style="padding:18px 22px;border-bottom:1px solid var(--border);">
@@ -228,7 +237,7 @@ async function openSettingsModal() {
           </div>
         `}
 
-        <button class="btn btn-primary btn-sm" onclick="document.getElementById('settingsModalWrap').remove();openProfileModal();" style="margin-top:6px;">
+        <button class="btn btn-primary btn-sm" onclick="closeSettingsModal();openProfileModal();" style="margin-top:6px;">
           <i class="fas fa-${noProfile?'plus':'edit'}"></i> ${noProfile ? 'Setup Profile' : 'Edit Profile'}
         </button>
       </div>
@@ -311,7 +320,7 @@ async function openSettingsModal() {
             <i class="fas fa-upload"></i> Restore
             <input type="file" accept=".json" style="display:none;" onchange="importLocalBackup(this.files[0])">
           </label>
-          <button class="btn btn-sm" onclick="document.getElementById('settingsModalWrap').remove();confirmClearData();" style="border:1px solid #ddd;color:var(--danger);background:#fff;">
+          <button class="btn btn-sm" onclick="closeSettingsModal();confirmClearData();" style="border:1px solid #ddd;color:var(--danger);background:#fff;">
             <i class="fas fa-trash-alt"></i> Clear All
           </button>
         </div>
@@ -351,11 +360,19 @@ async function openSettingsModal() {
         </div>
         <div style="font-size:11px;color:var(--text-muted);">Data stored locally in browser</div>
       </div>
+
+      </div><!-- /.modal-body -->
     </div>`;
 
   document.body.appendChild(wrap);
-  wrap.addEventListener('click', e => { if (e.target === wrap) wrap.remove(); });
+  lockBodyScroll();
+  wrap.addEventListener('click', e => { if (e.target === wrap) closeSettingsModal(); });
   document.getElementById('brandBankIFSC')?.addEventListener('input', function() { this.value = this.value.toUpperCase(); });
+}
+
+function closeSettingsModal() {
+  document.getElementById('settingsModalWrap')?.remove();
+  unlockBodyScrollIfNoModalsOpen();
 }
 
 function defaultFinancialYear() {
@@ -419,7 +436,7 @@ async function submitProfile() {
     website: document.getElementById('profWebsite')?.value?.trim() || ''
   });
 
-  if (!error) document.getElementById('profileModalWrap')?.remove();
+  if (!error) closeProfileModal();
 }
 
 // ── Company Branding (Settings) ────────────

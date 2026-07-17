@@ -14,14 +14,27 @@ async function initB2C() {
   loadUserProfile(user.id);
   setupMobileMenu();
   populateStateOptions();
-  setupB2CCalc();
   setupB2CSearch();
+  await initInvoiceItems(user.id, 'b2c');
   await loadB2C(user.id);
   applyIncomingSearchQuery('b2cSearch');
 
-  const draftFields = ['b2cState','b2cTaxable','b2cGstPct','b2cSupply','b2cInvDate'];
+  const draftFields = ['b2cState','b2cSupply','b2cInvDate'];
   setupDraftAutosave('b2c_invoice', draftFields);
-  if (!b2cEditId) checkForDraft('b2c_invoice', draftFields, 'b2cDraftBanner');
+  if (!b2cEditId) checkForDraft('b2c_invoice', draftFields, 'b2cDraftBanner', 'restoreB2CDraftFull', 'discardB2CDraftFull');
+}
+
+const B2C_DRAFT_FIELDS = ['b2cState','b2cSupply','b2cInvDate'];
+
+function restoreB2CDraftFull(formKey) {
+  restoreDraft(formKey, B2C_DRAFT_FIELDS);
+  restoreItemsFromDraft(formKey);
+  const banner = document.getElementById('b2cDraftBanner'); if (banner) banner.innerHTML = '';
+}
+
+function discardB2CDraftFull(formKey) {
+  discardDraft(formKey, 'b2cDraftBanner');
+  clearItemsDraft(formKey);
 }
 
 function populateStateOptions() {
@@ -30,58 +43,25 @@ function populateStateOptions() {
   sel.innerHTML = '<option value="">Select State</option>' + INDIAN_STATES.map(s => `<option value="${s}">${s}</option>`).join('');
 }
 
-function setupB2CCalc() {
-  ['b2cTaxable','b2cGstPct','b2cSupply'].forEach(id => {
-    document.getElementById(id)?.addEventListener('change', recalcB2C);
-    document.getElementById(id)?.addEventListener('input',  recalcB2C);
-  });
-}
-
-function recalcB2C() {
-  const amt  = parseFloat(document.getElementById('b2cTaxable')?.value) || 0;
-  const pct  = parseFloat(document.getElementById('b2cGstPct')?.value)  || 0;
-  const type = document.getElementById('b2cSupply')?.value || 'intrastate';
-  const r    = calcGST(amt, pct, type);
-  const setV = (id, v) => { const el = document.getElementById(id); if (el) el.value = v; };
-  setV('b2cGstAmt',   formatNum(r.gstAmount));
-  setV('b2cTotalAmt', formatNum(r.totalAmount));
-  setV('b2cIGST',     formatNum(r.igst));
-  setV('b2cCGST',     formatNum(r.cgst));
-  setV('b2cSGST',     formatNum(r.sgst));
-}
-
 async function saveB2C() {
   const user = await getCurrentUser();
   if (!user) return;
   const state   = document.getElementById('b2cState')?.value;
-  const taxable = parseFloat(document.getElementById('b2cTaxable')?.value) || 0;
-  const gstPct  = parseFloat(document.getElementById('b2cGstPct')?.value)  || 0;
   const supply  = document.getElementById('b2cSupply')?.value;
   const invDate = document.getElementById('b2cInvDate')?.value;
   if (!state) { showToast('Please select a state.', 'error'); return; }
-  if (taxable <= 0) { showToast('Taxable amount must be positive.', 'error'); return; }
   if (!invDate) { showToast('Please enter invoice date.', 'error'); return; }
 
-  const r = calcGST(taxable, gstPct, supply);
-  const payload = {
-    user_id: user.id, state, taxable_amount: taxable,
-    gst_percentage: gstPct, gst_amount: r.gstAmount,
-    total_amount: r.totalAmount, supply_type: supply,
-    igst: r.igst, cgst: r.cgst, sgst: r.sgst, invoice_date: invDate
-  };
+  const headerBase = { user_id: user.id, state, supply_type: supply, invoice_date: invDate };
 
-  let error;
-  if (b2cEditId) {
-    ({ error } = await _supabase.from('b2c_invoices').update(payload).eq('id', b2cEditId));
-  } else {
-    ({ error } = await _supabase.from('b2c_invoices').insert(payload));
-  }
+  const result = await saveInvoiceWithItems('b2c', headerBase, b2cEditId, user.id);
+  if (!result) return;
 
-  if (error) { showToast('Error: ' + error.message, 'error'); return; }
   showToast(b2cEditId ? 'Invoice updated successfully!' : 'Invoice saved successfully!');
   b2cEditId = null;
   resetB2C();
   clearDraft('b2c_invoice');
+  clearItemsDraft('b2c_invoice');
   const banner = document.getElementById('b2cDraftBanner'); if (banner) banner.innerHTML = '';
   await loadB2C(user.id);
   if (typeof refreshStorageStatus === 'function') refreshStorageStatus();
@@ -89,11 +69,9 @@ async function saveB2C() {
 
 function resetB2C() {
   document.getElementById('b2cState').value   = '';
-  document.getElementById('b2cTaxable').value = '';
-  document.getElementById('b2cGstPct').value  = getDefaultGstPct();
   document.getElementById('b2cSupply').value  = 'intrastate';
   document.getElementById('b2cInvDate').value = new Date().toISOString().split('T')[0];
-  recalcB2C();
+  resetInvoiceItems();
   b2cEditId = null;
   document.getElementById('b2cFormTitle').textContent = 'B2C Invoice Entry';
   document.getElementById('b2cSaveBtn').innerHTML = '<i class="fas fa-save"></i> Save Invoice';
@@ -162,11 +140,14 @@ async function editB2C(id) {
   if (!rec) return;
   b2cEditId = id;
   document.getElementById('b2cState').value   = rec.state;
-  document.getElementById('b2cTaxable').value = rec.taxable_amount;
-  document.getElementById('b2cGstPct').value  = rec.gst_percentage;
   document.getElementById('b2cSupply').value  = rec.supply_type;
   document.getElementById('b2cInvDate').value = rec.invoice_date;
-  recalcB2C();
+
+  const { data: items } = await _supabase.from('invoice_items').select('*').eq('invoice_id', id).eq('invoice_type', 'b2c');
+  const activeItems = (items || []).filter(r => !r.is_deleted).sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0));
+  if (activeItems.length) loadItemsIntoTable(activeItems);
+  else synthesizeLegacyItemRow(rec);
+
   document.getElementById('b2cFormTitle').textContent = 'Edit B2C Invoice';
   document.getElementById('b2cSaveBtn').innerHTML = '<i class="fas fa-save"></i> Update Invoice';
   window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -177,6 +158,7 @@ async function deleteB2C(id) {
   if (!ok) return;
   const { error } = await _supabase.from('b2c_invoices').update({ is_deleted: true, deleted_at: new Date().toISOString() }).eq('id', id);
   if (error) { showToast('Error: ' + error.message, 'error'); return; }
+  await cascadeInvoiceItemsDelete('b2c', id);
   showToast('Invoice moved to Recycle Bin.');
   b2cAllData = b2cAllData.filter(r => r.id !== id);
   renderB2CTable(b2cAllData);

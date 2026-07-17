@@ -288,51 +288,52 @@ async function confirmExcelImport() {
   const btn = document.getElementById('importConfirmBtn');
   if (btn) { btn.disabled = true; btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Importing...'; }
 
-  let importedB2B = 0, importedB2C = 0, importedHSN = 0, skipped = 0;
+  let importedB2B = 0, importedB2C = 0, importedItems = 0, skipped = 0;
 
   for (const row of importNormalizedRows) {
     if (row.hardInvalid) { skipped++; continue; }
 
     const calc = calcGST(row.taxableAmount, row.gstPct, row.supplyType);
+    const table = row.classification === 'b2b' ? 'b2b_invoices' : 'b2c_invoices';
+    const payload = row.classification === 'b2b'
+      ? {
+          user_id: user.id, gst_number: row.gstin, customer_name: row.customerName,
+          invoice_number: row.invoiceNumber, invoice_date: row.invoiceDate,
+          taxable_amount: row.taxableAmount, gst_percentage: row.gstPct,
+          gst_amount: calc.gstAmount, total_amount: calc.totalAmount,
+          supply_type: row.supplyType, igst: calc.igst, cgst: calc.cgst, sgst: calc.sgst
+        }
+      : {
+          user_id: user.id, state: row.state || 'Unknown', taxable_amount: row.taxableAmount,
+          gst_percentage: row.gstPct, gst_amount: calc.gstAmount, total_amount: calc.totalAmount,
+          supply_type: row.supplyType, igst: calc.igst, cgst: calc.cgst, sgst: calc.sgst,
+          invoice_date: row.invoiceDate
+        };
 
-    if (row.classification === 'b2b') {
-      await _supabase.from('b2b_invoices').insert({
-        user_id: user.id, gst_number: row.gstin, customer_name: row.customerName,
-        invoice_number: row.invoiceNumber, invoice_date: row.invoiceDate,
-        taxable_amount: row.taxableAmount, gst_percentage: row.gstPct,
-        gst_amount: calc.gstAmount, total_amount: calc.totalAmount,
-        supply_type: row.supplyType, igst: calc.igst, cgst: calc.cgst, sgst: calc.sgst
-      });
-      importedB2B++;
-    } else {
-      await _supabase.from('b2c_invoices').insert({
-        user_id: user.id, state: row.state || 'Unknown', taxable_amount: row.taxableAmount,
-        gst_percentage: row.gstPct, gst_amount: calc.gstAmount, total_amount: calc.totalAmount,
-        supply_type: row.supplyType, igst: calc.igst, cgst: calc.cgst, sgst: calc.sgst,
-        invoice_date: row.invoiceDate
-      });
-      importedB2C++;
-    }
+    const { data: inserted, error } = await _supabase.from(table).insert(payload).select().single();
+    if (error || !inserted) { skipped++; continue; }
+    if (row.classification === 'b2b') importedB2B++; else importedB2C++;
 
-    // Auto-generate matching HSN Summary entry — user never enters this by hand.
+    // Link a product line item straight to the imported invoice — the
+    // invoice is the only source of HSN data, even for bulk import,
+    // so this feeds HSN Summary/Reports/Dashboard automatically with
+    // no separate HSN entry step.
     if (row.hsnCode && row.productName) {
-      const table = row.classification === 'b2b' ? 'b2b_hsn' : 'b2c_hsn';
-      const payload = {
-        user_id: user.id, hsn_code: row.hsnCode, product_name: row.productName,
-        type: 'goods', taxable_value: row.taxableAmount, gst_percentage: row.gstPct,
-        supply_type: row.supplyType, igst: calc.igst, cgst: calc.cgst, sgst: calc.sgst,
-        total_gst: calc.gstAmount, total_invoice_value: calc.totalAmount,
-        entry_date: row.invoiceDate || new Date().toISOString().split('T')[0]
-      };
-      if (row.classification === 'b2b') payload.quantity = row.quantity || 0;
-      await _supabase.from(table).insert(payload);
-      importedHSN++;
+      const qty = row.quantity > 0 ? row.quantity : 1;
+      await _supabase.from('invoice_items').insert({
+        user_id: user.id, invoice_id: inserted.id, invoice_type: row.classification,
+        product_id: null, product_name: row.productName, hsn_code: row.hsnCode, unit: '',
+        quantity: qty, rate: round2(row.taxableAmount / qty), discount_percentage: 0,
+        gst_percentage: row.gstPct, taxable_value: row.taxableAmount, gst_amount: calc.gstAmount,
+        igst: calc.igst, cgst: calc.cgst, sgst: calc.sgst, total_amount: calc.totalAmount, sort_order: 0
+      });
+      importedItems++;
     }
   }
 
-  showToast(`Imported ${importedB2B} B2B, ${importedB2C} B2C invoice(s) and ${importedHSN} HSN entr${importedHSN === 1 ? 'y' : 'ies'}. ${skipped ? skipped + ' row(s) skipped.' : ''}`, importedB2B + importedB2C > 0 ? 'success' : 'warning');
+  showToast(`Imported ${importedB2B} B2B, ${importedB2C} B2C invoice(s)${importedItems ? ' with ' + importedItems + ' linked product line' + (importedItems === 1 ? '' : 's') : ''}. ${skipped ? skipped + ' row(s) skipped.' : ''}`, importedB2B + importedB2C > 0 ? 'success' : 'warning');
 
-  recordImportStats(importedB2B + importedB2C + importedHSN);
+  recordImportStats(importedB2B + importedB2C + importedItems);
   closeExcelImportModal();
   if (typeof refreshStorageStatus === 'function') refreshStorageStatus();
   if (typeof loadB2B === 'function') await loadB2B(user.id);

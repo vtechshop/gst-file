@@ -127,6 +127,7 @@ async function deleteInvoiceFromList(type, id) {
   const table = type === 'b2b' ? 'b2b_invoices' : 'b2c_invoices';
   const { error } = await _supabase.from(table).update({ is_deleted: true, deleted_at: new Date().toISOString() }).eq('id', id);
   if (error) { showToast('Error: ' + error.message, 'error'); return; }
+  await cascadeInvoiceItemsDelete(type, id);
   showToast('Invoice moved to Recycle Bin.', 'success');
   if (typeof refreshStorageStatus === 'function') refreshStorageStatus();
   const user = await getCurrentUser();

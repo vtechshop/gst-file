@@ -12,12 +12,12 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.31/jspdf.plugin.autotable.min.js"></script>
   <script src="js/localdb.js"></script>
   <script src="js/config.js"></script>
+  <script src="js/product-sync.js"></script>
   <script src="js/auth.js"></script>
   <script src="js/utils.js"></script>
   <script src="js/search.js"></script>
   <script src="js/profile.js"></script>
   <script src="js/export.js"></script>
-  <script src="js/products.js"></script>
   <script src="js/hsn.js"></script>
 </head>
 <body>
@@ -90,87 +90,17 @@
 
       <!-- B2B HSN Tab -->
       <div class="tab-pane active">
-        <div class="card mb-20">
-          <div class="card-header">
-            <span class="card-title"><i class="fas fa-plus-circle"></i> B2B HSN Entry</span>
-          </div>
-          <div class="card-body">
-            <div class="form-grid cols-3 mb-16">
-              <div class="form-group">
-                <label for="hsnB2BCode">HSN Code <span class="text-required">*</span></label>
-                <input type="text" id="hsnB2BCode" class="form-control" placeholder="e.g. 8471">
-              </div>
-              <div class="form-group">
-                <label for="hsnB2BProd">Product / Service Name <span class="text-required">*</span></label>
-                <input type="text" id="hsnB2BProd" class="form-control" placeholder="Type or select product" list="productDatalistB2B" oninput="onHSNProductSelect('b2b')" autocomplete="off">
-                <datalist id="productDatalistB2B"></datalist>
-              </div>
-              <div class="form-group">
-                <label for="hsnB2BType">Type <span class="text-required">*</span></label>
-                <select id="hsnB2BType" class="form-control">
-                  <option value="goods">Goods</option>
-                  <option value="service">Service</option>
-                </select>
-              </div>
-            </div>
-            <div class="form-grid cols-3 mb-16">
-              <div class="form-group">
-                <label for="hsnB2BQty">Quantity</label>
-                <input type="number" id="hsnB2BQty" class="form-control" placeholder="0" min="0" step="0.001">
-              </div>
-              <div class="form-group">
-                <label for="hsnB2BTaxable">Taxable Value (&#8377;) <span class="text-required">*</span></label>
-                <input type="number" id="hsnB2BTaxable" class="form-control" placeholder="0.00" min="0" step="0.01">
-              </div>
-              <div class="form-group">
-                <label for="hsnB2BGstPct">GST Percentage <span class="text-required">*</span></label>
-                <select id="hsnB2BGstPct" class="form-control">
-                  <option value="0">0%</option><option value="5">5%</option>
-                  <option value="12">12%</option><option value="18" selected>18%</option><option value="28">28%</option>
-                </select>
-              </div>
-            </div>
-            <div class="form-grid cols-2 mb-16">
-              <div class="form-group">
-                <label for="hsnB2BSupply">Supply Type <span class="text-required">*</span></label>
-                <select id="hsnB2BSupply" class="form-control">
-                  <option value="intrastate">Intrastate</option>
-                  <option value="interstate">Interstate</option>
-                </select>
-              </div>
-            </div>
-            <div class="calc-box mb-20">
-              <div class="calc-row">
-                <span class="label">IGST</span>
-                <span class="value"><input type="text" id="hsnB2BIGST" class="form-control calc-input-md" readonly aria-label="IGST"></span>
-              </div>
-              <div class="calc-row">
-                <span class="label">CGST</span>
-                <span class="value"><input type="text" id="hsnB2BCGST" class="form-control calc-input-md" readonly aria-label="CGST"></span>
-              </div>
-              <div class="calc-row">
-                <span class="label">SGST</span>
-                <span class="value"><input type="text" id="hsnB2BSGST" class="form-control calc-input-md" readonly aria-label="SGST"></span>
-              </div>
-              <div class="calc-row">
-                <span class="label">Total GST</span>
-                <span class="value"><input type="text" id="hsnB2BTotalGST" class="form-control calc-input-sm" readonly aria-label="Total GST"></span>
-              </div>
-              <div class="calc-row total">
-                <span class="label">Total Invoice Value</span>
-                <span class="value"><input type="text" id="hsnB2BTotalInv" class="form-control calc-input-total-plain" readonly aria-label="Total Invoice Value"></span>
-              </div>
-            </div>
-            <div class="btn-group">
-              <button type="button" class="btn btn-primary" onclick="saveHSN('b2b')"><i class="fas fa-save"></i> Save HSN</button>
-              <button type="button" class="btn btn-secondary" onclick="resetHSN('b2b')"><i class="fas fa-redo"></i> Reset</button>
-            </div>
+        <div class="banner-success mb-20">
+          <i class="fas fa-info-circle"></i>
+          <div class="banner-text">
+            HSN Summary is generated automatically from the products on your B2B invoices &mdash; there is nothing to enter here.
+            Add or edit products on the <a href="gstr1.html">B2B Invoice Entry</a> page and this updates on its own.
           </div>
         </div>
 
         <div class="card">
           <div class="card-header">
-            <span class="card-title"><i class="fas fa-list"></i> B2B HSN Records</span>
+            <span class="card-title"><i class="fas fa-list"></i> B2B HSN Summary</span>
             <div class="d-flex gap-10">
               <button type="button" class="btn btn-success btn-sm" onclick="exportHSNExcel(hsnB2BData, [])"><i class="fas fa-file-excel"></i> Excel</button>
             </div>
@@ -179,7 +109,7 @@
             <div class="table-wrapper">
               <table class="data-table">
                 <thead>
-                  <tr><th>#</th><th>HSN Code</th><th>Product Name</th><th>Type</th><th>Qty</th><th>Taxable Value</th><th>GST%</th><th>Supply</th><th>IGST</th><th>CGST/SGST</th><th>Total GST</th><th>Total Invoice</th><th>Actions</th></tr>
+                  <tr><th>#</th><th>HSN Code</th><th>Product Name</th><th>Type</th><th>Qty</th><th>Taxable Value</th><th>GST%</th><th>Supply</th><th>IGST</th><th>CGST/SGST</th><th>Total GST</th><th>Total Invoice</th><th>Source</th></tr>
                 </thead>
                 <tbody id="hsnB2BTableBody">
                   <tr><td colspan="13" class="empty-state"><i class="fas fa-spinner fa-spin table-loading-icon"></i>Loading...</td></tr>
@@ -193,66 +123,17 @@
 
       <!-- B2C HSN Tab -->
       <div class="tab-pane">
-        <div class="card mb-20">
-          <div class="card-header">
-            <span class="card-title"><i class="fas fa-plus-circle"></i> B2C HSN Entry</span>
-          </div>
-          <div class="card-body">
-            <div class="form-grid cols-3 mb-16">
-              <div class="form-group">
-                <label for="hsnB2CCode">HSN Code <span class="text-required">*</span></label>
-                <input type="text" id="hsnB2CCode" class="form-control" placeholder="e.g. 8471">
-              </div>
-              <div class="form-group">
-                <label for="hsnB2CProd">Product Name <span class="text-required">*</span></label>
-                <input type="text" id="hsnB2CProd" class="form-control" placeholder="Type or select product" list="productDatalistB2C" oninput="onHSNProductSelect('b2c')" autocomplete="off">
-                <datalist id="productDatalistB2C"></datalist>
-              </div>
-              <div class="form-group">
-                <label for="hsnB2CType">Type <span class="text-required">*</span></label>
-                <select id="hsnB2CType" class="form-control">
-                  <option value="goods">Goods</option>
-                  <option value="service">Service</option>
-                </select>
-              </div>
-            </div>
-            <div class="form-grid cols-3 mb-16">
-              <div class="form-group">
-                <label for="hsnB2CTaxable">Taxable Value (&#8377;) <span class="text-required">*</span></label>
-                <input type="number" id="hsnB2CTaxable" class="form-control" placeholder="0.00" min="0" step="0.01">
-              </div>
-              <div class="form-group">
-                <label for="hsnB2CGstPct">GST Percentage <span class="text-required">*</span></label>
-                <select id="hsnB2CGstPct" class="form-control">
-                  <option value="0">0%</option><option value="5">5%</option>
-                  <option value="12">12%</option><option value="18" selected>18%</option><option value="28">28%</option>
-                </select>
-              </div>
-              <div class="form-group">
-                <label for="hsnB2CSupply">Supply Type <span class="text-required">*</span></label>
-                <select id="hsnB2CSupply" class="form-control">
-                  <option value="intrastate">Intrastate</option>
-                  <option value="interstate">Interstate</option>
-                </select>
-              </div>
-            </div>
-            <div class="calc-box mb-20">
-              <div class="calc-row"><span class="label">IGST</span><span class="value"><input type="text" id="hsnB2CIGST" class="form-control calc-input-md" readonly aria-label="IGST"></span></div>
-              <div class="calc-row"><span class="label">CGST</span><span class="value"><input type="text" id="hsnB2CCGST" class="form-control calc-input-md" readonly aria-label="CGST"></span></div>
-              <div class="calc-row"><span class="label">SGST</span><span class="value"><input type="text" id="hsnB2CSGST" class="form-control calc-input-md" readonly aria-label="SGST"></span></div>
-              <div class="calc-row"><span class="label">Total GST</span><span class="value"><input type="text" id="hsnB2CTotalGST" class="form-control calc-input-sm" readonly aria-label="Total GST"></span></div>
-              <div class="calc-row total"><span class="label">Total Invoice Value</span><span class="value"><input type="text" id="hsnB2CTotalInv" class="form-control calc-input-total-plain" readonly aria-label="Total Invoice Value"></span></div>
-            </div>
-            <div class="btn-group">
-              <button type="button" class="btn btn-primary" onclick="saveHSN('b2c')"><i class="fas fa-save"></i> Save HSN</button>
-              <button type="button" class="btn btn-secondary" onclick="resetHSN('b2c')"><i class="fas fa-redo"></i> Reset</button>
-            </div>
+        <div class="banner-success mb-20">
+          <i class="fas fa-info-circle"></i>
+          <div class="banner-text">
+            HSN Summary is generated automatically from the products on your B2C invoices &mdash; there is nothing to enter here.
+            Add or edit products on the <a href="b2c.html">B2C Invoice Entry</a> page and this updates on its own.
           </div>
         </div>
 
         <div class="card">
           <div class="card-header">
-            <span class="card-title"><i class="fas fa-list"></i> B2C HSN Records</span>
+            <span class="card-title"><i class="fas fa-list"></i> B2C HSN Summary</span>
             <div class="d-flex gap-10">
               <button type="button" class="btn btn-success btn-sm" onclick="exportHSNExcel([], hsnB2CData)"><i class="fas fa-file-excel"></i> Excel</button>
             </div>
@@ -261,7 +142,7 @@
             <div class="table-wrapper">
               <table class="data-table">
                 <thead>
-                  <tr><th>#</th><th>HSN Code</th><th>Product Name</th><th>Type</th><th>Taxable Value</th><th>GST%</th><th>Supply</th><th>IGST</th><th>CGST/SGST</th><th>Total GST</th><th>Total Invoice</th><th>Actions</th></tr>
+                  <tr><th>#</th><th>HSN Code</th><th>Product Name</th><th>Type</th><th>Taxable Value</th><th>GST%</th><th>Supply</th><th>IGST</th><th>CGST/SGST</th><th>Total GST</th><th>Total Invoice</th><th>Source</th></tr>
                 </thead>
                 <tbody id="hsnB2CTableBody">
                   <tr><td colspan="12" class="empty-state"><i class="fas fa-spinner fa-spin table-loading-icon"></i>Loading...</td></tr>

@@ -29,3 +29,18 @@ const FEATURE_FLAGS = {
   eInvoice: false,
   eWayBill: false
 };
+
+// ── Product Sync (js/product-sync.js) ─────────
+// The company website's Product Master is the single source of truth.
+// This frontend NEVER holds the website's API key — it only calls our
+// own backend proxy (server/index.js), which holds the real secret in
+// server/.env and makes the authenticated call to the website on our
+// behalf. See server/README.md for setup.
+//
+// Point this at wherever that backend is running — e.g.
+// 'http://localhost:4000/api/product-sync' for local dev, or your
+// deployed backend's URL in production. Left as a placeholder until
+// then; sync stays gracefully inert (status "Not Configured") with
+// zero network calls and existing product data untouched.
+const PRODUCT_SYNC_BACKEND_URL = 'http://localhost:4000/api/product-sync';   // e.g. http://localhost:4000/api/product-sync
+const IS_PRODUCT_SYNC_CONFIGURED = PRODUCT_SYNC_BACKEND_URL !== 'YOUR_PRODUCT_SYNC_BACKEND_URL' && !!PRODUCT_SYNC_BACKEND_URL;

@@ -34,6 +34,11 @@ async function fetchInvoiceRecord(type, id) {
     ) || (custMatches || []).find(c => c.name.toLowerCase() === (data.customer_name || '').toLowerCase());
   }
 
+  let items = null;
+  const { data: itemRows } = await _supabase.from('invoice_items').select('*').eq('invoice_id', data.id).eq('invoice_type', type);
+  const activeItems = (itemRows || []).filter(r => !r.is_deleted).sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0));
+  if (activeItems.length) items = activeItems;
+
   return {
     type,
     id: data.id,
@@ -50,7 +55,9 @@ async function fetchInvoiceRecord(type, id) {
     gst_amount: +data.gst_amount,
     total_amount: +data.total_amount,
     supply_type: data.supply_type,
-    igst: +data.igst, cgst: +data.cgst, sgst: +data.sgst
+    igst: +data.igst, cgst: +data.cgst, sgst: +data.sgst,
+    round_off: round2(+data.total_amount - +data.taxable_amount - +data.gst_amount),
+    items
   };
 }
 
@@ -180,21 +187,32 @@ async function buildInvoicePDFDoc(inv) {
   custWrapped.forEach((line, i) => doc.text(line, L, y + i * 4.5, { maxWidth: R - L }));
   y += custWrapped.length * 4.5 + 6;
 
-  // ── Item table ──
+  // ── Item table — Product Name / HSN / Unit / Qty / Rate / GST% /
+  // Taxable Value / CGST / SGST / IGST / Line Total, sourced directly
+  // from the invoice's product line items (Product Master HSN/GST%/Unit) ──
+  const pdfItemRows = inv.items
+    ? inv.items.map((it, i) => [
+        String(i + 1), it.product_name, it.hsn_code || '-', it.unit || '-', formatNum(it.quantity), formatNum(it.rate),
+        it.gst_percentage + '%', formatNum(it.taxable_value),
+        it.cgst > 0 ? formatNum(it.cgst) : '-', it.sgst > 0 ? formatNum(it.sgst) : '-',
+        it.igst > 0 ? formatNum(it.igst) : '-', formatNum(it.total_amount)
+      ])
+    : [[
+        '1', 'Taxable Supply', '-', '-', '1', formatNum(inv.taxable_amount),
+        inv.gst_percentage + '%', formatNum(inv.taxable_amount),
+        inv.cgst > 0 ? formatNum(inv.cgst) : '-', inv.sgst > 0 ? formatNum(inv.sgst) : '-',
+        inv.igst > 0 ? formatNum(inv.igst) : '-', formatNum(inv.total_amount)
+      ]];
   doc.autoTable({
     startY: y,
-    head: [['#', 'Description', 'HSN', 'Qty', 'Rate', 'Discount', 'GST%', 'CGST', 'SGST', 'IGST', 'Total']],
-    body: [[
-      '1', 'Taxable Supply', '-', '1', formatNum(inv.taxable_amount), '-', inv.gst_percentage + '%',
-      inv.cgst > 0 ? formatNum(inv.cgst) : '-', inv.sgst > 0 ? formatNum(inv.sgst) : '-',
-      inv.igst > 0 ? formatNum(inv.igst) : '-', formatNum(inv.total_amount)
-    ]],
+    head: [['#', 'Product Name', 'HSN', 'Unit', 'Qty', 'Rate', 'GST%', 'Taxable Value', 'CGST', 'SGST', 'IGST', 'Total']],
+    body: pdfItemRows,
     theme: 'grid',
-    headStyles: { fillColor: [Math.min(accent[0]+224,255), Math.min(accent[1]+165,255), Math.min(accent[2]+177,255)], textColor: accent, fontStyle: 'bold', fontSize: 8, lineColor: [178, 223, 219] },
-    bodyStyles: { fontSize: 8.5, textColor: [40, 40, 40] },
-    columnStyles: { 1: { fontStyle: 'bold' }, 10: { fontStyle: 'bold' } },
+    headStyles: { fillColor: [Math.min(accent[0]+224,255), Math.min(accent[1]+165,255), Math.min(accent[2]+177,255)], textColor: accent, fontStyle: 'bold', fontSize: 7.5, lineColor: [178, 223, 219] },
+    bodyStyles: { fontSize: 8, textColor: [40, 40, 40] },
+    columnStyles: { 1: { fontStyle: 'bold' }, 11: { fontStyle: 'bold' } },
     margin: { left: L, right: L },
-    styles: { cellPadding: 3, lineColor: [225, 225, 225] }
+    styles: { cellPadding: 2.5, lineColor: [225, 225, 225] }
   });
   y = doc.lastAutoTable.finalY + 8;
 
@@ -206,6 +224,7 @@ async function buildInvoicePDFDoc(inv) {
   if (inv.cgst > 0) totalsRows.push(['CGST', formatNum(inv.cgst)]);
   if (inv.sgst > 0) totalsRows.push(['SGST', formatNum(inv.sgst)]);
   if (inv.igst > 0) totalsRows.push([`IGST (${inv.gst_percentage}%)`, formatNum(inv.igst)]);
+  if (Math.abs(inv.round_off) >= 0.005) totalsRows.push(['Round Off', (inv.round_off >= 0 ? '+' : '') + formatNum(inv.round_off)]);
 
   doc.setFontSize(9); doc.setFont('helvetica', 'normal'); doc.setTextColor(60, 60, 60);
   totalsRows.forEach((r, i) => {
@@ -325,6 +344,21 @@ async function printInvoice(type, id) {
   const contactLine = [p?.email, p?.phone, p?.website].filter(Boolean).join(' &middot; ');
   const bankLines = bankDetailLines(p);
 
+  const printItemRowsHtml = inv.items
+    ? inv.items.map((it, i) => `<tr>
+        <td>${i + 1}</td><td><b>${escHtml(it.product_name)}</b></td><td>${escHtml(it.hsn_code) || '-'}</td><td>${escHtml(it.unit) || '-'}</td><td class="c">${formatNum(it.quantity)}</td><td class="r">${formatNum(it.rate)}</td><td class="c">${it.gst_percentage}%</td><td class="r">${formatNum(it.taxable_value)}</td>
+        <td class="r">${it.cgst > 0 ? formatNum(it.cgst) : '-'}</td><td class="r">${it.sgst > 0 ? formatNum(it.sgst) : '-'}</td><td class="r">${it.igst > 0 ? formatNum(it.igst) : '-'}</td>
+        <td class="r"><b>${formatNum(it.total_amount)}</b></td>
+      </tr>`).join('')
+    : `<tr>
+        <td>1</td><td><b>Taxable Supply</b></td><td>-</td><td>-</td><td class="c">1</td><td class="r">${formatNum(inv.taxable_amount)}</td><td class="c">${inv.gst_percentage}%</td><td class="r">${formatNum(inv.taxable_amount)}</td>
+        <td class="r">${inv.cgst > 0 ? formatNum(inv.cgst) : '-'}</td><td class="r">${inv.sgst > 0 ? formatNum(inv.sgst) : '-'}</td><td class="r">${inv.igst > 0 ? formatNum(inv.igst) : '-'}</td>
+        <td class="r"><b>${formatNum(inv.total_amount)}</b></td>
+      </tr>`;
+  const roundOffRowHtml = Math.abs(inv.round_off) >= 0.005
+    ? `<tr><td>Round Off</td><td class="r">Rs.${(inv.round_off >= 0 ? '+' : '') + formatNum(inv.round_off)}</td></tr>`
+    : '';
+
   const w = window.open('', '_blank');
   w.document.write(`<!DOCTYPE html>
 <html><head><meta charset="UTF-8"><title>Invoice ${escHtml(inv.invoice_number)}</title>
@@ -413,12 +447,8 @@ async function printInvoice(type, id) {
   ${inv.email ? `<p>${escHtml(inv.email)}</p>` : ''}
 
   <table>
-    <thead><tr><th>#</th><th>Description</th><th>HSN</th><th class="c">Qty</th><th class="r">Rate</th><th class="c">Discount</th><th class="c">GST%</th><th class="r">CGST</th><th class="r">SGST</th><th class="r">IGST</th><th class="r">Total</th></tr></thead>
-    <tbody><tr>
-      <td>1</td><td><b>Taxable Supply</b></td><td>-</td><td class="c">1</td><td class="r">${formatNum(inv.taxable_amount)}</td><td class="c">-</td><td class="c">${inv.gst_percentage}%</td>
-      <td class="r">${inv.cgst > 0 ? formatNum(inv.cgst) : '-'}</td><td class="r">${inv.sgst > 0 ? formatNum(inv.sgst) : '-'}</td><td class="r">${inv.igst > 0 ? formatNum(inv.igst) : '-'}</td>
-      <td class="r"><b>${formatNum(inv.total_amount)}</b></td>
-    </tr></tbody>
+    <thead><tr><th>#</th><th>Product Name</th><th>HSN</th><th>Unit</th><th class="c">Qty</th><th class="r">Rate</th><th class="c">GST%</th><th class="r">Taxable Value</th><th class="r">CGST</th><th class="r">SGST</th><th class="r">IGST</th><th class="r">Total</th></tr></thead>
+    <tbody>${printItemRowsHtml}</tbody>
   </table>
 
   <div class="totals">
@@ -427,6 +457,7 @@ async function printInvoice(type, id) {
       ${inv.cgst > 0 ? `<tr><td>CGST</td><td class="r">Rs.${formatNum(inv.cgst)}</td></tr>` : ''}
       ${inv.sgst > 0 ? `<tr><td>SGST</td><td class="r">Rs.${formatNum(inv.sgst)}</td></tr>` : ''}
       ${inv.igst > 0 ? `<tr><td>IGST (${inv.gst_percentage}%)</td><td class="r">Rs.${formatNum(inv.igst)}</td></tr>` : ''}
+      ${roundOffRowHtml}
       <tr class="grand"><td>Grand Total</td><td class="r">Rs.${formatNum(inv.total_amount)}</td></tr>
     </table>
   </div>
