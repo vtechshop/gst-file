@@ -118,17 +118,18 @@
             </div>
           </div>
 
-          <!-- B2B-only: GST Number + State. Hidden completely (not just
-               disabled) in B2C mode, with a smooth collapse rather than
-               an abrupt display:none. -->
-          <div id="invB2BFields" class="form-grid cols-2 mb-16 inv-collapsible collapsed">
+          <!-- GST Number + State are always visible in both modes now —
+               only their required/optional-ness changes with the toggle
+               (see syncInvoiceTypeUI() in js/invoice-entry.js). B2C can
+               optionally carry a GST Number and still save as B2C. -->
+          <div id="invB2BFields" class="form-grid cols-2 mb-16">
             <div class="form-group">
-              <label for="invGstin">GST Number <span class="text-required">*</span></label>
-              <input type="text" id="invGstin" class="form-control uppercase" maxlength="15" placeholder="e.g. 27AAPFU0939F1ZV" oninput="onInvoiceGstinInput(this)" onblur="onInvoiceGstinBlur(this)" disabled>
+              <label for="invGstin">GST Number <span id="invGstinReqMark" class="fs-11 text-muted-sm">(Optional)</span></label>
+              <input type="text" id="invGstin" class="form-control uppercase" maxlength="15" placeholder="e.g. 27AAPFU0939F1ZV" oninput="onInvoiceGstinInput(this)" onblur="onInvoiceGstinBlur(this)">
             </div>
             <div class="form-group">
-              <label for="invState">State <span class="text-required">*</span></label>
-              <select id="invState" class="form-control" onchange="detectSupplyType()" disabled><option value="">Select State</option></select>
+              <label for="invState">State <span id="invStateReqMark" class="fs-11 text-muted-sm">(Optional)</span></label>
+              <select id="invState" class="form-control" onchange="detectSupplyType()"><option value="">Select State</option></select>
             </div>
           </div>
 

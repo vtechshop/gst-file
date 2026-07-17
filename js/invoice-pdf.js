@@ -47,7 +47,7 @@ async function fetchInvoiceRecord(type, id) {
     invoice_number: data.invoice_number || (type === 'b2c' ? ('B2C-' + data.id.slice(0, 8).toUpperCase()) : ''),
     invoice_date: data.invoice_date,
     customer_name: data.customer_name || (type === 'b2c' ? 'Walk-in Customer (B2C)' : ''),
-    gstin: type === 'b2b' ? (data.gst_number || '') : '',
+    gstin: data.gst_number || '',
     state: data.state || customer?.state || '',
     address: data.address || customer?.address || '',
     phone: data.phone || customer?.phone || '',

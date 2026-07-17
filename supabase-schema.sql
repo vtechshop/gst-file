@@ -459,3 +459,11 @@ CREATE POLICY "Own payments delete" ON payments FOR DELETE USING (auth.uid() = u
 -- legitimately be blank without blocking Save.
 -- =============================================
 ALTER TABLE b2c_invoices ALTER COLUMN state DROP NOT NULL;
+
+-- =============================================
+-- GST Number + State are now always visible on both B2B and B2C forms
+-- (previously B2C hid them entirely) — required on B2B, optional on
+-- B2C. B2C invoices can now optionally carry a GST Number and still
+-- save into b2c_invoices; b2b_invoices.gst_number stays NOT NULL.
+-- =============================================
+ALTER TABLE b2c_invoices ADD COLUMN IF NOT EXISTS gst_number TEXT;

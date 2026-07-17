@@ -34,7 +34,7 @@ async function loadInvoiceList(userId) {
   }));
   const b2cRows = (b2c || []).filter(r => !r.is_deleted).map(r => ({
     type: 'b2c', id: r.id, invoice_number: r.invoice_number || ('B2C-' + r.id.slice(0, 8).toUpperCase()), invoice_date: r.invoice_date,
-    customer_name: r.customer_name || 'Walk-in Customer (B2C)', gstin: '', total_amount: +r.total_amount,
+    customer_name: r.customer_name || 'Walk-in Customer (B2C)', gstin: r.gst_number || '', total_amount: +r.total_amount,
     payment_status: r.payment_status || 'unpaid', amount_paid: +r.amount_paid || 0
   }));
 
@@ -150,7 +150,7 @@ async function duplicateInvoiceFromList(type, id) {
   const inv = await fetchInvoiceRecord(type, id);
   if (!inv) return;
   sessionStorage.setItem('invoice_duplicate_draft', JSON.stringify({
-    customer_name: inv.customer_name, gst_number: inv.gstin, phone: inv.phone, address: inv.address, state: inv.state,
+    type, customer_name: inv.customer_name, gst_number: inv.gstin, phone: inv.phone, address: inv.address, state: inv.state,
     supply_type: inv.supply_type,
     transport_required: inv.transport_required, vehicle_number: inv.vehicle_number, transporter_name: inv.transporter_name,
     transport_mode: inv.transport_mode, transport_distance_km: inv.transport_distance_km, lr_number: inv.lr_number, lr_date: inv.lr_date,
