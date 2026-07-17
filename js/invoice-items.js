@@ -57,6 +57,11 @@ function renderProductSyncNotice() {
 }
 
 function getInvoiceSupplyType() {
+  // invoice.html's unified form uses one #invSupply select regardless of
+  // B2B/B2C classification; gstr1.html/b2c.html (kept as redirect stubs)
+  // still use their original per-page ids.
+  const generic = document.getElementById('invSupply');
+  if (generic) return generic.value || 'intrastate';
   const id = itemsFormPrefix === 'b2b' ? 'b2bSupply' : 'b2cSupply';
   return document.getElementById(id)?.value || 'intrastate';
 }
@@ -119,7 +124,7 @@ function renderItemsSectionShell(containerId) {
 
     <datalist id="itemsProductDatalist"></datalist>
   `;
-  ['b2bSupply','b2cSupply'].forEach(id => document.getElementById(id)?.addEventListener('change', recalcAllRows));
+  ['b2bSupply','b2cSupply','invSupply'].forEach(id => document.getElementById(id)?.addEventListener('change', recalcAllRows));
 }
 
 function populateItemsProductDatalist() {
@@ -326,6 +331,15 @@ function selectProductFromDropdown(rowId, productId) {
   applyProductToRow(row, product);
   recalcItemRow(rowId);
   hideProductDropdown();
+  // Both calls above re-render the row (fresh DOM nodes), so the
+  // Quantity input has to be looked up fresh rather than reused from
+  // before selection — keyboard-friendly entry: product chosen -> focus
+  // jumps straight to Qty without touching the mouse.
+  // .select() so the default "1" is fully selected, not just focused —
+  // otherwise the next digit typed inserts at whatever cursor position
+  // the browser happens to place it (often position 0), silently
+  // corrupting the quantity (e.g. typing "3" over "1" becoming "31").
+  document.querySelector(`#itemsTableBody tr[data-row="${rowId}"] input[oninput*="'quantity'"]`)?.select();
 }
 
 async function onItemProductBlur(rowId, name) {
@@ -677,10 +691,22 @@ async function saveInvoiceWithItems(type, headerBase, editId, userId) {
   }
   if (error) { showToast('Error: ' + error.message, 'error'); return false; }
 
+  // Read what this invoice contained BEFORE it's overwritten, so stock
+  // can be adjusted by the difference rather than by the new quantities
+  // alone (an edit that lowers a quantity must give stock back).
+  let oldItemsForStock = [];
+  if (editId) {
+    const { data } = await _supabase.from('invoice_items').select('product_id,quantity').eq('invoice_id', editId).eq('invoice_type', type);
+    oldItemsForStock = data || [];
+  }
+  const newItemsForStock = getItemsPayload(invoiceId, type, userId);
+
   await replaceInvoiceItems(type, invoiceId, userId);
   // HSN Summary is no longer written here — it's computed live from
   // invoice_items on the HSN Summary page (js/hsn.js). Invoices are the
   // single source of truth; there is nothing else to persist on save.
+
+  await applyStockDeltaForSave(oldItemsForStock, newItemsForStock);
 
   return invoiceId;
 }
@@ -693,9 +719,50 @@ async function replaceInvoiceItems(type, invoiceId, userId) {
   }
 }
 
+// ── Automatic stock tracking ─────────────────────────
+// Products without stock tracking (products.stock === null — e.g.
+// services, or anything synced from the website without a stock figure)
+// are left untouched by design; there's nothing to decrement.
+async function adjustProductStock(productId, deltaQty) {
+  if (!productId || !deltaQty) return;
+  const { data: prod } = await _supabase.from('products').select('id,stock').eq('id', productId).single();
+  if (!prod || prod.stock === null || prod.stock === undefined) return;
+  const next = Math.round(((+prod.stock || 0) + deltaQty) * 1000) / 1000;
+  await _supabase.from('products').update({ stock: next }).eq('id', productId);
+}
+
+// A sale decrements stock; deltaQty here is signed from the sale's point
+// of view (positive quantity change = more sold = stock goes DOWN), so
+// this always applies the negated per-product delta between old and new
+// line-item quantities.
+async function applyStockDeltaForSave(oldItems, newRows) {
+  const oldQty = {}, newQty = {};
+  (oldItems || []).forEach(r => { if (r.product_id) oldQty[r.product_id] = (oldQty[r.product_id] || 0) + (+r.quantity || 0); });
+  (newRows || []).forEach(r => { if (r.product_id) newQty[r.product_id] = (newQty[r.product_id] || 0) + (+r.quantity || 0); });
+  const productIds = new Set([...Object.keys(oldQty), ...Object.keys(newQty)]);
+  for (const pid of productIds) {
+    const delta = (newQty[pid] || 0) - (oldQty[pid] || 0);
+    if (delta) await adjustProductStock(pid, -delta);
+  }
+}
+
+// Soft-deleting/restoring an invoice is "was this ever an active sale
+// against stock" — mirrors how HSN Summary/GSTR-3B/Reports already
+// exclude is_deleted invoices from their live totals.
+async function restoreStockForInvoice(type, invoiceId) {
+  const { data } = await _supabase.from('invoice_items').select('product_id,quantity').eq('invoice_id', invoiceId).eq('invoice_type', type);
+  for (const r of (data || [])) if (r.product_id) await adjustProductStock(r.product_id, +r.quantity || 0);
+}
+
+async function decrementStockForInvoice(type, invoiceId) {
+  const { data } = await _supabase.from('invoice_items').select('product_id,quantity').eq('invoice_id', invoiceId).eq('invoice_type', type);
+  for (const r of (data || [])) if (r.product_id) await adjustProductStock(r.product_id, -(+r.quantity || 0));
+}
+
 // ── Cascade delete / restore (invoked from gstr1.js, b2c.js,
 // invoice-list.js, recycle-bin.js on delete/restore of a header row) ──
 async function cascadeInvoiceItemsDelete(type, invoiceId) {
+  await restoreStockForInvoice(type, invoiceId);
   const now = new Date().toISOString();
   await softDeleteMatching('invoice_items', { invoice_id: invoiceId, invoice_type: type }, now);
   const hsnTable = type === 'b2b' ? 'b2b_hsn' : 'b2c_hsn';
@@ -706,6 +773,7 @@ async function cascadeInvoiceItemsRestore(type, invoiceId) {
   await restoreMatching('invoice_items', { invoice_id: invoiceId, invoice_type: type });
   const hsnTable = type === 'b2b' ? 'b2b_hsn' : 'b2c_hsn';
   await restoreMatching(hsnTable, { source_invoice_id: invoiceId, source_invoice_type: type });
+  await decrementStockForInvoice(type, invoiceId);
 }
 
 async function cascadeInvoiceItemsHardDelete(type, invoiceId) {

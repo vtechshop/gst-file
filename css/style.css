@@ -462,6 +462,8 @@ table.data-table {
 .badge-orange { background: #fff3e0; color: #e65100; }
 .badge-red    { background: #ffebee; color: #c62828; }
 
+.clickable { cursor: pointer; }
+
 /* ---- Tabs ---- */
 .tab-bar { display: flex; gap: 4px; border-bottom: 2px solid var(--border); margin-bottom: 20px; }
 
@@ -753,6 +755,7 @@ table.data-table {
 .stat-card.border-purple  { border-left-color: #6a1b9a; }
 .stat-card.border-success { border-left-color: var(--success); }
 .stat-card.border-dark    { border-left-color: var(--primary-dark); }
+.stat-card.border-red     { border-left-color: #c62828; }
 
 /* ---- Info / warning banners ---- */
 .banner-success { background: #e8f5e9; border: 1px solid #a5d6a7; border-radius: 8px; padding: 12px 16px; margin-bottom: 20px; display: flex; gap: 10px; align-items: flex-start; }

@@ -14,6 +14,7 @@
   <script src="js/utils.js"></script>
   <script src="js/search.js"></script>
   <script src="js/profile.js"></script>
+  <script src="js/payments.js"></script>
   <script src="js/customers.js"></script>
 </head>
 <body>
@@ -28,10 +29,8 @@
       <div class="menu-section">Main</div>
       <a href="dashboard.html" class="menu-item"><i class="fas fa-tachometer-alt"></i> Dashboard</a>
       <div class="menu-section">Invoices</div>
+      <a href="invoice.html" class="menu-item"><i class="fas fa-plus-circle"></i> New Invoice</a>
       <a href="invoice-list.html" class="menu-item"><i class="fas fa-list-alt"></i> Invoice List</a>
-      <div class="menu-section">GSTR-1</div>
-      <a href="gstr1.html"   class="menu-item"><i class="fas fa-file-alt"></i> B2B Invoices</a>
-      <a href="b2c.html"     class="menu-item"><i class="fas fa-users"></i> B2C Invoices</a>
       <a href="cdnotes.html" class="menu-item"><i class="fas fa-file-minus"></i> Credit/Debit Notes</a>
       <div class="menu-section">HSN</div>
       <a href="hsn.html#b2b" class="menu-item"><i class="fas fa-barcode"></i> B2B HSN</a>
@@ -116,6 +115,25 @@
           <div class="btn-group">
             <button type="button" class="btn btn-primary" id="custSaveBtn" onclick="saveCustomer()"><i class="fas fa-save"></i> Save Customer</button>
             <button type="button" class="btn btn-secondary" onclick="resetCustomer()"><i class="fas fa-redo"></i> Reset</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Customer Outstanding Summary -->
+      <div class="card mb-20">
+        <div class="card-header">
+          <span class="card-title"><i class="fas fa-hourglass-half"></i> Customer Outstanding Summary</span>
+        </div>
+        <div class="card-body p-0">
+          <div class="table-wrapper">
+            <table class="data-table">
+              <thead>
+                <tr><th>Customer</th><th class="text-center">Invoices</th><th class="text-right">Total Billed</th><th class="text-right">Total Received</th><th class="text-right">Outstanding</th></tr>
+              </thead>
+              <tbody id="custOutstandingBody">
+                <tr><td colspan="5" class="empty-state"><i class="fas fa-spinner fa-spin table-loading-icon"></i>Loading...</td></tr>
+              </tbody>
+            </table>
           </div>
         </div>
       </div>

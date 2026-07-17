@@ -364,3 +364,88 @@ $$ LANGUAGE plpgsql SECURITY DEFINER;
 CREATE TRIGGER on_auth_user_created
   AFTER INSERT ON auth.users
   FOR EACH ROW EXECUTE FUNCTION handle_new_user();
+
+-- =============================================
+-- One-Page Invoice (js/invoice-entry.js / invoice.html)
+-- Customer contact fields, optional Transport section, and Payment
+-- tracking, added identically to both invoice tables so one form can
+-- write to either without either table lacking a field the other has.
+-- All additive/nullable — existing rows are unaffected.
+-- =============================================
+
+-- Customer contact (b2c_invoices previously had neither a name nor
+-- phone/address at all — B2C invoices were anonymous by design; the
+-- one-page form now always collects Name/Phone/Address regardless of
+-- whether a GSTIN is present).
+ALTER TABLE b2c_invoices ADD COLUMN IF NOT EXISTS customer_name TEXT;
+-- The one-page form has a single shared Invoice Number sequence
+-- regardless of B2B/B2C classification (previously only b2b_invoices
+-- had one; B2C rows were identified only by a synthesized id prefix in
+-- invoice-pdf.js, which remains as the fallback for old rows here).
+ALTER TABLE b2c_invoices ADD COLUMN IF NOT EXISTS invoice_number TEXT;
+ALTER TABLE b2b_invoices ADD COLUMN IF NOT EXISTS phone TEXT;
+ALTER TABLE b2c_invoices ADD COLUMN IF NOT EXISTS phone TEXT;
+ALTER TABLE b2b_invoices ADD COLUMN IF NOT EXISTS address TEXT;
+ALTER TABLE b2c_invoices ADD COLUMN IF NOT EXISTS address TEXT;
+-- b2b_invoices previously had no State at all (place of supply was only
+-- ever available via a best-effort Customer Master name match in
+-- invoice-pdf.js). The one-page form always collects it directly now,
+-- for both types, so it's reliable for a brand-new customer too.
+ALTER TABLE b2b_invoices ADD COLUMN IF NOT EXISTS state TEXT;
+
+-- Transport (optional; OFF by default; all fields nullable so leaving
+-- them blank never blocks Save). Stored now so a future E-Way Bill
+-- draft can be generated from real data without a further migration.
+ALTER TABLE b2b_invoices ADD COLUMN IF NOT EXISTS transport_required BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE b2b_invoices ADD COLUMN IF NOT EXISTS vehicle_number TEXT;
+ALTER TABLE b2b_invoices ADD COLUMN IF NOT EXISTS transporter_name TEXT;
+ALTER TABLE b2b_invoices ADD COLUMN IF NOT EXISTS transport_mode TEXT;
+ALTER TABLE b2b_invoices ADD COLUMN IF NOT EXISTS transport_distance_km DECIMAL(10,2);
+ALTER TABLE b2b_invoices ADD COLUMN IF NOT EXISTS lr_number TEXT;
+ALTER TABLE b2b_invoices ADD COLUMN IF NOT EXISTS lr_date DATE;
+
+ALTER TABLE b2c_invoices ADD COLUMN IF NOT EXISTS transport_required BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE b2c_invoices ADD COLUMN IF NOT EXISTS vehicle_number TEXT;
+ALTER TABLE b2c_invoices ADD COLUMN IF NOT EXISTS transporter_name TEXT;
+ALTER TABLE b2c_invoices ADD COLUMN IF NOT EXISTS transport_mode TEXT;
+ALTER TABLE b2c_invoices ADD COLUMN IF NOT EXISTS transport_distance_km DECIMAL(10,2);
+ALTER TABLE b2c_invoices ADD COLUMN IF NOT EXISTS lr_number TEXT;
+ALTER TABLE b2c_invoices ADD COLUMN IF NOT EXISTS lr_date DATE;
+
+-- Payment tracking. balance_due is intentionally NOT a stored column —
+-- it's always computed as total_amount - amount_paid, the same
+-- live-computed pattern already used for HSN Summary and GSTR-3B rather
+-- than a value that could drift out of sync with edits.
+ALTER TABLE b2b_invoices ADD COLUMN IF NOT EXISTS payment_status TEXT NOT NULL DEFAULT 'unpaid' CHECK (payment_status IN ('unpaid','partial','paid'));
+ALTER TABLE b2b_invoices ADD COLUMN IF NOT EXISTS amount_paid DECIMAL(15,2) NOT NULL DEFAULT 0;
+ALTER TABLE b2c_invoices ADD COLUMN IF NOT EXISTS payment_status TEXT NOT NULL DEFAULT 'unpaid' CHECK (payment_status IN ('unpaid','partial','paid'));
+ALTER TABLE b2c_invoices ADD COLUMN IF NOT EXISTS amount_paid DECIMAL(15,2) NOT NULL DEFAULT 0;
+
+-- =============================================
+-- Payment History (js/payments.js)
+-- An invoice's amount_paid/payment_status above are the current summary
+-- (kept for fast reads everywhere that already uses them); this table
+-- is the itemized ledger behind that summary — one row per actual
+-- payment received, so partial payments over time are never lost.
+-- amount_paid is recomputed as the sum of this table's active rows for
+-- an invoice every time a payment is recorded or removed.
+-- =============================================
+CREATE TABLE IF NOT EXISTS payments (
+  id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
+  user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE NOT NULL,
+  invoice_id UUID NOT NULL,
+  invoice_type TEXT NOT NULL CHECK (invoice_type IN ('b2b','b2c')),
+  amount DECIMAL(15,2) NOT NULL,
+  method TEXT NOT NULL DEFAULT 'cash' CHECK (method IN ('cash','upi','bank_transfer','cheque','card','other')),
+  payment_date DATE NOT NULL DEFAULT CURRENT_DATE,
+  note TEXT,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_payments_invoice ON payments(invoice_id, invoice_type);
+
+ALTER TABLE payments ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "Own payments select" ON payments FOR SELECT USING (auth.uid() = user_id);
+CREATE POLICY "Own payments insert" ON payments FOR INSERT WITH CHECK (auth.uid() = user_id);
+CREATE POLICY "Own payments update" ON payments FOR UPDATE USING (auth.uid() = user_id);
+CREATE POLICY "Own payments delete" ON payments FOR DELETE USING (auth.uid() = user_id);

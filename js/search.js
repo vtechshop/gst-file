@@ -57,10 +57,13 @@ async function runGlobalSearch(q) {
     (r.gst_number?.toLowerCase().includes(needle) ||
     r.customer_name?.toLowerCase().includes(needle) ||
     r.invoice_number?.toLowerCase().includes(needle))).slice(0, 5);
-  if (b2bMatches.length) groups.push({ label: 'B2B Invoices', icon: 'fa-file-alt', page: 'gstr1.html', items: b2bMatches.map(r => `${r.invoice_number} &mdash; ${r.customer_name} (${r.gst_number})`) });
+  if (b2bMatches.length) groups.push({ label: 'B2B Invoices', icon: 'fa-file-alt', page: 'invoice-list.html', items: b2bMatches.map(r => `${r.invoice_number} &mdash; ${r.customer_name} (${r.gst_number})`) });
 
-  const b2cMatches = (b2c.data || []).filter(r => !r.is_deleted && r.state?.toLowerCase().includes(needle)).slice(0, 5);
-  if (b2cMatches.length) groups.push({ label: 'B2C Invoices', icon: 'fa-users', page: 'b2c.html', items: b2cMatches.map(r => `${r.state} &mdash; &#8377;${formatNum(r.total_amount)} (${formatDate(r.invoice_date)})`) });
+  const b2cMatches = (b2c.data || []).filter(r => !r.is_deleted &&
+    (r.state?.toLowerCase().includes(needle) ||
+    r.customer_name?.toLowerCase().includes(needle) ||
+    r.invoice_number?.toLowerCase().includes(needle))).slice(0, 5);
+  if (b2cMatches.length) groups.push({ label: 'B2C Invoices', icon: 'fa-users', page: 'invoice-list.html', items: b2cMatches.map(r => `${r.invoice_number || r.state} &mdash; &#8377;${formatNum(r.total_amount)} (${formatDate(r.invoice_date)})`) });
 
   const custMatches = (customers.data || []).filter(r => !r.is_deleted &&
     (r.name?.toLowerCase().includes(needle) || (r.gstin || '').toLowerCase().includes(needle))).slice(0, 5);

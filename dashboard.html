@@ -30,10 +30,8 @@
       <div class="menu-section">Main</div>
       <a href="dashboard.html" class="menu-item active"><i class="fas fa-tachometer-alt"></i> Dashboard</a>
       <div class="menu-section">Invoices</div>
+      <a href="invoice.html" class="menu-item"><i class="fas fa-plus-circle"></i> New Invoice</a>
       <a href="invoice-list.html" class="menu-item"><i class="fas fa-list-alt"></i> Invoice List</a>
-      <div class="menu-section">GSTR-1</div>
-      <a href="gstr1.html"   class="menu-item"><i class="fas fa-file-alt"></i> B2B Invoices</a>
-      <a href="b2c.html"     class="menu-item"><i class="fas fa-users"></i> B2C Invoices</a>
       <a href="cdnotes.html" class="menu-item"><i class="fas fa-file-minus"></i> Credit/Debit Notes</a>
       <div class="menu-section">HSN</div>
       <a href="hsn.html#b2b" class="menu-item"><i class="fas fa-barcode"></i> B2B HSN</a>
@@ -117,6 +115,26 @@
 
       <!-- Stat Cards -->
       <div class="stat-grid">
+        <div class="stat-card border-teal">
+          <div class="stat-icon teal"><i class="fas fa-calendar-day"></i></div>
+          <div class="stat-info"><div class="stat-label">Today's Sales</div><div class="stat-value" id="statTodaySales">&#8377;0.00</div></div>
+        </div>
+        <div class="stat-card border-blue">
+          <div class="stat-icon blue"><i class="fas fa-file-invoice"></i></div>
+          <div class="stat-info"><div class="stat-label">Invoices Today</div><div class="stat-value" id="statInvoicesToday">0</div></div>
+        </div>
+        <div class="stat-card border-red">
+          <div class="stat-icon red"><i class="fas fa-hourglass-half"></i></div>
+          <div class="stat-info"><div class="stat-label">Pending Payments</div><div class="stat-value" id="statPendingPayments">&#8377;0.00</div></div>
+        </div>
+        <div class="stat-card border-orange">
+          <div class="stat-icon orange"><i class="fas fa-box-open"></i></div>
+          <div class="stat-info"><div class="stat-label">Low Stock</div><div class="stat-value" id="statLowStock">0</div></div>
+        </div>
+        <div class="stat-card border-red">
+          <div class="stat-icon red"><i class="fas fa-ban"></i></div>
+          <div class="stat-info"><div class="stat-label">Out of Stock</div><div class="stat-value" id="statOutOfStock">0</div></div>
+        </div>
         <div class="stat-card border-green">
           <div class="stat-icon green"><i class="fas fa-building"></i></div>
           <div class="stat-info"><div class="stat-label">Total B2B Sales</div><div class="stat-value" id="statB2B">&#8377;0.00</div></div>
@@ -161,9 +179,8 @@
           <span class="card-title"><i class="fas fa-bolt"></i> Quick Actions</span>
         </div>
         <div class="card-body d-flex gap-12 flex-wrap">
-          <a href="gstr1.html" class="btn btn-primary"><i class="fas fa-plus"></i> New B2B Invoice</a>
-          <a href="b2c.html"   class="btn btn-secondary"><i class="fas fa-plus"></i> New B2C Invoice</a>
-          <a href="hsn.html"   class="btn btn-secondary"><i class="fas fa-barcode"></i> HSN Entry</a>
+          <a href="invoice.html" class="btn btn-primary"><i class="fas fa-plus"></i> New Invoice</a>
+          <a href="hsn.html"   class="btn btn-secondary"><i class="fas fa-barcode"></i> HSN Summary</a>
           <a href="reports.html" class="btn btn-info"><i class="fas fa-chart-bar"></i> View Reports</a>
         </div>
       </div>
@@ -195,12 +212,40 @@
           <div id="topCustomersList"><p class="text-muted-sm">Loading...</p></div>
         </div>
         <div class="chart-card">
-          <h3><i class="fas fa-star"></i> Top Products</h3>
+          <h3><i class="fas fa-star"></i> Top Products (by revenue)</h3>
           <div id="topProductsList"><p class="text-muted-sm">Loading...</p></div>
+        </div>
+        <div class="chart-card">
+          <h3><i class="fas fa-fire"></i> Top Selling Products (by quantity)</h3>
+          <div id="topSellingProductsList"><p class="text-muted-sm">Loading...</p></div>
+        </div>
+        <div class="chart-card">
+          <h3><i class="fas fa-history"></i> Recent Activity</h3>
+          <div id="recentActivityList"><p class="text-muted-sm">Loading...</p></div>
         </div>
         <div class="chart-card">
           <h3><i class="fas fa-file-import"></i> Import Statistics</h3>
           <div id="importStatsBox"><p class="text-muted-sm">Loading...</p></div>
+        </div>
+      </div>
+
+      <!-- Inventory Intelligence -->
+      <div class="chart-grid mt-24">
+        <div class="chart-card">
+          <h3><i class="fas fa-box-open"></i> Low Stock</h3>
+          <div id="lowStockList"><p class="text-muted-sm">Loading...</p></div>
+        </div>
+        <div class="chart-card">
+          <h3><i class="fas fa-ban"></i> Out of Stock</h3>
+          <div id="outOfStockList"><p class="text-muted-sm">Loading...</p></div>
+        </div>
+        <div class="chart-card">
+          <h3><i class="fas fa-bolt"></i> Fast Moving Products (30d)</h3>
+          <div id="fastMovingList"><p class="text-muted-sm">Loading...</p></div>
+        </div>
+        <div class="chart-card">
+          <h3><i class="fas fa-snowflake"></i> Slow Moving Products (30d)</h3>
+          <div id="slowMovingList"><p class="text-muted-sm">Loading...</p></div>
         </div>
       </div>
 
@@ -378,6 +423,147 @@ async function loadInsights(userId) {
   }
 }
 
+// ── Today's Sales / Invoices Today (always "right now", independent
+// of the year/month period filter above) ───────────────
+async function loadTodayStats(userId) {
+  const today = toISO(new Date());
+  const [{ data: b2b }, { data: b2c }] = await Promise.all([
+    _supabase.from('b2b_invoices').select('total_amount,invoice_date,is_deleted').eq('user_id', userId).eq('invoice_date', today),
+    _supabase.from('b2c_invoices').select('total_amount,invoice_date,is_deleted').eq('user_id', userId).eq('invoice_date', today)
+  ]);
+  const all = [...(b2b || []), ...(b2c || [])].filter(r => !r.is_deleted);
+  const total = all.reduce((s, r) => s + (+r.total_amount || 0), 0);
+  const set = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
+  set('statTodaySales', formatCurrency(total));
+  set('statInvoicesToday', all.length);
+}
+
+// ── Pending Payments (all-time open balance — not scoped to the
+// selected period; a business needs to know what's owed right now) ──
+async function loadPendingPayments(userId) {
+  const [{ data: b2b }, { data: b2c }] = await Promise.all([
+    _supabase.from('b2b_invoices').select('total_amount,amount_paid,payment_status,is_deleted').eq('user_id', userId),
+    _supabase.from('b2c_invoices').select('total_amount,amount_paid,payment_status,is_deleted').eq('user_id', userId)
+  ]);
+  const all = [...(b2b || []), ...(b2c || [])].filter(r => !r.is_deleted && (r.payment_status || 'unpaid') !== 'paid');
+  const pending = all.reduce((s, r) => s + Math.max(0, (+r.total_amount || 0) - (+r.amount_paid || 0)), 0);
+  const set = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
+  set('statPendingPayments', formatCurrency(pending));
+}
+
+// ── Top Selling Products by quantity (all-time, from invoice line
+// items — the actual per-product unit count Top Products above doesn't
+// have, since that one is revenue-only and includes pre-itemization
+// legacy HSN rows that don't reliably carry a quantity). ──
+async function loadTopSellingProducts(userId) {
+  const { data } = await _supabase.from('invoice_items').select('product_name,quantity,total_amount,is_deleted').eq('user_id', userId);
+  const byProduct = {};
+  (data || []).filter(r => !r.is_deleted).forEach(r => {
+    const key = r.product_name;
+    if (!byProduct[key]) byProduct[key] = { name: key, qty: 0, revenue: 0 };
+    byProduct[key].qty += +r.quantity || 0;
+    byProduct[key].revenue += +r.total_amount || 0;
+  });
+  const top = Object.values(byProduct).sort((a, b) => b.qty - a.qty).slice(0, 5);
+  const el = document.getElementById('topSellingProductsList');
+  if (el) {
+    el.innerHTML = top.length
+      ? top.map((r, i) => `<div class="mini-list-row"><span>${i + 1}. ${r.name}</span><b>${formatNum(r.qty)} sold</b></div>`).join('')
+      : '<p class="text-muted-sm">No itemized sales yet.</p>';
+  }
+}
+
+// ── Recent Activity: last few invoices/customers/products by
+// created_at, merged into one feed. Purely a "what happened recently"
+// glance — no new schema, just a sorted read across existing tables. ──
+async function loadRecentActivity(userId) {
+  const [b2b, b2c, cust, prod] = await Promise.all([
+    _supabase.from('b2b_invoices').select('customer_name,invoice_number,total_amount,created_at,is_deleted').eq('user_id', userId),
+    _supabase.from('b2c_invoices').select('customer_name,invoice_number,total_amount,created_at,is_deleted').eq('user_id', userId),
+    _supabase.from('customers').select('name,created_at,is_deleted').eq('user_id', userId),
+    _supabase.from('products').select('name,created_at,is_deleted,source').eq('user_id', userId)
+  ]);
+  const events = [];
+  (b2b.data || []).filter(r => !r.is_deleted).forEach(r => events.push({ at: r.created_at, icon: 'fa-file-invoice', text: `Invoice ${r.invoice_number || ''} for ${r.customer_name} — ₹${formatNum(r.total_amount)}` }));
+  (b2c.data || []).filter(r => !r.is_deleted).forEach(r => events.push({ at: r.created_at, icon: 'fa-file-invoice', text: `Invoice ${r.invoice_number || ''} for ${r.customer_name || 'Walk-in Customer'} — ₹${formatNum(r.total_amount)}` }));
+  (cust.data || []).filter(r => !r.is_deleted).forEach(r => events.push({ at: r.created_at, icon: 'fa-address-book', text: `New customer added: ${r.name}` }));
+  (prod.data || []).filter(r => !r.is_deleted && r.source === 'local').forEach(r => events.push({ at: r.created_at, icon: 'fa-box', text: `Product added: ${r.name}` }));
+
+  events.sort((a, b) => (b.at || '').localeCompare(a.at || ''));
+  const top = events.slice(0, 10);
+  const el = document.getElementById('recentActivityList');
+  if (el) {
+    el.innerHTML = top.length
+      ? top.map(e => `<div class="mini-list-row"><span><i class="fas ${e.icon} text-muted-sm"></i> ${e.text}</span><b class="fs-11 text-muted-sm">${typeof formatRelativeTime === 'function' ? formatRelativeTime(e.at) : ''}</b></div>`).join('')
+      : '<p class="text-muted-sm">No activity yet.</p>';
+  }
+}
+
+// ── Inventory Intelligence ──────────────────────────────
+// Threshold and window are simple, sensible defaults — not configurable
+// yet: Low Stock is <=10 units remaining, Fast/Slow Moving looks at
+// quantity sold in the last 30 days. Only products with stock actually
+// tracked (products.stock !== null — i.e. synced-from-website items
+// with a real stock figure) are considered; untracked/service items
+// have nothing meaningful to show here.
+const LOW_STOCK_THRESHOLD = 10;
+
+async function loadInventoryIntelligence(userId) {
+  const { data: products } = await _supabase.from('products').select('*').eq('user_id', userId);
+  const tracked = (products || []).filter(p => !p.is_deleted && p.stock !== null && p.stock !== undefined);
+
+  const outOfStock = tracked.filter(p => +p.stock <= 0);
+  const lowStock = tracked.filter(p => +p.stock > 0 && +p.stock <= LOW_STOCK_THRESHOLD).sort((a, b) => a.stock - b.stock);
+
+  const set = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
+  set('statLowStock', lowStock.length);
+  set('statOutOfStock', outOfStock.length);
+
+  const renderStockList = (elId, list, emptyMsg) => {
+    const el = document.getElementById(elId);
+    if (!el) return;
+    el.innerHTML = list.length
+      ? list.slice(0, 8).map(p => `<div class="mini-list-row"><span>${p.name}</span><b>${formatNum(p.stock)} left</b></div>`).join('')
+      : `<p class="text-muted-sm">${emptyMsg}</p>`;
+  };
+  renderStockList('lowStockList', lowStock, 'No products running low.');
+  renderStockList('outOfStockList', outOfStock, 'Nothing out of stock.');
+
+  // Fast/Slow Moving: quantity sold per product in the last 30 days.
+  // invoice_items has no date of its own, so each line is matched back
+  // to its invoice's invoice_date via a small id lookup.
+  const sinceDate = toISO(new Date(Date.now() - 30 * 24 * 60 * 60 * 1000));
+  const [{ data: b2bInv }, { data: b2cInv }, { data: items }] = await Promise.all([
+    _supabase.from('b2b_invoices').select('id,invoice_date,is_deleted').eq('user_id', userId),
+    _supabase.from('b2c_invoices').select('id,invoice_date,is_deleted').eq('user_id', userId),
+    _supabase.from('invoice_items').select('product_id,quantity,invoice_id,invoice_type,is_deleted').eq('user_id', userId)
+  ]);
+  const invoiceDate = {};
+  (b2bInv || []).forEach(r => { if (!r.is_deleted) invoiceDate['b2b:' + r.id] = r.invoice_date; });
+  (b2cInv || []).forEach(r => { if (!r.is_deleted) invoiceDate['b2c:' + r.id] = r.invoice_date; });
+
+  const soldQty = {};
+  (items || []).filter(r => !r.is_deleted && r.product_id).forEach(r => {
+    const d = invoiceDate[r.invoice_type + ':' + r.invoice_id];
+    if (!d || d < sinceDate) return;
+    soldQty[r.product_id] = (soldQty[r.product_id] || 0) + (+r.quantity || 0);
+  });
+
+  const withRecentSales = tracked.map(p => ({ name: p.name, qty: soldQty[p.id] || 0 }));
+  const fastMoving = [...withRecentSales].filter(p => p.qty > 0).sort((a, b) => b.qty - a.qty).slice(0, 5);
+  const slowMoving = [...withRecentSales].sort((a, b) => a.qty - b.qty).slice(0, 5);
+
+  const renderMoveList = (elId, list, emptyMsg) => {
+    const el = document.getElementById(elId);
+    if (!el) return;
+    el.innerHTML = list.length
+      ? list.map(p => `<div class="mini-list-row"><span>${p.name}</span><b>${formatNum(p.qty)} sold</b></div>`).join('')
+      : `<p class="text-muted-sm">${emptyMsg}</p>`;
+  };
+  renderMoveList('fastMovingList', fastMoving, 'No sales in the last 30 days yet.');
+  renderMoveList('slowMovingList', slowMoving, 'No tracked products yet.');
+}
+
 // ── 12-month summary for selected year ─────────────────
 async function loadYearMonthSummary(userId) {
   const y = getSelectedYear();
@@ -488,6 +674,11 @@ document.addEventListener('DOMContentLoaded', async () => {
     await loadDashboardData(user.id, start, end);
     await loadYearMonthSummary(user.id);
     await loadInsights(user.id);
+    await loadTodayStats(user.id);
+    await loadPendingPayments(user.id);
+    await loadTopSellingProducts(user.id);
+    await loadRecentActivity(user.id);
+    await loadInventoryIntelligence(user.id);
   }
   hideLoader();
 });

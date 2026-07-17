@@ -156,7 +156,7 @@ class LocalSupabase {
 // =============================================
 // Storage Status & Backup / Restore
 // =============================================
-const DB_TABLES = ['b2b_invoices', 'b2c_invoices', 'b2b_hsn', 'b2c_hsn', 'customers', 'cdn_notes', 'products', 'import_mappings', 'invoice_items'];
+const DB_TABLES = ['b2b_invoices', 'b2c_invoices', 'b2b_hsn', 'b2c_hsn', 'customers', 'cdn_notes', 'products', 'import_mappings', 'invoice_items', 'payments'];
 
 function getStorageStats() {
   const stats = {};

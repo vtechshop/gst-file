@@ -32,10 +32,8 @@
       <div class="menu-section">Main</div>
       <a href="dashboard.html" class="menu-item"><i class="fas fa-tachometer-alt"></i> Dashboard</a>
       <div class="menu-section">Invoices</div>
+      <a href="invoice.html" class="menu-item"><i class="fas fa-plus-circle"></i> New Invoice</a>
       <a href="invoice-list.html" class="menu-item"><i class="fas fa-list-alt"></i> Invoice List</a>
-      <div class="menu-section">GSTR-1</div>
-      <a href="gstr1.html"   class="menu-item"><i class="fas fa-file-alt"></i> B2B Invoices</a>
-      <a href="b2c.html"     class="menu-item"><i class="fas fa-users"></i> B2C Invoices</a>
       <a href="cdnotes.html" class="menu-item"><i class="fas fa-file-minus"></i> Credit/Debit Notes</a>
       <div class="menu-section">HSN</div>
       <a href="#" class="menu-item" id="sideB2BHSN" onclick="hsnTabClick('b2b');return false;"><i class="fas fa-barcode"></i> B2B HSN</a>
@@ -67,21 +65,12 @@
       <span class="page-title"><i class="fas fa-barcode"></i>HSN Summary</span>
       <div class="ml-auto d-flex gap-10">
         <button type="button" class="btn btn-secondary btn-sm btn-icon" onclick="openGlobalSearch()" title="Search everywhere (Ctrl+K)" aria-label="Global search"><i class="fas fa-search"></i></button>
-        <a href="b2c.html" class="btn btn-secondary btn-sm"><i class="fas fa-arrow-left"></i> Back to B2C</a>
+        <a href="invoice.html" class="btn btn-secondary btn-sm"><i class="fas fa-plus"></i> New Invoice</a>
         <a href="reports.html" class="btn btn-info btn-sm"><i class="fas fa-arrow-right"></i> Reports</a>
       </div>
     </div>
 
     <div class="content">
-      <!-- Stepper -->
-      <div class="stepper">
-        <div class="step done"><div class="step-circle"><i class="fas fa-check"></i></div><div class="step-info"><div class="step-num">Step 1</div><div class="step-name">B2B Invoices</div></div></div>
-        <div class="step-line line-success"></div>
-        <div class="step done"><div class="step-circle"><i class="fas fa-check"></i></div><div class="step-info"><div class="step-num">Step 2</div><div class="step-name">B2C Invoices</div></div></div>
-        <div class="step-line line-success"></div>
-        <div class="step active"><div class="step-circle">3</div><div class="step-info"><div class="step-num">Step 3</div><div class="step-name">HSN Summary</div></div></div>
-      </div>
-
       <!-- Tabs -->
       <div class="tab-bar">
         <button type="button" class="tab-btn active" id="tabB2B" onclick="hsnTabClick('b2b')"><i class="fas fa-building"></i> B2B HSN</button>
@@ -94,7 +83,7 @@
           <i class="fas fa-info-circle"></i>
           <div class="banner-text">
             HSN Summary is generated automatically from the products on your B2B invoices &mdash; there is nothing to enter here.
-            Add or edit products on the <a href="gstr1.html">B2B Invoice Entry</a> page and this updates on its own.
+            Add or edit products on the <a href="invoice.html">New Invoice</a> page and this updates on its own.
           </div>
         </div>
 
@@ -127,7 +116,7 @@
           <i class="fas fa-info-circle"></i>
           <div class="banner-text">
             HSN Summary is generated automatically from the products on your B2C invoices &mdash; there is nothing to enter here.
-            Add or edit products on the <a href="b2c.html">B2C Invoice Entry</a> page and this updates on its own.
+            Add or edit products on the <a href="invoice.html">New Invoice</a> page and this updates on its own.
           </div>
         </div>
 

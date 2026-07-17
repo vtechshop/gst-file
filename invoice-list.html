@@ -20,6 +20,7 @@
   <script src="js/products.js"></script>
   <script src="js/invoice-items.js?v=20260717"></script>
   <script src="js/invoice-pdf.js"></script>
+  <script src="js/payments.js"></script>
   <script src="js/invoice-list.js"></script>
 </head>
 <body>
@@ -35,10 +36,8 @@
       <div class="menu-section">Main</div>
       <a href="dashboard.html" class="menu-item"><i class="fas fa-tachometer-alt"></i> Dashboard</a>
       <div class="menu-section">Invoices</div>
+      <a href="invoice.html" class="menu-item"><i class="fas fa-plus-circle"></i> New Invoice</a>
       <a href="invoice-list.html" class="menu-item active"><i class="fas fa-list-alt"></i> Invoice List</a>
-      <div class="menu-section">GSTR-1</div>
-      <a href="gstr1.html"   class="menu-item"><i class="fas fa-file-alt"></i> B2B Invoices</a>
-      <a href="b2c.html"     class="menu-item"><i class="fas fa-users"></i> B2C Invoices</a>
       <a href="cdnotes.html" class="menu-item"><i class="fas fa-file-minus"></i> Credit/Debit Notes</a>
       <div class="menu-section">HSN</div>
       <a href="hsn.html#b2b" class="menu-item"><i class="fas fa-barcode"></i> B2B HSN</a>
@@ -70,13 +69,12 @@
       <span class="page-title"><i class="fas fa-list-alt"></i>Invoice List</span>
       <div class="ml-auto d-flex gap-10">
         <button type="button" class="btn btn-secondary btn-sm btn-icon" onclick="openGlobalSearch()" title="Search everywhere (Ctrl+K)" aria-label="Global search"><i class="fas fa-search"></i></button>
-        <a href="gstr1.html" class="btn btn-secondary btn-sm"><i class="fas fa-plus"></i> New B2B Invoice</a>
-        <a href="b2c.html" class="btn btn-secondary btn-sm"><i class="fas fa-plus"></i> New B2C Invoice</a>
+        <a href="invoice.html" class="btn btn-primary btn-sm"><i class="fas fa-plus"></i> New Invoice</a>
       </div>
     </div>
 
     <div class="content">
-      <p class="text-muted-sm mb-16"><i class="fas fa-info-circle"></i> This lists every invoice already saved via B2B or B2C Invoice Entry. To add a new invoice, use those pages — this list is for viewing, printing, and sharing invoices you've already entered.</p>
+      <p class="text-muted-sm mb-16"><i class="fas fa-info-circle"></i> Every invoice you've saved, B2B and B2C together. Use <a href="invoice.html">New Invoice</a> to add one — this list is for viewing, editing, duplicating, printing, and sharing invoices you've already entered.</p>
 
       <div class="card">
         <div class="card-header">
@@ -101,11 +99,11 @@
               <thead>
                 <tr>
                   <th>#</th><th>Invoice No</th><th>Date</th><th>Customer</th><th>Type</th>
-                  <th>Total</th><th>Actions</th>
+                  <th>Total</th><th>Payment</th><th>Actions</th>
                 </tr>
               </thead>
               <tbody id="invListTableBody">
-                <tr><td colspan="7" class="empty-state"><i class="fas fa-spinner fa-spin table-loading-icon"></i>Loading...</td></tr>
+                <tr><td colspan="8" class="empty-state"><i class="fas fa-spinner fa-spin table-loading-icon"></i>Loading...</td></tr>
               </tbody>
               <tfoot id="invListTableTotal"></tfoot>
             </table>
@@ -124,6 +122,69 @@ document.addEventListener('DOMContentLoaded', () => {
   initInvoiceList();
 });
 </script>
+
+<!-- View Invoice Modal -->
+<div class="modal-overlay" id="viewInvoiceModal">
+  <div class="modal modal-lg">
+    <div class="modal-header">
+      <span class="modal-title"><i class="fas fa-eye"></i> Invoice Preview</span>
+      <button type="button" class="modal-close" onclick="closeViewInvoiceModal()" aria-label="Close"><i class="fas fa-times"></i></button>
+    </div>
+    <div class="modal-body" style="padding:0;">
+      <iframe id="viewInvoiceFrame" style="width:100%;height:70vh;border:0;display:block;"></iframe>
+    </div>
+  </div>
+</div>
+
+<!-- Receive Payment Modal -->
+<div class="modal-overlay" id="markPaymentModal">
+  <div class="modal">
+    <div class="modal-header">
+      <span class="modal-title"><i class="fas fa-rupee-sign"></i> Payment &mdash; <span id="mpInvoiceLabel"></span></span>
+      <button type="button" class="modal-close" onclick="closeMarkPaymentModal()" aria-label="Close"><i class="fas fa-times"></i></button>
+    </div>
+    <div class="modal-body">
+      <div class="calc-box mb-16">
+        <div class="calc-row"><span class="label">Invoice Total</span><span class="value" id="mpInvoiceTotal">&#8377;0.00</span></div>
+        <div class="calc-row"><span class="label">Received So Far</span><span class="value" id="mpReceivedSoFar">&#8377;0.00</span></div>
+        <div class="calc-row total"><span class="label">Outstanding Balance</span><span class="value" id="mpOutstanding">&#8377;0.00</span></div>
+      </div>
+
+      <div class="section-title mb-14">Receive Payment</div>
+      <div class="form-grid cols-2 mb-16">
+        <div class="form-group">
+          <label for="mpAmount">Amount (&#8377;)</label>
+          <input type="number" id="mpAmount" class="form-control" min="0" step="0.01" placeholder="0.00">
+        </div>
+        <div class="form-group">
+          <label for="mpMethod">Payment Method</label>
+          <select id="mpMethod" class="form-control">
+            <option value="cash">Cash</option>
+            <option value="upi">UPI</option>
+            <option value="bank_transfer">Bank Transfer</option>
+            <option value="cheque">Cheque</option>
+            <option value="card">Card</option>
+            <option value="other">Other</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label for="mpDate">Date</label>
+          <input type="date" id="mpDate" class="form-control">
+        </div>
+        <div class="form-group">
+          <label for="mpNote">Note</label>
+          <input type="text" id="mpNote" class="form-control" placeholder="Optional">
+        </div>
+      </div>
+      <div class="btn-group mb-20">
+        <button type="button" class="btn btn-primary" onclick="submitReceivePayment()"><i class="fas fa-check"></i> Receive Payment</button>
+      </div>
+
+      <div class="section-title mb-14">Payment History</div>
+      <div id="mpHistoryList"><p class="text-muted-sm">No payments recorded yet.</p></div>
+    </div>
+  </div>
+</div>
 
 <!-- Global Search Modal -->
 <div class="modal-overlay" id="globalSearchModal">

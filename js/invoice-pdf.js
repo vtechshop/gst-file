@@ -25,14 +25,16 @@ async function fetchInvoiceRecord(type, id) {
   const { data } = await _supabase.from(table).select('*').eq('id', id).single();
   if (!data) { showToast('Invoice not found.', 'error'); return null; }
 
-  let customer = null;
-  if (type === 'b2b') {
-    const { data: custMatches } = await _supabase.from('customers').select('*').eq('user_id', data.user_id);
-    customer = (custMatches || []).find(c =>
-      c.name.toLowerCase() === (data.customer_name || '').toLowerCase() &&
-      (c.gstin || '').toUpperCase() === (data.gst_number || '').toUpperCase()
-    ) || (custMatches || []).find(c => c.name.toLowerCase() === (data.customer_name || '').toLowerCase());
-  }
+  // The invoice row itself (customer_name/phone/address/state, captured
+  // directly on Invoice Entry) is the authoritative source now. Customer
+  // Master is still consulted as a fallback for older rows saved before
+  // those fields existed, and for email (not collected on the invoice
+  // form itself).
+  const { data: custMatches } = await _supabase.from('customers').select('*').eq('user_id', data.user_id);
+  const customer = (custMatches || []).find(c =>
+    c.name.toLowerCase() === (data.customer_name || '').toLowerCase() &&
+    (!data.gst_number || (c.gstin || '').toUpperCase() === (data.gst_number || '').toUpperCase())
+  ) || (custMatches || []).find(c => c.name.toLowerCase() === (data.customer_name || '').toLowerCase());
 
   let items = null;
   const { data: itemRows } = await _supabase.from('invoice_items').select('*').eq('invoice_id', data.id).eq('invoice_type', type);
@@ -42,13 +44,13 @@ async function fetchInvoiceRecord(type, id) {
   return {
     type,
     id: data.id,
-    invoice_number: type === 'b2b' ? data.invoice_number : ('B2C-' + data.id.slice(0, 8).toUpperCase()),
+    invoice_number: data.invoice_number || (type === 'b2c' ? ('B2C-' + data.id.slice(0, 8).toUpperCase()) : ''),
     invoice_date: data.invoice_date,
-    customer_name: type === 'b2b' ? data.customer_name : 'Walk-in Customer (B2C)',
-    gstin: type === 'b2b' ? data.gst_number : '',
-    state: type === 'b2b' ? (customer?.state || '') : data.state,
-    address: customer?.address || '',
-    phone: customer?.phone || '',
+    customer_name: data.customer_name || (type === 'b2c' ? 'Walk-in Customer (B2C)' : ''),
+    gstin: type === 'b2b' ? (data.gst_number || '') : '',
+    state: data.state || customer?.state || '',
+    address: data.address || customer?.address || '',
+    phone: data.phone || customer?.phone || '',
     email: customer?.email || '',
     taxable_amount: +data.taxable_amount,
     gst_percentage: +data.gst_percentage,
@@ -57,6 +59,15 @@ async function fetchInvoiceRecord(type, id) {
     supply_type: data.supply_type,
     igst: +data.igst, cgst: +data.cgst, sgst: +data.sgst,
     round_off: round2(+data.total_amount - +data.taxable_amount - +data.gst_amount),
+    transport_required: !!data.transport_required,
+    vehicle_number: data.vehicle_number || '',
+    transporter_name: data.transporter_name || '',
+    transport_mode: data.transport_mode || '',
+    transport_distance_km: data.transport_distance_km || null,
+    lr_number: data.lr_number || '',
+    lr_date: data.lr_date || null,
+    payment_status: data.payment_status || 'unpaid',
+    amount_paid: +data.amount_paid || 0,
     items
   };
 }
@@ -332,10 +343,30 @@ async function buildInvoicePDFDoc(inv) {
   return doc;
 }
 
-// ── Print ────────────────────────────────────────────
+// ── Print / View ───────────────────────────────────────
+// buildInvoiceHTML() is the single source of the rendered invoice
+// markup — printInvoice() opens it in a new window and auto-prints;
+// viewInvoiceHTML() (js/invoice-list.js's View action) gets the exact
+// same markup back to display read-only inside an iframe, with no
+// separate template to keep in sync.
 async function printInvoice(type, id) {
   const inv = await fetchInvoiceRecord(type, id);
   if (!inv) return;
+  const html = await buildInvoiceHTML(inv, { autoPrint: true });
+  const w = window.open('', '_blank');
+  w.document.write(html);
+  w.document.close();
+  showToast('Print dialog opened!');
+}
+
+async function viewInvoiceHTML(type, id) {
+  const inv = await fetchInvoiceRecord(type, id);
+  if (!inv) return null;
+  return buildInvoiceHTML(inv, { autoPrint: false });
+}
+
+async function buildInvoiceHTML(inv, opts) {
+  opts = opts || {};
   const p = (typeof getCachedProfile === 'function') ? getCachedProfile() : null;
   const accentHex = p?.header_color || '#004d40';
 
@@ -359,8 +390,7 @@ async function printInvoice(type, id) {
     ? `<tr><td>Round Off</td><td class="r">Rs.${(inv.round_off >= 0 ? '+' : '') + formatNum(inv.round_off)}</td></tr>`
     : '';
 
-  const w = window.open('', '_blank');
-  w.document.write(`<!DOCTYPE html>
+  return `<!DOCTYPE html>
 <html><head><meta charset="UTF-8"><title>Invoice ${escHtml(inv.invoice_number)}</title>
 <style>
   @page { margin: 14mm 16mm; size: A4; }
@@ -486,10 +516,8 @@ async function printInvoice(type, id) {
     ${contactLine ? `<div class="contact">${contactLine}</div>` : ''}
   </div>
 
-  <script>window.onload = function(){ window.print(); }<\/script>
-</body></html>`);
-  w.document.close();
-  showToast('Print dialog opened!');
+  ${opts.autoPrint ? '<script>window.onload = function(){ window.print(); }<\/script>' : ''}
+</body></html>`;
 }
 
 function escHtml(v) { return (v || '').toString().replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;'); }

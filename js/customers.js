@@ -15,7 +15,23 @@ async function initCustomers() {
   loadUserProfile(user.id);
   setupCustSearch();
   await loadCustomers(user.id);
+  await loadCustomerOutstanding(user.id);
   applyIncomingSearchQuery('custSearch');
+}
+
+async function loadCustomerOutstanding(userId) {
+  const tbody = document.getElementById('custOutstandingBody');
+  if (!tbody) return;
+  const rows = await loadCustomerOutstandingSummary(userId);
+  tbody.innerHTML = rows.length
+    ? rows.map(r => `<tr>
+        <td class="fw-600">${r.name}</td>
+        <td class="text-center">${r.invoiceCount}</td>
+        <td class="text-right">&#8377;${formatNum(r.totalBilled)}</td>
+        <td class="text-right">&#8377;${formatNum(r.totalPaid)}</td>
+        <td class="text-right fw-700 ${r.outstanding > 0 ? 'text-danger' : ''}">&#8377;${formatNum(r.outstanding)}</td>
+      </tr>`).join('')
+    : '<tr><td colspan="5" class="empty-state">No invoices yet.</td></tr>';
 }
 
 async function saveCustomer() {
@@ -94,7 +110,7 @@ function renderCustTable(data) {
         <div class="action-btns">
           <button class="btn btn-secondary btn-sm btn-icon" onclick="editCustomer('${r.id}')" title="Edit"><i class="fas fa-edit"></i></button>
           <button class="btn btn-danger btn-sm btn-icon" onclick="deleteCustomer('${r.id}')" title="Delete"><i class="fas fa-trash"></i></button>
-          <button class="btn btn-success btn-sm btn-icon" onclick="useInB2B('${r.id}')" title="Use in B2B Invoice" style="background:#00796b;border-color:#00796b;"><i class="fas fa-file-invoice"></i></button>
+          <button class="btn btn-success btn-sm btn-icon" onclick="useInB2B('${r.id}')" title="Create Invoice for this Customer" style="background:#00796b;border-color:#00796b;"><i class="fas fa-file-invoice"></i></button>
         </div>
       </td>
     </tr>`).join('');
@@ -143,8 +159,10 @@ async function deleteCustomer(id) {
 function useInB2B(id) {
   const rec = custAllData.find(r => r.id === id);
   if (!rec) return;
-  sessionStorage.setItem('prefill_customer', JSON.stringify({ name: rec.name, gstin: rec.gstin || '' }));
-  window.location.href = 'gstr1.html';
+  sessionStorage.setItem('prefill_customer', JSON.stringify({
+    name: rec.name, gstin: rec.gstin || '', phone: rec.phone || '', address: rec.address || '', state: rec.state || ''
+  }));
+  window.location.href = 'invoice.html';
 }
 
 function setupCustSearch() {
