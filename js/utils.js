@@ -30,6 +30,21 @@ function getDefaultGstPct() {
   return v === undefined || v === null || v === '' ? 18 : v;
 }
 
+// ── Invoice Number Format (Auto Generate mode) ──────
+// The single run of # characters becomes the zero-padded running
+// sequence — everything else in the format is left exactly as typed,
+// wherever it appears (prefix, middle, or suffix). No other placeholder
+// syntax is supported, matching the spec's examples (INV-2026-### ->
+// INV-2026-001, VT/B2B/#### -> VT/B2B/0001, SALE## -> SALE01).
+function applyInvoiceNumberFormat(format, seq) {
+  const fmt = (format || '').trim() || 'INV-###';
+  const match = fmt.match(/#+/);
+  const n = Math.max(1, parseInt(seq, 10) || 1);
+  if (!match) return fmt; // no # placeholder — caller's own duplicate check still applies
+  const padded = String(n).padStart(match[0].length, '0');
+  return fmt.slice(0, match.index) + padded + fmt.slice(match.index + match[0].length);
+}
+
 function calcGST(taxableAmount, gstPct, supplyType) {
   const gstAmt = (taxableAmount * gstPct) / 100;
   let igst = 0, cgst = 0, sgst = 0;

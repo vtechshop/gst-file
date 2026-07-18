@@ -254,38 +254,81 @@ function populateInvoiceStateOptions() {
 // ── Invoice Number Auto-generate (shared sequence across B2B + B2C —
 // the one-page form has a single Invoice Number field regardless of
 // classification) ──────────────────────────────────
-function isAutoInvoiceOn() { return localStorage.getItem('gst_auto_invoice') === 'true'; }
+// Both the ON/OFF flag and the format+sequence used to generate a
+// number live on the business's own profile row (invoice_auto_number /
+// invoice_number_format / invoice_current_sequence — see Settings'
+// Invoice Numbering section, js/profile.js), not a raw localStorage
+// flag, so they're synced through the same profiles table every other
+// business setting already uses (real Supabase or the local demo-mode
+// shim — see js/localdb.js).
+function isAutoInvoiceOn() { return !!getCachedProfile()?.invoice_auto_number; }
 
 function updateAutoToggleUI() {
   const on = isAutoInvoiceOn();
   const cb = document.getElementById('autoInvToggle');
   const lbl = document.getElementById('autoInvLabel');
+  const numEl = document.getElementById('invNum');
   if (cb) cb.checked = on;
   if (lbl) { lbl.textContent = on ? 'ON' : 'OFF'; lbl.style.color = on ? 'var(--primary)' : '#9e9e9e'; }
+  // Auto Generate = the field is machine-managed, not user-typed —
+  // read-only makes that visually unambiguous (Manual mode's field
+  // stays freely editable).
+  if (numEl) numEl.readOnly = on;
 }
 
-function onAutoToggleChange() {
-  const on = document.getElementById('autoInvToggle')?.checked;
-  localStorage.setItem('gst_auto_invoice', on);
+async function onAutoToggleChange() {
+  const on = !!document.getElementById('autoInvToggle')?.checked;
+  const user = await getCurrentUser();
+  if (user) await saveUserProfile(user.id, { invoice_auto_number: on }, true);
   updateAutoToggleUI();
-  if (on) getCurrentUser().then(u => { if (u) generateInvoiceNo(u.id, true); });
+  if (on && user) generateInvoiceNo(user.id, true);
 }
 
+// Preview-only: shows what the NEXT number would be, using the
+// persisted sequence counter and format, without consuming/advancing
+// the counter — that only happens once an invoice is actually saved,
+// via reserveNextInvoiceNumber() below. This keeps abandoned drafts
+// (page reload, never saved) from burning through numbers.
 async function generateInvoiceNo(userId, force) {
   if (invoiceEditId) return;
   if (!force && !isAutoInvoiceOn()) return;
   const uid = userId || (await getCurrentUser())?.id;
-  const year = new Date().getFullYear();
+  const profile = getCachedProfile() || (uid ? await loadUserProfile(uid) : null);
+  const format = profile?.invoice_number_format || 'INV-###';
+  const seq = profile?.invoice_current_sequence || 1;
+  setInvValue('invNum', applyInvoiceNumberFormat(format, seq));
+}
+
+// The authoritative generator — called only right before an actual new
+// invoice is saved. Re-checks against every existing invoice number for
+// this user (both tables, B2B + B2C, INCLUDING soft-deleted rows — a
+// deleted invoice's number must never be reissued) and rolls the
+// sequence forward past any that are already taken, then persists the
+// counter one past whatever it hands out so the next call starts fresh.
+// A hard iteration cap guards against a pathological format with no #
+// (which would otherwise generate the same literal string forever).
+async function reserveNextInvoiceNumber(userId) {
+  const profile = getCachedProfile() || await loadUserProfile(userId);
+  const format = profile?.invoice_number_format || 'INV-###';
+  let seq = Math.max(1, parseInt(profile?.invoice_current_sequence, 10) || 1);
+
   const [{ data: b2b }, { data: b2c }] = await Promise.all([
-    _supabase.from('b2b_invoices').select('invoice_number').eq('user_id', uid),
-    _supabase.from('b2c_invoices').select('invoice_number').eq('user_id', uid)
+    _supabase.from('b2b_invoices').select('invoice_number').eq('user_id', userId),
+    _supabase.from('b2c_invoices').select('invoice_number').eq('user_id', userId)
   ]);
-  const nums = [...(b2b || []), ...(b2c || [])].map(r => {
-    const m = r.invoice_number?.match(/(\d+)$/);
-    return m ? parseInt(m[1]) : 0;
-  });
-  const next = (nums.length ? Math.max(...nums) : 0) + 1;
-  setInvValue('invNum', `INV-${year}-${String(next).padStart(3, '0')}`);
+  const taken = new Set([...(b2b || []), ...(b2c || [])].map(r => (r.invoice_number || '').toUpperCase()));
+
+  let candidate = applyInvoiceNumberFormat(format, seq);
+  let guard = 0;
+  while (taken.has(candidate.toUpperCase()) && guard < 100000) {
+    seq++;
+    candidate = applyInvoiceNumberFormat(format, seq);
+    guard++;
+  }
+  if (guard >= 100000) candidate = candidate + '-' + Date.now(); // pathological format (no #) — guarantee uniqueness anyway
+
+  await saveUserProfile(userId, { invoice_current_sequence: seq + 1 }, true);
+  return candidate;
 }
 
 // ── Transport toggle ────────────────────────────────
@@ -470,18 +513,24 @@ async function saveInvoice() {
   const phone    = getInvText('invPhone');
   const address  = getInvText('invAddress');
   const state    = document.getElementById('invState')?.value || '';
-  const invNum   = getInvText('invNum');
+  let   invNum   = getInvText('invNum');
   const invDate  = getInvText('invDate');
   const supply   = document.getElementById('invSupply')?.value || 'intrastate';
 
   const type = getSelectedInvoiceType();
   const wasNewInvoice = !invoiceEditId;
+  const autoMode = isAutoInvoiceOn();
 
   if (!custName) { showToast('Please enter the customer name.', 'error'); return; }
   // State is only user-facing (and required) in B2B's form — B2C's is
   // hidden and auto-filled from the business profile by syncInvoiceTypeUI().
   if (type === 'b2b' && !state) { showToast('Please select a state.', 'error'); return; }
-  if (!invNum)   { showToast('Please enter an invoice number.', 'error'); return; }
+  // In Auto Generate mode a brand-new invoice's number hasn't been
+  // reserved yet at this point (see below) — the field just shows a
+  // non-binding preview, which is allowed to be blank if e.g. the
+  // profile hasn't loaded yet. Manual mode (or editing/duplicating an
+  // existing invoice) still requires it up front as before.
+  if (!invNum && !(autoMode && wasNewInvoice)) { showToast('Please enter an invoice number.', 'error'); return; }
   if (!invDate)  { showToast('Please enter the invoice date.', 'error'); return; }
   if (type === 'b2b' && !gstin) { showToast('B2B is selected — enter the customer\'s GST Number, or switch to B2C.', 'error'); return; }
   if (gstin) {
@@ -489,6 +538,16 @@ async function saveInvoice() {
     if (!isValidGstinFormat(gstin)) {
       showToast('GST Number format warning — saving anyway.', 'warning');
     }
+  }
+
+  // Auto Generate: reserve the authoritative number now, right before
+  // the duplicate check — never trust the on-screen preview alone since
+  // another tab/session could have consumed it since it was shown. Never
+  // applies to editing/duplicating-in-place an existing invoice (that
+  // always keeps its own number); only a genuinely new invoice.
+  if (autoMode && wasNewInvoice) {
+    invNum = await reserveNextInvoiceNumber(user.id);
+    setInvValue('invNum', invNum);
   }
 
   const isTypeChange = invoiceEditId && invoiceEditType && invoiceEditType !== type;

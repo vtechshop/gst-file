@@ -467,3 +467,20 @@ ALTER TABLE b2c_invoices ALTER COLUMN state DROP NOT NULL;
 -- save into b2c_invoices; b2b_invoices.gst_number stays NOT NULL.
 -- =============================================
 ALTER TABLE b2c_invoices ADD COLUMN IF NOT EXISTS gst_number TEXT;
+
+-- =============================================
+-- Dual Invoice Numbering System — Manual / Auto Generate
+-- Auto Generate uses a user-defined format (# = running sequence, e.g.
+-- INV-2026-### -> INV-2026-001) plus a persisted, monotonically
+-- increasing sequence counter, kept on the business's own profile row
+-- (one numbering sequence per business, same as everything else here).
+-- The counter only ever moves forward — it is never re-derived by
+-- scanning existing invoices for the highest number in use, because
+-- that approach would let a deleted invoice's number get reissued.
+-- Manual mode ignores all three columns entirely: the Invoice Number
+-- field stays freely editable and only the existing duplicate-number
+-- check on save applies.
+-- =============================================
+ALTER TABLE profiles ADD COLUMN IF NOT EXISTS invoice_auto_number BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE profiles ADD COLUMN IF NOT EXISTS invoice_number_format TEXT NOT NULL DEFAULT 'INV-###';
+ALTER TABLE profiles ADD COLUMN IF NOT EXISTS invoice_current_sequence INTEGER NOT NULL DEFAULT 1;

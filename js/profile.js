@@ -29,7 +29,7 @@ async function loadUserProfile(userId) {
 // (e.g. Business Profile identity fields vs. Company Branding
 // assets) — merge onto the cache rather than replacing it, so a
 // save from one form never drops fields owned by another.
-async function saveUserProfile(userId, fields) {
+async function saveUserProfile(userId, fields, silent) {
   const payload = { id: userId, ...fields };
   const existing = await _supabase.from('profiles').select('id').eq('id', userId).single();
   let error;
@@ -41,7 +41,7 @@ async function saveUserProfile(userId, fields) {
   if (!error) {
     _currentProfile = { ..._currentProfile, ...payload };
     updateNavFromProfile(_currentProfile);
-    showToast('Saved!', 'success');
+    if (!silent) showToast('Saved!', 'success');
   }
   return { error };
 }
@@ -242,6 +242,39 @@ async function openSettingsModal() {
         </button>
       </div>
 
+      <!-- Invoice Numbering -->
+      <div style="padding:18px 22px;border-bottom:1px solid var(--border);">
+        <div style="font-size:11px;font-weight:700;color:var(--text-muted);letter-spacing:1px;text-transform:uppercase;margin-bottom:12px;">
+          <i class="fas fa-hashtag" style="color:var(--primary);margin-right:5px;"></i> Invoice Numbering
+        </div>
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">
+          <div>
+            <div style="font-size:13px;font-weight:600;color:var(--text);">Auto Generate</div>
+            <div style="font-size:11.5px;color:var(--text-muted);">Off = type any invoice number yourself. On = the field is filled in automatically and read-only.</div>
+          </div>
+          <label class="inv-toggle" title="Toggle auto invoice numbering">
+            <input type="checkbox" id="setAutoInvToggle" ${profile?.invoice_auto_number ? 'checked' : ''}>
+            <span class="inv-toggle-track"><span class="inv-toggle-thumb"></span></span>
+          </label>
+        </div>
+        <div class="form-grid cols-2" style="gap:14px;margin-bottom:10px;">
+          <div class="form-group">
+            <label for="setInvFormat">Invoice Number Format</label>
+            <input type="text" id="setInvFormat" class="form-control" placeholder="e.g. INV-2026-###" value="${e(profile?.invoice_number_format || 'INV-###')}" oninput="updateSettingsInvPreview()">
+          </div>
+          <div class="form-group">
+            <label for="setInvNextSeq">Next Sequence Number</label>
+            <input type="number" id="setInvNextSeq" class="form-control" min="1" step="1" value="${profile?.invoice_current_sequence || 1}" oninput="updateSettingsInvPreview()">
+          </div>
+        </div>
+        <p class="fs-11 text-muted-sm mb-10"><b>#</b> marks the running sequence &mdash; <code>###</code> = 001, 002&hellip; &nbsp;<code>####</code> = 0001, 0002&hellip; Everything else in the format is kept exactly as typed.</p>
+        <div style="background:var(--bg);border:1px dashed var(--border);border-radius:8px;padding:10px 14px;margin-bottom:14px;">
+          <span class="fs-11 text-muted-sm">Live Preview</span>
+          <div id="setInvPreview" style="font-size:16px;font-weight:700;color:var(--primary);margin-top:2px;">${e(applyInvoiceNumberFormat(profile?.invoice_number_format || 'INV-###', profile?.invoice_current_sequence || 1))}</div>
+        </div>
+        <button class="btn btn-primary btn-sm" onclick="submitInvoiceNumberingSettings()"><i class="fas fa-save"></i> Save Numbering Settings</button>
+      </div>
+
       <!-- Company Branding -->
       <div style="padding:18px 22px;border-bottom:1px solid var(--border);">
         <div style="font-size:11px;font-weight:700;color:var(--text-muted);letter-spacing:1px;text-transform:uppercase;margin-bottom:8px;">
@@ -373,6 +406,40 @@ async function openSettingsModal() {
 function closeSettingsModal() {
   document.getElementById('settingsModalWrap')?.remove();
   unlockBodyScrollIfNoModalsOpen();
+}
+
+// ── Invoice Numbering (Settings) ───────────
+function updateSettingsInvPreview() {
+  const format = document.getElementById('setInvFormat')?.value || '';
+  const seq = parseInt(document.getElementById('setInvNextSeq')?.value, 10) || 1;
+  const el = document.getElementById('setInvPreview');
+  if (el) el.textContent = applyInvoiceNumberFormat(format, seq);
+}
+
+async function submitInvoiceNumberingSettings() {
+  const user = await getCurrentUser();
+  if (!user) return;
+
+  let format = document.getElementById('setInvFormat')?.value?.trim() || 'INV-###';
+  if (!format.includes('#')) {
+    format = format + '-###';
+    showToast('Format must include # for the running sequence — appended automatically.', 'warning');
+  }
+  const seq = Math.max(1, parseInt(document.getElementById('setInvNextSeq')?.value, 10) || 1);
+  const autoOn = !!document.getElementById('setAutoInvToggle')?.checked;
+
+  const { error } = await saveUserProfile(user.id, {
+    invoice_auto_number: autoOn,
+    invoice_number_format: format,
+    invoice_current_sequence: seq
+  });
+  if (error) return;
+
+  // Invoice Entry (js/invoice-entry.js) may or may not be loaded on
+  // whichever page this Settings modal was opened from — keep its own
+  // toggle/field in sync immediately if it is, no-op otherwise.
+  if (typeof updateAutoToggleUI === 'function') updateAutoToggleUI();
+  if (typeof generateInvoiceNo === 'function') generateInvoiceNo(user.id, true);
 }
 
 function defaultFinancialYear() {
