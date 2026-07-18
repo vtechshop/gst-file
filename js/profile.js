@@ -411,7 +411,22 @@ function closeSettingsModal() {
 // ── Invoice Numbering (Settings) ───────────
 function updateSettingsInvPreview() {
   const format = document.getElementById('setInvFormat')?.value || '';
-  const seq = parseInt(document.getElementById('setInvNextSeq')?.value, 10) || 1;
+  const trimmed = format.trim();
+  const seqEl = document.getElementById('setInvNextSeq');
+  // A purely numeric format (e.g. "25") IS the sequence to preview —
+  // show exactly what was typed, not whatever's separately sitting in
+  // Next Sequence Number (that field only matters for # / text formats,
+  // or once this numeric format is already saved and its own counter
+  // has moved on — see submitInvoiceNumberingSettings()'s save-time
+  // logic). Mirror it into the Next Sequence field too, live, purely so
+  // the two never visually disagree while typing.
+  let seq;
+  if (/^\d+$/.test(trimmed)) {
+    seq = parseInt(trimmed, 10) || 1;
+    if (seqEl) seqEl.value = seq;
+  } else {
+    seq = parseInt(seqEl?.value, 10) || 1;
+  }
   const el = document.getElementById('setInvPreview');
   if (el) el.textContent = applyInvoiceNumberFormat(format, seq);
 }
@@ -424,7 +439,20 @@ async function submitInvoiceNumberingSettings() {
   // #-free format on its own (bare numeric formats count directly;
   // any other plain text gets "-N" appended), so it's saved as typed.
   const format = document.getElementById('setInvFormat')?.value?.trim() || 'INV-###';
-  const seq = Math.max(1, parseInt(document.getElementById('setInvNextSeq')?.value, 10) || 1);
+  let seq = Math.max(1, parseInt(document.getElementById('setInvNextSeq')?.value, 10) || 1);
+
+  // A numeric format IS the starting sequence itself — typing "25" and
+  // saving must actually start generating from 25, not from whatever
+  // Next Sequence Number happened to still show. Only re-seed when the
+  // format actually changed to this number just now: once "25" is
+  // already the saved format and invoices have advanced past it (e.g.
+  // to 28), re-saving the SAME unchanged format must NOT reset the
+  // counter back down — that would reissue numbers already in use.
+  const priorFormat = (getCachedProfile()?.invoice_number_format || '').trim();
+  if (/^\d+$/.test(format) && format !== priorFormat) {
+    seq = Math.max(1, parseInt(format, 10) || 1);
+  }
+
   const autoOn = !!document.getElementById('setAutoInvToggle')?.checked;
 
   const { error } = await saveUserProfile(user.id, {
