@@ -246,7 +246,10 @@ function onItemProductInput(rowId, name) {
   if (!row) return;
   row.product_name = name;
   const match = findProductByName(itemsProductsList, name);
-  if (match) applyProductToRow(row, match);
+  // An exact-name match while typing is still "a product was selected" —
+  // same as a dropdown click or blur match, it must refresh every
+  // auto-filled field (Rate included) and recalculate immediately.
+  if (match) { applyProductToRow(row, match); recalcItemRow(rowId); }
 }
 
 // ── Product search dropdown (name + SKU + HSN) ─────
@@ -437,13 +440,20 @@ async function onItemProductBlur(rowId, name) {
   }
 }
 
+// Every field here must fully replace whatever the row previously held —
+// including Rate, which used to only fill in if the row's rate was still
+// 0 (`if (!row.rate) row.rate = ...`). That left a manually-edited or
+// previously-selected-product's Rate stuck in place when switching to a
+// different product on the same row, since the row's rate was already
+// non-zero by then. Rate must always come from the newly selected
+// product's own Product Master value, same as HSN/Unit/GST % already do.
 function applyProductToRow(row, product) {
   row.product_id = product.id;
   row.product_name = product.name;
   row.hsn_code = product.hsn_code || '';
   row.unit = product.unit || '';
   row.gst_percentage = +product.gst_percentage || 0;
-  if (!row.rate) row.rate = +product.default_rate || 0;
+  row.rate = +product.default_rate || 0;
   row.locked = true;
   renderItemsTable();
 }
