@@ -223,8 +223,10 @@ function renderItemsTable() {
           oninput="onItemFieldChange('${row.rowId}','rate',this.value)"></td>
       <td><input type="number" class="form-control text-center" min="0" max="100" step="0.01" value="${row.discount_percentage}"
           oninput="onItemFieldChange('${row.rowId}','discount_percentage',this.value)"></td>
-      <td><input type="number" class="form-control text-center" min="0" step="0.01" value="${row.gst_percentage}" ${row.locked ? 'readonly' : ''}
-          onchange="onItemFieldChange('${row.rowId}','gst_percentage',this.value)"></td>
+      <td><input type="number" class="form-control text-center" min="0" max="100" step="0.01" value="${row.gst_percentage}"
+          oninput="onItemFieldChange('${row.rowId}','gst_percentage',this.value)"
+          onblur="onItemGstBlur('${row.rowId}', this)"
+          title="Auto-filled from Product Master — editable for this invoice line only"></td>
       <td class="text-right fw-600 item-taxable-cell">&#8377;${formatNum(row.taxable_value)}</td>
       <td class="text-right fw-700 item-total-cell">&#8377;${formatNum(row.total_amount)}</td>
       <td><button type="button" class="btn btn-danger btn-sm btn-icon" onclick="removeItemRow('${row.rowId}')" title="Remove row"><i class="fas fa-trash"></i></button></td>
@@ -451,7 +453,12 @@ function onItemFieldChange(rowId, field, value) {
   if (!row) return;
   if (field === 'hsn_code' || field === 'unit') {
     row[field] = value;
-  } else if (field === 'discount_percentage') {
+  } else if (field === 'discount_percentage' || field === 'gst_percentage') {
+    // Same 0-100 clamp as Discount — a manually overridden GST % never
+    // breaks the math, it just can't go negative or above 100. This is
+    // an in-memory edit on this one row only: it never touches
+    // itemsProductsList or the products table, so Product Master (and
+    // every other row/invoice) is untouched, per requirement.
     row[field] = Math.min(100, Math.max(0, parseFloat(value) || 0));
   } else {
     row[field] = Math.max(0, parseFloat(value) || 0);
@@ -462,6 +469,22 @@ function onItemFieldChange(rowId, field, value) {
   // which drops focus and cursor position mid-keystroke (the input being
   // typed into isn't even the one losing value — it's destroyed outright).
   recalcItemRowLive(rowId);
+}
+
+// GST % accepts free typing (including a transient "-" or a value briefly
+// above 100 mid-keystroke) without interrupting the user with a toast on
+// every character — onItemFieldChange above already clamps it for
+// calculation purposes on every keystroke. Once the user leaves the
+// field, this reconciles what's displayed with what was actually clamped
+// and stored, and surfaces one validation message if a correction happened.
+function onItemGstBlur(rowId, el) {
+  const row = currentItems.find(r => r.rowId === rowId);
+  if (!row) return;
+  const raw = el.value.trim();
+  const parsed = parseFloat(raw);
+  const wasInvalid = raw !== '' && (isNaN(parsed) || parsed < 0 || parsed > 100);
+  if (wasInvalid) showToast('GST % must be a number between 0 and 100 — corrected to ' + row.gst_percentage + '%.', 'error');
+  el.value = row.gst_percentage;
 }
 
 // ── Quick Add Product modal ─────────────────────────
