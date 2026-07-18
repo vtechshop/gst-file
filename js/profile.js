@@ -267,7 +267,7 @@ async function openSettingsModal() {
             <input type="number" id="setInvNextSeq" class="form-control" min="1" step="1" value="${profile?.invoice_current_sequence || 1}" oninput="updateSettingsInvPreview()">
           </div>
         </div>
-        <p class="fs-11 text-muted-sm mb-10"><b>#</b> marks the running sequence &mdash; <code>###</code> = 001, 002&hellip; &nbsp;<code>####</code> = 0001, 0002&hellip; Everything else in the format is kept exactly as typed.</p>
+        <p class="fs-11 text-muted-sm mb-10"><b>#</b> marks the running sequence &mdash; <code>###</code> = 001, 002&hellip; &nbsp;<code>####</code> = 0001, 0002&hellip; Everything else in the format is kept exactly as typed. No <b>#</b>? A plain number (<code>1</code>) counts up on its own (1, 2, 3&hellip;); any other text gets the sequence appended (<code>INV</code> &rarr; INV-1, INV-2).</p>
         <div style="background:var(--bg);border:1px dashed var(--border);border-radius:8px;padding:10px 14px;margin-bottom:14px;">
           <span class="fs-11 text-muted-sm">Live Preview</span>
           <div id="setInvPreview" style="font-size:16px;font-weight:700;color:var(--primary);margin-top:2px;">${e(applyInvoiceNumberFormat(profile?.invoice_number_format || 'INV-###', profile?.invoice_current_sequence || 1))}</div>
@@ -420,11 +420,10 @@ async function submitInvoiceNumberingSettings() {
   const user = await getCurrentUser();
   if (!user) return;
 
-  let format = document.getElementById('setInvFormat')?.value?.trim() || 'INV-###';
-  if (!format.includes('#')) {
-    format = format + '-###';
-    showToast('Format must include # for the running sequence — appended automatically.', 'warning');
-  }
+  // No # required — applyInvoiceNumberFormat() (js/utils.js) handles a
+  // #-free format on its own (bare numeric formats count directly;
+  // any other plain text gets "-N" appended), so it's saved as typed.
+  const format = document.getElementById('setInvFormat')?.value?.trim() || 'INV-###';
   const seq = Math.max(1, parseInt(document.getElementById('setInvNextSeq')?.value, 10) || 1);
   const autoOn = !!document.getElementById('setAutoInvToggle')?.checked;
 
