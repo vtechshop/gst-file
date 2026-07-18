@@ -97,6 +97,29 @@ function hexToRgb(hex) {
   return [parseInt(m[1], 16), parseInt(m[2], 16), parseInt(m[3], 16)];
 }
 
+// jsPDF's doc.addImage() needs actual image data (a base64 data URL or
+// an already-loaded image element) — it cannot take a plain remote URL
+// and fetch it internally. Business branding images are now stored as
+// Cloudinary URLs (js/profile.js's handleImageUpload()), so every
+// doc.addImage() call in this file first needs its source resolved
+// through this helper. The plain HTML <img src="..."> paths elsewhere
+// in this file (buildInvoiceHTML, used for Print/View/WhatsApp) don't
+// need this — a browser <img> tag already fetches a URL on its own.
+async function imageUrlToDataUrl(url) {
+  if (!url || url.startsWith('data:')) return url || null;
+  try {
+    const blob = await fetch(url).then(r => r.blob());
+    return await new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result);
+      reader.onerror = reject;
+      reader.readAsDataURL(blob);
+    });
+  } catch {
+    return null; // unreachable/broken URL — treated the same as "no image set"
+  }
+}
+
 function bankDetailLines(p) {
   if (!p) return [];
   return [
@@ -125,10 +148,19 @@ async function buildInvoicePDFDoc(inv) {
   const pw = doc.internal.pageSize.width;
   const L = 14, R = pw - 14;
 
+  // Resolve every branding image (now Cloudinary URLs, not base64) into
+  // actual image data once, up front — see imageUrlToDataUrl() above.
+  const [logoData, sealData, signatureData, qrCustomData] = await Promise.all([
+    imageUrlToDataUrl(p?.logo_base64),
+    imageUrlToDataUrl(p?.seal_base64),
+    imageUrlToDataUrl(p?.signature_base64),
+    imageUrlToDataUrl(p?.qr_base64)
+  ]);
+
   // ── Top: Logo + Company (left) / TAX INVOICE (right) ──
   let nameX = L;
-  if (p?.logo_base64) {
-    try { doc.addImage(p.logo_base64, 'PNG', L, 8, 14, 14); nameX = L + 18; } catch {}
+  if (logoData) {
+    try { doc.addImage(logoData, 'PNG', L, 8, 14, 14); nameX = L + 18; } catch {}
   }
   doc.setTextColor(20, 20, 20);
   doc.setFontSize(19); doc.setFont('helvetica', 'bold');
@@ -277,12 +309,12 @@ async function buildInvoicePDFDoc(inv) {
   if (y > 250) { doc.addPage(); y = 20; }
 
   // ── QR (left) + Seal + Signature (right) ──
-  const qrSource = p?.qr_base64 || await generateQRDataUrl(`Invoice: ${inv.invoice_number}\nDate: ${formatDate(inv.invoice_date)}\nAmount: Rs.${formatNum(inv.total_amount)}`, p?.header_color);
-  const qrIsCustom = !!p?.qr_base64;
+  const qrSource = qrCustomData || await generateQRDataUrl(`Invoice: ${inv.invoice_number}\nDate: ${formatDate(inv.invoice_date)}\nAmount: Rs.${formatNum(inv.total_amount)}`, p?.header_color);
+  const qrIsCustom = !!qrCustomData;
   let sigBlockY = y;
   if (qrSource) {
     try {
-      doc.addImage(qrSource, p?.qr_base64 ? 'PNG' : 'PNG', L, y, 24, 24);
+      doc.addImage(qrSource, 'PNG', L, y, 24, 24);
       doc.setFontSize(7); doc.setTextColor(...accent); doc.setFont('helvetica', 'normal');
       doc.text(qrIsCustom ? 'Scan QR' : 'Scan to verify invoice', L, y + 28);
     } catch {}
@@ -290,11 +322,11 @@ async function buildInvoicePDFDoc(inv) {
 
   doc.setFont('helvetica', 'normal'); doc.setFontSize(9.5); doc.setTextColor(30, 30, 30);
   doc.text('For ' + (p?.business_name || 'Us'), R, sigBlockY + 4, { align: 'right' });
-  if (p?.seal_base64) {
-    try { doc.addImage(p.seal_base64, 'PNG', R - 88, sigBlockY, 20, 20); } catch {}
+  if (sealData) {
+    try { doc.addImage(sealData, 'PNG', R - 88, sigBlockY, 20, 20); } catch {}
   }
-  if (p?.signature_base64) {
-    try { doc.addImage(p.signature_base64, 'PNG', R - 45, sigBlockY + 6, 35, 14); } catch {}
+  if (signatureData) {
+    try { doc.addImage(signatureData, 'PNG', R - 45, sigBlockY + 6, 35, 14); } catch {}
   }
   doc.setFontSize(8); doc.setTextColor(120, 120, 120);
   doc.text('Authorized Signatory', R, sigBlockY + 24, { align: 'right' });

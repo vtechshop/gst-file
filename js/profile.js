@@ -6,19 +6,7 @@ let _currentProfile = null;
 
 // ── Load profile from DB ───────────────────
 async function loadUserProfile(userId) {
-  let { data } = await _supabase.from('profiles').select('*').eq('id', userId).single();
-
-  // Auto-migrate: if profile saved with wrong random UUID (old bug), fix it
-  if (!data && typeof IS_LOCAL_MODE !== 'undefined' && IS_LOCAL_MODE) {
-    const all = JSON.parse(localStorage.getItem('gst_profiles') || '[]');
-    const anyProfile = all.find(p => p.business_name);
-    if (anyProfile) {
-      anyProfile.id = userId;
-      localStorage.setItem('gst_profiles', JSON.stringify(all));
-      data = anyProfile;
-    }
-  }
-
+  const { data } = await _supabase.from('profiles').select('*').eq('id', userId).single();
   _currentProfile = data;
   if (data) updateNavFromProfile(data);
   return data;
@@ -150,19 +138,43 @@ function closeProfileModal() {
 
 function e(v) { return (v || '').toString().replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;'); }
 
-// ── Generic base64 image upload/clear (reused for logo/seal/signature/QR) ──
-function handleImageUpload(file, hiddenId, previewWrapId, iconClass) {
+// ── Generic image upload/clear (reused for logo/seal/signature/QR) ──
+// Uploads to Cloudinary (server/routes/uploads.js) and stores the
+// returned URL — not a base64 data-URL — in the hidden input, which is
+// the only thing the rest of this modal's read/save logic cares about
+// (it just reads/writes whatever string is there under the same
+// logo_base64/seal_base64/etc. column names, now holding URLs).
+async function handleImageUpload(file, hiddenId, previewWrapId, iconClass) {
   if (!file) return;
   if (file.size > 500 * 1024) { showToast('Image too large — please use a file under 500KB.', 'error'); return; }
+
+  const hidden = document.getElementById(hiddenId);
+  const wrap = document.getElementById(previewWrapId);
+
+  // Instant local preview while the upload is in flight — same
+  // immediate visual feedback the old base64-only version had.
   const reader = new FileReader();
-  reader.onload = (e) => {
-    const dataUrl = e.target.result;
-    const hidden = document.getElementById(hiddenId);
-    if (hidden) hidden.value = dataUrl;
-    const wrap = document.getElementById(previewWrapId);
-    if (wrap) wrap.innerHTML = `<img src="${dataUrl}" style="width:100%;height:100%;object-fit:contain;">`;
-  };
+  reader.onload = (e) => { if (wrap) wrap.innerHTML = `<img src="${e.target.result}" style="width:100%;height:100%;object-fit:contain;">`; };
   reader.readAsDataURL(file);
+
+  const formData = new FormData();
+  formData.append('image', file);
+  try {
+    const token = localStorage.getItem('gst_jwt');
+    const res = await fetch(API_BASE_URL + '/uploads/image', {
+      method: 'POST',
+      headers: token ? { Authorization: 'Bearer ' + token } : {},
+      body: formData
+    });
+    const body = await res.json().catch(() => null);
+    if (!res.ok) throw (body && body.error) || { message: 'Upload failed' };
+    if (hidden) hidden.value = body.url;
+  } catch (error) {
+    showToast('Image upload failed: ' + (error.message || 'unknown error'), 'error');
+    // Upload didn't succeed — roll the preview back rather than leaving
+    // it showing a local-only image the hidden input doesn't reference.
+    if (wrap) wrap.innerHTML = hidden?.value ? `<img src="${hidden.value}" style="width:100%;height:100%;object-fit:contain;">` : `<i class="fas ${iconClass} text-gray-mid"></i>`;
+  }
 }
 
 function clearImageUpload(hiddenId, previewWrapId, iconClass) {
@@ -181,7 +193,7 @@ async function openSettingsModal() {
   document.getElementById('settingsModalWrap')?.remove();
 
   const noProfile = !profile?.business_name;
-  const stats = typeof getStorageStats === 'function' ? getStorageStats() : {};
+  const stats = typeof getStorageStats === 'function' ? await getStorageStats() : {};
 
   const wrap = document.createElement('div');
   wrap.id = 'settingsModalWrap';

@@ -22,6 +22,14 @@
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
+const helmet = require('helmet');
+const rateLimit = require('express-rate-limit');
+const authRoutes = require('./routes/auth');
+const backupRoutes = require('./routes/backup');
+const invoiceRoutes = require('./routes/invoices');
+const uploadRoutes = require('./routes/uploads');
+const { mountGenericRoutes } = require('./routes/generic');
+const { errorHandler } = require('./middleware/errorHandler');
 
 const PORT = process.env.PORT || 4000;
 const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGIN || 'http://localhost:5500')
@@ -31,6 +39,7 @@ const WEBSITE_PRODUCT_API_KEY = process.env.WEBSITE_PRODUCT_API_KEY || '';
 
 const app = express();
 
+app.use(helmet());
 app.use(cors({
   origin: (origin, callback) => {
     // Allow same-origin/non-browser requests (no Origin header) and
@@ -39,6 +48,31 @@ app.use(cors({
     callback(new Error('Origin not allowed: ' + origin));
   }
 }));
+app.use(express.json());
+
+// Gentle, general defense-in-depth across the whole API. A much tighter
+// limit specifically on login/register/forgot-password (the genuinely
+// brute-forceable endpoints) lives in routes/auth.js itself — NOT here,
+// because a blanket limit on the whole /api/auth/* prefix would also
+// throttle GET /api/auth/me, which fires on every single authenticated
+// page load and would lock normal users out after a few page visits.
+app.use('/api', rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 600,
+  standardHeaders: true,
+  legacyHeaders: false
+}));
+
+app.use('/api/auth', authRoutes);
+// Mounted at its own sub-path, not bare /api — backupRoutes applies
+// requireAuth to every path under wherever it's mounted (router.use with
+// no path arg), so mounting it at bare /api would gate every OTHER /api/*
+// route behind it too (product-sync/health included), regardless of
+// registration order.
+app.use('/api/backup', backupRoutes);
+app.use('/api/invoices', invoiceRoutes);
+app.use('/api/uploads', uploadRoutes);
+mountGenericRoutes(app);
 
 // Simple health/status check — never returns the key itself, only
 // whether one is configured, so this is safe to leave public.
@@ -105,8 +139,13 @@ app.get('/api/product-sync', async (req, res) => {
   }
 });
 
+// Must be mounted last — Express only routes an error to this once no
+// earlier route/middleware has already sent a response.
+app.use(errorHandler);
+
 app.listen(PORT, () => {
-  console.log(`Product sync backend listening on http://localhost:${PORT}`);
-  console.log(`  Website API configured: ${!!WEBSITE_PRODUCT_API_URL}`);
+  console.log(`GST Billing backend listening on http://localhost:${PORT}`);
+  console.log(`  Database: ${process.env.DATABASE_URL ? 'configured' : 'NOT CONFIGURED'}`);
+  console.log(`  Website product API configured: ${!!WEBSITE_PRODUCT_API_URL}`);
   console.log(`  Allowed origins: ${ALLOWED_ORIGINS.join(', ')}`);
 });

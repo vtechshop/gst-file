@@ -6,8 +6,7 @@
   <title>GST Invoice & GSTR-1 Management System â€“ Login</title>
   <link rel="stylesheet" href="css/style.css">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
-  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-  <script src="js/localdb.js"></script>
+  <script src="js/apiClient.js"></script>
   <script src="js/config.js"></script>
 </head>
 <body>
@@ -132,12 +131,6 @@ async function handleLogin(e) {
   const errEl = document.getElementById('loginError');
   errEl.style.display = 'none';
 
-  if (SUPABASE_URL === 'YOUR_SUPABASE_PROJECT_URL') {
-    errEl.textContent = 'Supabase not configured! Open js/config.js and add your project URL and API key.';
-    errEl.style.display = 'block';
-    return;
-  }
-
   btn.disabled = true;
   btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Signing inâ€¦';
 
@@ -153,7 +146,7 @@ async function handleLogin(e) {
       window.location.href = 'dashboard.html';
     }
   } catch (err) {
-    errEl.textContent = 'Connection failed: ' + (err.message || 'Check your Supabase URL in js/config.js');
+    errEl.textContent = 'Connection failed: ' + (err.message || 'Is the backend server running?');
     errEl.style.display = 'block';
   }
 
@@ -171,11 +164,6 @@ async function handleRegister(e) {
   const pwd = document.getElementById('regPassword').value;
   const conf = document.getElementById('regConfirm').value;
   if (pwd !== conf) { errEl.textContent = 'Passwords do not match.'; errEl.style.display = 'block'; return; }
-  if (SUPABASE_URL === 'YOUR_SUPABASE_PROJECT_URL') {
-    errEl.textContent = 'Supabase not configured! Open js/config.js and add your project URL and API key.';
-    errEl.style.display = 'block';
-    return;
-  }
 
   btn.disabled = true;
   btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Creating accountâ€¦';
@@ -190,12 +178,12 @@ async function handleRegister(e) {
       errEl.textContent = error.message;
       errEl.style.display = 'block';
     } else {
-      sucEl.textContent = 'Account created! Check your email to confirm, then sign in.';
+      sucEl.textContent = 'Account created! Redirecting…';
       sucEl.style.display = 'block';
-      document.getElementById('registerForm').reset();
+      window.location.href = 'dashboard.html';
     }
   } catch (err) {
-    errEl.textContent = 'Connection failed: ' + (err.message || 'Check your Supabase URL in js/config.js');
+    errEl.textContent = 'Connection failed: ' + (err.message || 'Is the backend server running?');
     errEl.style.display = 'block';
   }
 
@@ -213,11 +201,6 @@ async function handleForgot(e) {
 }
 
 (async () => {
-  // Local mode: skip login, go straight to dashboard
-  if (IS_LOCAL_MODE) {
-    window.location.href = 'dashboard.html';
-    return;
-  }
   const { data: { session } } = await _supabase.auth.getSession();
   if (session) window.location.href = 'dashboard.html';
 })();

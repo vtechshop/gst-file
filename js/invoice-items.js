@@ -701,18 +701,6 @@ function validateInvoiceItems() {
   return true;
 }
 
-function getItemsPayload(invoiceId, invoiceType, userId) {
-  return currentItems
-    .filter(r => r.product_name && r.taxable_value >= 0)
-    .map((r, i) => ({
-      user_id: userId, invoice_id: invoiceId, invoice_type: invoiceType,
-      product_id: r.product_id, product_name: r.product_name, hsn_code: r.hsn_code, unit: r.unit,
-      quantity: r.quantity, rate: r.rate, discount_percentage: r.discount_percentage, gst_percentage: r.gst_percentage,
-      taxable_value: r.taxable_value, gst_amount: r.gst_amount, igst: r.igst, cgst: r.cgst, sgst: r.sgst,
-      total_amount: r.total_amount, sort_order: i
-    }));
-}
-
 // ── Draft persistence (parallel to js/drafts.js — dynamic rows
 // can't be captured by its fixed-field-id snapshot) ──────────
 function itemsDraftKey(formKey) { return 'gst_draft_items_' + formKey; }
@@ -760,138 +748,63 @@ function clearItemsDraft(formKey) {
 }
 
 // ── Save orchestration ───────────────────────────────
+// Header upsert + line-item replace + stock delta all happen in ONE
+// Postgres transaction server-side now (server/routes/invoices.js),
+// with the touched products row-locked (SELECT ... FOR UPDATE) for real
+// race-safety — the in-memory read-then-write loop this used to be
+// couldn't offer that. Signature and return value (invoiceId on
+// success, false on failure) are unchanged, so every caller
+// (js/invoice-entry.js, js/b2c.js, js/gstr1.js) needs no changes.
 async function saveInvoiceWithItems(type, headerBase, editId, userId) {
   if (!validateInvoiceItems()) return false;
 
-  const rollups = computeInvoiceRollups();
-  const payload = { ...headerBase, ...rollups };
-  const table = type === 'b2b' ? 'b2b_invoices' : 'b2c_invoices';
+  const header = { ...headerBase, ...computeInvoiceRollups() };
+  const items = currentItems
+    .filter(r => r.product_name && r.taxable_value >= 0)
+    .map(r => ({
+      product_id: r.product_id, product_name: r.product_name, hsn_code: r.hsn_code, unit: r.unit,
+      quantity: r.quantity, rate: r.rate, discount_percentage: r.discount_percentage, gst_percentage: r.gst_percentage,
+      taxable_value: r.taxable_value, gst_amount: r.gst_amount, igst: r.igst, cgst: r.cgst, sgst: r.sgst,
+      total_amount: r.total_amount
+    }));
 
-  let invoiceId = editId;
-  let error;
-  if (editId) {
-    ({ error } = await _supabase.from(table).update(payload).eq('id', editId));
-  } else {
-    const res = await _supabase.from(table).insert(payload).select().single();
-    error = res.error;
-    invoiceId = res.data?.id;
+  try {
+    const { invoiceId } = await apiFetch(`/invoices/${type}/save-with-items`, {
+      method: 'POST',
+      body: JSON.stringify({ editId, header, items })
+    });
+    return invoiceId;
+  } catch (error) {
+    showToast('Error: ' + (error.message || 'save failed'), 'error');
+    return false;
   }
-  if (error) { showToast('Error: ' + error.message, 'error'); return false; }
-
-  // Read what this invoice contained BEFORE it's overwritten, so stock
-  // can be adjusted by the difference rather than by the new quantities
-  // alone (an edit that lowers a quantity must give stock back).
-  let oldItemsForStock = [];
-  if (editId) {
-    const { data } = await _supabase.from('invoice_items').select('product_id,quantity').eq('invoice_id', editId).eq('invoice_type', type);
-    oldItemsForStock = data || [];
-  }
-  const newItemsForStock = getItemsPayload(invoiceId, type, userId);
-
-  await replaceInvoiceItems(type, invoiceId, userId);
-  // HSN Summary is no longer written here — it's computed live from
-  // invoice_items on the HSN Summary page (js/hsn.js). Invoices are the
-  // single source of truth; there is nothing else to persist on save.
-
-  await applyStockDeltaForSave(oldItemsForStock, newItemsForStock);
-
-  return invoiceId;
-}
-
-async function replaceInvoiceItems(type, invoiceId, userId) {
-  await _supabase.from('invoice_items').delete().eq('invoice_id', invoiceId).eq('invoice_type', type);
-  const rows = getItemsPayload(invoiceId, type, userId);
-  for (const row of rows) {
-    await _supabase.from('invoice_items').insert(row);
-  }
-}
-
-// ── Automatic stock tracking ─────────────────────────
-// Products without stock tracking (products.stock === null — e.g.
-// services, or anything synced from the website without a stock figure)
-// are left untouched by design; there's nothing to decrement.
-async function adjustProductStock(productId, deltaQty) {
-  if (!productId || !deltaQty) return;
-  const { data: prod } = await _supabase.from('products').select('id,stock').eq('id', productId).single();
-  if (!prod || prod.stock === null || prod.stock === undefined) return;
-  const next = Math.round(((+prod.stock || 0) + deltaQty) * 1000) / 1000;
-  await _supabase.from('products').update({ stock: next }).eq('id', productId);
-}
-
-// A sale decrements stock; deltaQty here is signed from the sale's point
-// of view (positive quantity change = more sold = stock goes DOWN), so
-// this always applies the negated per-product delta between old and new
-// line-item quantities.
-async function applyStockDeltaForSave(oldItems, newRows) {
-  const oldQty = {}, newQty = {};
-  (oldItems || []).forEach(r => { if (r.product_id) oldQty[r.product_id] = (oldQty[r.product_id] || 0) + (+r.quantity || 0); });
-  (newRows || []).forEach(r => { if (r.product_id) newQty[r.product_id] = (newQty[r.product_id] || 0) + (+r.quantity || 0); });
-  const productIds = new Set([...Object.keys(oldQty), ...Object.keys(newQty)]);
-  for (const pid of productIds) {
-    const delta = (newQty[pid] || 0) - (oldQty[pid] || 0);
-    if (delta) await adjustProductStock(pid, -delta);
-  }
-}
-
-// Soft-deleting/restoring an invoice is "was this ever an active sale
-// against stock" — mirrors how HSN Summary/GSTR-3B/Reports already
-// exclude is_deleted invoices from their live totals.
-async function restoreStockForInvoice(type, invoiceId) {
-  const { data } = await _supabase.from('invoice_items').select('product_id,quantity').eq('invoice_id', invoiceId).eq('invoice_type', type);
-  for (const r of (data || [])) if (r.product_id) await adjustProductStock(r.product_id, +r.quantity || 0);
-}
-
-async function decrementStockForInvoice(type, invoiceId) {
-  const { data } = await _supabase.from('invoice_items').select('product_id,quantity').eq('invoice_id', invoiceId).eq('invoice_type', type);
-  for (const r of (data || [])) if (r.product_id) await adjustProductStock(r.product_id, -(+r.quantity || 0));
 }
 
 // ── Cascade delete / restore (invoked from gstr1.js, b2c.js,
 // invoice-list.js, recycle-bin.js on delete/restore of a header row) ──
+// Stock adjustment + invoice_items + HSN soft/hard-delete-or-restore all
+// happen in one Postgres transaction server-side now — same signatures,
+// same call sites, no changes needed there.
 async function cascadeInvoiceItemsDelete(type, invoiceId) {
-  await restoreStockForInvoice(type, invoiceId);
-  const now = new Date().toISOString();
-  await softDeleteMatching('invoice_items', { invoice_id: invoiceId, invoice_type: type }, now);
-  const hsnTable = type === 'b2b' ? 'b2b_hsn' : 'b2c_hsn';
-  await softDeleteMatching(hsnTable, { source_invoice_id: invoiceId, source_invoice_type: type }, now);
+  try {
+    await apiFetch(`/invoices/${type}/${invoiceId}/cascade-delete`, { method: 'POST' });
+  } catch (error) {
+    showToast('Error: ' + (error.message || 'cascade delete failed'), 'error');
+  }
 }
 
 async function cascadeInvoiceItemsRestore(type, invoiceId) {
-  await restoreMatching('invoice_items', { invoice_id: invoiceId, invoice_type: type });
-  const hsnTable = type === 'b2b' ? 'b2b_hsn' : 'b2c_hsn';
-  await restoreMatching(hsnTable, { source_invoice_id: invoiceId, source_invoice_type: type });
-  await decrementStockForInvoice(type, invoiceId);
+  try {
+    await apiFetch(`/invoices/${type}/${invoiceId}/cascade-restore`, { method: 'POST' });
+  } catch (error) {
+    showToast('Error: ' + (error.message || 'cascade restore failed'), 'error');
+  }
 }
 
 async function cascadeInvoiceItemsHardDelete(type, invoiceId) {
-  await hardDeleteMatching('invoice_items', { invoice_id: invoiceId, invoice_type: type });
-  const hsnTable = type === 'b2b' ? 'b2b_hsn' : 'b2c_hsn';
-  await hardDeleteMatching(hsnTable, { source_invoice_id: invoiceId, source_invoice_type: type });
-}
-
-async function softDeleteMatching(table, filters, deletedAt) {
-  const { data } = await queryByFilters(table, filters);
-  for (const r of (data || [])) {
-    await _supabase.from(table).update({ is_deleted: true, deleted_at: deletedAt }).eq('id', r.id);
+  try {
+    await apiFetch(`/invoices/${type}/${invoiceId}/cascade-hard-delete`, { method: 'POST' });
+  } catch (error) {
+    showToast('Error: ' + (error.message || 'cascade hard-delete failed'), 'error');
   }
-}
-
-async function restoreMatching(table, filters) {
-  const { data } = await queryByFilters(table, filters);
-  for (const r of (data || [])) {
-    await _supabase.from(table).update({ is_deleted: false, deleted_at: null }).eq('id', r.id);
-  }
-}
-
-async function hardDeleteMatching(table, filters) {
-  const { data } = await queryByFilters(table, filters);
-  for (const r of (data || [])) {
-    await _supabase.from(table).delete().eq('id', r.id);
-  }
-}
-
-async function queryByFilters(table, filters) {
-  let q = _supabase.from(table).select('id');
-  Object.entries(filters).forEach(([k, v]) => { q = q.eq(k, v); });
-  return await q;
 }

@@ -259,8 +259,8 @@ function populateInvoiceStateOptions() {
 // invoice_number_format / invoice_current_sequence — see Settings'
 // Invoice Numbering section, js/profile.js), not a raw localStorage
 // flag, so they're synced through the same profiles table every other
-// business setting already uses (real Supabase or the local demo-mode
-// shim — see js/localdb.js).
+// business setting already uses (backed by the Node.js + Postgres API
+// — see js/apiClient.js).
 function isAutoInvoiceOn() { return !!getCachedProfile()?.invoice_auto_number; }
 
 function updateAutoToggleUI() {
@@ -300,35 +300,22 @@ async function generateInvoiceNo(userId, force) {
 }
 
 // The authoritative generator — called only right before an actual new
-// invoice is saved. Re-checks against every existing invoice number for
-// this user (both tables, B2B + B2C, INCLUDING soft-deleted rows — a
-// deleted invoice's number must never be reissued) and rolls the
-// sequence forward past any that are already taken, then persists the
-// counter one past whatever it hands out so the next call starts fresh.
-// A hard iteration cap guards against a pathological format with no #
-// (which would otherwise generate the same literal string forever).
+// invoice is saved. Runs entirely inside one Postgres transaction
+// server-side now (server/routes/invoices.js's POST /reserve-number,
+// which locks the profile row before scanning both invoice tables —
+// INCLUDING soft-deleted rows, since a deleted invoice's number must
+// never be reissued — so two concurrent saves can never both land on
+// the same number, unlike the old client-side read-then-write version).
+// Returns null (after showing an error toast) if the reservation call
+// itself fails, e.g. the backend being unreachable.
 async function reserveNextInvoiceNumber(userId) {
-  const profile = getCachedProfile() || await loadUserProfile(userId);
-  const format = profile?.invoice_number_format || 'INV-###';
-  let seq = Math.max(1, parseInt(profile?.invoice_current_sequence, 10) || 1);
-
-  const [{ data: b2b }, { data: b2c }] = await Promise.all([
-    _supabase.from('b2b_invoices').select('invoice_number').eq('user_id', userId),
-    _supabase.from('b2c_invoices').select('invoice_number').eq('user_id', userId)
-  ]);
-  const taken = new Set([...(b2b || []), ...(b2c || [])].map(r => (r.invoice_number || '').toUpperCase()));
-
-  let candidate = applyInvoiceNumberFormat(format, seq);
-  let guard = 0;
-  while (taken.has(candidate.toUpperCase()) && guard < 100000) {
-    seq++;
-    candidate = applyInvoiceNumberFormat(format, seq);
-    guard++;
+  try {
+    const { invoiceNumber } = await apiFetch('/invoices/reserve-number', { method: 'POST' });
+    return invoiceNumber;
+  } catch (error) {
+    showToast('Could not reserve an invoice number: ' + (error.message || 'unknown error'), 'error');
+    return null;
   }
-  if (guard >= 100000) candidate = candidate + '-' + Date.now(); // pathological format (no #) — guarantee uniqueness anyway
-
-  await saveUserProfile(userId, { invoice_current_sequence: seq + 1 }, true);
-  return candidate;
 }
 
 // ── Transport toggle ────────────────────────────────
@@ -547,6 +534,7 @@ async function saveInvoice() {
   // always keeps its own number); only a genuinely new invoice.
   if (autoMode && wasNewInvoice) {
     invNum = await reserveNextInvoiceNumber(user.id);
+    if (!invNum) return; // reserveNextInvoiceNumber() already showed an error toast
     setInvValue('invNum', invNum);
   }
 
