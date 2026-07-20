@@ -66,6 +66,10 @@ async function initInvoiceEntry() {
 
   updateClassifyBadge();
   detectSupplyType();
+  // Covers every load path in one place — fresh invoice (with or
+  // without a Customer Master prefill), Edit load, and Duplicate load
+  // all funnel through here regardless of which branch above ran.
+  updateGstinValidationStatus();
 }
 
 function getInvText(id) { return document.getElementById(id)?.value?.trim() || ''; }
@@ -173,10 +177,85 @@ function onInvoiceGstinInput(el) {
   // sale can carry an optional GST Number and still save as B2C. Only
   // the segmented toggle decides the type.
   detectSupplyType();
+  updateGstinValidationStatus();
 }
 
 function isValidGstinFormat(value) {
   return value.length === 15 && /^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z]{1}[1-9A-Z]{1}Z[0-9A-Z]{1}$/.test(value);
+}
+
+// ── GST Verification — fully offline, no external API/scrape ──────
+// Structural + checksum validation only. "Verify on GST Portal" (below)
+// hands the actual authoritative lookup to the taxpayer manually on the
+// real government site — this never claims to confirm a GSTIN is real,
+// only that it's well-formed.
+const GST_VALID_STATE_CODES = new Set([
+  '01','02','03','04','05','06','07','08','09','10',
+  '11','12','13','14','15','16','17','18','19','20',
+  '21','22','23','24','25','26','27','28','29','30',
+  '31','32','33','34','35','36','37','38'
+]);
+const PAN_FORMAT_REGEX = /^[A-Z]{5}[0-9]{4}[A-Z]$/;
+const GSTIN_ALPHABET = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+
+// Standard GSTIN check-digit algorithm (mod-36, processed right to left
+// over the first 14 characters, alternating multiplier 2/1) — verified
+// against several real-format GSTINs before shipping.
+function gstinCheckDigit(first14) {
+  const mod = GSTIN_ALPHABET.length;
+  let factor = 2, sum = 0;
+  for (let i = first14.length - 1; i >= 0; i--) {
+    const codePoint = GSTIN_ALPHABET.indexOf(first14[i]);
+    let digit = factor * codePoint;
+    digit = Math.floor(digit / mod) + (digit % mod);
+    sum += digit;
+    factor = factor === 2 ? 1 : 2;
+  }
+  return GSTIN_ALPHABET[(mod - (sum % mod)) % mod];
+}
+
+// Runs every offline check the spec asks for — length, structural
+// format, state code, embedded PAN format, checksum — and returns which
+// one first failed, so callers can show a specific reason if they want
+// (the status UI itself just shows a single valid/invalid indicator).
+function validateGstin(value) {
+  const v = (value || '').trim().toUpperCase();
+  if (!v) return { valid: false, reason: 'empty' };
+  if (v.length !== 15) return { valid: false, reason: 'length' };
+  if (!/^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][1-9A-Z]Z[0-9A-Z]$/.test(v)) return { valid: false, reason: 'format' };
+  if (!GST_VALID_STATE_CODES.has(v.slice(0, 2))) return { valid: false, reason: 'state_code' };
+  if (!PAN_FORMAT_REGEX.test(v.slice(2, 12))) return { valid: false, reason: 'pan' };
+  if (gstinCheckDigit(v.slice(0, 14)) !== v[14]) return { valid: false, reason: 'checksum' };
+  return { valid: true };
+}
+
+// Live status indicator + "Verify on GST Portal" button, shown right
+// under the GST Number field. Called on every keystroke and whenever
+// the field's value changes programmatically (customer auto-fill, edit
+// load, duplicate load, reset) — see call sites below.
+function updateGstinValidationStatus() {
+  const el = document.getElementById('invGstinStatus');
+  if (!el) return;
+  const value = getInvText('invGstin');
+  if (!value) {
+    el.classList.add('d-none');
+    el.innerHTML = '';
+    return;
+  }
+  el.classList.remove('d-none');
+  const result = validateGstin(value);
+  el.innerHTML = result.valid
+    ? '<span class="fw-600" style="color:var(--success);">🟢 Valid GST Format</span>' +
+      '<button type="button" class="btn btn-secondary btn-sm" onclick="openGstPortalVerify()"><i class="fas fa-external-link-alt"></i> Verify on GST Portal</button>'
+    : '<span class="fw-600" style="color:var(--danger);">🔴 Invalid GST Number</span>';
+}
+
+// Opens the official public GST Portal taxpayer-search page for the
+// user to manually verify the GSTIN themselves — a plain new tab, never
+// an iframe, never pre-filled/auto-submitted, never scraped. This app
+// has no relationship with and does not automate anything on that site.
+function openGstPortalVerify() {
+  window.open('https://services.gst.gov.in/services/searchtp', '_blank', 'noopener,noreferrer');
 }
 
 // "Untouched" covers both a genuinely empty field and the default
@@ -371,6 +450,7 @@ function onInvoiceCustomerInput() {
   const adEl  = document.getElementById('invAddress'); if (adEl  && !adEl.value  && cust.address) adEl.value  = cust.address;
   const stEl  = document.getElementById('invState');   if (stEl  && !stEl.value  && cust.state)   stEl.value  = cust.state;
   detectSupplyType();
+  updateGstinValidationStatus();
 }
 
 async function saveCustomerFromInvoiceForm() {
@@ -520,11 +600,14 @@ async function saveInvoice() {
   if (!invNum && !(autoMode && wasNewInvoice)) { showToast('Please enter an invoice number.', 'error'); return; }
   if (!invDate)  { showToast('Please enter the invoice date.', 'error'); return; }
   if (type === 'b2b' && !gstin) { showToast('B2B is selected — enter the customer\'s GST Number, or switch to B2C.', 'error'); return; }
-  if (gstin) {
-    if (gstin.length < 15) { showToast('GST Number must be 15 characters.', 'error'); return; }
-    if (!isValidGstinFormat(gstin)) {
-      showToast('GST Number format warning — saving anyway.', 'warning');
-    }
+  // GST Number is optional on B2C, but if one is entered — either type —
+  // it must be a genuinely valid GSTIN (format + state code + PAN +
+  // checksum, see validateGstin()) before Save is allowed; the 🔴
+  // Invalid GST Number indicator under the field is the live version of
+  // this same check.
+  if (gstin && !validateGstin(gstin).valid) {
+    showToast('GST Number is invalid — correct it (or clear it) before saving.', 'error');
+    return;
   }
 
   // Auto Generate: reserve the authoritative number now, right before
@@ -657,6 +740,7 @@ function clearInvoiceFormFields() {
   setInvValue('invDate', toISO(new Date()));
   setInvValue('invSupply', 'intrastate');
   setInvoiceTypeToggle('b2c');
+  updateGstinValidationStatus();
 
   const toggle = document.getElementById('transportToggle');
   if (toggle) toggle.checked = false;
