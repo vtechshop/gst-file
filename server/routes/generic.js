@@ -138,7 +138,8 @@ const TABLES = {
       'invoice_number','invoice_date','taxable_amount','gst_percentage','gst_amount',
       'total_amount','supply_type','igst','cgst','sgst','transport_required',
       'vehicle_number','transporter_name','transport_mode','transport_distance_km',
-      'lr_number','lr_date','payment_status','amount_paid','is_deleted','deleted_at',
+      'lr_number','lr_date','transporter_gstin','vehicle_type','dispatch_from','dispatch_to',
+      'payment_status','amount_paid','is_deleted','deleted_at',
       'created_at','updated_at']
   },
   b2c_invoices: {
@@ -146,7 +147,8 @@ const TABLES = {
       'invoice_number','taxable_amount','gst_percentage','gst_amount','total_amount',
       'supply_type','igst','cgst','sgst','invoice_date','transport_required',
       'vehicle_number','transporter_name','transport_mode','transport_distance_km',
-      'lr_number','lr_date','payment_status','amount_paid','is_deleted','deleted_at',
+      'lr_number','lr_date','transporter_gstin','vehicle_type','dispatch_from','dispatch_to',
+      'payment_status','amount_paid','is_deleted','deleted_at',
       'created_at','updated_at']
   },
   b2b_hsn: {

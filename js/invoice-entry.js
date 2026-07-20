@@ -447,6 +447,10 @@ async function loadInvoiceForEdit(type, id) {
   setInvValue('invDistance', rec.transport_distance_km || '');
   setInvValue('invLrNumber', rec.lr_number || '');
   setInvValue('invLrDate', rec.lr_date || '');
+  setInvValue('invTransporterGstin', rec.transporter_gstin || '');
+  setInvValue('invVehicleType', rec.vehicle_type || '');
+  setInvValue('invDispatchFrom', rec.dispatch_from || '');
+  setInvValue('invDispatchTo', rec.dispatch_to || '');
 
   const { data: items } = await _supabase.from('invoice_items').select('*').eq('invoice_id', id).eq('invoice_type', type);
   const activeItems = (items || []).filter(r => !r.is_deleted).sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0));
@@ -494,6 +498,10 @@ async function loadInvoiceDuplicateDraft() {
   setInvValue('invDistance', draft.transport_distance_km || '');
   setInvValue('invLrNumber', draft.lr_number || '');
   setInvValue('invLrDate', draft.lr_date || '');
+  setInvValue('invTransporterGstin', draft.transporter_gstin || '');
+  setInvValue('invVehicleType', draft.vehicle_type || '');
+  setInvValue('invDispatchFrom', draft.dispatch_from || '');
+  setInvValue('invDispatchTo', draft.dispatch_to || '');
 
   if (Array.isArray(draft.items) && draft.items.length) loadItemsIntoTable(draft.items);
 
@@ -579,7 +587,11 @@ async function saveInvoice() {
     transport_mode: transportRequired ? (document.getElementById('invTransportMode')?.value || '') : '',
     transport_distance_km: transportRequired ? (parseFloat(getInvText('invDistance')) || null) : null,
     lr_number: transportRequired ? getInvText('invLrNumber') : '',
-    lr_date: transportRequired ? (getInvText('invLrDate') || null) : null
+    lr_date: transportRequired ? (getInvText('invLrDate') || null) : null,
+    transporter_gstin: transportRequired ? getInvText('invTransporterGstin') : '',
+    vehicle_type: transportRequired ? (document.getElementById('invVehicleType')?.value || '') : '',
+    dispatch_from: transportRequired ? getInvText('invDispatchFrom') : '',
+    dispatch_to: transportRequired ? getInvText('invDispatchTo') : ''
   };
   // GST Number is optional on B2C too now, so it's always persisted —
   // b2b_invoices.gst_number is NOT NULL (validated above), b2c_invoices'
@@ -678,7 +690,8 @@ function clearInvoiceFormFields() {
   const toggle = document.getElementById('transportToggle');
   if (toggle) toggle.checked = false;
   onTransportToggleChange();
-  ['invVehicleNo','invTransporter','invLrNumber','invTransportMode','invDistance','invLrDate'].forEach(id => setInvValue(id, ''));
+  ['invVehicleNo','invTransporter','invLrNumber','invTransportMode','invDistance','invLrDate',
+   'invTransporterGstin','invVehicleType','invDispatchFrom','invDispatchTo'].forEach(id => setInvValue(id, ''));
 
   setInvValue('invPaymentStatus', 'unpaid');
   onInvPaymentStatusChange();

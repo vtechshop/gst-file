@@ -154,6 +154,7 @@ async function duplicateInvoiceFromList(type, id) {
     supply_type: inv.supply_type,
     transport_required: inv.transport_required, vehicle_number: inv.vehicle_number, transporter_name: inv.transporter_name,
     transport_mode: inv.transport_mode, transport_distance_km: inv.transport_distance_km, lr_number: inv.lr_number, lr_date: inv.lr_date,
+    transporter_gstin: inv.transporter_gstin, vehicle_type: inv.vehicle_type, dispatch_from: inv.dispatch_from, dispatch_to: inv.dispatch_to,
     items: inv.items || []
   }));
   window.location.href = 'invoice.html?duplicate=1';

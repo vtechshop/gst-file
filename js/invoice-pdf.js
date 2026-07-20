@@ -66,6 +66,10 @@ async function fetchInvoiceRecord(type, id) {
     transport_distance_km: data.transport_distance_km || null,
     lr_number: data.lr_number || '',
     lr_date: data.lr_date || null,
+    transporter_gstin: data.transporter_gstin || '',
+    vehicle_type: data.vehicle_type || '',
+    dispatch_from: data.dispatch_from || '',
+    dispatch_to: data.dispatch_to || '',
     payment_status: data.payment_status || 'unpaid',
     amount_paid: +data.amount_paid || 0,
     items

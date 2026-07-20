@@ -221,6 +221,26 @@
               <label for="invLrDate">LR Date</label>
               <input type="date" id="invLrDate" class="form-control">
             </div>
+            <div class="form-group">
+              <label for="invTransporterGstin">Transporter GSTIN</label>
+              <input type="text" id="invTransporterGstin" class="form-control uppercase" maxlength="15" placeholder="e.g. 27AAPFU0939F1ZV" oninput="this.value=this.value.toUpperCase()">
+            </div>
+            <div class="form-group">
+              <label for="invVehicleType">Vehicle Type</label>
+              <select id="invVehicleType" class="form-control">
+                <option value="">Select</option>
+                <option value="regular">Regular</option>
+                <option value="over_dimensional_cargo">Over Dimensional Cargo</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label for="invDispatchFrom">Dispatch From</label>
+              <input type="text" id="invDispatchFrom" class="form-control" placeholder="Dispatch address / city">
+            </div>
+            <div class="form-group">
+              <label for="invDispatchTo">Dispatch To</label>
+              <input type="text" id="invDispatchTo" class="form-control" placeholder="Delivery address / city">
+            </div>
           </div>
 
           <!-- Payment -->
