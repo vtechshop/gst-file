@@ -666,20 +666,24 @@ document.addEventListener('DOMContentLoaded', async () => {
   setupLogoutBtn();
   refreshStorageStatus();          // show storage counts immediately
   showLoader();
-  const user = await getCurrentUser();
-  if (user) {
-    initNavUser(user);
-    await checkAndShowProfileSetup(user.id);   // ask GST details if first time
-    const { start, end } = getYearMonthRange();
-    await loadDashboardData(user.id, start, end);
-    await loadYearMonthSummary(user.id);
-    await loadInsights(user.id);
-    await loadTodayStats(user.id);
-    await loadPendingPayments(user.id);
-    await loadTopSellingProducts(user.id);
-    await loadRecentActivity(user.id);
-    await loadInventoryIntelligence(user.id);
-  }
+  // requireAuth() (js/auth.js) redirects to index.html itself when
+  // there's no valid session — matches every other protected page.
+  // getCurrentUser() alone (the old code here) never redirects, it just
+  // returns null, which left the dashboard silently rendering with no
+  // data instead of sending an unauthenticated visitor to the login page.
+  const user = await requireAuth();
+  if (!user) return;
+  initNavUser(user);
+  await checkAndShowProfileSetup(user.id);   // ask GST details if first time
+  const { start, end } = getYearMonthRange();
+  await loadDashboardData(user.id, start, end);
+  await loadYearMonthSummary(user.id);
+  await loadInsights(user.id);
+  await loadTodayStats(user.id);
+  await loadPendingPayments(user.id);
+  await loadTopSellingProducts(user.id);
+  await loadRecentActivity(user.id);
+  await loadInventoryIntelligence(user.id);
   hideLoader();
 });
 </script>
