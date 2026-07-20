@@ -200,6 +200,60 @@ function unlockBodyScrollIfNoModalsOpen() {
   if (!anyOpen) document.body.style.overflow = '';
 }
 
+// ── Sidebar scroll-position stability ──────────────────────────────
+// This is a traditional multi-page app — every nav click is a full page
+// load — and .sidebar itself is the scrollable container (overflow-y:
+// auto, position:fixed, spanning brand+menu+user footer as one box; see
+// css/style.css). Once the sidebar grew past what fits in typical
+// viewport heights, it started visibly "jumping" on every load: browsers
+// apply CSS Scroll Anchoring to any overflowing box by default, and
+// small async layout shifts (e.g. the user's name populating into
+// #navUserName after the profile fetch resolves) were enough to trigger
+// it. Two independent fixes, neither touching sidebar HTML/CSS:
+//   1. overflowAnchor is turned off on the container itself, so the
+//      browser never auto-adjusts its scroll position on its own.
+//   2. The user's own last scroll position is restored from
+//      sessionStorage (never just reset to 0), and the active menu item
+//      is nudged into view — smallest possible adjustment, block:
+//      'nearest' — ONLY if it isn't already fully visible. If it's
+//      already visible, nothing happens at all.
+(function setupSidebarScrollStability() {
+  const STORAGE_KEY = 'gst_sidebar_scroll_top';
+
+  function reconcile() {
+    const sidebar = document.querySelector('.sidebar');
+    if (!sidebar) return;
+
+    sidebar.style.overflowAnchor = 'none';
+
+    const saved = sessionStorage.getItem(STORAGE_KEY);
+    if (saved !== null) {
+      const savedTop = parseFloat(saved);
+      if (!isNaN(savedTop)) sidebar.scrollTop = savedTop;
+    }
+
+    const active = sidebar.querySelector('.menu-item.active');
+    if (active) {
+      const sidebarRect = sidebar.getBoundingClientRect();
+      const activeRect = active.getBoundingClientRect();
+      const alreadyVisible = activeRect.top >= sidebarRect.top && activeRect.bottom <= sidebarRect.bottom;
+      if (!alreadyVisible) {
+        active.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+      }
+    }
+
+    sidebar.addEventListener('scroll', () => {
+      sessionStorage.setItem(STORAGE_KEY, String(sidebar.scrollTop));
+    }, { passive: true });
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', reconcile);
+  } else {
+    reconcile();
+  }
+})();
+
 // Shared by js/invoice-items.js and js/purchase-items.js — both render
 // product names/SKU/HSN into inline HTML (dropdown options, table cells).
 function escItemHtml(v) { return (v || '').toString().replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;'); }
