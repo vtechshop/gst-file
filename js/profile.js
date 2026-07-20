@@ -52,10 +52,18 @@ async function checkAndShowProfileSetup(userId) {
 }
 
 // ── Open profile modal ─────────────────────
+// Every caller on a given page (nav link, first-run auto-open, Settings)
+// runs after that page's own requireAuth()/loadUserProfile() has already
+// verified the session — re-verifying via another getCurrentUser() call
+// (a fresh /auth/me round trip) is redundant whenever _currentProfile is
+// already cached, since profiles.id IS the authenticated user's id.
 async function openProfileModal(isRequired = false) {
-  const user = await getCurrentUser();
-  if (!user) return;
-  const profile = _currentProfile || (await loadUserProfile(user.id));
+  let profile = _currentProfile;
+  if (!profile) {
+    const user = await getCurrentUser();
+    if (!user) return;
+    profile = await loadUserProfile(user.id);
+  }
   buildProfileModal(profile, isRequired);
 }
 
@@ -185,10 +193,14 @@ function clearImageUpload(hiddenId, previewWrapId, iconClass) {
 }
 
 // ── Settings Modal ─────────────────────────
+// Same redundant-/auth/me-call avoidance as openProfileModal() above.
 async function openSettingsModal() {
-  const user  = await getCurrentUser();
-  if (!user) return;
-  const profile = _currentProfile || await loadUserProfile(user.id);
+  let profile = _currentProfile;
+  if (!profile) {
+    const user = await getCurrentUser();
+    if (!user) return;
+    profile = await loadUserProfile(user.id);
+  }
 
   document.getElementById('settingsModalWrap')?.remove();
 
