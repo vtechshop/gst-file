@@ -3,6 +3,7 @@
 // =============================================
 let repB2B = [], repB2C = [], repB2BHSN = [], repB2CHSN = [];
 let repItemsByInvoice = {};
+let repPurchases = [], repPurchaseItems = [];
 let currentUser = null;
 
 async function initReports() {
@@ -31,12 +32,14 @@ async function loadReports(filter) {
   showRepLoader(true);
   const { start, end } = getReportDateRange(filter);
 
-  const [b2bRes, b2cRes, hsnB2BRes, hsnB2CRes, itemsRes] = await Promise.all([
+  const [b2bRes, b2cRes, hsnB2BRes, hsnB2CRes, itemsRes, purchRes, purchItemsRes] = await Promise.all([
     _supabase.from('b2b_invoices').select('*').eq('user_id', currentUser.id).gte('invoice_date', start).lte('invoice_date', end).order('invoice_date', { ascending: false }),
     _supabase.from('b2c_invoices').select('*').eq('user_id', currentUser.id).gte('invoice_date', start).lte('invoice_date', end).order('invoice_date', { ascending: false }),
     _supabase.from('b2b_hsn').select('*').eq('user_id', currentUser.id).order('created_at', { ascending: false }),
     _supabase.from('b2c_hsn').select('*').eq('user_id', currentUser.id).order('created_at', { ascending: false }),
-    _supabase.from('invoice_items').select('*').eq('user_id', currentUser.id)
+    _supabase.from('invoice_items').select('*').eq('user_id', currentUser.id),
+    _supabase.from('purchases').select('*').eq('user_id', currentUser.id).gte('purchase_date', start).lte('purchase_date', end).order('purchase_date', { ascending: false }),
+    _supabase.from('purchase_items').select('*').eq('user_id', currentUser.id)
   ]);
 
   repB2B = (b2bRes.data || []).filter(r => !r.is_deleted);
@@ -63,15 +66,58 @@ async function loadReports(filter) {
     (repItemsByInvoice[key] = repItemsByInvoice[key] || []).push(r);
   });
 
+  repPurchases = (purchRes.data || []).filter(r => !r.is_deleted);
+  repPurchaseItems = (purchItemsRes.data || []).filter(r => !r.is_deleted);
+
   renderSummaryCards();
   renderGSTR1Summary();
   renderMonthlyTable();
   renderHSNReport();
   renderCustomerWiseReport();
   renderProductWiseReport();
+  renderVendorWiseReport();
+  renderPurchProductWiseReport();
   renderHSNWiseSummary();
   renderGSTRateWiseReport();
   showRepLoader(false);
+}
+
+// ── Vendor-wise (Purchases) ───────────────────────────
+function renderVendorWiseReport() {
+  const tbody = document.getElementById('vendorWiseBody');
+  if (!tbody) return;
+  const byVendor = {};
+  repPurchases.forEach(r => {
+    const key = r.vendor_name;
+    if (!byVendor[key]) byVendor[key] = { name: key, gstin: r.vendor_gstin || '', count: 0, taxable: 0, gst: 0, total: 0 };
+    byVendor[key].count++;
+    byVendor[key].taxable += +r.taxable_amount;
+    byVendor[key].gst += +r.gst_amount;
+    byVendor[key].total += +r.total_amount;
+  });
+  const rows = Object.values(byVendor).sort((a, b) => b.total - a.total);
+  tbody.innerHTML = rows.length
+    ? rows.map(r => `<tr><td><b>${r.name}</b></td><td>${r.gstin || '&mdash;'}</td><td class="text-center">${r.count}</td><td class="text-right">₹${formatNum(r.taxable)}</td><td class="text-right">₹${formatNum(r.gst)}</td><td class="text-right fw-700">₹${formatNum(r.total)}</td></tr>`).join('')
+    : '<tr><td colspan="6" class="empty-state">No purchase data for this period</td></tr>';
+}
+
+// ── Product-wise (Purchases, from purchase_items, all-time) ──
+function renderPurchProductWiseReport() {
+  const tbody = document.getElementById('purchProductWiseBody');
+  if (!tbody) return;
+  const byProduct = {};
+  repPurchaseItems.forEach(r => {
+    const key = r.product_name;
+    if (!byProduct[key]) byProduct[key] = { name: key, hsn: r.hsn_code || '', qty: 0, taxable: 0, gst: 0, total: 0 };
+    byProduct[key].qty += +r.quantity || 0;
+    byProduct[key].taxable += +r.taxable_value;
+    byProduct[key].gst += +r.gst_amount;
+    byProduct[key].total += +r.total_amount;
+  });
+  const rows = Object.values(byProduct).sort((a, b) => b.total - a.total);
+  tbody.innerHTML = rows.length
+    ? rows.map(r => `<tr><td><b>${r.name}</b></td><td>${r.hsn || '&mdash;'}</td><td class="text-center">${r.qty || '&mdash;'}</td><td class="text-right">₹${formatNum(r.taxable)}</td><td class="text-right">₹${formatNum(r.gst)}</td><td class="text-right fw-700">₹${formatNum(r.total)}</td></tr>`).join('')
+    : '<tr><td colspan="6" class="empty-state">No purchase line items yet</td></tr>';
 }
 
 // ── Customer-wise (B2B only — B2C has no customer identity) ──

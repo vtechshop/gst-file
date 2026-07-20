@@ -1,9 +1,9 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Product Master - GST Management System</title>
+  <title>Purchase List - GST Management System</title>
   <link rel="stylesheet" href="css/style.css">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
   <script src="js/apiClient.js"></script>
@@ -14,7 +14,8 @@
   <script src="js/utils.js"></script>
   <script src="js/search.js"></script>
   <script src="js/profile.js"></script>
-  <script src="js/products.js"></script>
+  <script src="js/purchase-items.js"></script>
+  <script src="js/purchase-list.js"></script>
 </head>
 <body>
 <div class="app-layout">
@@ -36,11 +37,11 @@
       <a href="hsn.html#b2c" class="menu-item"><i class="fas fa-tags"></i> B2C HSN</a>
       <div class="menu-section">Masters</div>
       <a href="customers.html" class="menu-item"><i class="fas fa-address-book"></i> Customers</a>
-      <a href="products.html" class="menu-item active"><i class="fas fa-box"></i> Products</a>
+      <a href="products.html" class="menu-item"><i class="fas fa-box"></i> Products</a>
       <div class="menu-section">Purchases</div>
       <a href="vendors.html" class="menu-item"><i class="fas fa-truck"></i> Vendors</a>
       <a href="purchases.html" class="menu-item"><i class="fas fa-cart-plus"></i> New Purchase</a>
-      <a href="purchase-list.html" class="menu-item"><i class="fas fa-boxes"></i> Purchase List</a>
+      <a href="purchase-list.html" class="menu-item active"><i class="fas fa-boxes"></i> Purchase List</a>
       <a href="purchase-returns.html" class="menu-item"><i class="fas fa-undo"></i> Purchase Returns</a>
       <div class="menu-section">Reports</div>
       <a href="reports.html" class="menu-item"><i class="fas fa-chart-bar"></i> Reports &amp; Export</a>
@@ -63,38 +64,26 @@
   <div class="main-content">
     <div class="top-bar">
       <button type="button" class="menu-toggle" id="menuToggle" aria-label="Toggle sidebar menu"><i class="fas fa-bars"></i></button>
-      <span class="page-title"><i class="fas fa-box"></i>Product Master</span>
-      <button type="button" class="btn btn-secondary btn-sm btn-icon ml-auto" onclick="openGlobalSearch()" title="Search everywhere (Ctrl+K)" aria-label="Global search"><i class="fas fa-search"></i></button>
+      <span class="page-title"><i class="fas fa-boxes"></i>Purchase List</span>
+      <div class="ml-auto d-flex gap-10">
+        <button type="button" class="btn btn-secondary btn-sm btn-icon" onclick="openGlobalSearch()" title="Search everywhere (Ctrl+K)" aria-label="Global search"><i class="fas fa-search"></i></button>
+        <a href="purchases.html" class="btn btn-primary btn-sm"><i class="fas fa-plus"></i> New Purchase</a>
+      </div>
     </div>
 
     <div class="content">
+      <p class="text-muted-sm mb-16"><i class="fas fa-info-circle"></i> Every purchase you've saved. Use <a href="purchases.html">New Purchase</a> to add one — this list is for viewing, editing, and deleting purchases you've already entered.</p>
 
-      <!-- Product Sync Status -->
-      <p class="text-muted-sm mb-16"><i class="fas fa-info-circle"></i> Products come from your company website's Product Master and sync automatically &mdash; there is no manual product entry here. The one exception is a product typed on an invoice that isn't found yet: that creates a small local draft (tagged "Local Draft" below) which is never touched by sync.</p>
-      <div class="storage-bar mb-20">
-        <div class="storage-bar-left">
-          <span id="syncDot" class="storage-dot"></span>
-          <span class="fs-13 fw-600 text-primary-dark">Product Sync</span>
-        </div>
-        <div class="storage-stats">
-          <span>&#128337; Last Sync: <b id="syncLastTime" class="text-primary-dark">Never</b></span>
-          <span>Status: <b id="syncStatusText" class="text-primary-dark">Checking&hellip;</b></span>
-          <span>&#128230; Total Synced: <b id="syncTotalCount" class="text-primary-dark">0</b></span>
-        </div>
-        <div class="storage-actions">
-          <button type="button" class="btn btn-primary btn-sm" id="syncNowBtn" onclick="runManualSync()"><i class="fas fa-sync"></i> Sync Now</button>
-        </div>
-      </div>
-
-      <!-- Product List -->
       <div class="card">
         <div class="card-header">
-          <span class="card-title"><i class="fas fa-list"></i> Product List</span>
-          <div class="d-flex gap-10">
-            <div class="search-input-wrap w-240">
+          <span class="card-title"><i class="fas fa-list"></i> All Purchases</span>
+          <div class="d-flex gap-10 flex-wrap">
+            <div class="search-input-wrap w-220">
               <i class="fas fa-search"></i>
-              <input type="text" id="prodSearch" class="form-control" placeholder="Search name, HSN..." aria-label="Search products">
+              <input type="text" id="purchListSearch" class="form-control" placeholder="Search purchase no, vendor, GSTIN..." aria-label="Search purchases">
             </div>
+            <select id="purchListMonthFilter" class="form-control w-130" onchange="applyPurchListFilters()" aria-label="Filter by month"></select>
+            <select id="purchListYearFilter" class="form-control w-100" onchange="applyPurchListFilters()" aria-label="Filter by year"></select>
           </div>
         </div>
         <div class="card-body p-0">
@@ -102,36 +91,29 @@
             <table class="data-table">
               <thead>
                 <tr>
-                  <th>#</th>
-                  <th>Product / Service Name</th>
-                  <th>SKU</th>
-                  <th>Category</th>
-                  <th>HSN Code</th>
-                  <th>Unit</th>
-                  <th>GST%</th>
-                  <th>Selling Price</th>
-                  <th>Warranty</th>
-                  <th>Source</th>
-                  <th>Actions</th>
+                  <th>#</th><th>Purchase No</th><th>Date</th><th>Vendor</th>
+                  <th>Total</th><th>Payment</th><th>Actions</th>
                 </tr>
               </thead>
-              <tbody id="prodTableBody">
-                <tr><td colspan="11" class="empty-state"><i class="fas fa-spinner fa-spin table-loading-icon"></i>Loading...</td></tr>
+              <tbody id="purchListTableBody">
+                <tr><td colspan="7" class="empty-state"><i class="fas fa-spinner fa-spin table-loading-icon"></i>Loading...</td></tr>
               </tbody>
+              <tfoot id="purchListTableTotal"></tfoot>
             </table>
           </div>
           <div class="table-pagination-row">
-            <div id="prodPagination" class="pagination"></div>
+            <div id="purchListPagination" class="pagination"></div>
           </div>
         </div>
       </div>
-
     </div>
   </div>
 </div>
 
 <script>
-document.addEventListener('DOMContentLoaded', initProducts);
+document.addEventListener('DOMContentLoaded', () => {
+  initPurchaseList();
+});
 </script>
 
 <!-- Global Search Modal -->

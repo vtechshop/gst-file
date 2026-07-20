@@ -12,8 +12,6 @@ let itemsUserId = null;
 let itemsRowSeq = 0;
 let quickAddTargetRowId = null;
 
-const COMMON_UNITS = ['PCS','NOS','KG','LTR','MTR','BOX','SET','PAIR','DOZ','BAG','BTL','HRS'];
-
 // ── Init ──────────────────────────────────────────
 async function initInvoiceItems(userId, formPrefix) {
   itemsUserId = userId;
@@ -131,8 +129,6 @@ function populateItemsProductDatalist() {
   const dl = document.getElementById('itemsProductDatalist');
   if (dl) dl.innerHTML = itemsProductsList.map(p => `<option value="${escItemHtml(p.name)}"></option>`).join('');
 }
-
-function escItemHtml(v) { return (v || '').toString().replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;'); }
 
 // ── Row lifecycle ─────────────────────────────────
 function blankRow() {

@@ -27,6 +27,7 @@ const rateLimit = require('express-rate-limit');
 const authRoutes = require('./routes/auth');
 const backupRoutes = require('./routes/backup');
 const invoiceRoutes = require('./routes/invoices');
+const purchaseRoutes = require('./routes/purchases');
 const uploadRoutes = require('./routes/uploads');
 const { mountGenericRoutes } = require('./routes/generic');
 const { errorHandler } = require('./middleware/errorHandler');
@@ -71,6 +72,7 @@ app.use('/api/auth', authRoutes);
 // registration order.
 app.use('/api/backup', backupRoutes);
 app.use('/api/invoices', invoiceRoutes);
+app.use('/api/purchases', purchaseRoutes);
 app.use('/api/uploads', uploadRoutes);
 mountGenericRoutes(app);
 

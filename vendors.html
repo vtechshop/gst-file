@@ -1,9 +1,9 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Product Master - GST Management System</title>
+  <title>Vendor Master - GST Management System</title>
   <link rel="stylesheet" href="css/style.css">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
   <script src="js/apiClient.js"></script>
@@ -14,7 +14,8 @@
   <script src="js/utils.js"></script>
   <script src="js/search.js"></script>
   <script src="js/profile.js"></script>
-  <script src="js/products.js"></script>
+  <script src="js/payments.js"></script>
+  <script src="js/vendors.js"></script>
 </head>
 <body>
 <div class="app-layout">
@@ -36,9 +37,9 @@
       <a href="hsn.html#b2c" class="menu-item"><i class="fas fa-tags"></i> B2C HSN</a>
       <div class="menu-section">Masters</div>
       <a href="customers.html" class="menu-item"><i class="fas fa-address-book"></i> Customers</a>
-      <a href="products.html" class="menu-item active"><i class="fas fa-box"></i> Products</a>
+      <a href="products.html" class="menu-item"><i class="fas fa-box"></i> Products</a>
       <div class="menu-section">Purchases</div>
-      <a href="vendors.html" class="menu-item"><i class="fas fa-truck"></i> Vendors</a>
+      <a href="vendors.html" class="menu-item active"><i class="fas fa-truck"></i> Vendors</a>
       <a href="purchases.html" class="menu-item"><i class="fas fa-cart-plus"></i> New Purchase</a>
       <a href="purchase-list.html" class="menu-item"><i class="fas fa-boxes"></i> Purchase List</a>
       <a href="purchase-returns.html" class="menu-item"><i class="fas fa-undo"></i> Purchase Returns</a>
@@ -63,37 +64,75 @@
   <div class="main-content">
     <div class="top-bar">
       <button type="button" class="menu-toggle" id="menuToggle" aria-label="Toggle sidebar menu"><i class="fas fa-bars"></i></button>
-      <span class="page-title"><i class="fas fa-box"></i>Product Master</span>
+      <span class="page-title"><i class="fas fa-truck"></i>Vendor Master</span>
       <button type="button" class="btn btn-secondary btn-sm btn-icon ml-auto" onclick="openGlobalSearch()" title="Search everywhere (Ctrl+K)" aria-label="Global search"><i class="fas fa-search"></i></button>
     </div>
 
     <div class="content">
 
-      <!-- Product Sync Status -->
-      <p class="text-muted-sm mb-16"><i class="fas fa-info-circle"></i> Products come from your company website's Product Master and sync automatically &mdash; there is no manual product entry here. The one exception is a product typed on an invoice that isn't found yet: that creates a small local draft (tagged "Local Draft" below) which is never touched by sync.</p>
-      <div class="storage-bar mb-20">
-        <div class="storage-bar-left">
-          <span id="syncDot" class="storage-dot"></span>
-          <span class="fs-13 fw-600 text-primary-dark">Product Sync</span>
+      <!-- Add / Edit Form -->
+      <div class="card mb-20">
+        <div class="card-header">
+          <span class="card-title"><i class="fas fa-plus-circle"></i> <span id="vendFormTitle">Add Vendor</span></span>
         </div>
-        <div class="storage-stats">
-          <span>&#128337; Last Sync: <b id="syncLastTime" class="text-primary-dark">Never</b></span>
-          <span>Status: <b id="syncStatusText" class="text-primary-dark">Checking&hellip;</b></span>
-          <span>&#128230; Total Synced: <b id="syncTotalCount" class="text-primary-dark">0</b></span>
-        </div>
-        <div class="storage-actions">
-          <button type="button" class="btn btn-primary btn-sm" id="syncNowBtn" onclick="runManualSync()"><i class="fas fa-sync"></i> Sync Now</button>
+        <div class="card-body">
+          <div class="form-grid cols-2 mb-16">
+            <div class="form-group">
+              <label for="vendName">Vendor Name <span class="text-required">*</span></label>
+              <input type="text" id="vendName" class="form-control" placeholder="Enter vendor / supplier name">
+            </div>
+            <div class="form-group">
+              <label for="vendGstin">GSTIN</label>
+              <input type="text" id="vendGstin" class="form-control uppercase" maxlength="15" placeholder="e.g. 27AAPFU0939F1ZV" oninput="onVendGstinInput(this)">
+              <div id="vendGstinStatus" class="d-flex align-center gap-8 d-none" style="margin-top:6px;"></div>
+            </div>
+          </div>
+          <div class="form-grid cols-3 mb-16">
+            <div class="form-group">
+              <label for="vendPhone">Phone</label>
+              <input type="tel" id="vendPhone" class="form-control" placeholder="+91 98765 43210">
+            </div>
+            <div class="form-group">
+              <label for="vendEmail">Email</label>
+              <input type="email" id="vendEmail" class="form-control" placeholder="vendor@example.com">
+            </div>
+            <div class="form-group">
+              <label for="vendState">State</label>
+              <select id="vendState" class="form-control">
+                <option value="">Select State</option>
+                <option>Andhra Pradesh</option><option>Arunachal Pradesh</option><option>Assam</option>
+                <option>Bihar</option><option>Chhattisgarh</option><option>Goa</option>
+                <option>Gujarat</option><option>Haryana</option><option>Himachal Pradesh</option>
+                <option>Jharkhand</option><option>Karnataka</option><option>Kerala</option>
+                <option>Madhya Pradesh</option><option>Maharashtra</option><option>Manipur</option>
+                <option>Meghalaya</option><option>Mizoram</option><option>Nagaland</option>
+                <option>Odisha</option><option>Punjab</option><option>Rajasthan</option>
+                <option>Sikkim</option><option>Tamil Nadu</option><option>Telangana</option>
+                <option>Tripura</option><option>Uttar Pradesh</option><option>Uttarakhand</option>
+                <option>West Bengal</option><option>Delhi</option><option>Jammu and Kashmir</option>
+                <option>Ladakh</option><option>Puducherry</option><option>Chandigarh</option>
+              </select>
+            </div>
+          </div>
+          <div class="form-group mb-16">
+            <label for="vendAddr">Address</label>
+            <textarea id="vendAddr" class="form-control" rows="2" placeholder="Full address..."></textarea>
+          </div>
+          <div class="btn-group">
+            <button type="button" class="btn btn-primary" id="vendSaveBtn" onclick="saveVendor()"><i class="fas fa-save"></i> Save Vendor</button>
+            <button type="button" class="btn btn-secondary" onclick="resetVendor()"><i class="fas fa-redo"></i> Reset</button>
+          </div>
         </div>
       </div>
 
-      <!-- Product List -->
+      <!-- Vendor List -->
       <div class="card">
         <div class="card-header">
-          <span class="card-title"><i class="fas fa-list"></i> Product List</span>
+          <span class="card-title"><i class="fas fa-list"></i> Vendor List</span>
           <div class="d-flex gap-10">
             <div class="search-input-wrap w-240">
               <i class="fas fa-search"></i>
-              <input type="text" id="prodSearch" class="form-control" placeholder="Search name, HSN..." aria-label="Search products">
+              <input type="text" id="vendSearch" class="form-control" placeholder="Search name, GSTIN, phone..." aria-label="Search vendors">
             </div>
           </div>
         </div>
@@ -103,25 +142,21 @@
               <thead>
                 <tr>
                   <th>#</th>
-                  <th>Product / Service Name</th>
-                  <th>SKU</th>
-                  <th>Category</th>
-                  <th>HSN Code</th>
-                  <th>Unit</th>
-                  <th>GST%</th>
-                  <th>Selling Price</th>
-                  <th>Warranty</th>
-                  <th>Source</th>
+                  <th>Vendor Name</th>
+                  <th>GSTIN</th>
+                  <th>Phone</th>
+                  <th>Email</th>
+                  <th>State</th>
                   <th>Actions</th>
                 </tr>
               </thead>
-              <tbody id="prodTableBody">
-                <tr><td colspan="11" class="empty-state"><i class="fas fa-spinner fa-spin table-loading-icon"></i>Loading...</td></tr>
+              <tbody id="vendTableBody">
+                <tr><td colspan="7" class="empty-state"><i class="fas fa-spinner fa-spin table-loading-icon"></i>Loading...</td></tr>
               </tbody>
             </table>
           </div>
           <div class="table-pagination-row">
-            <div id="prodPagination" class="pagination"></div>
+            <div id="vendPagination" class="pagination"></div>
           </div>
         </div>
       </div>
@@ -131,7 +166,7 @@
 </div>
 
 <script>
-document.addEventListener('DOMContentLoaded', initProducts);
+document.addEventListener('DOMContentLoaded', initVendors);
 </script>
 
 <!-- Global Search Modal -->

@@ -259,3 +259,4 @@ router.post('/:type/:id/cascade-hard-delete', asyncRoute(async (req, res) => {
 }));
 
 module.exports = router;
+module.exports.applyStockDelta = applyStockDelta;

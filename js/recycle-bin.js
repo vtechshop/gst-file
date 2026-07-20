@@ -20,7 +20,13 @@ const RECYCLE_TABLES = [
   { table: 'products',     label: 'Product',            icon: 'fa-box',
     title: r => r.name, subtitle: r => r.hsn_code || '', amount: r => r.default_rate },
   { table: 'cdn_notes',    label: 'Credit/Debit Note',  icon: 'fa-file-minus',
-    title: r => r.note_number, subtitle: r => r.customer_name, amount: r => r.total_amount }
+    title: r => r.note_number, subtitle: r => r.customer_name, amount: r => r.total_amount },
+  { table: 'vendors',          label: 'Vendor',           icon: 'fa-truck',
+    title: r => r.name, subtitle: r => r.gstin || r.phone || r.email || '', amount: null },
+  { table: 'purchases',        label: 'Purchase',         icon: 'fa-cart-plus',
+    title: r => r.purchase_number, subtitle: r => r.vendor_name, amount: r => r.total_amount },
+  { table: 'purchase_returns', label: 'Purchase Return',  icon: 'fa-undo',
+    title: r => r.return_number, subtitle: r => r.vendor_name, amount: r => r.total_amount }
 ];
 
 let binAllItems = [];
@@ -107,11 +113,19 @@ function invoiceTypeForTable(table) {
   return null;
 }
 
+function purchaseKindForTable(table) {
+  if (table === 'purchases') return 'purchase';
+  if (table === 'purchase_returns') return 'return';
+  return null;
+}
+
 async function restoreBinItem(table, id) {
   const { error } = await _supabase.from(table).update({ is_deleted: false, deleted_at: null }).eq('id', id);
   if (error) { showToast('Error: ' + error.message, 'error'); return; }
   const invType = invoiceTypeForTable(table);
   if (invType) await cascadeInvoiceItemsRestore(invType, id);
+  const purchKind = purchaseKindForTable(table);
+  if (purchKind) await cascadePurchaseItemsRestore(purchKind, id);
   showToast('Restored!', 'success');
   if (typeof refreshStorageStatus === 'function') refreshStorageStatus();
   const user = await getCurrentUser();
@@ -125,6 +139,8 @@ async function deleteBinItemForever(table, id) {
   if (error) { showToast('Error: ' + error.message, 'error'); return; }
   const invType = invoiceTypeForTable(table);
   if (invType) await cascadeInvoiceItemsHardDelete(invType, id);
+  const purchKind = purchaseKindForTable(table);
+  if (purchKind) await cascadePurchaseItemsHardDelete(purchKind, id);
   showToast('Permanently deleted.', 'success');
   const user = await getCurrentUser();
   if (user) await loadRecycleBin(user.id);
@@ -138,6 +154,8 @@ async function emptyRecycleBin() {
     await _supabase.from(it.table).delete().eq('id', it.id);
     const invType = invoiceTypeForTable(it.table);
     if (invType) await cascadeInvoiceItemsHardDelete(invType, it.id);
+    const purchKind = purchaseKindForTable(it.table);
+    if (purchKind) await cascadePurchaseItemsHardDelete(purchKind, it.id);
   }
   showToast('Recycle Bin emptied.', 'success');
   const user = await getCurrentUser();

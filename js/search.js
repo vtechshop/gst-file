@@ -41,14 +41,17 @@ async function runGlobalSearch(q) {
   if (!user) return;
   const needle = q.toLowerCase();
 
-  const [b2b, b2c, customers, products, b2bHsn, b2cHsn, cdn] = await Promise.all([
+  const [b2b, b2c, customers, products, b2bHsn, b2cHsn, cdn, vendors, purchases, purchReturns] = await Promise.all([
     _supabase.from('b2b_invoices').select('*').eq('user_id', user.id),
     _supabase.from('b2c_invoices').select('*').eq('user_id', user.id),
     _supabase.from('customers').select('*').eq('user_id', user.id),
     _supabase.from('products').select('*').eq('user_id', user.id),
     _supabase.from('b2b_hsn').select('*').eq('user_id', user.id),
     _supabase.from('b2c_hsn').select('*').eq('user_id', user.id),
-    _supabase.from('cdn_notes').select('*').eq('user_id', user.id)
+    _supabase.from('cdn_notes').select('*').eq('user_id', user.id),
+    _supabase.from('vendors').select('*').eq('user_id', user.id),
+    _supabase.from('purchases').select('*').eq('user_id', user.id),
+    _supabase.from('purchase_returns').select('*').eq('user_id', user.id)
   ]);
 
   const groups = [];
@@ -82,6 +85,22 @@ async function runGlobalSearch(q) {
     r.customer_name?.toLowerCase().includes(needle) ||
     r.original_invoice?.toLowerCase().includes(needle))).slice(0, 5);
   if (cdnMatches.length) groups.push({ label: 'Credit/Debit Notes', icon: 'fa-file-minus', page: 'cdnotes.html', items: cdnMatches.map(r => `${r.note_number} &mdash; ${r.customer_name}`) });
+
+  const vendorMatches = (vendors.data || []).filter(r => !r.is_deleted &&
+    (r.name?.toLowerCase().includes(needle) || (r.gstin || '').toLowerCase().includes(needle))).slice(0, 5);
+  if (vendorMatches.length) groups.push({ label: 'Vendors', icon: 'fa-truck', page: 'vendors.html', items: vendorMatches.map(r => `${r.name}${r.gstin ? ' (' + r.gstin + ')' : ''}`) });
+
+  const purchMatches = (purchases.data || []).filter(r => !r.is_deleted &&
+    (r.purchase_number?.toLowerCase().includes(needle) ||
+    r.vendor_name?.toLowerCase().includes(needle) ||
+    (r.vendor_gstin || '').toLowerCase().includes(needle))).slice(0, 5);
+  if (purchMatches.length) groups.push({ label: 'Purchases', icon: 'fa-cart-plus', page: 'purchase-list.html', items: purchMatches.map(r => `${r.purchase_number} &mdash; ${r.vendor_name} (&#8377;${formatNum(r.total_amount)})`) });
+
+  const purchRetMatches = (purchReturns.data || []).filter(r => !r.is_deleted &&
+    (r.return_number?.toLowerCase().includes(needle) ||
+    r.vendor_name?.toLowerCase().includes(needle) ||
+    (r.original_purchase_number || '').toLowerCase().includes(needle))).slice(0, 5);
+  if (purchRetMatches.length) groups.push({ label: 'Purchase Returns', icon: 'fa-undo', page: 'purchase-returns.html', items: purchRetMatches.map(r => `${r.return_number} &mdash; ${r.vendor_name}`) });
 
   if (!groups.length) {
     results.innerHTML = `<p class="text-muted-sm">No matches for "${q}".</p>`;

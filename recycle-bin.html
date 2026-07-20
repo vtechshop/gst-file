@@ -16,6 +16,7 @@
   <script src="js/profile.js"></script>
   <script src="js/products.js"></script>
   <script src="js/invoice-items.js?v=20260717"></script>
+  <script src="js/purchase-items.js"></script>
   <script src="js/recycle-bin.js"></script>
 </head>
 <body>
@@ -40,6 +41,11 @@
       <div class="menu-section">Masters</div>
       <a href="customers.html" class="menu-item"><i class="fas fa-address-book"></i> Customers</a>
       <a href="products.html" class="menu-item"><i class="fas fa-box"></i> Products</a>
+      <div class="menu-section">Purchases</div>
+      <a href="vendors.html" class="menu-item"><i class="fas fa-truck"></i> Vendors</a>
+      <a href="purchases.html" class="menu-item"><i class="fas fa-cart-plus"></i> New Purchase</a>
+      <a href="purchase-list.html" class="menu-item"><i class="fas fa-boxes"></i> Purchase List</a>
+      <a href="purchase-returns.html" class="menu-item"><i class="fas fa-undo"></i> Purchase Returns</a>
       <div class="menu-section">Reports</div>
       <a href="reports.html" class="menu-item"><i class="fas fa-chart-bar"></i> Reports &amp; Export</a>
       <a href="gstr3b.html"  class="menu-item"><i class="fas fa-calculator"></i> GSTR-3B Summary</a>
@@ -87,6 +93,9 @@
               <option value="customers">Customers</option>
               <option value="products">Products</option>
               <option value="cdn_notes">Credit/Debit Notes</option>
+              <option value="vendors">Vendors</option>
+              <option value="purchases">Purchases</option>
+              <option value="purchase_returns">Purchase Returns</option>
             </select>
             <button type="button" class="btn btn-danger btn-sm" onclick="emptyRecycleBin()"><i class="fas fa-trash-alt"></i> Empty Bin</button>
           </div>

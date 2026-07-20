@@ -171,6 +171,34 @@ const TABLES = {
       'hsn_code','unit','quantity','rate','discount_percentage','gst_percentage',
       'taxable_value','gst_amount','igst','cgst','sgst','total_amount','sort_order',
       'is_deleted','deleted_at','created_at','updated_at']
+  },
+  vendors: {
+    columns: ['id','user_id','name','gstin','phone','email','address','state',
+      'is_deleted','deleted_at','created_at','updated_at']
+  },
+  purchases: {
+    columns: ['id','user_id','vendor_id','vendor_name','vendor_gstin','phone','address','state',
+      'purchase_number','purchase_date','taxable_amount','gst_percentage','gst_amount',
+      'total_amount','supply_type','igst','cgst','sgst','payment_status','amount_paid',
+      'is_deleted','deleted_at','created_at','updated_at']
+  },
+  purchase_items: {
+    columns: ['id','user_id','purchase_id','product_id','product_name','hsn_code','unit',
+      'quantity','rate','discount_percentage','gst_percentage','taxable_value','gst_amount',
+      'igst','cgst','sgst','total_amount','sort_order','is_deleted','deleted_at',
+      'created_at','updated_at']
+  },
+  purchase_returns: {
+    columns: ['id','user_id','vendor_id','vendor_name','vendor_gstin','return_number','return_date',
+      'original_purchase_id','original_purchase_number','reason','taxable_amount','gst_percentage',
+      'gst_amount','total_amount','supply_type','igst','cgst','sgst','is_deleted','deleted_at',
+      'created_at','updated_at']
+  },
+  purchase_return_items: {
+    columns: ['id','user_id','return_id','product_id','product_name','hsn_code','unit',
+      'quantity','rate','discount_percentage','gst_percentage','taxable_value','gst_amount',
+      'igst','cgst','sgst','total_amount','sort_order','is_deleted','deleted_at',
+      'created_at','updated_at']
   }
 };
 
