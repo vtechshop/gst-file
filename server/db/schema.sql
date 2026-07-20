@@ -256,6 +256,13 @@ CREATE TABLE IF NOT EXISTS cdn_notes (
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
+-- Unlike every other transactional table, cdn_notes had no index beyond
+-- its primary key — js/cdnotes.js's loadCDNotes() filters by user_id and
+-- sorts by note_date on every load, same shape idx_b2b_invoices_date /
+-- idx_purchases_date already serve for their own tables.
+CREATE INDEX IF NOT EXISTS idx_cdn_notes_date ON cdn_notes(user_id, note_date);
+CREATE INDEX IF NOT EXISTS idx_cdn_notes_customer_name ON cdn_notes(user_id, customer_name);
+
 -- ── Product Master ────────────────────────────────────
 CREATE TABLE IF NOT EXISTS products (
   id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
