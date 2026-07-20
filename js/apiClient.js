@@ -32,11 +32,15 @@ async function apiFetch(path, options = {}) {
   try {
     res = await fetch(API_BASE_URL + path, { ...options, headers });
   } catch {
-    throw { message: 'Could not reach the server. Is it running?' };
+    // The request never got a response at all (offline, server down, or the
+    // browser aborted it — e.g. a page reload firing while this fetch was
+    // still in flight). This is NOT the server telling us the token is bad,
+    // so callers (see getSession() below) must not treat it as one.
+    throw { message: 'Could not reach the server. Is it running?', networkError: true };
   }
   let body = null;
   try { body = await res.json(); } catch { /* e.g. 204/empty body */ }
-  if (!res.ok) throw (body && body.error) ? body.error : { message: 'Request failed (' + res.status + ')' };
+  if (!res.ok) throw { ...((body && body.error) || { message: 'Request failed (' + res.status + ')' }), status: res.status };
   return body;
 }
 
@@ -124,8 +128,17 @@ class ApiClient {
         try {
           const { user } = await apiFetch('/auth/me');
           return { data: { session: { user } }, error: null };
-        } catch {
-          clearToken();
+        } catch (err) {
+          // Only a genuine "the server rejected this token" (401/403)
+          // means the token is actually invalid — clear it so the user is
+          // asked to log in again. A network failure or aborted request
+          // (err.networkError, or no status at all) says nothing about
+          // whether the token is still good, so it must NOT be cleared —
+          // otherwise a transient connectivity blip (or a page reload
+          // racing an in-flight check) would silently sign the user out
+          // and force an unnecessary re-login even though their session
+          // was still perfectly valid.
+          if (err && (err.status === 401 || err.status === 403)) clearToken();
           return { data: { session: null }, error: null };
         }
       },
