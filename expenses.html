@@ -1,9 +1,9 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Credit/Debit Notes - GST Management System</title>
+  <title>Expenses - GST Management System</title>
   <link rel="stylesheet" href="css/style.css">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
   <script src="js/apiClient.js"></script>
@@ -14,7 +14,7 @@
   <script src="js/utils.js"></script>
   <script src="js/search.js"></script>
   <script src="js/profile.js"></script>
-  <script src="js/cdnotes.js"></script>
+  <script src="js/expenses.js"></script>
 </head>
 <body>
 <div class="app-layout">
@@ -30,7 +30,7 @@
       <div class="menu-section">Invoices</div>
       <a href="invoice.html" class="menu-item"><i class="fas fa-plus-circle"></i> New Invoice</a>
       <a href="invoice-list.html" class="menu-item"><i class="fas fa-list-alt"></i> Invoice List</a>
-      <a href="cdnotes.html" class="menu-item active"><i class="fas fa-file-minus"></i> Credit/Debit Notes</a>
+      <a href="cdnotes.html" class="menu-item"><i class="fas fa-file-minus"></i> Credit/Debit Notes</a>
       <div class="menu-section">HSN</div>
       <a href="hsn.html#b2b" class="menu-item"><i class="fas fa-barcode"></i> B2B HSN</a>
       <a href="hsn.html#b2c" class="menu-item"><i class="fas fa-tags"></i> B2C HSN</a>
@@ -43,7 +43,7 @@
       <a href="purchase-list.html" class="menu-item"><i class="fas fa-boxes"></i> Purchase List</a>
       <a href="purchase-returns.html" class="menu-item"><i class="fas fa-undo"></i> Purchase Returns</a>
       <div class="menu-section">Expenses</div>
-      <a href="expenses.html" class="menu-item"><i class="fas fa-receipt"></i> Expenses</a>
+      <a href="expenses.html" class="menu-item active"><i class="fas fa-receipt"></i> Expenses</a>
       <div class="menu-section">Reports</div>
       <a href="reports.html" class="menu-item"><i class="fas fa-chart-bar"></i> Reports &amp; Export</a>
       <a href="gstr3b.html"  class="menu-item"><i class="fas fa-calculator"></i> GSTR-3B Summary</a>
@@ -65,115 +65,71 @@
   <div class="main-content">
     <div class="top-bar">
       <button type="button" class="menu-toggle" id="menuToggle" aria-label="Toggle sidebar menu"><i class="fas fa-bars"></i></button>
-      <span class="page-title"><i class="fas fa-file-minus"></i>Credit / Debit Notes</span>
+      <span class="page-title"><i class="fas fa-receipt"></i>Expenses</span>
       <button type="button" class="btn btn-secondary btn-sm btn-icon ml-auto" onclick="openGlobalSearch()" title="Search everywhere (Ctrl+K)" aria-label="Global search"><i class="fas fa-search"></i></button>
     </div>
 
     <div class="content">
 
-      <!-- Entry Form -->
+      <!-- Add / Edit Form -->
       <div class="card mb-20">
         <div class="card-header">
-          <span class="card-title"><i class="fas fa-plus-circle"></i> <span id="cdFormTitle">Add Credit / Debit Note</span></span>
+          <span class="card-title"><i class="fas fa-plus-circle"></i> <span id="expFormTitle">Add Expense</span></span>
         </div>
         <div class="card-body">
-
           <div class="form-grid cols-3 mb-16">
             <div class="form-group">
-              <label for="cdNoteType">Note Type <span class="text-required">*</span></label>
-              <select id="cdNoteType" class="form-control">
-                <option value="credit">Credit Note</option>
-                <option value="debit">Debit Note</option>
-              </select>
-            </div>
-            <div class="form-group">
-              <label for="cdNoteNum">Note Number <span class="text-required">*</span></label>
-              <input type="text" id="cdNoteNum" class="form-control" placeholder="e.g. CN-2026-001">
-            </div>
-            <div class="form-group">
-              <label for="cdNoteDate">Note Date <span class="text-required">*</span></label>
-              <input type="date" id="cdNoteDate" class="form-control">
-            </div>
-          </div>
-
-          <div class="form-grid cols-2 mb-16">
-            <div class="form-group">
-              <label for="cdOrigInv">Original Invoice Number</label>
-              <input type="text" id="cdOrigInv" class="form-control" placeholder="Invoice this note refers to">
-            </div>
-            <div class="form-group">
-              <label for="cdCustName">Customer Name <span class="text-required">*</span></label>
-              <input type="text" id="cdCustName" class="form-control" placeholder="Enter customer name">
-            </div>
-          </div>
-
-          <div class="form-grid cols-2 mb-16">
-            <div class="form-group">
-              <label for="cdGSTIN">Customer GSTIN</label>
-              <input type="text" id="cdGSTIN" class="form-control uppercase" maxlength="15" placeholder="e.g. 27AAPFU0939F1ZV" oninput="this.value=this.value.toUpperCase()">
-            </div>
-            <div class="form-group">
-              <label for="cdReason">Reason</label>
-              <input type="text" id="cdReason" class="form-control" placeholder="e.g. Goods returned, Price correction">
-            </div>
-          </div>
-
-          <div class="section-title mb-14">Tax Details</div>
-          <div class="form-grid cols-3 mb-16">
-            <div class="form-group">
-              <label for="cdTaxable">Taxable Amount (&#8377;) <span class="text-required">*</span></label>
-              <input type="number" id="cdTaxable" class="form-control" placeholder="0.00" min="0" step="0.01">
-            </div>
-            <div class="form-group">
-              <label for="cdGstPct">GST Percentage</label>
-              <select id="cdGstPct" class="form-control">
-                <option value="0">0%</option>
-                <option value="5">5%</option>
-                <option value="12">12%</option>
-                <option value="18" selected>18%</option>
-                <option value="28">28%</option>
-              </select>
-            </div>
-            <div class="form-group">
-              <label for="cdSupply">Supply Type</label>
-              <select id="cdSupply" class="form-control">
-                <option value="intrastate">Intrastate</option>
-                <option value="interstate">Interstate</option>
-              </select>
-            </div>
-          </div>
-
-          <div class="calc-box mb-20">
-            <div class="calc-row">
-              <span class="label">Tax Breakdown</span>
-              <div class="calc-tax-row">
-                <span class="text-muted-sm">IGST: <b id="cdIGST">0.00</b></span>
-                <span class="text-muted-sm">CGST: <b id="cdCGST">0.00</b></span>
-                <span class="text-muted-sm">SGST: <b id="cdSGST">0.00</b></span>
+              <div class="d-flex align-center gap-10">
+                <label for="expCategory">Category</label>
+                <a href="javascript:void(0)" class="fs-11 text-muted-sm" onclick="openExpCategoryManager()"><i class="fas fa-cog"></i> Manage Categories</a>
               </div>
-              <span class="value"><input type="text" id="cdGstAmt" class="form-control calc-input-sm" readonly aria-label="GST Amount"></span>
+              <select id="expCategory" class="form-control"><option value="">Select Category</option></select>
             </div>
-            <div class="calc-row total">
-              <span class="label">Total Note Amount</span>
-              <span class="value"><input type="text" id="cdTotalAmt" class="form-control calc-input-total" readonly aria-label="Total Note Amount"></span>
+            <div class="form-group">
+              <label for="expDate">Expense Date <span class="text-required">*</span></label>
+              <input type="date" id="expDate" class="form-control">
+            </div>
+            <div class="form-group">
+              <label for="expAmount">Amount (&#8377;) <span class="text-required">*</span></label>
+              <input type="number" id="expAmount" class="form-control" min="0" step="0.01" placeholder="0.00">
             </div>
           </div>
-
+          <div class="form-grid cols-2 mb-16">
+            <div class="form-group">
+              <label for="expMethod">Payment Method</label>
+              <select id="expMethod" class="form-control">
+                <option value="cash" selected>Cash</option>
+                <option value="upi">UPI</option>
+                <option value="bank_transfer">Bank Transfer</option>
+                <option value="cheque">Cheque</option>
+                <option value="card">Card</option>
+                <option value="other">Other</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label for="expPayee">Paid To <span class="fs-11 text-muted-sm">(Optional)</span></label>
+              <input type="text" id="expPayee" class="form-control" placeholder="e.g. Landlord, Electricity Board">
+            </div>
+          </div>
+          <div class="form-group mb-16">
+            <label for="expDescription">Description</label>
+            <input type="text" id="expDescription" class="form-control" placeholder="Optional notes">
+          </div>
           <div class="btn-group">
-            <button type="button" class="btn btn-primary" id="cdSaveBtn" onclick="saveCDNote()"><i class="fas fa-save"></i> Save Note</button>
-            <button type="button" class="btn btn-secondary" onclick="resetCDNote()"><i class="fas fa-redo"></i> Reset</button>
+            <button type="button" class="btn btn-primary" id="expSaveBtn" onclick="saveExpense()"><i class="fas fa-save"></i> Save Expense</button>
+            <button type="button" class="btn btn-secondary" onclick="resetExpense()"><i class="fas fa-redo"></i> Reset</button>
           </div>
         </div>
       </div>
 
-      <!-- Table -->
+      <!-- Expense History -->
       <div class="card">
         <div class="card-header">
-          <span class="card-title"><i class="fas fa-list"></i> Credit / Debit Note Records</span>
+          <span class="card-title"><i class="fas fa-list"></i> Expense History</span>
           <div class="d-flex gap-10">
-            <div class="search-input-wrap w-220">
+            <div class="search-input-wrap w-240">
               <i class="fas fa-search"></i>
-              <input type="text" id="cdSearch" class="form-control" placeholder="Search note no, customer..." aria-label="Search notes">
+              <input type="text" id="expSearch" class="form-control" placeholder="Search category, payee, notes..." aria-label="Search expenses">
             </div>
           </div>
         </div>
@@ -182,26 +138,17 @@
             <table class="data-table">
               <thead>
                 <tr>
-                  <th>#</th>
-                  <th>Type</th>
-                  <th>Note No</th>
-                  <th>Date</th>
-                  <th>Original Invoice</th>
-                  <th>Customer</th>
-                  <th>Taxable Amt</th>
-                  <th>GST%</th>
-                  <th>Total Amount</th>
-                  <th>Actions</th>
+                  <th>#</th><th>Date</th><th>Category</th><th>Paid To</th><th>Method</th><th>Amount</th><th>Actions</th>
                 </tr>
               </thead>
-              <tbody id="cdTableBody">
-                <tr><td colspan="10" class="empty-state"><i class="fas fa-spinner fa-spin table-loading-icon"></i>Loading...</td></tr>
+              <tbody id="expTableBody">
+                <tr><td colspan="7" class="empty-state"><i class="fas fa-spinner fa-spin table-loading-icon"></i>Loading...</td></tr>
               </tbody>
-              <tfoot id="cdTableTotal"></tfoot>
+              <tfoot id="expTableTotal"></tfoot>
             </table>
           </div>
           <div class="table-pagination-row">
-            <div id="cdPagination" class="pagination"></div>
+            <div id="expPagination" class="pagination"></div>
           </div>
         </div>
       </div>
@@ -211,8 +158,35 @@
 </div>
 
 <script>
-document.addEventListener('DOMContentLoaded', initCDNotes);
+document.addEventListener('DOMContentLoaded', initExpenses);
 </script>
+
+<!-- Manage Categories Modal -->
+<div class="modal-overlay" id="expCategoryModal">
+  <div class="modal">
+    <div class="modal-header">
+      <span class="modal-title"><i class="fas fa-tags"></i> Manage Expense Categories</span>
+      <button type="button" class="modal-close" onclick="closeExpCategoryManager()" aria-label="Close"><i class="fas fa-times"></i></button>
+    </div>
+    <div class="modal-body">
+      <div id="ecList" class="mb-20"><p class="text-muted-sm">Loading...</p></div>
+      <div class="section-title mb-14">Add / Edit Category</div>
+      <div class="form-grid cols-2 mb-16">
+        <div class="form-group">
+          <label for="ecName">Category Name <span class="text-required">*</span></label>
+          <input type="text" id="ecName" class="form-control" placeholder="e.g. Rent, Utilities, Salaries">
+        </div>
+        <div class="form-group">
+          <label for="ecDescription">Description <span class="fs-11 text-muted-sm">(Optional)</span></label>
+          <input type="text" id="ecDescription" class="form-control" placeholder="Optional notes">
+        </div>
+      </div>
+      <div class="btn-group">
+        <button type="button" class="btn btn-primary" onclick="saveExpCategory()"><i class="fas fa-save"></i> Save Category</button>
+      </div>
+    </div>
+  </div>
+</div>
 
 <!-- Global Search Modal -->
 <div class="modal-overlay" id="globalSearchModal">

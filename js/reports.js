@@ -4,6 +4,7 @@
 let repB2B = [], repB2C = [], repB2BHSN = [], repB2CHSN = [];
 let repItemsByInvoice = {};
 let repPurchases = [], repPurchaseItems = [];
+let repExpenses = [], repExpensesAllTime = [];
 let currentUser = null;
 
 async function initReports() {
@@ -32,14 +33,16 @@ async function loadReports(filter) {
   showRepLoader(true);
   const { start, end } = getReportDateRange(filter);
 
-  const [b2bRes, b2cRes, hsnB2BRes, hsnB2CRes, itemsRes, purchRes, purchItemsRes] = await Promise.all([
+  const [b2bRes, b2cRes, hsnB2BRes, hsnB2CRes, itemsRes, purchRes, purchItemsRes, expRes, expAllRes] = await Promise.all([
     _supabase.from('b2b_invoices').select('*').eq('user_id', currentUser.id).gte('invoice_date', start).lte('invoice_date', end).order('invoice_date', { ascending: false }),
     _supabase.from('b2c_invoices').select('*').eq('user_id', currentUser.id).gte('invoice_date', start).lte('invoice_date', end).order('invoice_date', { ascending: false }),
     _supabase.from('b2b_hsn').select('*').eq('user_id', currentUser.id).order('created_at', { ascending: false }),
     _supabase.from('b2c_hsn').select('*').eq('user_id', currentUser.id).order('created_at', { ascending: false }),
     _supabase.from('invoice_items').select('*').eq('user_id', currentUser.id),
     _supabase.from('purchases').select('*').eq('user_id', currentUser.id).gte('purchase_date', start).lte('purchase_date', end).order('purchase_date', { ascending: false }),
-    _supabase.from('purchase_items').select('*').eq('user_id', currentUser.id)
+    _supabase.from('purchase_items').select('*').eq('user_id', currentUser.id),
+    _supabase.from('expenses').select('*').eq('user_id', currentUser.id).gte('expense_date', start).lte('expense_date', end).order('expense_date', { ascending: false }),
+    _supabase.from('expenses').select('*').eq('user_id', currentUser.id)
   ]);
 
   repB2B = (b2bRes.data || []).filter(r => !r.is_deleted);
@@ -68,6 +71,8 @@ async function loadReports(filter) {
 
   repPurchases = (purchRes.data || []).filter(r => !r.is_deleted);
   repPurchaseItems = (purchItemsRes.data || []).filter(r => !r.is_deleted);
+  repExpenses = (expRes.data || []).filter(r => !r.is_deleted);
+  repExpensesAllTime = (expAllRes.data || []).filter(r => !r.is_deleted);
 
   renderSummaryCards();
   renderGSTR1Summary();
@@ -77,9 +82,46 @@ async function loadReports(filter) {
   renderProductWiseReport();
   renderVendorWiseReport();
   renderPurchProductWiseReport();
+  renderExpenseByCategoryReport();
+  renderExpenseByMonthReport();
   renderHSNWiseSummary();
   renderGSTRateWiseReport();
   showRepLoader(false);
+}
+
+// ── Expense Report — by Category (respects the selected period) ──
+function renderExpenseByCategoryReport() {
+  const tbody = document.getElementById('expByCategoryBody');
+  if (!tbody) return;
+  const byCategory = {};
+  repExpenses.forEach(r => {
+    const key = r.category_name || 'Uncategorized';
+    if (!byCategory[key]) byCategory[key] = { name: key, count: 0, total: 0 };
+    byCategory[key].count++;
+    byCategory[key].total += +r.amount || 0;
+  });
+  const rows = Object.values(byCategory).sort((a, b) => b.total - a.total);
+  tbody.innerHTML = rows.length
+    ? rows.map(r => `<tr><td><b>${r.name}</b></td><td class="text-center">${r.count}</td><td class="text-right fw-700">₹${formatNum(r.total)}</td></tr>`).join('')
+    : '<tr><td colspan="3" class="empty-state">No expenses for this period</td></tr>';
+}
+
+// ── Expense Report — by Month (trailing 12 months, all-time —
+// same independent-of-period-filter shape as renderMonthlyTable()) ──
+function renderExpenseByMonthReport() {
+  const tbody = document.getElementById('expByMonthBody');
+  if (!tbody) return;
+  const months = monthYearOptions().slice(0, 12).reverse();
+  const rows = months.map(m => {
+    const mo = repExpensesAllTime.filter(r => r.expense_date?.startsWith(m.value));
+    if (!mo.length) return null;
+    const total = mo.reduce((s, r) => s + (+r.amount || 0), 0);
+    return { month: m.label, count: mo.length, total };
+  }).filter(Boolean);
+
+  tbody.innerHTML = rows.length
+    ? rows.map(r => `<tr><td><b>${r.month}</b></td><td class="text-center">${r.count}</td><td class="text-right fw-700">₹${formatNum(r.total)}</td></tr>`).join('')
+    : '<tr><td colspan="3" class="empty-state">No expense data yet</td></tr>';
 }
 
 // ── Vendor-wise (Purchases) ───────────────────────────

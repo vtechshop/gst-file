@@ -41,7 +41,7 @@ async function runGlobalSearch(q) {
   if (!user) return;
   const needle = q.toLowerCase();
 
-  const [b2b, b2c, customers, products, b2bHsn, b2cHsn, cdn, vendors, purchases, purchReturns] = await Promise.all([
+  const [b2b, b2c, customers, products, b2bHsn, b2cHsn, cdn, vendors, purchases, purchReturns, expenses] = await Promise.all([
     _supabase.from('b2b_invoices').select('*').eq('user_id', user.id),
     _supabase.from('b2c_invoices').select('*').eq('user_id', user.id),
     _supabase.from('customers').select('*').eq('user_id', user.id),
@@ -51,7 +51,8 @@ async function runGlobalSearch(q) {
     _supabase.from('cdn_notes').select('*').eq('user_id', user.id),
     _supabase.from('vendors').select('*').eq('user_id', user.id),
     _supabase.from('purchases').select('*').eq('user_id', user.id),
-    _supabase.from('purchase_returns').select('*').eq('user_id', user.id)
+    _supabase.from('purchase_returns').select('*').eq('user_id', user.id),
+    _supabase.from('expenses').select('*').eq('user_id', user.id)
   ]);
 
   const groups = [];
@@ -101,6 +102,12 @@ async function runGlobalSearch(q) {
     r.vendor_name?.toLowerCase().includes(needle) ||
     (r.original_purchase_number || '').toLowerCase().includes(needle))).slice(0, 5);
   if (purchRetMatches.length) groups.push({ label: 'Purchase Returns', icon: 'fa-undo', page: 'purchase-returns.html', items: purchRetMatches.map(r => `${r.return_number} &mdash; ${r.vendor_name}`) });
+
+  const expMatches = (expenses.data || []).filter(r => !r.is_deleted &&
+    ((r.category_name || '').toLowerCase().includes(needle) ||
+    (r.payee || '').toLowerCase().includes(needle) ||
+    (r.description || '').toLowerCase().includes(needle))).slice(0, 5);
+  if (expMatches.length) groups.push({ label: 'Expenses', icon: 'fa-receipt', page: 'expenses.html', items: expMatches.map(r => `${r.category_name || 'Expense'} &mdash; &#8377;${formatNum(r.amount)}${r.payee ? ' (' + r.payee + ')' : ''}`) });
 
   if (!groups.length) {
     results.innerHTML = `<p class="text-muted-sm">No matches for "${q}".</p>`;

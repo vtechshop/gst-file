@@ -199,6 +199,13 @@ const TABLES = {
       'quantity','rate','discount_percentage','gst_percentage','taxable_value','gst_amount',
       'igst','cgst','sgst','total_amount','sort_order','is_deleted','deleted_at',
       'created_at','updated_at']
+  },
+  expense_categories: {
+    columns: ['id','user_id','name','description','is_deleted','deleted_at','created_at','updated_at']
+  },
+  expenses: {
+    columns: ['id','user_id','category_id','category_name','expense_date','amount',
+      'payment_method','payee','description','is_deleted','deleted_at','created_at','updated_at']
   }
 };
 

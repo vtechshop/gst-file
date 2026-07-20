@@ -26,7 +26,11 @@ const RECYCLE_TABLES = [
   { table: 'purchases',        label: 'Purchase',         icon: 'fa-cart-plus',
     title: r => r.purchase_number, subtitle: r => r.vendor_name, amount: r => r.total_amount },
   { table: 'purchase_returns', label: 'Purchase Return',  icon: 'fa-undo',
-    title: r => r.return_number, subtitle: r => r.vendor_name, amount: r => r.total_amount }
+    title: r => r.return_number, subtitle: r => r.vendor_name, amount: r => r.total_amount },
+  { table: 'expense_categories', label: 'Expense Category', icon: 'fa-tags',
+    title: r => r.name, subtitle: r => r.description || '', amount: null },
+  { table: 'expenses',           label: 'Expense',           icon: 'fa-receipt',
+    title: r => r.category_name || 'Expense', subtitle: r => r.payee || '', amount: r => r.amount }
 ];
 
 let binAllItems = [];

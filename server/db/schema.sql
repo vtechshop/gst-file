@@ -475,6 +475,40 @@ CREATE TABLE IF NOT EXISTS purchase_return_items (
 
 CREATE INDEX IF NOT EXISTS idx_purchase_return_items_return ON purchase_return_items(return_id);
 
+-- ── Expense Categories ────────────────────────────────
+CREATE TABLE IF NOT EXISTS expense_categories (
+  id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
+  user_id UUID REFERENCES users(id) ON DELETE CASCADE NOT NULL,
+  name TEXT NOT NULL,
+  description TEXT,
+  is_deleted BOOLEAN NOT NULL DEFAULT FALSE,
+  deleted_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_expense_categories_name ON expense_categories(user_id, name);
+
+-- ── Expenses ───────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS expenses (
+  id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
+  user_id UUID REFERENCES users(id) ON DELETE CASCADE NOT NULL,
+  category_id UUID REFERENCES expense_categories(id) ON DELETE SET NULL,
+  category_name TEXT,
+  expense_date DATE NOT NULL,
+  amount DECIMAL(15,2) NOT NULL,
+  payment_method TEXT NOT NULL DEFAULT 'cash' CHECK (payment_method IN ('cash','upi','bank_transfer','cheque','card','other')),
+  payee TEXT,
+  description TEXT,
+  is_deleted BOOLEAN NOT NULL DEFAULT FALSE,
+  deleted_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_expenses_date ON expenses(user_id, expense_date);
+CREATE INDEX IF NOT EXISTS idx_expenses_category ON expenses(user_id, category_id);
+
 -- ── updated_at trigger, applied to every table with that column ──
 CREATE OR REPLACE FUNCTION update_updated_at()
 RETURNS TRIGGER AS $$
@@ -498,3 +532,5 @@ CREATE TRIGGER purchases_upd            BEFORE UPDATE ON purchases            FO
 CREATE TRIGGER purchase_items_upd       BEFORE UPDATE ON purchase_items       FOR EACH ROW EXECUTE FUNCTION update_updated_at();
 CREATE TRIGGER purchase_returns_upd     BEFORE UPDATE ON purchase_returns     FOR EACH ROW EXECUTE FUNCTION update_updated_at();
 CREATE TRIGGER purchase_return_items_upd BEFORE UPDATE ON purchase_return_items FOR EACH ROW EXECUTE FUNCTION update_updated_at();
+CREATE TRIGGER expense_categories_upd BEFORE UPDATE ON expense_categories FOR EACH ROW EXECUTE FUNCTION update_updated_at();
+CREATE TRIGGER expenses_upd           BEFORE UPDATE ON expenses           FOR EACH ROW EXECUTE FUNCTION update_updated_at();

@@ -44,6 +44,8 @@
       <a href="purchases.html" class="menu-item"><i class="fas fa-cart-plus"></i> New Purchase</a>
       <a href="purchase-list.html" class="menu-item"><i class="fas fa-boxes"></i> Purchase List</a>
       <a href="purchase-returns.html" class="menu-item"><i class="fas fa-undo"></i> Purchase Returns</a>
+      <div class="menu-section">Expenses</div>
+      <a href="expenses.html" class="menu-item"><i class="fas fa-receipt"></i> Expenses</a>
       <div class="menu-section">Reports</div>
       <a href="reports.html" class="menu-item"><i class="fas fa-chart-bar"></i> Reports &amp; Export</a>
       <a href="gstr3b.html"  class="menu-item"><i class="fas fa-calculator"></i> GSTR-3B Summary</a>
@@ -127,6 +129,10 @@
         <div class="stat-card border-blue">
           <div class="stat-icon blue"><i class="fas fa-file-invoice"></i></div>
           <div class="stat-info"><div class="stat-label">Invoices Today</div><div class="stat-value" id="statInvoicesToday">0</div></div>
+        </div>
+        <div class="stat-card border-purple">
+          <div class="stat-icon purple"><i class="fas fa-receipt"></i></div>
+          <div class="stat-info"><div class="stat-label">Monthly Expenses</div><div class="stat-value" id="statMonthlyExpenses">&#8377;0.00</div></div>
         </div>
         <div class="stat-card border-red">
           <div class="stat-icon red"><i class="fas fa-hourglass-half"></i></div>
@@ -443,6 +449,20 @@ async function loadTodayStats(userId) {
   set('statInvoicesToday', all.length);
 }
 
+// ── Monthly Expenses (current calendar month, independent of the
+// year/month period filter above — same "right now" shape as Today's
+// Sales) ────────────────────────────────────────────
+async function loadMonthlyExpenses(userId) {
+  const now = new Date();
+  const start = toISO(new Date(now.getFullYear(), now.getMonth(), 1));
+  const end = toISO(new Date(now.getFullYear(), now.getMonth() + 1, 0));
+  const { data } = await _supabase.from('expenses').select('amount,expense_date,is_deleted')
+    .eq('user_id', userId).gte('expense_date', start).lte('expense_date', end);
+  const total = (data || []).filter(r => !r.is_deleted).reduce((s, r) => s + (+r.amount || 0), 0);
+  const set = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
+  set('statMonthlyExpenses', formatCurrency(total));
+}
+
 // ── Pending Payments (all-time open balance — not scoped to the
 // selected period; a business needs to know what's owed right now) ──
 async function loadPendingPayments(userId) {
@@ -685,6 +705,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   await loadYearMonthSummary(user.id);
   await loadInsights(user.id);
   await loadTodayStats(user.id);
+  await loadMonthlyExpenses(user.id);
   await loadPendingPayments(user.id);
   await loadTopSellingProducts(user.id);
   await loadRecentActivity(user.id);
