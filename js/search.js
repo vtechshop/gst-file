@@ -41,7 +41,7 @@ async function runGlobalSearch(q) {
   if (!user) return;
   const needle = q.toLowerCase();
 
-  const [b2b, b2c, customers, products, b2bHsn, b2cHsn, cdn, vendors, purchases, purchReturns, expenses] = await Promise.all([
+  const [b2b, b2c, customers, products, b2bHsn, b2cHsn, cdn, vendors, purchases, purchReturns, expenses, salesReturns] = await Promise.all([
     _supabase.from('b2b_invoices').select('*').eq('user_id', user.id),
     _supabase.from('b2c_invoices').select('*').eq('user_id', user.id),
     _supabase.from('customers').select('*').eq('user_id', user.id),
@@ -52,7 +52,8 @@ async function runGlobalSearch(q) {
     _supabase.from('vendors').select('*').eq('user_id', user.id),
     _supabase.from('purchases').select('*').eq('user_id', user.id),
     _supabase.from('purchase_returns').select('*').eq('user_id', user.id),
-    _supabase.from('expenses').select('*').eq('user_id', user.id)
+    _supabase.from('expenses').select('*').eq('user_id', user.id),
+    _supabase.from('sales_returns').select('*').eq('user_id', user.id)
   ]);
 
   const groups = [];
@@ -108,6 +109,12 @@ async function runGlobalSearch(q) {
     (r.payee || '').toLowerCase().includes(needle) ||
     (r.description || '').toLowerCase().includes(needle))).slice(0, 5);
   if (expMatches.length) groups.push({ label: 'Expenses', icon: 'fa-receipt', page: 'expenses.html', items: expMatches.map(r => `${r.category_name || 'Expense'} &mdash; &#8377;${formatNum(r.amount)}${r.payee ? ' (' + r.payee + ')' : ''}`) });
+
+  const srMatches = (salesReturns.data || []).filter(r => !r.is_deleted &&
+    (r.return_number?.toLowerCase().includes(needle) ||
+    r.customer_name?.toLowerCase().includes(needle) ||
+    (r.original_invoice_number || '').toLowerCase().includes(needle))).slice(0, 5);
+  if (srMatches.length) groups.push({ label: 'Sales Returns', icon: 'fa-rotate-left', page: 'sales-returns.html', items: srMatches.map(r => `${r.return_number} &mdash; ${r.customer_name}`) });
 
   if (!groups.length) {
     results.innerHTML = `<p class="text-muted-sm">No matches for "${q}".</p>`;

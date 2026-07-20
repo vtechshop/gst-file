@@ -5,6 +5,7 @@ let repB2B = [], repB2C = [], repB2BHSN = [], repB2CHSN = [];
 let repItemsByInvoice = {};
 let repPurchases = [], repPurchaseItems = [];
 let repExpenses = [], repExpensesAllTime = [];
+let repSalesReturns = [], repSalesReturnItems = [];
 let currentUser = null;
 
 async function initReports() {
@@ -33,7 +34,7 @@ async function loadReports(filter) {
   showRepLoader(true);
   const { start, end } = getReportDateRange(filter);
 
-  const [b2bRes, b2cRes, hsnB2BRes, hsnB2CRes, itemsRes, purchRes, purchItemsRes, expRes, expAllRes] = await Promise.all([
+  const [b2bRes, b2cRes, hsnB2BRes, hsnB2CRes, itemsRes, purchRes, purchItemsRes, expRes, expAllRes, srRes, srItemsRes] = await Promise.all([
     _supabase.from('b2b_invoices').select('*').eq('user_id', currentUser.id).gte('invoice_date', start).lte('invoice_date', end).order('invoice_date', { ascending: false }),
     _supabase.from('b2c_invoices').select('*').eq('user_id', currentUser.id).gte('invoice_date', start).lte('invoice_date', end).order('invoice_date', { ascending: false }),
     _supabase.from('b2b_hsn').select('*').eq('user_id', currentUser.id).order('created_at', { ascending: false }),
@@ -42,7 +43,9 @@ async function loadReports(filter) {
     _supabase.from('purchases').select('*').eq('user_id', currentUser.id).gte('purchase_date', start).lte('purchase_date', end).order('purchase_date', { ascending: false }),
     _supabase.from('purchase_items').select('*').eq('user_id', currentUser.id),
     _supabase.from('expenses').select('*').eq('user_id', currentUser.id).gte('expense_date', start).lte('expense_date', end).order('expense_date', { ascending: false }),
-    _supabase.from('expenses').select('*').eq('user_id', currentUser.id)
+    _supabase.from('expenses').select('*').eq('user_id', currentUser.id),
+    _supabase.from('sales_returns').select('*').eq('user_id', currentUser.id).gte('return_date', start).lte('return_date', end).order('return_date', { ascending: false }),
+    _supabase.from('sales_return_items').select('*').eq('user_id', currentUser.id)
   ]);
 
   repB2B = (b2bRes.data || []).filter(r => !r.is_deleted);
@@ -73,6 +76,8 @@ async function loadReports(filter) {
   repPurchaseItems = (purchItemsRes.data || []).filter(r => !r.is_deleted);
   repExpenses = (expRes.data || []).filter(r => !r.is_deleted);
   repExpensesAllTime = (expAllRes.data || []).filter(r => !r.is_deleted);
+  repSalesReturns = (srRes.data || []).filter(r => !r.is_deleted);
+  repSalesReturnItems = (srItemsRes.data || []).filter(r => !r.is_deleted);
 
   renderSummaryCards();
   renderGSTR1Summary();
@@ -82,11 +87,51 @@ async function loadReports(filter) {
   renderProductWiseReport();
   renderVendorWiseReport();
   renderPurchProductWiseReport();
+  renderSrCustomerWiseReport();
+  renderSrProductWiseReport();
   renderExpenseByCategoryReport();
   renderExpenseByMonthReport();
   renderHSNWiseSummary();
   renderGSTRateWiseReport();
   showRepLoader(false);
+}
+
+// ── Customer-wise (Sales Returns) ───────────────────────────
+function renderSrCustomerWiseReport() {
+  const tbody = document.getElementById('srCustomerWiseBody');
+  if (!tbody) return;
+  const byCustomer = {};
+  repSalesReturns.forEach(r => {
+    const key = r.customer_name;
+    if (!byCustomer[key]) byCustomer[key] = { name: key, gstin: r.customer_gstin || '', count: 0, taxable: 0, gst: 0, total: 0 };
+    byCustomer[key].count++;
+    byCustomer[key].taxable += +r.taxable_amount;
+    byCustomer[key].gst += +r.gst_amount;
+    byCustomer[key].total += +r.total_amount;
+  });
+  const rows = Object.values(byCustomer).sort((a, b) => b.total - a.total);
+  tbody.innerHTML = rows.length
+    ? rows.map(r => `<tr><td><b>${r.name}</b></td><td>${r.gstin || '&mdash;'}</td><td class="text-center">${r.count}</td><td class="text-right">₹${formatNum(r.taxable)}</td><td class="text-right">₹${formatNum(r.gst)}</td><td class="text-right fw-700">₹${formatNum(r.total)}</td></tr>`).join('')
+    : '<tr><td colspan="6" class="empty-state">No sales return data for this period</td></tr>';
+}
+
+// ── Product-wise (Sales Returns, from sales_return_items, all-time) ──
+function renderSrProductWiseReport() {
+  const tbody = document.getElementById('srProductWiseBody');
+  if (!tbody) return;
+  const byProduct = {};
+  repSalesReturnItems.forEach(r => {
+    const key = r.product_name;
+    if (!byProduct[key]) byProduct[key] = { name: key, hsn: r.hsn_code || '', qty: 0, taxable: 0, gst: 0, total: 0 };
+    byProduct[key].qty += +r.quantity || 0;
+    byProduct[key].taxable += +r.taxable_value;
+    byProduct[key].gst += +r.gst_amount;
+    byProduct[key].total += +r.total_amount;
+  });
+  const rows = Object.values(byProduct).sort((a, b) => b.total - a.total);
+  tbody.innerHTML = rows.length
+    ? rows.map(r => `<tr><td><b>${r.name}</b></td><td>${r.hsn || '&mdash;'}</td><td class="text-center">${r.qty || '&mdash;'}</td><td class="text-right">₹${formatNum(r.taxable)}</td><td class="text-right">₹${formatNum(r.gst)}</td><td class="text-right fw-700">₹${formatNum(r.total)}</td></tr>`).join('')
+    : '<tr><td colspan="6" class="empty-state">No sales return line items yet</td></tr>';
 }
 
 // ── Expense Report — by Category (respects the selected period) ──

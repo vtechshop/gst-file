@@ -36,6 +36,7 @@
       <a href="invoice.html" class="menu-item"><i class="fas fa-plus-circle"></i> New Invoice</a>
       <a href="invoice-list.html" class="menu-item"><i class="fas fa-list-alt"></i> Invoice List</a>
       <a href="cdnotes.html" class="menu-item"><i class="fas fa-file-minus"></i> Credit/Debit Notes</a>
+      <a href="sales-returns.html" class="menu-item"><i class="fas fa-rotate-left"></i> Sales Returns</a>
       <div class="menu-section">HSN</div>
       <a href="hsn.html#b2b" class="menu-item"><i class="fas fa-barcode"></i> B2B HSN</a>
       <a href="hsn.html#b2c" class="menu-item"><i class="fas fa-tags"></i> B2C HSN</a>
@@ -279,6 +280,40 @@
               <table class="data-table">
                 <thead><tr><th>Product</th><th>HSN Code</th><th>Qty</th><th>Taxable</th><th>GST</th><th>Total</th></tr></thead>
                 <tbody id="purchProductWiseBody">
+                  <tr><td colspan="6" class="empty-state">Loading...</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        <!-- Customer-wise Sales Returns Report -->
+        <div class="card mb-20">
+          <div class="card-header">
+            <span class="card-title"><i class="fas fa-rotate-left"></i> Customer-wise Sales Returns Report</span>
+          </div>
+          <div class="card-body p-0">
+            <div class="table-wrapper">
+              <table class="data-table">
+                <thead><tr><th>Customer</th><th>GSTIN</th><th>Returns</th><th>Taxable</th><th>GST</th><th>Total</th></tr></thead>
+                <tbody id="srCustomerWiseBody">
+                  <tr><td colspan="6" class="empty-state">Loading...</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        <!-- Product-wise Sales Returns Report -->
+        <div class="card mb-20">
+          <div class="card-header">
+            <span class="card-title"><i class="fas fa-boxes"></i> Product-wise Sales Returns Report</span>
+          </div>
+          <div class="card-body p-0">
+            <div class="table-wrapper">
+              <table class="data-table">
+                <thead><tr><th>Product</th><th>HSN Code</th><th>Qty</th><th>Taxable</th><th>GST</th><th>Total</th></tr></thead>
+                <tbody id="srProductWiseBody">
                   <tr><td colspan="6" class="empty-state">Loading...</td></tr>
                 </tbody>
               </table>

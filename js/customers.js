@@ -29,9 +29,10 @@ async function loadCustomerOutstanding(userId) {
         <td class="text-center">${r.invoiceCount}</td>
         <td class="text-right">&#8377;${formatNum(r.totalBilled)}</td>
         <td class="text-right">&#8377;${formatNum(r.totalPaid)}</td>
+        <td class="text-right">${r.totalReturned > 0 ? '&#8377;' + formatNum(r.totalReturned) : '&mdash;'}</td>
         <td class="text-right fw-700 ${r.outstanding > 0 ? 'text-danger' : ''}">&#8377;${formatNum(r.outstanding)}</td>
       </tr>`).join('')
-    : '<tr><td colspan="5" class="empty-state">No invoices yet.</td></tr>';
+    : '<tr><td colspan="6" class="empty-state">No invoices yet.</td></tr>';
 }
 
 async function saveCustomer() {

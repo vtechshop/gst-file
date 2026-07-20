@@ -30,7 +30,9 @@ const RECYCLE_TABLES = [
   { table: 'expense_categories', label: 'Expense Category', icon: 'fa-tags',
     title: r => r.name, subtitle: r => r.description || '', amount: null },
   { table: 'expenses',           label: 'Expense',           icon: 'fa-receipt',
-    title: r => r.category_name || 'Expense', subtitle: r => r.payee || '', amount: r => r.amount }
+    title: r => r.category_name || 'Expense', subtitle: r => r.payee || '', amount: r => r.amount },
+  { table: 'sales_returns',      label: 'Sales Return',      icon: 'fa-rotate-left',
+    title: r => r.return_number, subtitle: r => r.customer_name, amount: r => r.total_amount }
 ];
 
 let binAllItems = [];
@@ -130,6 +132,7 @@ async function restoreBinItem(table, id) {
   if (invType) await cascadeInvoiceItemsRestore(invType, id);
   const purchKind = purchaseKindForTable(table);
   if (purchKind) await cascadePurchaseItemsRestore(purchKind, id);
+  if (table === 'sales_returns') await cascadeSalesReturnItemsRestore(id);
   showToast('Restored!', 'success');
   if (typeof refreshStorageStatus === 'function') refreshStorageStatus();
   const user = await getCurrentUser();
@@ -145,6 +148,7 @@ async function deleteBinItemForever(table, id) {
   if (invType) await cascadeInvoiceItemsHardDelete(invType, id);
   const purchKind = purchaseKindForTable(table);
   if (purchKind) await cascadePurchaseItemsHardDelete(purchKind, id);
+  if (table === 'sales_returns') await cascadeSalesReturnItemsHardDelete(id);
   showToast('Permanently deleted.', 'success');
   const user = await getCurrentUser();
   if (user) await loadRecycleBin(user.id);
@@ -160,6 +164,7 @@ async function emptyRecycleBin() {
     if (invType) await cascadeInvoiceItemsHardDelete(invType, it.id);
     const purchKind = purchaseKindForTable(it.table);
     if (purchKind) await cascadePurchaseItemsHardDelete(purchKind, it.id);
+    if (it.table === 'sales_returns') await cascadeSalesReturnItemsHardDelete(it.id);
   }
   showToast('Recycle Bin emptied.', 'success');
   const user = await getCurrentUser();

@@ -33,6 +33,7 @@
       <a href="invoice.html" class="menu-item"><i class="fas fa-plus-circle"></i> New Invoice</a>
       <a href="invoice-list.html" class="menu-item"><i class="fas fa-list-alt"></i> Invoice List</a>
       <a href="cdnotes.html" class="menu-item"><i class="fas fa-file-minus"></i> Credit/Debit Notes</a>
+      <a href="sales-returns.html" class="menu-item"><i class="fas fa-rotate-left"></i> Sales Returns</a>
       <div class="menu-section">HSN</div>
       <a href="hsn.html#b2b" class="menu-item"><i class="fas fa-barcode"></i> B2B HSN</a>
       <a href="hsn.html#b2c" class="menu-item"><i class="fas fa-tags"></i> B2C HSN</a>
@@ -137,6 +138,10 @@
         <div class="stat-card border-red">
           <div class="stat-icon red"><i class="fas fa-hourglass-half"></i></div>
           <div class="stat-info"><div class="stat-label">Pending Payments</div><div class="stat-value" id="statPendingPayments">&#8377;0.00</div></div>
+        </div>
+        <div class="stat-card border-purple">
+          <div class="stat-icon purple"><i class="fas fa-rotate-left"></i></div>
+          <div class="stat-info"><div class="stat-label">Monthly Sales Returns</div><div class="stat-value" id="statMonthlySalesReturns">&#8377;0.00</div></div>
         </div>
         <div class="stat-card border-orange">
           <div class="stat-icon orange"><i class="fas fa-box-open"></i></div>
@@ -463,6 +468,19 @@ async function loadMonthlyExpenses(userId) {
   set('statMonthlyExpenses', formatCurrency(total));
 }
 
+// ── Monthly Sales Returns (current calendar month, same "right now"
+// shape as Monthly Expenses) ────────────────────────────────────────
+async function loadMonthlySalesReturns(userId) {
+  const now = new Date();
+  const start = toISO(new Date(now.getFullYear(), now.getMonth(), 1));
+  const end = toISO(new Date(now.getFullYear(), now.getMonth() + 1, 0));
+  const { data } = await _supabase.from('sales_returns').select('total_amount,return_date,is_deleted')
+    .eq('user_id', userId).gte('return_date', start).lte('return_date', end);
+  const total = (data || []).filter(r => !r.is_deleted).reduce((s, r) => s + (+r.total_amount || 0), 0);
+  const set = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
+  set('statMonthlySalesReturns', formatCurrency(total));
+}
+
 // ── Pending Payments (all-time open balance — not scoped to the
 // selected period; a business needs to know what's owed right now) ──
 async function loadPendingPayments(userId) {
@@ -706,6 +724,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   await loadInsights(user.id);
   await loadTodayStats(user.id);
   await loadMonthlyExpenses(user.id);
+  await loadMonthlySalesReturns(user.id);
   await loadPendingPayments(user.id);
   await loadTopSellingProducts(user.id);
   await loadRecentActivity(user.id);

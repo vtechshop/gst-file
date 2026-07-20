@@ -47,22 +47,32 @@ async function deletePayment(paymentId, type, invoiceId, userId) {
 // Outstanding balance per customer, across both B2B and B2C invoices —
 // matched by customer_name, the same identity key already used
 // elsewhere (Top Customers, Customer-wise Report) since B2C invoices
-// now carry a real customer_name too.
+// now carry a real customer_name too. Sales Returns reduce what a
+// customer owes (goods came back), so each customer's return total is
+// netted off their outstanding balance here — this reads sales_returns
+// only and never touches the invoice rows themselves.
 async function loadCustomerOutstandingSummary(userId) {
-  const [{ data: b2b }, { data: b2c }] = await Promise.all([
+  const [{ data: b2b }, { data: b2c }, { data: srData }] = await Promise.all([
     _supabase.from('b2b_invoices').select('customer_name,total_amount,amount_paid,payment_status,is_deleted').eq('user_id', userId),
-    _supabase.from('b2c_invoices').select('customer_name,total_amount,amount_paid,payment_status,is_deleted').eq('user_id', userId)
+    _supabase.from('b2c_invoices').select('customer_name,total_amount,amount_paid,payment_status,is_deleted').eq('user_id', userId),
+    _supabase.from('sales_returns').select('customer_name,total_amount,is_deleted').eq('user_id', userId)
   ]);
   const all = [...(b2b || []), ...(b2c || [])].filter(r => !r.is_deleted && r.customer_name);
   const byCustomer = {};
   all.forEach(r => {
     const key = r.customer_name;
-    if (!byCustomer[key]) byCustomer[key] = { name: key, invoiceCount: 0, totalBilled: 0, totalPaid: 0, outstanding: 0 };
+    if (!byCustomer[key]) byCustomer[key] = { name: key, invoiceCount: 0, totalBilled: 0, totalPaid: 0, totalReturned: 0, outstanding: 0 };
     const bal = Math.max(0, (+r.total_amount || 0) - (+r.amount_paid || 0));
     byCustomer[key].invoiceCount += 1;
     byCustomer[key].totalBilled += (+r.total_amount || 0);
     byCustomer[key].totalPaid += (+r.amount_paid || 0);
     byCustomer[key].outstanding += bal;
+  });
+  (srData || []).filter(r => !r.is_deleted && r.customer_name && byCustomer[r.customer_name]).forEach(r => {
+    byCustomer[r.customer_name].totalReturned += (+r.total_amount || 0);
+  });
+  Object.values(byCustomer).forEach(c => {
+    c.outstanding = Math.max(0, c.outstanding - c.totalReturned);
   });
   return Object.values(byCustomer).sort((a, b) => b.outstanding - a.outstanding);
 }
