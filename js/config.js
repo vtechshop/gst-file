@@ -9,6 +9,20 @@ const API_BASE_URL = 'http://localhost:4000/api';
 
 const _supabase = new ApiClient();
 
+// ── TEMPORARY DEV BYPASS — remove or set to false to restore normal login ──
+// When true, index.html auto-signs in with a fixed local dev account
+// (self-provisioned on first use — see the bottom of index.html) and
+// skips straight to dashboard.html, so the login screen is never shown
+// during local development. Nothing about real auth changes: the
+// backend, JWT/session logic, users/profiles tables, login/register/
+// forgot-password APIs, and every page's requireAuth() check are all
+// completely untouched — this only automates the one manual sign-in
+// step. Flip DEV_AUTO_LOGIN to false (or delete this block) whenever
+// you want the real login screen back.
+const DEV_AUTO_LOGIN = true;
+const DEV_AUTO_LOGIN_EMAIL = 'dev@local.test';
+const DEV_AUTO_LOGIN_PASSWORD = 'dev-local-bypass-only';
+
 // ── Feature flags ─────────────────────────────
 // Toggle these on once the corresponding integration is built.
 // Keeping them here (rather than scattered checks) is the hook

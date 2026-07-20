@@ -201,8 +201,38 @@ async function handleForgot(e) {
 }
 
 (async () => {
+  // Already have a valid session (e.g. reloading index.html while still
+  // logged in from earlier) — go straight to the dashboard without
+  // firing any login/register call at all. Checked first, always, dev
+  // bypass or not.
   const { data: { session } } = await _supabase.auth.getSession();
-  if (session) window.location.href = 'dashboard.html';
+  if (session) { window.location.href = 'dashboard.html'; return; }
+
+  // Temporary development bypass — see DEV_AUTO_LOGIN in js/config.js.
+  // Only reached when there's genuinely no session yet. Auto-signs in
+  // (self-provisioning the fixed dev account on first run, via the real
+  // register API, if it doesn't exist) and skips straight to the
+  // dashboard, so the login screen never has to be clicked through
+  // while developing. This calls the exact same signInWithPassword/
+  // signUp the real login/register forms above use — nothing about
+  // backend auth, JWT handling, or any other page's requireAuth() check
+  // is bypassed or modified, only this one manual step is automated.
+  // If the bypass itself fails for any reason (e.g. the backend isn't
+  // reachable, or its own rate limit is hit from rapid reloads), it
+  // silently falls through and the normal login form below is shown
+  // instead of leaving the user stuck.
+  if (typeof DEV_AUTO_LOGIN !== 'undefined' && DEV_AUTO_LOGIN) {
+    let { error } = await _supabase.auth.signInWithPassword({
+      email: DEV_AUTO_LOGIN_EMAIL, password: DEV_AUTO_LOGIN_PASSWORD
+    });
+    if (error) {
+      ({ error } = await _supabase.auth.signUp({
+        email: DEV_AUTO_LOGIN_EMAIL, password: DEV_AUTO_LOGIN_PASSWORD,
+        options: { data: { name: 'Dev User' } }
+      }));
+    }
+    if (!error) window.location.href = 'dashboard.html';
+  }
 })();
 </script>
 </body>
