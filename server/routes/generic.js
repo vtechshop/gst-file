@@ -208,6 +208,18 @@ const TABLES = {
   expenses: {
     columns: ['id','user_id','category_id','category_name','expense_date','amount',
       'payment_method','payee','description','is_deleted','deleted_at','created_at','updated_at']
+  },
+  sales_returns: {
+    columns: ['id','user_id','original_invoice_id','original_invoice_type','original_invoice_number',
+      'customer_name','customer_gstin','phone','address','state','return_number','return_date','reason',
+      'taxable_amount','gst_percentage','gst_amount','total_amount','supply_type','igst','cgst','sgst',
+      'is_deleted','deleted_at','created_at','updated_at']
+  },
+  sales_return_items: {
+    columns: ['id','user_id','return_id','product_id','product_name','hsn_code','unit',
+      'quantity','rate','discount_percentage','gst_percentage','taxable_value','gst_amount',
+      'igst','cgst','sgst','total_amount','sort_order','is_deleted','deleted_at',
+      'created_at','updated_at']
   }
 };
 

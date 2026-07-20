@@ -524,6 +524,70 @@ CREATE TABLE IF NOT EXISTS expenses (
 CREATE INDEX IF NOT EXISTS idx_expenses_date ON expenses(user_id, expense_date);
 CREATE INDEX IF NOT EXISTS idx_expenses_category ON expenses(user_id, category_id);
 
+-- ── Sales Returns (header) — always created from an existing B2B/B2C
+--    invoice (original_invoice_id/type NOT NULL); b2b_invoices/
+--    b2c_invoices themselves are never written to by this module ──
+CREATE TABLE IF NOT EXISTS sales_returns (
+  id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
+  user_id UUID REFERENCES users(id) ON DELETE CASCADE NOT NULL,
+  original_invoice_id UUID NOT NULL,
+  original_invoice_type TEXT NOT NULL CHECK (original_invoice_type IN ('b2b','b2c')),
+  original_invoice_number TEXT,
+  customer_name TEXT NOT NULL,
+  customer_gstin TEXT,
+  phone TEXT,
+  address TEXT,
+  state TEXT,
+  return_number TEXT NOT NULL,
+  return_date DATE NOT NULL,
+  reason TEXT,
+  taxable_amount DECIMAL(15,2) NOT NULL,
+  gst_percentage DECIMAL(5,2) NOT NULL,
+  gst_amount DECIMAL(15,2) NOT NULL,
+  total_amount DECIMAL(15,2) NOT NULL,
+  supply_type TEXT NOT NULL CHECK (supply_type IN ('intrastate','interstate')),
+  igst DECIMAL(15,2) DEFAULT 0,
+  cgst DECIMAL(15,2) DEFAULT 0,
+  sgst DECIMAL(15,2) DEFAULT 0,
+  is_deleted BOOLEAN NOT NULL DEFAULT FALSE,
+  deleted_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_sales_returns_number_active ON sales_returns(user_id, return_number) WHERE is_deleted = false;
+CREATE INDEX IF NOT EXISTS idx_sales_returns_date ON sales_returns(user_id, return_date);
+CREATE INDEX IF NOT EXISTS idx_sales_returns_customer_name ON sales_returns(user_id, customer_name);
+CREATE INDEX IF NOT EXISTS idx_sales_returns_original_invoice ON sales_returns(original_invoice_id, original_invoice_type);
+
+-- ── Sales Return Line Items ────────────────────────────
+CREATE TABLE IF NOT EXISTS sales_return_items (
+  id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
+  user_id UUID REFERENCES users(id) ON DELETE CASCADE NOT NULL,
+  return_id UUID NOT NULL,
+  product_id UUID REFERENCES products(id) ON DELETE SET NULL,
+  product_name TEXT NOT NULL,
+  hsn_code TEXT,
+  unit TEXT,
+  quantity DECIMAL(15,3) NOT NULL DEFAULT 1,
+  rate DECIMAL(15,2) NOT NULL DEFAULT 0,
+  discount_percentage DECIMAL(5,2) NOT NULL DEFAULT 0,
+  gst_percentage DECIMAL(5,2) NOT NULL DEFAULT 0,
+  taxable_value DECIMAL(15,2) NOT NULL DEFAULT 0,
+  gst_amount DECIMAL(15,2) NOT NULL DEFAULT 0,
+  igst DECIMAL(15,2) DEFAULT 0,
+  cgst DECIMAL(15,2) DEFAULT 0,
+  sgst DECIMAL(15,2) DEFAULT 0,
+  total_amount DECIMAL(15,2) NOT NULL DEFAULT 0,
+  sort_order INTEGER NOT NULL DEFAULT 0,
+  is_deleted BOOLEAN NOT NULL DEFAULT FALSE,
+  deleted_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_sales_return_items_return ON sales_return_items(return_id);
+
 -- ── updated_at trigger, applied to every table with that column ──
 CREATE OR REPLACE FUNCTION update_updated_at()
 RETURNS TRIGGER AS $$
@@ -549,3 +613,5 @@ CREATE TRIGGER purchase_returns_upd     BEFORE UPDATE ON purchase_returns     FO
 CREATE TRIGGER purchase_return_items_upd BEFORE UPDATE ON purchase_return_items FOR EACH ROW EXECUTE FUNCTION update_updated_at();
 CREATE TRIGGER expense_categories_upd BEFORE UPDATE ON expense_categories FOR EACH ROW EXECUTE FUNCTION update_updated_at();
 CREATE TRIGGER expenses_upd           BEFORE UPDATE ON expenses           FOR EACH ROW EXECUTE FUNCTION update_updated_at();
+CREATE TRIGGER sales_returns_upd       BEFORE UPDATE ON sales_returns       FOR EACH ROW EXECUTE FUNCTION update_updated_at();
+CREATE TRIGGER sales_return_items_upd  BEFORE UPDATE ON sales_return_items  FOR EACH ROW EXECUTE FUNCTION update_updated_at();

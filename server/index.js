@@ -28,6 +28,7 @@ const authRoutes = require('./routes/auth');
 const backupRoutes = require('./routes/backup');
 const invoiceRoutes = require('./routes/invoices');
 const purchaseRoutes = require('./routes/purchases');
+const salesReturnRoutes = require('./routes/sales-returns');
 const paymentsRoutes = require('./routes/payments');
 const uploadRoutes = require('./routes/uploads');
 const { mountGenericRoutes } = require('./routes/generic');
@@ -80,6 +81,11 @@ app.use('/api/purchases', purchaseRoutes);
 // (/:type/:invoiceId/record etc.), never the bare path the generic
 // router's GET/POST/PATCH/DELETE operate on.
 app.use('/api/payments', paymentsRoutes);
+// Shares the /api/sales_returns prefix with the generic router's plain
+// sales_returns-table CRUD, same reasoning as /api/purchases above —
+// these routes are all multi-segment (/save-with-items, /:id/cascade-*),
+// never the bare path the generic router's own routes use.
+app.use('/api/sales_returns', salesReturnRoutes);
 app.use('/api/uploads', uploadRoutes);
 mountGenericRoutes(app);
 
