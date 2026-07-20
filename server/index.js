@@ -28,6 +28,7 @@ const authRoutes = require('./routes/auth');
 const backupRoutes = require('./routes/backup');
 const invoiceRoutes = require('./routes/invoices');
 const purchaseRoutes = require('./routes/purchases');
+const paymentsRoutes = require('./routes/payments');
 const uploadRoutes = require('./routes/uploads');
 const { mountGenericRoutes } = require('./routes/generic');
 const { errorHandler } = require('./middleware/errorHandler');
@@ -73,6 +74,12 @@ app.use('/api/auth', authRoutes);
 app.use('/api/backup', backupRoutes);
 app.use('/api/invoices', invoiceRoutes);
 app.use('/api/purchases', purchaseRoutes);
+// Shares the /api/payments prefix with the generic router's plain
+// payments-table CRUD (still used for read-only ledger listing) —
+// no collision since these routes are all multi-segment
+// (/:type/:invoiceId/record etc.), never the bare path the generic
+// router's GET/POST/PATCH/DELETE operate on.
+app.use('/api/payments', paymentsRoutes);
 app.use('/api/uploads', uploadRoutes);
 mountGenericRoutes(app);
 

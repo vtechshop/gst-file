@@ -16,40 +16,32 @@ async function loadPaymentsForInvoice(type, invoiceId) {
   return (data || []).sort((a, b) => (b.payment_date || '').localeCompare(a.payment_date || '') || (b.created_at || '').localeCompare(a.created_at || ''));
 }
 
-// Sums the ledger and writes payment_status/amount_paid back onto the
-// invoice header — the single place both fields are ever computed, so
-// every reader (Invoice List badge, Dashboard Pending Payments, Customer
-// Outstanding Summary) sees the same number.
-async function recomputeInvoicePaymentSummary(type, invoiceId, userId) {
-  const table = type === 'b2b' ? 'b2b_invoices' : 'b2c_invoices';
-  const [{ data: invRows }, payments] = await Promise.all([
-    _supabase.from(table).select('total_amount').eq('id', invoiceId).single(),
-    loadPaymentsForInvoice(type, invoiceId)
-  ]);
-  const total = +invRows?.total_amount || 0;
-  const paid = round2(payments.reduce((s, p) => s + (+p.amount || 0), 0));
-  const status = paid <= 0 ? 'unpaid' : (paid + 0.005 >= total ? 'paid' : 'partial');
-  await _supabase.from(table).update({ payment_status: status, amount_paid: paid }).eq('id', invoiceId);
-  return { paid, status, total, balance: round2(Math.max(0, total - paid)) };
-}
-
+// Recording/removing a payment writes both the payments ledger AND the
+// invoice header's cached payment_status/amount_paid — server/routes/
+// payments.js wraps both in one Postgres transaction (see the comment
+// there) so they can never drift apart the way two separate client-side
+// calls could if the second one failed after the first succeeded.
 async function recordPayment(type, invoiceId, userId, { amount, method, date, note }) {
   amount = +amount || 0;
   if (amount <= 0) return { ok: false, reason: 'Enter an amount greater than zero.' };
-  const { error } = await _supabase.from('payments').insert({
-    user_id: userId, invoice_id: invoiceId, invoice_type: type,
-    amount, method: method || 'cash', payment_date: date || toISO(new Date()), note: note || ''
-  });
-  if (error) return { ok: false, reason: error.message };
-  const summary = await recomputeInvoicePaymentSummary(type, invoiceId, userId);
-  return { ok: true, ...summary };
+  try {
+    const summary = await apiFetch(`/payments/${type}/${invoiceId}/record`, {
+      method: 'POST',
+      body: JSON.stringify({ amount, method: method || 'cash', date: date || toISO(new Date()), note: note || '' })
+    });
+    return { ok: true, ...summary };
+  } catch (error) {
+    return { ok: false, reason: error.message };
+  }
 }
 
 async function deletePayment(paymentId, type, invoiceId, userId) {
-  const { error } = await _supabase.from('payments').delete().eq('id', paymentId);
-  if (error) return { ok: false, reason: error.message };
-  const summary = await recomputeInvoicePaymentSummary(type, invoiceId, userId);
-  return { ok: true, ...summary };
+  try {
+    const summary = await apiFetch(`/payments/${type}/${invoiceId}/${paymentId}/delete`, { method: 'POST' });
+    return { ok: true, ...summary };
+  } catch (error) {
+    return { ok: false, reason: error.message };
+  }
 }
 
 // Outstanding balance per customer, across both B2B and B2C invoices —
