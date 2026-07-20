@@ -180,10 +180,8 @@ function onInvoiceGstinInput(el) {
   updateGstinValidationStatus();
 }
 
-function isValidGstinFormat(value) {
-  return value.length === 15 && /^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z]{1}[1-9A-Z]{1}Z[0-9A-Z]{1}$/.test(value);
-}
-
+// isValidGstinFormat() lives in js/utils.js now (loaded before this file
+// on every page that needs it) — see the comment there.
 // GST Verification (validateGstin, openGstPortalVerify, renderGstinStatusInto)
 // lives in js/utils.js now, shared with Vendor Master. Thin page-specific
 // wrapper only — knows which element/field belongs to Invoice Entry.
