@@ -10,9 +10,8 @@
 #   2. Copy the service's https://<name>.onrender.com URL into
 #      js/config.js's API_BASE_URL (and PRODUCT_SYNC_BACKEND_URL if
 #      you use product sync), as .../api — then redeploy the frontend.
-#   3. In the service's Environment tab, set CLOUDINARY_* and
-#      WEBSITE_PRODUCT_API_* if/when you use those features (left
-#      blank here since they're per-account secrets).
+#   3. In the service's Environment tab, set WEBSITE_PRODUCT_API_* if/when
+#      you use product sync (left blank here since it's a per-account secret).
 #   4. Set ALLOWED_ORIGIN below to your actual deployed frontend URL
 #      before applying (defaults to the Vercel URL already in use).
 
@@ -41,12 +40,6 @@ services:
         value: 7d
       - key: ALLOWED_ORIGIN
         value: https://gst-file-theta.vercel.app
-      - key: CLOUDINARY_CLOUD_NAME
-        sync: false
-      - key: CLOUDINARY_API_KEY
-        sync: false
-      - key: CLOUDINARY_API_SECRET
-        sync: false
       - key: WEBSITE_PRODUCT_API_URL
         sync: false
       - key: WEBSITE_PRODUCT_API_KEY

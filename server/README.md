@@ -12,8 +12,8 @@ Frontend (js/apiClient.js — no secrets)
         ▼
 This backend (server/)
         │
-        ├── PostgreSQL — all business data
-        ├── Cloudinary — logo/seal/signature/QR images (URL only in Postgres)
+        ├── PostgreSQL — all business data, including logo/seal/signature/QR
+        │                images (stored as base64, profiles table)
         └── Website Product API — proxied, key never reaches the browser
 ```
 
@@ -37,11 +37,6 @@ DATABASE_URL=postgresql://postgres:postgres@localhost:5432/gst_invoicing
 # JWT auth
 JWT_SECRET=<a long random string>
 JWT_EXPIRES_IN=7d
-
-# Cloudinary — Settings' logo/seal/signature/QR uploads
-CLOUDINARY_CLOUD_NAME=<your cloud name>
-CLOUDINARY_API_KEY=<your api key>
-CLOUDINARY_API_SECRET=<your api secret>
 
 # Website Product API (existing product-sync proxy)
 WEBSITE_PRODUCT_API_URL=https://yourcompany.com/api/products
@@ -90,7 +85,8 @@ platform's environment-variables panel instead of shipping a `.env` file.
   its line items + stock delta, reserving the next Auto-Generate invoice
   number (row-locked to prevent duplicates under concurrent saves), and the
   Recycle Bin delete/restore/hard-delete cascades.
-- **`routes/uploads.js`** — Cloudinary image upload for Settings' branding assets.
+- **`routes/uploads.js`** — Settings' branding assets (logo/seal/signature/QR),
+  stored as base64 data URLs directly in `profiles`.
 - **`routes/backup.js`** — Settings' Backup/Restore/Clear-All-Data, scoped per user.
 - **`index.js`** — mounts everything above, plus the original product-sync proxy.
 
