@@ -4,7 +4,7 @@ Node.js + Express + PostgreSQL backend for the GST Invoice & GSTR-1
 Management System. Started life as a small product-sync proxy; now the
 single backend for the whole app — auth, business data (invoices,
 customers, products, payments, credit/debit notes, HSN), image uploads,
-and the original product-sync proxy all live here.
+and the per-company product-sync proxy all live here.
 
 ```
 Frontend (js/apiClient.js — no secrets)
@@ -14,7 +14,11 @@ This backend (server/)
         │
         ├── PostgreSQL — all business data, including logo/seal/signature/QR
         │                images (stored as base64, profiles table)
-        └── Website Product API — proxied, key never reaches the browser
+        └── Each company's own Product API — proxied per-request using
+             that company's own profiles.product_api_url/product_api_key
+             (never a global credential — every account is a different
+             company; see routes/product-sync.js). The key never reaches
+             the browser after it's saved.
 ```
 
 ## Setup
@@ -37,11 +41,12 @@ DATABASE_URL=postgresql://postgres:postgres@localhost:5432/gst_invoicing
 # JWT auth
 JWT_SECRET=<a long random string>
 JWT_EXPIRES_IN=7d
-
-# Website Product API (existing product-sync proxy)
-WEBSITE_PRODUCT_API_URL=https://yourcompany.com/api/products
-WEBSITE_PRODUCT_API_KEY=<your real key>
 ```
+
+There is no global Product API setting here — each company configures
+its own Product API URL/Key in the app itself (Business Profile >
+Settings > Product Sync), stored in `profiles.product_api_url`/
+`product_api_key`.
 
 Create the database and apply the schema (idempotent — safe to re-run):
 
@@ -87,8 +92,13 @@ platform's environment-variables panel instead of shipping a `.env` file.
   Recycle Bin delete/restore/hard-delete cascades.
 - **`routes/uploads.js`** — Settings' branding assets (logo/seal/signature/QR),
   stored as base64 data URLs directly in `profiles`.
+- **`routes/product-sync.js`** — per-company Product Master sync. Looks up the
+  authenticated user's own `profiles.product_api_url`/`product_api_key` and
+  proxies to that company's product API only — never a global/shared
+  credential. `product_api_key` never comes back to the browser once saved;
+  `GET /config` reports only whether one is set.
 - **`routes/backup.js`** — Settings' Backup/Restore/Clear-All-Data, scoped per user.
-- **`index.js`** — mounts everything above, plus the original product-sync proxy.
+- **`index.js`** — mounts everything above.
 
 ## Wiring up the frontend
 
@@ -140,5 +150,6 @@ regardless, as defense in depth.
   `POST /api/invoices/:type/:id/cascade-{delete,restore,hard-delete}`
 - `POST /api/uploads/image`
 - `GET /api/backup/export`, `POST /api/backup/import`, `DELETE /api/backup/all-data`
-- `GET /api/product-sync` — proxies the website's product list, never includes the API key.
-- `GET /api/product-sync/health` — `{ ok, websiteConfigured, keyConfigured }`, safe to leave public.
+- `GET /api/product-sync` — proxies the calling company's own product list (per `req.userId`'s `profiles` row), never includes the API key.
+- `GET /api/product-sync/config` — `{ product_api_url, has_key }` for the calling company; never the key value itself.
+- `PATCH /api/product-sync/config` — sets `product_api_url`/`product_api_key` (or `clear_key: true`) for the calling company.

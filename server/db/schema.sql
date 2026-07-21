@@ -54,6 +54,8 @@ CREATE TABLE IF NOT EXISTS profiles (
   terms_conditions TEXT,
   pan TEXT,
   website TEXT,
+  product_api_url TEXT,
+  product_api_key TEXT,
   invoice_auto_number BOOLEAN NOT NULL DEFAULT FALSE,
   invoice_number_format TEXT NOT NULL DEFAULT 'INV-###',
   invoice_current_sequence INTEGER NOT NULL DEFAULT 1,

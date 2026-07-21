@@ -8,12 +8,15 @@
 #      (one-time — creates all tables; safe to re-run, every CREATE
 #      TABLE/INDEX is IF NOT EXISTS).
 #   2. Copy the service's https://<name>.onrender.com URL into
-#      js/config.js's API_BASE_URL (and PRODUCT_SYNC_BACKEND_URL if
-#      you use product sync), as .../api — then redeploy the frontend.
-#   3. In the service's Environment tab, set WEBSITE_PRODUCT_API_* if/when
-#      you use product sync (left blank here since it's a per-account secret).
-#   4. Set ALLOWED_ORIGIN below to your actual deployed frontend URL
+#      js/config.js's API_BASE_URL/PRODUCT_SYNC_BACKEND_URL, as .../api —
+#      then redeploy the frontend.
+#   3. Set ALLOWED_ORIGIN below to your actual deployed frontend URL
 #      before applying (defaults to the Vercel URL already in use).
+#
+# Product Sync needs no env var here — every account configures its own
+# Product API URL/Key in-app (Business Profile > Settings), stored per
+# company in profiles.product_api_url/product_api_key. See
+# server/routes/product-sync.js.
 
 databases:
   - name: gst-invoicing-db
@@ -40,7 +43,3 @@ services:
         value: 7d
       - key: ALLOWED_ORIGIN
         value: https://gst-file-theta.vercel.app
-      - key: WEBSITE_PRODUCT_API_URL
-        sync: false
-      - key: WEBSITE_PRODUCT_API_KEY
-        sync: false

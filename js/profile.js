@@ -206,6 +206,7 @@ async function openSettingsModal() {
 
   const noProfile = !profile?.business_name;
   const stats = typeof getStorageStats === 'function' ? await getStorageStats() : {};
+  const productSyncConfig = await fetchProductSyncConfig();
 
   const wrap = document.createElement('div');
   wrap.id = 'settingsModalWrap';
@@ -355,6 +356,34 @@ async function openSettingsModal() {
         </div>
 
         <button class="btn btn-primary btn-sm" onclick="submitCompanyBranding()"><i class="fas fa-save"></i> Save Branding</button>
+      </div>
+
+      <!-- Product Sync -->
+      <div style="padding:18px 22px;border-bottom:1px solid var(--border);">
+        <div style="font-size:11px;font-weight:700;color:var(--text-muted);letter-spacing:1px;text-transform:uppercase;margin-bottom:8px;">
+          <i class="fas fa-sync" style="color:var(--primary);margin-right:5px;"></i> Product Sync
+        </div>
+        <p class="text-muted-sm mb-14">Point this at your own company's product API so Sync Now pulls only your catalog &mdash; never another company's.</p>
+
+        <div class="form-group mb-14">
+          <label for="pSyncApiUrl">Product API URL</label>
+          <input type="text" id="pSyncApiUrl" class="form-control" value="${e(productSyncConfig.product_api_url)}">
+        </div>
+
+        <div class="form-group mb-14">
+          <label for="pSyncApiKey">Product API Key</label>
+          <input type="password" id="pSyncApiKey" class="form-control" autocomplete="new-password">
+          <div class="fs-11 text-muted-sm mt-4">
+            ${productSyncConfig.has_key
+              ? '<i class="fas fa-check-circle" style="color:var(--primary);"></i> A key is already saved and stays hidden — leave this blank to keep it, or type a new one to replace it.'
+              : 'No key saved yet. Leave blank if your company\'s API doesn\'t require one.'}
+          </div>
+        </div>
+
+        <div class="btn-group">
+          <button class="btn btn-primary btn-sm" onclick="submitProductSyncSettings()"><i class="fas fa-save"></i> Save Product Sync Settings</button>
+          ${productSyncConfig.has_key ? '<button class="btn btn-secondary btn-sm" onclick="clearProductSyncKey()"><i class="fas fa-times"></i> Remove Saved Key</button>' : ''}
+        </div>
       </div>
 
       <!-- Data Management -->
@@ -578,6 +607,62 @@ async function submitCompanyBranding() {
   });
 
   if (!error) showToast('Company branding saved — every invoice PDF will use it automatically.', 'success');
+}
+
+// ── Product Sync config (server/routes/product-sync.js) ────────────
+// Deliberately NOT part of the generic profiles read/write path (see
+// submitCompanyBranding() above, which goes through saveUserProfile()) —
+// product_api_key is a secret that must never round-trip back to the
+// browser once saved, so it's handled through its own dedicated
+// endpoint that only ever reports has_key, never the key itself.
+async function fetchProductSyncConfig() {
+  try {
+    const token = localStorage.getItem('gst_jwt');
+    const res = await fetch(API_BASE_URL + '/product-sync/config', {
+      headers: token ? { Authorization: 'Bearer ' + token } : {}
+    });
+    if (!res.ok) return { product_api_url: '', has_key: false };
+    return await res.json();
+  } catch {
+    return { product_api_url: '', has_key: false };
+  }
+}
+
+async function saveProductSyncConfig(body) {
+  try {
+    const token = localStorage.getItem('gst_jwt');
+    const res = await fetch(API_BASE_URL + '/product-sync/config', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: 'Bearer ' + token } : {}) },
+      body: JSON.stringify(body)
+    });
+    if (!res.ok) {
+      const errBody = await res.json().catch(() => null);
+      throw new Error(errBody?.error?.message || errBody?.error || 'Save failed');
+    }
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, message: err.message };
+  }
+}
+
+async function submitProductSyncSettings() {
+  const product_api_url = document.getElementById('pSyncApiUrl')?.value?.trim() || '';
+  const product_api_key = document.getElementById('pSyncApiKey')?.value?.trim() || '';
+
+  const result = await saveProductSyncConfig({ product_api_url, product_api_key });
+  if (!result.ok) { showToast('Error: ' + result.message, 'error'); return; }
+  showToast('Product Sync settings saved.', 'success');
+  await openSettingsModal(); // re-render so the key field/status reflects what's now saved
+}
+
+async function clearProductSyncKey() {
+  const ok = await showConfirm('Remove the saved Product API key? Sync will stop authenticating until a new one is added.');
+  if (!ok) return;
+  const result = await saveProductSyncConfig({ clear_key: true });
+  if (!result.ok) { showToast('Error: ' + result.message, 'error'); return; }
+  showToast('Product API key removed.', 'success');
+  await openSettingsModal();
 }
 
 // ── Business header for PDF ────────────────

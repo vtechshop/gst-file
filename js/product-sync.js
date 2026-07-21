@@ -1,22 +1,28 @@
 // =============================================
-// Product Sync — mirrors the company website's Product Master
-// The website is the single source of truth for products; this app
-// never maintains a second one (the one deliberate exception is the
-// "Quick Add Product" local-draft flow in js/invoice-items.js, which
-// is explicitly excluded from sync by having no external_id and
-// source:'local').
+// Product Sync — mirrors each company's OWN website Product Master
+// Every account here is a different company with its own website — the
+// website is that company's single source of truth for its products,
+// synced into that company's own products rows (user_id-scoped). The
+// one deliberate exception is the "Quick Add Product" local-draft flow
+// in js/invoice-items.js, which is explicitly excluded from sync by
+// having no external_id and source:'local'.
 //
 // This file NEVER holds a website API key. It only calls our own
-// backend proxy at PRODUCT_SYNC_BACKEND_URL (js/config.js) — see
-// server/index.js, which holds the real secret server-side (in
-// server/.env, git-ignored) and makes the authenticated call to the
-// website on our behalf. Until PRODUCT_SYNC_BACKEND_URL is filled in,
-// sync stays inert ("Not Configured") and nothing here touches the
+// backend proxy at PRODUCT_SYNC_BACKEND_URL (js/config.js), with the
+// user's own JWT attached — server/routes/product-sync.js looks up
+// THAT company's product_api_url/product_api_key from its own profiles
+// row (never a shared/global credential) and makes the authenticated
+// call to that company's website on our behalf. Until a company sets
+// its Product API URL in Business Profile, sync stays inert ("Not
+// Configured") for that company only and nothing here touches the
 // products table.
 //
-// mapRemoteProduct() below guesses a few common field-name spellings
-// since the website's exact response shape isn't known yet — adjust
-// it in one place once that's confirmed.
+// mapRemoteProduct() below is mapped to one confirmed response shape
+// (see its own comment) — every company syncs through the same mapper,
+// so a company whose website API returns a differently-shaped response
+// would need that mapper adjusted to branch on shape, which isn't done
+// here (out of scope for the per-company URL/key isolation fix this
+// file is otherwise about).
 // =============================================
 
 const PRODUCT_SYNC_LAST_ATTEMPT_KEY = 'gst_sync_last_attempt_at';
@@ -121,21 +127,37 @@ async function syncProductsIfNeeded(userId) {
 // bypassing the once-per-session gate.
 async function syncProducts(userId) {
   if (!IS_PRODUCT_SYNC_CONFIGURED) {
+    // This only means "our backend isn't deployed at all" — a company
+    // that hasn't set its own Product API URL yet gets a distinct
+    // 'not_configured' status below instead (a 503 from the backend
+    // itself), not this one.
     setProductSyncMeta({
       lastSyncAt: getProductSyncMeta().lastSyncAt,
       status: 'not_configured',
-      message: 'Set PRODUCT_SYNC_BACKEND_URL in js/config.js to enable product sync.'
+      message: 'Product Sync backend is not deployed yet.'
     });
     return { ok: false, reason: 'not_configured' };
   }
 
   try {
-    // No Authorization header, no key — this is a plain request to our
-    // own backend, which is the only thing that ever holds the secret.
-    const res = await fetch(PRODUCT_SYNC_BACKEND_URL, { headers: { 'Accept': 'application/json' } });
+    // The JWT is what lets the backend know WHICH company's own
+    // product_api_url/product_api_key to use — see
+    // server/routes/product-sync.js. The key itself never comes back
+    // to this file; only the resulting product list does.
+    const token = localStorage.getItem('gst_jwt');
+    const res = await fetch(PRODUCT_SYNC_BACKEND_URL, {
+      headers: { Accept: 'application/json', ...(token ? { Authorization: 'Bearer ' + token } : {}) }
+    });
     if (!res.ok) {
       const body = await res.json().catch(() => null);
-      throw new Error(body?.error || ('HTTP ' + res.status));
+      const message = body?.error || ('HTTP ' + res.status);
+      if (res.status === 503) {
+        // This company hasn't configured its own Product API URL yet —
+        // a normal, expected state, not a failure.
+        setProductSyncMeta({ lastSyncAt: getProductSyncMeta().lastSyncAt, status: 'not_configured', message });
+        return { ok: false, reason: 'not_configured' };
+      }
+      throw new Error(message);
     }
     const payload = await res.json();
     const remoteRaw = Array.isArray(payload) ? payload : (payload.products || payload.data || null);

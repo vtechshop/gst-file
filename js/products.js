@@ -48,7 +48,7 @@ function renderSyncStatusBar() {
   const labels = {
     success: { text: (meta.message || 'Synced') + (stale ? ' — due for refresh' : ''), color: stale ? '#f57c00' : '#2e7d32' },
     error: { text: `Using cached products (${meta.message || 'sync failed'})`, color: '#f57c00' },
-    not_configured: { text: 'Not Configured — using cached/local products', color: '#9e9e9e' },
+    not_configured: { text: 'Not Configured — add your Product API URL in Business Profile', color: '#9e9e9e' },
     never: { text: 'Never Synced', color: '#9e9e9e' }
   };
   const s = labels[meta.status] || labels.never;
@@ -68,7 +68,7 @@ async function runManualSync() {
 
   if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fas fa-sync"></i> Sync Now'; }
   if (result.ok) showToast(`Product sync complete — ${result.inserted} new, ${result.updated} updated, ${result.deactivated} deactivated.`, 'success');
-  else if (result.reason === 'not_configured') showToast('Product sync is not configured yet (set PRODUCT_SYNC_BACKEND_URL in js/config.js).', 'warning');
+  else if (result.reason === 'not_configured') showToast('Product Sync is not set up yet — add your Product API URL in Business Profile > Settings.', 'warning');
   else showToast('Product sync failed: ' + result.reason, 'error');
 }
 
