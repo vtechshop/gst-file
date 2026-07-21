@@ -147,9 +147,11 @@ app.get('/api/product-sync', async (req, res) => {
 
     res.json({ products: allItems, meta: { total: allItems.length, pagesFetched: page } });
   } catch (err) {
-    // Nothing about the key or the failure is leaked beyond a generic
-    // message — the frontend's existing fallback logic (js/product-sync.js)
-    // already keeps using its last-synced product data on any error here.
+    // Logged server-side only — nothing about the key or the failure is
+    // leaked to the client beyond a generic message. The frontend's
+    // existing fallback logic (js/product-sync.js) already keeps using
+    // its last-synced product data on any error here.
+    console.error('Product sync failed:', err);
     res.status(502).json({ error: 'Failed to reach the website product API.' });
   }
 });
