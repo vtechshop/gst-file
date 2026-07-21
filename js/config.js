@@ -1,11 +1,13 @@
 // =============================================
 // Backend API Configuration
-// Point this at wherever server/ (Node.js + Express + PostgreSQL) is
-// running — e.g. http://localhost:4000/api for local dev, or your
-// deployed backend's URL in production.
+// Points at localhost:4000 automatically during local dev (this file
+// served from 127.0.0.1/localhost), and at the deployed Render backend
+// everywhere else (e.g. the Vercel-hosted production site) — no manual
+// toggling needed between the two.
 // js/apiClient.js must be loaded before this script on every page.
 // =============================================
-const API_BASE_URL = 'http://localhost:4000/api';
+const IS_LOCAL_DEV = ['localhost', '127.0.0.1'].includes(location.hostname);
+const API_BASE_URL = IS_LOCAL_DEV ? 'http://localhost:4000/api' : 'https://gst-file.onrender.com/api';
 
 const _supabase = new ApiClient();
 
@@ -27,10 +29,8 @@ const FEATURE_FLAGS = {
 // server/.env and makes the authenticated call to the website on our
 // behalf. See server/README.md for setup.
 //
-// Point this at wherever that backend is running — e.g.
-// 'http://localhost:4000/api/product-sync' for local dev, or your
-// deployed backend's URL in production. Left as a placeholder until
-// then; sync stays gracefully inert (status "Not Configured") with
-// zero network calls and existing product data untouched.
-const PRODUCT_SYNC_BACKEND_URL = 'http://localhost:4000/api/product-sync';   // e.g. http://localhost:4000/api/product-sync
+// Same local-dev/production split as API_BASE_URL above — sync stays
+// gracefully inert (status "Not Configured") until WEBSITE_PRODUCT_API_URL
+// is actually set on the backend, zero network calls either way.
+const PRODUCT_SYNC_BACKEND_URL = IS_LOCAL_DEV ? 'http://localhost:4000/api/product-sync' : 'https://gst-file.onrender.com/api/product-sync';
 const IS_PRODUCT_SYNC_CONFIGURED = PRODUCT_SYNC_BACKEND_URL !== 'YOUR_PRODUCT_SYNC_BACKEND_URL' && !!PRODUCT_SYNC_BACKEND_URL;

@@ -1,0 +1,53 @@
+# Render Blueprint — provisions the backend (server/) and its Postgres
+# database together. In the Render dashboard: New + > Blueprint > point
+# it at this repo. Review the two resources it proposes, then Apply.
+#
+# After it deploys:
+#   1. Open the gst-billing-backend service > Shell, and run:
+#        psql "$DATABASE_URL" -f db/schema.sql
+#      (one-time — creates all tables; safe to re-run, every CREATE
+#      TABLE/INDEX is IF NOT EXISTS).
+#   2. Copy the service's https://<name>.onrender.com URL into
+#      js/config.js's API_BASE_URL (and PRODUCT_SYNC_BACKEND_URL if
+#      you use product sync), as .../api — then redeploy the frontend.
+#   3. In the service's Environment tab, set CLOUDINARY_* and
+#      WEBSITE_PRODUCT_API_* if/when you use those features (left
+#      blank here since they're per-account secrets).
+#   4. Set ALLOWED_ORIGIN below to your actual deployed frontend URL
+#      before applying (defaults to the Vercel URL already in use).
+
+databases:
+  - name: gst-invoicing-db
+    plan: free
+    databaseName: gst_invoicing
+    user: gst_invoicing
+
+services:
+  - type: web
+    name: gst-billing-backend
+    runtime: node
+    plan: free
+    rootDir: server
+    buildCommand: npm install
+    startCommand: npm start
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: gst-invoicing-db
+          property: connectionString
+      - key: JWT_SECRET
+        generateValue: true
+      - key: JWT_EXPIRES_IN
+        value: 7d
+      - key: ALLOWED_ORIGIN
+        value: https://gst-file-theta.vercel.app
+      - key: CLOUDINARY_CLOUD_NAME
+        sync: false
+      - key: CLOUDINARY_API_KEY
+        sync: false
+      - key: CLOUDINARY_API_SECRET
+        sync: false
+      - key: WEBSITE_PRODUCT_API_URL
+        sync: false
+      - key: WEBSITE_PRODUCT_API_KEY
+        sync: false

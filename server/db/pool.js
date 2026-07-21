@@ -17,7 +17,14 @@ if (!process.env.DATABASE_URL) {
   throw new Error('DATABASE_URL is not set — check server/.env');
 }
 
-const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+// Render (and most hosted Postgres providers) require/accept SSL on
+// both their internal and external connection strings; a plain local
+// install doesn't speak SSL at all. `RENDER` is set automatically by
+// Render's runtime, so this needs no manual config either way.
+const pool = new Pool({
+  connectionString: process.env.DATABASE_URL,
+  ssl: process.env.RENDER ? { rejectUnauthorized: false } : false
+});
 
 pool.on('error', (err) => {
   // Idle client errors (e.g. the DB restarting) shouldn't crash the
