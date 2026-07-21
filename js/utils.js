@@ -14,6 +14,16 @@ function toggleTheme(dark) {
   localStorage.setItem('gst_theme', dark ? 'dark' : 'light');
 }
 
+// Uppercases an input's value in place without moving the caret —
+// toUpperCase() never changes string length, so re-applying the same
+// selection range after the swap keeps typing/pasting mid-string safe.
+function uppercaseKeepCursor(el) {
+  const start = el.selectionStart;
+  const end = el.selectionEnd;
+  el.value = el.value.toUpperCase();
+  if (start !== null && end !== null) el.setSelectionRange(start, end);
+}
+
 // ── App-wide preferences (default GST rate, financial year) ──
 function getAppSettings() {
   try { return JSON.parse(localStorage.getItem('gst_app_settings') || '{}'); } catch { return {}; }

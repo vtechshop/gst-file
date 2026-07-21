@@ -439,7 +439,7 @@ async function loadInvoiceForEdit(type, id) {
   const toggle = document.getElementById('transportToggle');
   if (toggle) toggle.checked = !!rec.transport_required;
   onTransportToggleChange();
-  setInvValue('invVehicleNo', rec.vehicle_number || '');
+  setInvValue('invVehicleNo', (rec.vehicle_number || '').toUpperCase());
   setInvValue('invTransporter', rec.transporter_name || '');
   setInvValue('invTransportMode', rec.transport_mode || '');
   setInvValue('invDistance', rec.transport_distance_km || '');
@@ -490,7 +490,7 @@ async function loadInvoiceDuplicateDraft() {
   const toggle = document.getElementById('transportToggle');
   if (toggle) toggle.checked = !!draft.transport_required;
   onTransportToggleChange();
-  setInvValue('invVehicleNo', draft.vehicle_number || '');
+  setInvValue('invVehicleNo', (draft.vehicle_number || '').toUpperCase());
   setInvValue('invTransporter', draft.transporter_name || '');
   setInvValue('invTransportMode', draft.transport_mode || '');
   setInvValue('invDistance', draft.transport_distance_km || '');
@@ -580,7 +580,7 @@ async function saveInvoice() {
     customer_name: custName, phone, address, state,
     invoice_number: invNum, invoice_date: invDate, supply_type: supply,
     transport_required: transportRequired,
-    vehicle_number: transportRequired ? getInvText('invVehicleNo') : '',
+    vehicle_number: transportRequired ? getInvText('invVehicleNo').toUpperCase() : '',
     transporter_name: transportRequired ? getInvText('invTransporter') : '',
     transport_mode: transportRequired ? (document.getElementById('invTransportMode')?.value || '') : '',
     transport_distance_km: transportRequired ? (parseFloat(getInvText('invDistance')) || null) : null,

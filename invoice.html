@@ -194,7 +194,7 @@
           <div id="transportFields" class="form-grid cols-3 mb-16 d-none">
             <div class="form-group">
               <label for="invVehicleNo">Vehicle Number</label>
-              <input type="text" id="invVehicleNo" class="form-control" placeholder="e.g. TN01AB1234">
+              <input type="text" id="invVehicleNo" class="form-control uppercase" placeholder="e.g. TN01AB1234" oninput="uppercaseKeepCursor(this)">
             </div>
             <div class="form-group">
               <label for="invTransporter">Transporter Name</label>
