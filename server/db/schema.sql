@@ -290,6 +290,10 @@ CREATE TABLE IF NOT EXISTS products (
 CREATE UNIQUE INDEX IF NOT EXISTS idx_products_user_external ON products(user_id, external_id) WHERE external_id IS NOT NULL;
 -- New index (product_name)
 CREATE INDEX IF NOT EXISTS idx_products_name ON products(user_id, name);
+-- Explicit standalone index for plain user-scoped queries (list/count with
+-- no other filter) — the two composite indexes above already have user_id
+-- as their leading column so this is largely redundant, but explicit.
+CREATE INDEX IF NOT EXISTS idx_products_user_id ON products(user_id);
 
 -- ── Remembered Excel import column mappings ──────────
 CREATE TABLE IF NOT EXISTS import_mappings (

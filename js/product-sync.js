@@ -60,10 +60,21 @@ function isProductSyncStale(meta) {
 }
 
 // Called from js/auth.js's requireAuth() on every page. Auto-refreshes
-// in the background only when the cached product list is missing or
-// older than 24 hours (Product Auto Refresh, requirement 1) — once
-// that succeeds, lastSyncAt is recent again so this naturally stays
-// quiet until the next 24h boundary.
+// in the background only for an account that has already synced at
+// least once and is now stale (>24h since lastSyncAt) — once that
+// succeeds, lastSyncAt is recent again so this naturally stays quiet
+// until the next 24h boundary.
+//
+// A brand-new or never-synced account (zero rows in its own Product
+// Master) is deliberately left alone here — no auto-trigger, even
+// though the old behavior used to sync immediately in that case. That
+// made every fresh account silently populate itself with the shared
+// company catalog the moment it first logged in, which is easy to
+// mistake for another account's data leaking in during multi-account
+// testing (it isn't — each account gets its own independently-scoped
+// rows — but it looks exactly like it from the outside). Sync for a
+// zero-product account only ever happens via an explicit "Sync Now"
+// click (runManualSync() below), never automatically.
 //
 // A prior version of this function used a one-shot "already attempted
 // this session" sessionStorage flag to stop a failed sync from being
@@ -79,14 +90,6 @@ function isProductSyncStale(meta) {
 // up a since-fixed backend automatically. Never awaited by callers —
 // sync always happens in the background and never blocks a page
 // (requirement 4/7).
-//
-// One more override on top of that: if there are no products in the
-// local cache at all (gst_products missing, or zero rows for this
-// user — e.g. first-ever run, or after a Clear All), every invoice
-// page is completely blocked regardless of how "fresh" that empty
-// state technically is. There's nothing to lose by retrying immediately
-// in that case, so both the 24h staleness check AND the cooldown are
-// skipped entirely until the cache actually has something in it.
 async function syncProductsIfNeeded(userId) {
   if (!userId) return;
 
@@ -100,11 +103,10 @@ async function syncProductsIfNeeded(userId) {
     hasNoProducts = false;
   }
 
-  if (hasNoProducts) {
-    sessionStorage.setItem(PRODUCT_SYNC_LAST_ATTEMPT_KEY, String(Date.now()));
-    syncProducts(userId);
-    return;
-  }
+  // Zero products for this account — stay empty until the user
+  // explicitly syncs. See the comment above for why this is no longer
+  // an auto-trigger.
+  if (hasNoProducts) return;
 
   if (!isProductSyncStale()) return;
 
