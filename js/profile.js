@@ -89,23 +89,23 @@ function buildProfileModal(profile, isRequired) {
         <div class="form-grid cols-2" style="gap:14px;">
           <div class="form-group" style="grid-column:1/-1;">
             <label>Business / Trade Name <span style="color:red;">*</span></label>
-            <input type="text" id="profBizName" class="form-control" placeholder="Your business name" value="${e(profile?.business_name)}">
+            <input type="text" id="profBizName" class="form-control" value="${e(profile?.business_name)}">
           </div>
           <div class="form-group">
             <label>Your GSTIN <span style="color:red;">*</span></label>
-            <input type="text" id="profGSTIN" class="form-control" placeholder="e.g. 27AAPFU0939F1ZV" value="${e(profile?.gstin)}" maxlength="15" style="text-transform:uppercase;letter-spacing:1px;">
+            <input type="text" id="profGSTIN" class="form-control" value="${e(profile?.gstin)}" maxlength="15" style="text-transform:uppercase;letter-spacing:1px;">
           </div>
           <div class="form-group">
             <label>PAN</label>
-            <input type="text" id="profPAN" class="form-control uppercase" placeholder="e.g. AARFV8415B" maxlength="10" value="${e(profile?.pan)}">
+            <input type="text" id="profPAN" class="form-control uppercase" maxlength="10" value="${e(profile?.pan)}">
           </div>
           <div class="form-group">
             <label>Phone Number</label>
-            <input type="tel" id="profPhone" class="form-control" placeholder="+91 98765 43210" value="${e(profile?.phone)}">
+            <input type="tel" id="profPhone" class="form-control" value="${e(profile?.phone)}">
           </div>
           <div class="form-group" style="grid-column:1/-1;">
             <label>Business Address</label>
-            <textarea id="profAddress" class="form-control" rows="2" placeholder="Door No, Street, City, PIN Code">${e(profile?.address)}</textarea>
+            <textarea id="profAddress" class="form-control" rows="2">${e(profile?.address)}</textarea>
           </div>
           <div class="form-group">
             <label>State</label>
@@ -116,11 +116,11 @@ function buildProfileModal(profile, isRequired) {
           </div>
           <div class="form-group">
             <label>Email</label>
-            <input type="email" id="profEmail" class="form-control" placeholder="business@email.com" value="${e(profile?.email)}">
+            <input type="email" id="profEmail" class="form-control" value="${e(profile?.email)}">
           </div>
           <div class="form-group" style="grid-column:1/-1;">
             <label>Website</label>
-            <input type="text" id="profWebsite" class="form-control" placeholder="e.g. www.yourbusiness.com" value="${e(profile?.website)}">
+            <input type="text" id="profWebsite" class="form-control" value="${e(profile?.website)}">
           </div>
         </div>
         <p class="text-muted-sm mt-16"><i class="fas fa-info-circle"></i> Logo, seal, signature, bank/UPI details and invoice footer text are set once under <b>Settings &rarr; Company Branding</b> and apply to every invoice automatically.</p>
@@ -284,7 +284,7 @@ async function openSettingsModal() {
         <div class="form-grid cols-2" style="gap:14px;margin-bottom:10px;">
           <div class="form-group">
             <label for="setInvFormat">Invoice Number Format</label>
-            <input type="text" id="setInvFormat" class="form-control" placeholder="e.g. INV-2026-###" value="${e(profile?.invoice_number_format || 'INV-###')}" oninput="updateSettingsInvPreview()">
+            <input type="text" id="setInvFormat" class="form-control" value="${e(profile?.invoice_number_format || 'INV-###')}" oninput="updateSettingsInvPreview()">
           </div>
           <div class="form-group">
             <label for="setInvNextSeq">Next Sequence Number</label>
@@ -320,7 +320,7 @@ async function openSettingsModal() {
           </div>
           <div class="form-group">
             <label>UPI ID</label>
-            <input type="text" id="brandUPI" class="form-control" placeholder="e.g. business@okhdfcbank" value="${e(profile?.upi_id)}">
+            <input type="text" id="brandUPI" class="form-control" value="${e(profile?.upi_id)}">
           </div>
         </div>
 
@@ -328,30 +328,30 @@ async function openSettingsModal() {
         <div class="form-grid cols-2" style="gap:14px;margin-bottom:14px;">
           <div class="form-group">
             <label>Bank Name</label>
-            <input type="text" id="brandBankName" class="form-control" placeholder="e.g. HDFC Bank" value="${e(profile?.bank_name)}">
+            <input type="text" id="brandBankName" class="form-control" value="${e(profile?.bank_name)}">
           </div>
           <div class="form-group">
             <label>Account Number</label>
-            <input type="text" id="brandBankAccount" class="form-control" placeholder="Account number" value="${e(profile?.bank_account_no)}">
+            <input type="text" id="brandBankAccount" class="form-control" value="${e(profile?.bank_account_no)}">
           </div>
           <div class="form-group">
             <label>IFSC Code</label>
-            <input type="text" id="brandBankIFSC" class="form-control uppercase" placeholder="e.g. HDFC0001234" value="${e(profile?.bank_ifsc)}">
+            <input type="text" id="brandBankIFSC" class="form-control uppercase" value="${e(profile?.bank_ifsc)}">
           </div>
           <div class="form-group">
             <label>Branch</label>
-            <input type="text" id="brandBankBranch" class="form-control" placeholder="Branch name" value="${e(profile?.bank_branch)}">
+            <input type="text" id="brandBankBranch" class="form-control" value="${e(profile?.bank_branch)}">
           </div>
         </div>
 
         <div class="form-group mb-14">
           <label>Invoice Footer Text</label>
-          <textarea id="brandFooterText" class="form-control" rows="2" placeholder="e.g. Thank you for your business!">${e(profile?.footer_text)}</textarea>
+          <textarea id="brandFooterText" class="form-control" rows="2">${e(profile?.footer_text)}</textarea>
         </div>
 
         <div class="form-group mb-14">
           <label>Terms &amp; Conditions</label>
-          <textarea id="brandTerms" class="form-control" rows="3" placeholder="e.g. Warranty Information: covers manufacturing defects only...&#10;Return Policy: returns accepted within 15 days if unused.">${e(profile?.terms_conditions)}</textarea>
+          <textarea id="brandTerms" class="form-control" rows="3">${e(profile?.terms_conditions)}</textarea>
         </div>
 
         <button class="btn btn-primary btn-sm" onclick="submitCompanyBranding()"><i class="fas fa-save"></i> Save Branding</button>
@@ -397,7 +397,7 @@ async function openSettingsModal() {
           </div>
           <div class="form-group">
             <label for="prefFinancialYear">Financial Year</label>
-            <input type="text" id="prefFinancialYear" class="form-control" placeholder="e.g. 2026-27" value="${e(getAppSettings().financialYear || defaultFinancialYear())}" onchange="saveAppSetting('financialYear', this.value)">
+            <input type="text" id="prefFinancialYear" class="form-control" value="${e(getAppSettings().financialYear || defaultFinancialYear())}" onchange="saveAppSetting('financialYear', this.value)">
           </div>
         </div>
         <div style="display:flex;align-items:center;justify-content:space-between;">

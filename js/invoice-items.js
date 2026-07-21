@@ -202,7 +202,7 @@ function renderItemsTable() {
   tbody.innerHTML = currentItems.map(row => `
     <tr data-row="${row.rowId}">
       <td>
-        <input type="text" class="form-control" placeholder="Type or select product" autocomplete="off"
+        <input type="text" class="form-control" autocomplete="off"
           value="${escItemHtml(row.product_name)}"
           oninput="onItemProductInput('${row.rowId}', this.value); showProductDropdown('${row.rowId}', this, this.value)"
           onfocus="showProductDropdown('${row.rowId}', this, this.value)"
@@ -510,11 +510,11 @@ function ensureQuickAddProductModal() {
         <div class="form-grid cols-2 mb-16">
           <div class="form-group">
             <label for="qapName">Product Name <span class="text-required">*</span></label>
-            <input type="text" id="qapName" class="form-control" placeholder="Enter product or service name">
+            <input type="text" id="qapName" class="form-control">
           </div>
           <div class="form-group">
             <label for="qapHSN">HSN Code</label>
-            <input type="text" id="qapHSN" class="form-control" placeholder="e.g. 8471">
+            <input type="text" id="qapHSN" class="form-control">
           </div>
         </div>
         <div class="form-grid cols-3 mb-16">
@@ -530,17 +530,17 @@ function ensureQuickAddProductModal() {
           </div>
           <div class="form-group">
             <label for="qapUnit">Unit</label>
-            <input type="text" id="qapUnit" class="form-control" list="qapUnitDatalist" placeholder="e.g. PCS">
+            <input type="text" id="qapUnit" class="form-control" list="qapUnitDatalist">
             <datalist id="qapUnitDatalist">${COMMON_UNITS.map(u => `<option value="${u}">`).join('')}</datalist>
           </div>
           <div class="form-group">
             <label for="qapRate">Selling Price (&#8377;)</label>
-            <input type="number" id="qapRate" class="form-control" placeholder="0.00" min="0" step="0.01">
+            <input type="number" id="qapRate" class="form-control" min="0" step="0.01">
           </div>
         </div>
         <div class="form-group">
           <label for="qapDescription">Description <span class="text-muted-sm">(optional)</span></label>
-          <input type="text" id="qapDescription" class="form-control" placeholder="Optional notes">
+          <input type="text" id="qapDescription" class="form-control">
         </div>
       </div>
       <div class="modal-footer">

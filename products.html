@@ -96,7 +96,7 @@
           <div class="d-flex gap-10">
             <div class="search-input-wrap w-240">
               <i class="fas fa-search"></i>
-              <input type="text" id="prodSearch" class="form-control" placeholder="Search name, HSN..." aria-label="Search products">
+              <input type="text" id="prodSearch" class="form-control" aria-label="Search products">
             </div>
           </div>
         </div>
@@ -145,7 +145,7 @@ document.addEventListener('DOMContentLoaded', initProducts);
       <button type="button" class="modal-close" onclick="closeGlobalSearch()" aria-label="Close"><i class="fas fa-times"></i></button>
     </div>
     <div class="modal-body">
-      <input type="text" id="globalSearchInput" class="form-control mb-16" placeholder="Search invoices, customers, products, HSN..." oninput="onGlobalSearchInput(this.value)" aria-label="Global search input">
+      <input type="text" id="globalSearchInput" class="form-control mb-16" oninput="onGlobalSearchInput(this.value)" aria-label="Global search input">
       <div id="globalSearchResults"><p class="text-muted-sm">Type at least 2 characters&hellip;</p></div>
     </div>
   </div>

@@ -116,13 +116,13 @@
             <div class="form-group">
               <label for="invCustName">Customer Name</label>
               <div class="d-flex gap-8">
-                <input type="text" id="invCustName" class="form-control" placeholder="Type or select customer" list="customerDatalist" oninput="onInvoiceCustomerInput()" onfocus="onInvCustNameFocus(this)" onmousedown="onInvCustNameMouseDown(event, this)" autocomplete="off">
+                <input type="text" id="invCustName" class="form-control" list="customerDatalist" oninput="onInvoiceCustomerInput()" onfocus="onInvCustNameFocus(this)" onmousedown="onInvCustNameMouseDown(event, this)" autocomplete="off">
                 <button type="button" class="btn btn-secondary btn-sm text-nowrap" onclick="saveCustomerFromInvoiceForm()" title="Save to Customer Master"><i class="fas fa-user-plus"></i></button>
               </div>
             </div>
             <div class="form-group">
               <label for="invPhone">Phone</label>
-              <input type="text" id="invPhone" class="form-control" placeholder="Optional">
+              <input type="text" id="invPhone" class="form-control">
             </div>
           </div>
 
@@ -133,7 +133,7 @@
           <div id="invB2BFields" class="form-grid cols-2 mb-16">
             <div class="form-group">
               <label for="invGstin">GST Number <span id="invGstinReqMark" class="fs-11 text-muted-sm">(Optional)</span></label>
-              <input type="text" id="invGstin" class="form-control uppercase" maxlength="15" placeholder="e.g. 27AAPFU0939F1ZV" oninput="onInvoiceGstinInput(this)" onblur="onInvoiceGstinBlur(this)">
+              <input type="text" id="invGstin" class="form-control uppercase" maxlength="15" oninput="onInvoiceGstinInput(this)" onblur="onInvoiceGstinBlur(this)">
               <div id="invGstinStatus" class="d-flex align-center gap-8 d-none" style="margin-top:6px;"></div>
             </div>
             <div class="form-group">
@@ -144,7 +144,7 @@
 
           <div class="form-group mb-16">
             <label for="invAddress">Address</label>
-            <input type="text" id="invAddress" class="form-control" placeholder="Optional">
+            <input type="text" id="invAddress" class="form-control">
           </div>
 
           <!-- Invoice Info -->
@@ -162,7 +162,7 @@
                 <a href="javascript:void(0)" class="fs-11 text-muted-sm" onclick="openSettingsModal()" title="Configure the auto-numbering format"><i class="fas fa-cog"></i> Format</a>
               </div>
               <div class="d-flex gap-8">
-                <input type="text" id="invNum" class="form-control" placeholder="e.g. INV-2026-001">
+                <input type="text" id="invNum" class="form-control">
                 <button type="button" class="btn btn-secondary btn-sm text-nowrap" onclick="getCurrentUser().then(u=>generateInvoiceNo(u?.id,true))" title="Generate Now"><i class="fas fa-magic"></i></button>
               </div>
             </div>
@@ -194,7 +194,7 @@
           <div id="transportFields" class="form-grid cols-3 mb-16 d-none">
             <div class="form-group">
               <label for="invVehicleNo">Vehicle Number</label>
-              <input type="text" id="invVehicleNo" class="form-control uppercase" placeholder="e.g. TN01AB1234" oninput="uppercaseKeepCursor(this)">
+              <input type="text" id="invVehicleNo" class="form-control uppercase" oninput="uppercaseKeepCursor(this)">
             </div>
             <div class="form-group">
               <label for="invTransporter">Transporter Name</label>
@@ -224,7 +224,7 @@
             </div>
             <div class="form-group">
               <label for="invTransporterGstin">Transporter GSTIN</label>
-              <input type="text" id="invTransporterGstin" class="form-control uppercase" maxlength="15" placeholder="e.g. 27AAPFU0939F1ZV" oninput="this.value=this.value.toUpperCase()">
+              <input type="text" id="invTransporterGstin" class="form-control uppercase" maxlength="15" oninput="this.value=this.value.toUpperCase()">
             </div>
             <div class="form-group">
               <label for="invVehicleType">Vehicle Type</label>
@@ -236,11 +236,11 @@
             </div>
             <div class="form-group">
               <label for="invDispatchFrom">Dispatch From</label>
-              <input type="text" id="invDispatchFrom" class="form-control" placeholder="Dispatch address / city">
+              <input type="text" id="invDispatchFrom" class="form-control">
             </div>
             <div class="form-group">
               <label for="invDispatchTo">Dispatch To</label>
-              <input type="text" id="invDispatchTo" class="form-control" placeholder="Delivery address / city">
+              <input type="text" id="invDispatchTo" class="form-control">
             </div>
           </div>
 
@@ -257,7 +257,7 @@
             </div>
             <div class="form-group inv-collapsible collapsed" id="invPaymentAmountGroup">
               <label for="invPaymentAmount">Amount Received (&#8377;)</label>
-              <input type="number" id="invPaymentAmount" class="form-control" min="0" step="0.01" placeholder="0.00" disabled>
+              <input type="number" id="invPaymentAmount" class="form-control" min="0" step="0.01" disabled>
             </div>
           </div>
           <p class="text-muted-sm fs-12 mb-16 d-none" id="invPaymentEditNote">Payment status: <b id="invPaymentEditStatusText">Unpaid</b>. Record further payments from <a href="invoice-list.html">Invoice List</a>.</p>
@@ -302,7 +302,7 @@ document.addEventListener('DOMContentLoaded', initInvoiceEntry);
       <button type="button" class="modal-close" onclick="closeGlobalSearch()" aria-label="Close"><i class="fas fa-times"></i></button>
     </div>
     <div class="modal-body">
-      <input type="text" id="globalSearchInput" class="form-control mb-16" placeholder="Search invoices, customers, products, HSN..." oninput="onGlobalSearchInput(this.value)" aria-label="Global search input">
+      <input type="text" id="globalSearchInput" class="form-control mb-16" oninput="onGlobalSearchInput(this.value)" aria-label="Global search input">
       <div id="globalSearchResults"><p class="text-muted-sm">Type at least 2 characters&hellip;</p></div>
     </div>
   </div>

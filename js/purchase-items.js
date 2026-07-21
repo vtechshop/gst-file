@@ -148,7 +148,7 @@ function renderPurchItemsTable() {
   tbody.innerHTML = purchItems.map(row => `
     <tr data-row="${row.rowId}">
       <td>
-        <input type="text" class="form-control" placeholder="Type or select product" autocomplete="off"
+        <input type="text" class="form-control" autocomplete="off"
           value="${escItemHtml(row.product_name)}"
           oninput="onPurchProductInput('${row.rowId}', this.value); showPurchProductDropdown('${row.rowId}', this, this.value)"
           onfocus="showPurchProductDropdown('${row.rowId}', this, this.value)"
@@ -396,11 +396,11 @@ function ensurePurchQuickAddProductModal() {
         <div class="form-grid cols-2 mb-16">
           <div class="form-group">
             <label for="pqapName">Product Name <span class="text-required">*</span></label>
-            <input type="text" id="pqapName" class="form-control" placeholder="Enter product or service name">
+            <input type="text" id="pqapName" class="form-control">
           </div>
           <div class="form-group">
             <label for="pqapHSN">HSN Code</label>
-            <input type="text" id="pqapHSN" class="form-control" placeholder="e.g. 8471">
+            <input type="text" id="pqapHSN" class="form-control">
           </div>
         </div>
         <div class="form-grid cols-3 mb-16">
@@ -416,12 +416,12 @@ function ensurePurchQuickAddProductModal() {
           </div>
           <div class="form-group">
             <label for="pqapUnit">Unit</label>
-            <input type="text" id="pqapUnit" class="form-control" list="pqapUnitDatalist" placeholder="e.g. PCS">
+            <input type="text" id="pqapUnit" class="form-control" list="pqapUnitDatalist">
             <datalist id="pqapUnitDatalist">${COMMON_UNITS.map(u => `<option value="${u}">`).join('')}</datalist>
           </div>
           <div class="form-group">
             <label for="pqapRate">Selling Price (&#8377;)</label>
-            <input type="number" id="pqapRate" class="form-control" placeholder="0.00" min="0" step="0.01">
+            <input type="number" id="pqapRate" class="form-control" min="0" step="0.01">
           </div>
         </div>
       </div>

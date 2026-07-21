@@ -86,7 +86,7 @@
           <div class="d-flex gap-10 flex-wrap">
             <div class="search-input-wrap w-220">
               <i class="fas fa-search"></i>
-              <input type="text" id="binSearch" class="form-control" placeholder="Search deleted items..." aria-label="Search recycle bin">
+              <input type="text" id="binSearch" class="form-control" aria-label="Search recycle bin">
             </div>
             <select id="binTypeFilter" class="form-control w-150" aria-label="Filter by type">
               <option value="">All Types</option>
@@ -140,7 +140,7 @@ document.addEventListener('DOMContentLoaded', () => {
       <button type="button" class="modal-close" onclick="closeGlobalSearch()" aria-label="Close"><i class="fas fa-times"></i></button>
     </div>
     <div class="modal-body">
-      <input type="text" id="globalSearchInput" class="form-control mb-16" placeholder="Search invoices, customers, products, HSN..." oninput="onGlobalSearchInput(this.value)" aria-label="Global search input">
+      <input type="text" id="globalSearchInput" class="form-control mb-16" oninput="onGlobalSearchInput(this.value)" aria-label="Global search input">
       <div id="globalSearchResults"><p class="text-muted-sm">Type at least 2 characters&hellip;</p></div>
     </div>
   </div>

@@ -40,12 +40,12 @@
     <form class="auth-form active" id="loginForm" onsubmit="handleLogin(event)">
       <div class="form-group mb-14">
         <label for="loginEmail">Email Address</label>
-        <input type="email" id="loginEmail" class="form-control" placeholder="Enter your email" required>
+        <input type="email" id="loginEmail" class="form-control" required>
       </div>
       <div class="form-group mb-6">
         <label for="loginPassword">Password</label>
         <div class="input-group">
-          <input type="password" id="loginPassword" class="form-control" placeholder="Enter your password" required>
+          <input type="password" id="loginPassword" class="form-control" required>
           <button type="button" class="btn btn-secondary btn-icon btn-rounded-right" onclick="togglePwd('loginPassword',this)" aria-label="Show password">
             <i class="fas fa-eye"></i>
           </button>
@@ -64,16 +64,16 @@
     <form class="auth-form" id="registerForm" onsubmit="handleRegister(event)">
       <div class="form-group mb-14">
         <label for="regName">Full Name</label>
-        <input type="text" id="regName" class="form-control" placeholder="Enter your full name" required>
+        <input type="text" id="regName" class="form-control" required>
       </div>
       <div class="form-group mb-14">
         <label for="regEmail">Email Address</label>
-        <input type="email" id="regEmail" class="form-control" placeholder="Enter your email" required>
+        <input type="email" id="regEmail" class="form-control" required>
       </div>
       <div class="form-group mb-14">
         <label for="regPassword">Password</label>
         <div class="input-group">
-          <input type="password" id="regPassword" class="form-control" placeholder="Min 6 characters" required minlength="6">
+          <input type="password" id="regPassword" class="form-control" required minlength="6">
           <button type="button" class="btn btn-secondary btn-icon btn-rounded-right" onclick="togglePwd('regPassword',this)" aria-label="Show password">
             <i class="fas fa-eye"></i>
           </button>
@@ -81,7 +81,7 @@
       </div>
       <div class="form-group mb-20">
         <label for="regConfirm">Confirm Password</label>
-        <input type="password" id="regConfirm" class="form-control" placeholder="Re-enter password" required>
+        <input type="password" id="regConfirm" class="form-control" required>
       </div>
       <button type="submit" class="btn btn-primary btn-lg btn-full" id="regBtn">
         <i class="fas fa-user-plus"></i> Create Account
@@ -95,7 +95,7 @@
       <p class="fs-13 text-muted mb-18">Enter your email address and we'll send you a password reset link.</p>
       <div class="form-group mb-20">
         <label for="forgotEmail">Email Address</label>
-        <input type="email" id="forgotEmail" class="form-control" placeholder="Enter your email" required>
+        <input type="email" id="forgotEmail" class="form-control" required>
       </div>
       <button type="submit" class="btn btn-primary btn-lg btn-full">
         <i class="fas fa-paper-plane"></i> Send Reset Link

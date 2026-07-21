@@ -85,11 +85,11 @@
           <div class="form-grid cols-2 mb-16">
             <div class="form-group">
               <label for="retVendorName">Vendor Name <span class="text-required">*</span></label>
-              <input type="text" id="retVendorName" class="form-control" placeholder="Type or select vendor" list="retVendorDatalist" oninput="onRetVendorInput()" autocomplete="off">
+              <input type="text" id="retVendorName" class="form-control" list="retVendorDatalist" oninput="onRetVendorInput()" autocomplete="off">
             </div>
             <div class="form-group">
               <label for="retGstin">Vendor GSTIN <span class="fs-11 text-muted-sm">(Optional)</span></label>
-              <input type="text" id="retGstin" class="form-control uppercase" maxlength="15" placeholder="e.g. 27AAPFU0939F1ZV" oninput="onRetGstinInput(this)">
+              <input type="text" id="retGstin" class="form-control uppercase" maxlength="15" oninput="onRetGstinInput(this)">
               <div id="retGstinStatus" class="d-flex align-center gap-8 d-none" style="margin-top:6px;"></div>
             </div>
           </div>
@@ -110,7 +110,7 @@
           <div class="form-grid cols-3 mb-16">
             <div class="form-group">
               <label for="retNum">Return Number <span class="text-required">*</span></label>
-              <input type="text" id="retNum" class="form-control" placeholder="e.g. PRET-2026-001">
+              <input type="text" id="retNum" class="form-control">
             </div>
             <div class="form-group">
               <label for="retDate">Return Date <span class="text-required">*</span></label>
@@ -118,12 +118,12 @@
             </div>
             <div class="form-group">
               <label for="retOrigPurchase">Original Purchase No. <span class="fs-11 text-muted-sm">(Optional)</span></label>
-              <input type="text" id="retOrigPurchase" class="form-control" placeholder="e.g. PUR-2026-001">
+              <input type="text" id="retOrigPurchase" class="form-control">
             </div>
           </div>
           <div class="form-group mb-16">
             <label for="retReason">Reason</label>
-            <input type="text" id="retReason" class="form-control" placeholder="e.g. Damaged goods, wrong item, excess quantity...">
+            <input type="text" id="retReason" class="form-control">
           </div>
 
           <!-- Products (multi-item, per return) -->
@@ -143,7 +143,7 @@
           <div class="d-flex gap-10">
             <div class="search-input-wrap w-240">
               <i class="fas fa-search"></i>
-              <input type="text" id="retSearch" class="form-control" placeholder="Search return no, vendor, purchase no..." aria-label="Search purchase returns">
+              <input type="text" id="retSearch" class="form-control" aria-label="Search purchase returns">
             </div>
           </div>
         </div>
@@ -184,7 +184,7 @@ document.addEventListener('DOMContentLoaded', initPurchaseReturns);
       <button type="button" class="modal-close" onclick="closeGlobalSearch()" aria-label="Close"><i class="fas fa-times"></i></button>
     </div>
     <div class="modal-body">
-      <input type="text" id="globalSearchInput" class="form-control mb-16" placeholder="Search invoices, customers, products, HSN..." oninput="onGlobalSearchInput(this.value)" aria-label="Global search input">
+      <input type="text" id="globalSearchInput" class="form-control mb-16" oninput="onGlobalSearchInput(this.value)" aria-label="Global search input">
       <div id="globalSearchResults"><p class="text-muted-sm">Type at least 2 characters&hellip;</p></div>
     </div>
   </div>

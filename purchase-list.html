@@ -83,7 +83,7 @@
           <div class="d-flex gap-10 flex-wrap">
             <div class="search-input-wrap w-220">
               <i class="fas fa-search"></i>
-              <input type="text" id="purchListSearch" class="form-control" placeholder="Search purchase no, vendor, GSTIN..." aria-label="Search purchases">
+              <input type="text" id="purchListSearch" class="form-control" aria-label="Search purchases">
             </div>
             <select id="purchListMonthFilter" class="form-control w-130" onchange="applyPurchListFilters()" aria-label="Filter by month"></select>
             <select id="purchListYearFilter" class="form-control w-100" onchange="applyPurchListFilters()" aria-label="Filter by year"></select>
@@ -127,7 +127,7 @@ document.addEventListener('DOMContentLoaded', () => {
       <button type="button" class="modal-close" onclick="closeGlobalSearch()" aria-label="Close"><i class="fas fa-times"></i></button>
     </div>
     <div class="modal-body">
-      <input type="text" id="globalSearchInput" class="form-control mb-16" placeholder="Search invoices, customers, products, HSN..." oninput="onGlobalSearchInput(this.value)" aria-label="Global search input">
+      <input type="text" id="globalSearchInput" class="form-control mb-16" oninput="onGlobalSearchInput(this.value)" aria-label="Global search input">
       <div id="globalSearchResults"><p class="text-muted-sm">Type at least 2 characters&hellip;</p></div>
     </div>
   </div>

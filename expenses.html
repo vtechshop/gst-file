@@ -92,7 +92,7 @@
             </div>
             <div class="form-group">
               <label for="expAmount">Amount (&#8377;) <span class="text-required">*</span></label>
-              <input type="number" id="expAmount" class="form-control" min="0" step="0.01" placeholder="0.00">
+              <input type="number" id="expAmount" class="form-control" min="0" step="0.01">
             </div>
           </div>
           <div class="form-grid cols-2 mb-16">
@@ -109,12 +109,12 @@
             </div>
             <div class="form-group">
               <label for="expPayee">Paid To <span class="fs-11 text-muted-sm">(Optional)</span></label>
-              <input type="text" id="expPayee" class="form-control" placeholder="e.g. Landlord, Electricity Board">
+              <input type="text" id="expPayee" class="form-control">
             </div>
           </div>
           <div class="form-group mb-16">
             <label for="expDescription">Description</label>
-            <input type="text" id="expDescription" class="form-control" placeholder="Optional notes">
+            <input type="text" id="expDescription" class="form-control">
           </div>
           <div class="btn-group">
             <button type="button" class="btn btn-primary" id="expSaveBtn" onclick="saveExpense()"><i class="fas fa-save"></i> Save Expense</button>
@@ -130,7 +130,7 @@
           <div class="d-flex gap-10">
             <div class="search-input-wrap w-240">
               <i class="fas fa-search"></i>
-              <input type="text" id="expSearch" class="form-control" placeholder="Search category, payee, notes..." aria-label="Search expenses">
+              <input type="text" id="expSearch" class="form-control" aria-label="Search expenses">
             </div>
           </div>
         </div>
@@ -175,11 +175,11 @@ document.addEventListener('DOMContentLoaded', initExpenses);
       <div class="form-grid cols-2 mb-16">
         <div class="form-group">
           <label for="ecName">Category Name <span class="text-required">*</span></label>
-          <input type="text" id="ecName" class="form-control" placeholder="e.g. Rent, Utilities, Salaries">
+          <input type="text" id="ecName" class="form-control">
         </div>
         <div class="form-group">
           <label for="ecDescription">Description <span class="fs-11 text-muted-sm">(Optional)</span></label>
-          <input type="text" id="ecDescription" class="form-control" placeholder="Optional notes">
+          <input type="text" id="ecDescription" class="form-control">
         </div>
       </div>
       <div class="btn-group">
@@ -197,7 +197,7 @@ document.addEventListener('DOMContentLoaded', initExpenses);
       <button type="button" class="modal-close" onclick="closeGlobalSearch()" aria-label="Close"><i class="fas fa-times"></i></button>
     </div>
     <div class="modal-body">
-      <input type="text" id="globalSearchInput" class="form-control mb-16" placeholder="Search invoices, customers, products, HSN..." oninput="onGlobalSearchInput(this.value)" aria-label="Global search input">
+      <input type="text" id="globalSearchInput" class="form-control mb-16" oninput="onGlobalSearchInput(this.value)" aria-label="Global search input">
       <div id="globalSearchResults"><p class="text-muted-sm">Type at least 2 characters&hellip;</p></div>
     </div>
   </div>

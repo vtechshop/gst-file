@@ -89,7 +89,7 @@
           <div class="form-grid cols-2 mb-16">
             <div class="form-group">
               <label for="srInvoiceSearch">Invoice Number <span class="text-required">*</span></label>
-              <input type="text" id="srInvoiceSearch" class="form-control" placeholder="Type or select an invoice" list="srInvoiceDatalist" oninput="onSrInvoiceInput()" autocomplete="off">
+              <input type="text" id="srInvoiceSearch" class="form-control" list="srInvoiceDatalist" oninput="onSrInvoiceInput()" autocomplete="off">
             </div>
             <div class="form-group">
               <label>Supply Type <span class="fs-11 text-muted-sm">(from invoice)</span></label>
@@ -131,7 +131,7 @@
             <div class="form-grid cols-3 mb-16">
               <div class="form-group">
                 <label for="srNum">Return Number <span class="text-required">*</span></label>
-                <input type="text" id="srNum" class="form-control" placeholder="e.g. SR-2026-001">
+                <input type="text" id="srNum" class="form-control">
               </div>
               <div class="form-group">
                 <label for="srDate">Return Date <span class="text-required">*</span></label>
@@ -139,7 +139,7 @@
               </div>
               <div class="form-group">
                 <label for="srReason">Reason</label>
-                <input type="text" id="srReason" class="form-control" placeholder="e.g. Damaged, wrong item, excess quantity...">
+                <input type="text" id="srReason" class="form-control">
               </div>
             </div>
 
@@ -161,7 +161,7 @@
           <div class="d-flex gap-10">
             <div class="search-input-wrap w-240">
               <i class="fas fa-search"></i>
-              <input type="text" id="srHistorySearch" class="form-control" placeholder="Search return no, customer, invoice no..." aria-label="Search sales returns">
+              <input type="text" id="srHistorySearch" class="form-control" aria-label="Search sales returns">
             </div>
           </div>
         </div>
@@ -202,7 +202,7 @@ document.addEventListener('DOMContentLoaded', initSalesReturns);
       <button type="button" class="modal-close" onclick="closeGlobalSearch()" aria-label="Close"><i class="fas fa-times"></i></button>
     </div>
     <div class="modal-body">
-      <input type="text" id="globalSearchInput" class="form-control mb-16" placeholder="Search invoices, customers, products, HSN..." oninput="onGlobalSearchInput(this.value)" aria-label="Global search input">
+      <input type="text" id="globalSearchInput" class="form-control mb-16" oninput="onGlobalSearchInput(this.value)" aria-label="Global search input">
       <div id="globalSearchResults"><p class="text-muted-sm">Type at least 2 characters&hellip;</p></div>
     </div>
   </div>
