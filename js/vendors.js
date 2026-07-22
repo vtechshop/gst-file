@@ -73,7 +73,7 @@ function resetVendor() {
 
 async function loadVendors(userId) {
   const { data } = await _supabase.from('vendors').select('*').eq('user_id', userId).order('name', { ascending: true });
-  vendAllData = (data || []).filter(r => !r.is_deleted);
+  vendAllData = (data || []);
   vendPage = 1;
   renderVendTable(vendAllData);
 }
@@ -141,11 +141,11 @@ function editVendor(id) {
 }
 
 async function deleteVendor(id) {
-  const ok = await showConfirm('Move this vendor to Recycle Bin? You can restore it later.');
+  const ok = await showConfirm('Permanently delete this vendor? This cannot be undone.');
   if (!ok) return;
-  const { error } = await _supabase.from('vendors').update({ is_deleted: true, deleted_at: new Date().toISOString() }).eq('id', id);
+  const { error } = await _supabase.from('vendors').delete().eq('id', id);
   if (error) { showToast('Error: ' + error.message, 'error'); return; }
-  showToast('Vendor moved to Recycle Bin.');
+  showToast('Vendor permanently deleted.');
   vendAllData = vendAllData.filter(r => r.id !== id);
   renderVendTable(vendAllData);
 }

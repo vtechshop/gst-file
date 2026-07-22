@@ -14,7 +14,7 @@ async function fetchSalesReturnRecord(id) {
   if (!data) { showToast('Sales return not found.', 'error'); return null; }
 
   const { data: itemRows } = await _supabase.from('sales_return_items').select('*').eq('return_id', data.id);
-  const activeItems = (itemRows || []).filter(r => !r.is_deleted).sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0));
+  const activeItems = (itemRows || []).sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0));
 
   return {
     id: data.id,

@@ -596,28 +596,12 @@ async function savePurchaseWithItems(kind, headerBase, editId, userId) {
   }
 }
 
-// ── Cascade delete / restore (invoked from purchase-list.js,
-// purchase-returns.js, recycle-bin.js) ──────────────
+// ── Cascade permanent delete (invoked from purchase-list.js,
+// purchase-returns.js) ──────────────
 async function cascadePurchaseItemsDelete(kind, id) {
   try {
     await apiFetch(`/purchases/${kind}/${id}/cascade-delete`, { method: 'POST' });
   } catch (error) {
     showToast('Error: ' + (error.message || 'cascade delete failed'), 'error');
-  }
-}
-
-async function cascadePurchaseItemsRestore(kind, id) {
-  try {
-    await apiFetch(`/purchases/${kind}/${id}/cascade-restore`, { method: 'POST' });
-  } catch (error) {
-    showToast('Error: ' + (error.message || 'cascade restore failed'), 'error');
-  }
-}
-
-async function cascadePurchaseItemsHardDelete(kind, id) {
-  try {
-    await apiFetch(`/purchases/${kind}/${id}/cascade-hard-delete`, { method: 'POST' });
-  } catch (error) {
-    showToast('Error: ' + (error.message || 'cascade hard-delete failed'), 'error');
   }
 }

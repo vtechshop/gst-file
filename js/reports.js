@@ -48,21 +48,21 @@ async function loadReports(filter) {
     _supabase.from('sales_return_items').select('*').eq('user_id', currentUser.id)
   ]);
 
-  repB2B = (b2bRes.data || []).filter(r => !r.is_deleted);
-  repB2C = (b2cRes.data || []).filter(r => !r.is_deleted);
+  repB2B = (b2bRes.data || []);
+  repB2C = (b2cRes.data || []);
 
   // HSN/Product reports are driven by invoice line items now — the
   // invoice is the only source of truth. 'source' !== 'auto' historical
   // rows (manual entries / Excel imports from before this was a live
   // report) are kept alongside so no past data disappears.
-  const allItems = (itemsRes.data || []).filter(r => !r.is_deleted);
+  const allItems = (itemsRes.data || []);
   const toHSNRow = it => ({
     hsn_code: it.hsn_code, product_name: it.product_name, type: 'goods',
     quantity: it.quantity, taxable_value: +it.taxable_value, gst_percentage: it.gst_percentage,
     igst: +it.igst, cgst: +it.cgst, sgst: +it.sgst, total_gst: +it.gst_amount, total_invoice_value: +it.total_amount
   });
-  const legacyB2BHSN = (hsnB2BRes.data || []).filter(r => !r.is_deleted && r.source !== 'auto');
-  const legacyB2CHSN = (hsnB2CRes.data || []).filter(r => !r.is_deleted && r.source !== 'auto');
+  const legacyB2BHSN = (hsnB2BRes.data || []).filter(r => r.source !== 'auto');
+  const legacyB2CHSN = (hsnB2CRes.data || []).filter(r => r.source !== 'auto');
   repB2BHSN = [...allItems.filter(it => it.invoice_type === 'b2b' && it.hsn_code).map(toHSNRow), ...legacyB2BHSN];
   repB2CHSN = [...allItems.filter(it => it.invoice_type === 'b2c' && it.hsn_code).map(toHSNRow), ...legacyB2CHSN];
 
@@ -72,12 +72,12 @@ async function loadReports(filter) {
     (repItemsByInvoice[key] = repItemsByInvoice[key] || []).push(r);
   });
 
-  repPurchases = (purchRes.data || []).filter(r => !r.is_deleted);
-  repPurchaseItems = (purchItemsRes.data || []).filter(r => !r.is_deleted);
-  repExpenses = (expRes.data || []).filter(r => !r.is_deleted);
-  repExpensesAllTime = (expAllRes.data || []).filter(r => !r.is_deleted);
-  repSalesReturns = (srRes.data || []).filter(r => !r.is_deleted);
-  repSalesReturnItems = (srItemsRes.data || []).filter(r => !r.is_deleted);
+  repPurchases = (purchRes.data || []);
+  repPurchaseItems = (purchItemsRes.data || []);
+  repExpenses = (expRes.data || []);
+  repExpensesAllTime = (expAllRes.data || []);
+  repSalesReturns = (srRes.data || []);
+  repSalesReturnItems = (srItemsRes.data || []);
 
   renderSummaryCards();
   renderGSTR1Summary();

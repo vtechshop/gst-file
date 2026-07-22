@@ -26,7 +26,7 @@ async function initPurchaseList() {
 
 async function loadPurchaseList(userId) {
   const { data } = await _supabase.from('purchases').select('*').eq('user_id', userId);
-  purchListAllData = (data || []).filter(r => !r.is_deleted)
+  purchListAllData = (data || [])
     .sort((a, b) => (b.purchase_date || '').localeCompare(a.purchase_date || ''));
   purchListPage = 1;
   renderPurchListTable(purchListAllData);
@@ -109,12 +109,12 @@ function renderPurchListTable(data) {
 }
 
 async function deletePurchaseFromList(id) {
-  const ok = await showConfirm('Move this purchase to Recycle Bin? Stock added by it will be reversed. You can restore it later.');
+  const ok = await showConfirm('Permanently delete this purchase? Stock added by it will be reversed. This cannot be undone.');
   if (!ok) return;
-  const { error } = await _supabase.from('purchases').update({ is_deleted: true, deleted_at: new Date().toISOString() }).eq('id', id);
+  await cascadePurchaseItemsDelete('purchase', id); // items + stock reversal first
+  const { error } = await _supabase.from('purchases').delete().eq('id', id);
   if (error) { showToast('Error: ' + error.message, 'error'); return; }
-  await cascadePurchaseItemsDelete('purchase', id);
-  showToast('Purchase moved to Recycle Bin.', 'success');
+  showToast('Purchase permanently deleted.', 'success');
   const user = await getCurrentUser();
   if (user) await loadPurchaseList(user.id);
 }

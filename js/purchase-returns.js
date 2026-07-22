@@ -80,7 +80,7 @@ function detectRetSupplyType() {
 // ── Vendor Master helpers ────────────────────────────
 async function loadRetVendorsList(userId) {
   const { data } = await _supabase.from('vendors').select('*').eq('user_id', userId);
-  retVendorsList = (data || []).filter(v => !v.is_deleted);
+  retVendorsList = (data || []);
   const dl = document.getElementById('retVendorDatalist');
   if (dl) {
     dl.innerHTML = retVendorsList.map(v =>
@@ -161,7 +161,7 @@ function resetPurchaseReturn() {
 // ── History list ──────────────────────────────────────
 async function loadPurchaseReturns(userId) {
   const { data } = await _supabase.from('purchase_returns').select('*').eq('user_id', userId).order('return_date', { ascending: false });
-  retAllData = (data || []).filter(r => !r.is_deleted);
+  retAllData = (data || []);
   retPage = 1;
   renderRetTable(retAllData);
 }
@@ -231,7 +231,7 @@ async function editPurchaseReturn(id) {
   setRetValue('retOrigPurchase', rec.original_purchase_number || '');
 
   const { data: items } = await _supabase.from('purchase_return_items').select('*').eq('return_id', id);
-  const activeItems = (items || []).filter(r => !r.is_deleted).sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0));
+  const activeItems = (items || []).sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0));
   if (activeItems.length) loadPurchItemsIntoTable(activeItems);
 
   document.getElementById('retFormTitle').textContent = 'Edit Purchase Return';
@@ -242,12 +242,12 @@ async function editPurchaseReturn(id) {
 }
 
 async function deletePurchaseReturn(id) {
-  const ok = await showConfirm('Move this return to Recycle Bin? Stock removed by it will be given back. You can restore it later.');
+  const ok = await showConfirm('Permanently delete this return? Stock removed by it will be given back. This cannot be undone.');
   if (!ok) return;
-  const { error } = await _supabase.from('purchase_returns').update({ is_deleted: true, deleted_at: new Date().toISOString() }).eq('id', id);
+  await cascadePurchaseItemsDelete('return', id); // items + stock reversal first
+  const { error } = await _supabase.from('purchase_returns').delete().eq('id', id);
   if (error) { showToast('Error: ' + error.message, 'error'); return; }
-  await cascadePurchaseItemsDelete('return', id);
-  showToast('Purchase return moved to Recycle Bin.', 'success');
+  showToast('Purchase return permanently deleted.', 'success');
   const user = await getCurrentUser();
   if (user) await loadPurchaseReturns(user.id);
 }

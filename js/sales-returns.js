@@ -43,12 +43,12 @@ async function loadSrInvoicesList(userId) {
     _supabase.from('b2b_invoices').select('*').eq('user_id', userId),
     _supabase.from('b2c_invoices').select('*').eq('user_id', userId)
   ]);
-  const b2bRows = (b2b || []).filter(r => !r.is_deleted).map(r => ({
+  const b2bRows = (b2b || []).map(r => ({
     type: 'b2b', id: r.id, invoice_number: r.invoice_number, customer_name: r.customer_name,
     gst_number: r.gst_number, phone: r.phone, address: r.address, state: r.state,
     supply_type: r.supply_type, invoice_date: r.invoice_date
   }));
-  const b2cRows = (b2c || []).filter(r => !r.is_deleted).map(r => ({
+  const b2cRows = (b2c || []).map(r => ({
     type: 'b2c', id: r.id, invoice_number: r.invoice_number || ('B2C-' + r.id.slice(0, 8).toUpperCase()),
     customer_name: r.customer_name || 'Walk-in Customer (B2C)', gst_number: r.gst_number,
     phone: r.phone, address: r.address, state: r.state, supply_type: r.supply_type, invoice_date: r.invoice_date
@@ -86,14 +86,14 @@ async function selectSrInvoice(match) {
   }
 
   const { data: items } = await _supabase.from('invoice_items').select('*').eq('invoice_id', match.id).eq('invoice_type', match.type);
-  const activeItems = (items || []).filter(r => !r.is_deleted).sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0));
+  const activeItems = (items || []).sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0));
 
   const alreadyReturned = await computeAlreadyReturnedByProduct(match.id, match.type, srEditId);
   loadOriginalInvoiceItems(activeItems, alreadyReturned);
 
   if (srEditId) {
     const { data: savedItems } = await _supabase.from('sales_return_items').select('*').eq('return_id', srEditId);
-    prefillSrReturnQuantities((savedItems || []).filter(r => !r.is_deleted));
+    prefillSrReturnQuantities((savedItems || []));
   }
 }
 
@@ -104,14 +104,14 @@ async function computeAlreadyReturnedByProduct(invoiceId, invoiceType, excludeRe
   const { data: returns } = await _supabase.from('sales_returns').select('*')
     .eq('user_id', srUserId).eq('original_invoice_id', invoiceId).eq('original_invoice_type', invoiceType);
   const activeReturnIds = (returns || [])
-    .filter(r => !r.is_deleted && r.id !== excludeReturnId)
+    .filter(r => r.id !== excludeReturnId)
     .map(r => r.id);
   if (!activeReturnIds.length) return {};
 
   const { data: allItems } = await _supabase.from('sales_return_items').select('*').eq('user_id', srUserId);
   const byProduct = {};
   (allItems || []).forEach(it => {
-    if (it.is_deleted || !it.product_id || !activeReturnIds.includes(it.return_id)) return;
+    if (!it.product_id || !activeReturnIds.includes(it.return_id)) return;
     byProduct[it.product_id] = (byProduct[it.product_id] || 0) + (+it.quantity || 0);
   });
   return byProduct;
@@ -171,7 +171,7 @@ function resetSalesReturn() {
 // ── History list ──────────────────────────────────────
 async function loadSalesReturns(userId) {
   const { data } = await _supabase.from('sales_returns').select('*').eq('user_id', userId).order('return_date', { ascending: false });
-  srAllData = (data || []).filter(r => !r.is_deleted);
+  srAllData = (data || []);
   srPage = 1;
   renderSrTable(srAllData);
 }
@@ -253,12 +253,12 @@ async function editSalesReturn(id) {
 }
 
 async function deleteSalesReturn(id) {
-  const ok = await showConfirm('Move this sales return to Recycle Bin? Stock added by it will be reversed. You can restore it later.');
+  const ok = await showConfirm('Permanently delete this sales return? Stock added by it will be reversed. This cannot be undone.');
   if (!ok) return;
-  const { error } = await _supabase.from('sales_returns').update({ is_deleted: true, deleted_at: new Date().toISOString() }).eq('id', id);
+  await cascadeSalesReturnItemsDelete(id); // items + stock reversal first
+  const { error } = await _supabase.from('sales_returns').delete().eq('id', id);
   if (error) { showToast('Error: ' + error.message, 'error'); return; }
-  await cascadeSalesReturnItemsDelete(id);
-  showToast('Sales return moved to Recycle Bin.', 'success');
+  showToast('Sales return permanently deleted.', 'success');
   const user = await getCurrentUser();
   if (user) await loadSalesReturns(user.id);
 }

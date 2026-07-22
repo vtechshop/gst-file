@@ -2,7 +2,7 @@
 // Invoice Line Items — Product Master driven
 // Shared by B2B (gstr1.html) and B2C (b2c.html) invoice entry.
 // Also safe to include (function-only, no DOM) on invoice-list.html
-// and recycle-bin.html for the delete/restore cascade helpers.
+// for the cascade-delete helper.
 // =============================================
 
 let currentItems = [];
@@ -776,31 +776,13 @@ async function saveInvoiceWithItems(type, headerBase, editId, userId) {
   }
 }
 
-// ── Cascade delete / restore (invoked from gstr1.js, b2c.js,
-// invoice-list.js, recycle-bin.js on delete/restore of a header row) ──
-// Stock adjustment + invoice_items + HSN soft/hard-delete-or-restore all
-// happen in one Postgres transaction server-side now — same signatures,
-// same call sites, no changes needed there.
+// ── Cascade permanent delete (invoked from invoice-list.js on delete of
+// a header row) — stock reversal + invoice_items + HSN delete all
+// happen in one Postgres transaction server-side.
 async function cascadeInvoiceItemsDelete(type, invoiceId) {
   try {
     await apiFetch(`/invoices/${type}/${invoiceId}/cascade-delete`, { method: 'POST' });
   } catch (error) {
     showToast('Error: ' + (error.message || 'cascade delete failed'), 'error');
-  }
-}
-
-async function cascadeInvoiceItemsRestore(type, invoiceId) {
-  try {
-    await apiFetch(`/invoices/${type}/${invoiceId}/cascade-restore`, { method: 'POST' });
-  } catch (error) {
-    showToast('Error: ' + (error.message || 'cascade restore failed'), 'error');
-  }
-}
-
-async function cascadeInvoiceItemsHardDelete(type, invoiceId) {
-  try {
-    await apiFetch(`/invoices/${type}/${invoiceId}/cascade-hard-delete`, { method: 'POST' });
-  } catch (error) {
-    showToast('Error: ' + (error.message || 'cascade hard-delete failed'), 'error');
   }
 }

@@ -6,9 +6,9 @@
 // are always visible in either mode, just optional in B2C and required
 // in B2B. b2b_invoices/b2c_invoices remain two separate tables under the
 // hood (every downstream consumer — Reports, Dashboard, HSN, GSTR-3B,
-// Recycle Bin, PDF/WhatsApp/Email — already keys off that 'b2b'/'b2c'
-// type discriminator); this form just decides which one to write to
-// instead of the user picking a page.
+// PDF/WhatsApp/Email — already keys off that 'b2b'/'b2c' type
+// discriminator); this form just decides which one to write to instead
+// of the user picking a page.
 // =============================================
 
 let invoiceEditId = null;
@@ -360,7 +360,7 @@ function setPaymentSectionMode(editable, statusLabel) {
 // ── Customer Master helpers ─────────────────────────
 async function loadInvoiceCustomersList(userId) {
   const { data } = await _supabase.from('customers').select('*').eq('user_id', userId);
-  invoiceCustomersList = (data || []).filter(c => !c.is_deleted);
+  invoiceCustomersList = (data || []);
   const dl = document.getElementById('customerDatalist');
   if (dl) {
     dl.innerHTML = invoiceCustomersList.map(c =>
@@ -451,7 +451,7 @@ async function loadInvoiceForEdit(type, id) {
   setInvValue('invDispatchTo', rec.dispatch_to || '');
 
   const { data: items } = await _supabase.from('invoice_items').select('*').eq('invoice_id', id).eq('invoice_type', type);
-  const activeItems = (items || []).filter(r => !r.is_deleted).sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0));
+  const activeItems = (items || []).sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0));
   if (activeItems.length) loadItemsIntoTable(activeItems);
   else synthesizeLegacyItemRow(rec);
 
@@ -601,14 +601,14 @@ async function saveInvoice() {
     // The B2B/B2C toggle (auto-driven by GSTIN, or manually switched)
     // now points at the OTHER table than this invoice was originally
     // saved under. saveInvoiceWithItems() only ever updates in place on
-    // the table it's given, so a classification
-    // change is handled as insert-into-new-table + soft-delete-old
-    // (recoverable via Recycle Bin, same as any other delete).
+    // the table it's given, so a classification change is handled as
+    // insert-into-new-table + permanently delete the old row (same as
+    // any other delete — items+HSN+stock reversal, then the header).
     invoiceId = await saveInvoiceWithItems(type, headerBase, null, user.id);
     if (invoiceId) {
       const oldTable = invoiceEditType === 'b2b' ? 'b2b_invoices' : 'b2c_invoices';
-      await _supabase.from(oldTable).update({ is_deleted: true, deleted_at: new Date().toISOString() }).eq('id', invoiceEditId);
       await cascadeInvoiceItemsDelete(invoiceEditType, invoiceEditId);
+      await _supabase.from(oldTable).delete().eq('id', invoiceEditId);
     }
   } else {
     if (!invoiceEditId) { headerBase.payment_status = 'unpaid'; headerBase.amount_paid = 0; }

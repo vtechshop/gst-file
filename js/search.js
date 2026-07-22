@@ -58,59 +58,59 @@ async function runGlobalSearch(q) {
 
   const groups = [];
 
-  const b2bMatches = (b2b.data || []).filter(r => !r.is_deleted &&
+  const b2bMatches = (b2b.data || []).filter(r =>
     (r.gst_number?.toLowerCase().includes(needle) ||
     r.customer_name?.toLowerCase().includes(needle) ||
     r.invoice_number?.toLowerCase().includes(needle))).slice(0, 5);
   if (b2bMatches.length) groups.push({ label: 'B2B Invoices', icon: 'fa-file-alt', page: 'invoice-list.html', items: b2bMatches.map(r => `${r.invoice_number} &mdash; ${r.customer_name} (${r.gst_number})`) });
 
-  const b2cMatches = (b2c.data || []).filter(r => !r.is_deleted &&
+  const b2cMatches = (b2c.data || []).filter(r =>
     (r.state?.toLowerCase().includes(needle) ||
     r.customer_name?.toLowerCase().includes(needle) ||
     r.invoice_number?.toLowerCase().includes(needle))).slice(0, 5);
   if (b2cMatches.length) groups.push({ label: 'B2C Invoices', icon: 'fa-users', page: 'invoice-list.html', items: b2cMatches.map(r => `${r.invoice_number || r.state} &mdash; &#8377;${formatNum(r.total_amount)} (${formatDate(r.invoice_date)})`) });
 
-  const custMatches = (customers.data || []).filter(r => !r.is_deleted &&
+  const custMatches = (customers.data || []).filter(r =>
     (r.name?.toLowerCase().includes(needle) || (r.gstin || '').toLowerCase().includes(needle))).slice(0, 5);
   if (custMatches.length) groups.push({ label: 'Customers', icon: 'fa-address-book', page: 'customers.html', items: custMatches.map(r => `${r.name}${r.gstin ? ' (' + r.gstin + ')' : ''}`) });
 
-  const prodMatches = (products.data || []).filter(r => !r.is_deleted &&
+  const prodMatches = (products.data || []).filter(r =>
     (r.name?.toLowerCase().includes(needle) || (r.hsn_code || '').toLowerCase().includes(needle))).slice(0, 5);
   if (prodMatches.length) groups.push({ label: 'Products', icon: 'fa-box', page: 'products.html', items: prodMatches.map(r => `${r.name}${r.hsn_code ? ' (HSN ' + r.hsn_code + ')' : ''}`) });
 
-  const hsnMatches = [...(b2bHsn.data || []), ...(b2cHsn.data || [])].filter(r => !r.is_deleted &&
+  const hsnMatches = [...(b2bHsn.data || []), ...(b2cHsn.data || [])].filter(r =>
     (r.hsn_code?.toLowerCase().includes(needle) || r.product_name?.toLowerCase().includes(needle))).slice(0, 5);
   if (hsnMatches.length) groups.push({ label: 'HSN Summary', icon: 'fa-barcode', page: 'hsn.html', items: hsnMatches.map(r => `${r.hsn_code} &mdash; ${r.product_name}`) });
 
-  const cdnMatches = (cdn.data || []).filter(r => !r.is_deleted &&
+  const cdnMatches = (cdn.data || []).filter(r =>
     (r.note_number?.toLowerCase().includes(needle) ||
     r.customer_name?.toLowerCase().includes(needle) ||
     r.original_invoice?.toLowerCase().includes(needle))).slice(0, 5);
   if (cdnMatches.length) groups.push({ label: 'Credit/Debit Notes', icon: 'fa-file-minus', page: 'cdnotes.html', items: cdnMatches.map(r => `${r.note_number} &mdash; ${r.customer_name}`) });
 
-  const vendorMatches = (vendors.data || []).filter(r => !r.is_deleted &&
+  const vendorMatches = (vendors.data || []).filter(r =>
     (r.name?.toLowerCase().includes(needle) || (r.gstin || '').toLowerCase().includes(needle))).slice(0, 5);
   if (vendorMatches.length) groups.push({ label: 'Vendors', icon: 'fa-truck', page: 'vendors.html', items: vendorMatches.map(r => `${r.name}${r.gstin ? ' (' + r.gstin + ')' : ''}`) });
 
-  const purchMatches = (purchases.data || []).filter(r => !r.is_deleted &&
+  const purchMatches = (purchases.data || []).filter(r =>
     (r.purchase_number?.toLowerCase().includes(needle) ||
     r.vendor_name?.toLowerCase().includes(needle) ||
     (r.vendor_gstin || '').toLowerCase().includes(needle))).slice(0, 5);
   if (purchMatches.length) groups.push({ label: 'Purchases', icon: 'fa-cart-plus', page: 'purchase-list.html', items: purchMatches.map(r => `${r.purchase_number} &mdash; ${r.vendor_name} (&#8377;${formatNum(r.total_amount)})`) });
 
-  const purchRetMatches = (purchReturns.data || []).filter(r => !r.is_deleted &&
+  const purchRetMatches = (purchReturns.data || []).filter(r =>
     (r.return_number?.toLowerCase().includes(needle) ||
     r.vendor_name?.toLowerCase().includes(needle) ||
     (r.original_purchase_number || '').toLowerCase().includes(needle))).slice(0, 5);
   if (purchRetMatches.length) groups.push({ label: 'Purchase Returns', icon: 'fa-undo', page: 'purchase-returns.html', items: purchRetMatches.map(r => `${r.return_number} &mdash; ${r.vendor_name}`) });
 
-  const expMatches = (expenses.data || []).filter(r => !r.is_deleted &&
+  const expMatches = (expenses.data || []).filter(r =>
     ((r.category_name || '').toLowerCase().includes(needle) ||
     (r.payee || '').toLowerCase().includes(needle) ||
     (r.description || '').toLowerCase().includes(needle))).slice(0, 5);
   if (expMatches.length) groups.push({ label: 'Expenses', icon: 'fa-receipt', page: 'expenses.html', items: expMatches.map(r => `${r.category_name || 'Expense'} &mdash; &#8377;${formatNum(r.amount)}${r.payee ? ' (' + r.payee + ')' : ''}`) });
 
-  const srMatches = (salesReturns.data || []).filter(r => !r.is_deleted &&
+  const srMatches = (salesReturns.data || []).filter(r =>
     (r.return_number?.toLowerCase().includes(needle) ||
     r.customer_name?.toLowerCase().includes(needle) ||
     (r.original_invoice_number || '').toLowerCase().includes(needle))).slice(0, 5);

@@ -36,10 +36,10 @@ async function buildHSNSummary(userId, type) {
   const activeInvoiceIds = new Set();
   (invRes.data || []).forEach(r => {
     invSupply[r.id] = r.supply_type;
-    if (!r.is_deleted) activeInvoiceIds.add(r.id);
+    activeInvoiceIds.add(r.id);
   });
 
-  const activeItems = (itemsRes.data || []).filter(r => !r.is_deleted && activeInvoiceIds.has(r.invoice_id) && r.hsn_code);
+  const activeItems = (itemsRes.data || []).filter(r => activeInvoiceIds.has(r.invoice_id) && r.hsn_code);
 
   const groups = {};
   activeItems.forEach(it => {
@@ -77,7 +77,7 @@ async function buildHSNSummary(userId, type) {
   // instead), so any leftover 'auto' rows are stale caches — excluded
   // here to avoid double-counting against the live computation above.
   const legacyRows = (hsnRes.data || [])
-    .filter(r => !r.is_deleted && r.source !== 'auto')
+    .filter(r => r.source !== 'auto')
     .map(r => ({ ...r, source: r.source || 'legacy' }));
 
   return [...computedRows, ...legacyRows].sort((a, b) => b.total_invoice_value - a.total_invoice_value);
@@ -145,12 +145,12 @@ async function deleteHSN(prefix, id) {
   const rec = data.find(r => r.id === id);
   if (!rec || rec.source === 'computed') return;
 
-  const ok = await showConfirm('Move this historical HSN entry to Recycle Bin? You can restore it later.');
+  const ok = await showConfirm('Permanently delete this historical HSN entry? This cannot be undone.');
   if (!ok) return;
   const table = prefix === 'b2b' ? 'b2b_hsn' : 'b2c_hsn';
-  const { error } = await _supabase.from(table).update({ is_deleted: true, deleted_at: new Date().toISOString() }).eq('id', id);
+  const { error } = await _supabase.from(table).delete().eq('id', id);
   if (error) { showToast('Error: ' + error.message, 'error'); return; }
-  showToast('HSN entry moved to Recycle Bin.');
+  showToast('HSN entry permanently deleted.');
   const user = await getCurrentUser();
   if (user) { if (prefix === 'b2b') await loadB2BHSN(user.id); else await loadB2CHSN(user.id); }
 }

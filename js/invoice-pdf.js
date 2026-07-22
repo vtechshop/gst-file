@@ -38,7 +38,7 @@ async function fetchInvoiceRecord(type, id) {
 
   let items = null;
   const { data: itemRows } = await _supabase.from('invoice_items').select('*').eq('invoice_id', data.id).eq('invoice_type', type);
-  const activeItems = (itemRows || []).filter(r => !r.is_deleted).sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0));
+  const activeItems = (itemRows || []).sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0));
   if (activeItems.length) items = activeItems;
 
   return {

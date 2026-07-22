@@ -104,7 +104,7 @@ let purchSelectedVendorId = null;
 
 async function loadPurchVendorsList(userId) {
   const { data } = await _supabase.from('vendors').select('*').eq('user_id', userId);
-  purchVendorsList = (data || []).filter(v => !v.is_deleted);
+  purchVendorsList = (data || []);
   const dl = document.getElementById('purchVendorDatalist');
   if (dl) {
     dl.innerHTML = purchVendorsList.map(v =>
@@ -188,7 +188,7 @@ async function loadPurchaseForEdit(id) {
   onPurchPaymentStatusChange();
 
   const { data: items } = await _supabase.from('purchase_items').select('*').eq('purchase_id', id);
-  const activeItems = (items || []).filter(r => !r.is_deleted).sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0));
+  const activeItems = (items || []).sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0));
   if (activeItems.length) loadPurchItemsIntoTable(activeItems);
 
   document.getElementById('purchPageTitle').textContent = 'Edit Purchase';

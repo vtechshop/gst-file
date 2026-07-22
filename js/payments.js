@@ -53,11 +53,11 @@ async function deletePayment(paymentId, type, invoiceId, userId) {
 // only and never touches the invoice rows themselves.
 async function loadCustomerOutstandingSummary(userId) {
   const [{ data: b2b }, { data: b2c }, { data: srData }] = await Promise.all([
-    _supabase.from('b2b_invoices').select('customer_name,total_amount,amount_paid,payment_status,is_deleted').eq('user_id', userId),
-    _supabase.from('b2c_invoices').select('customer_name,total_amount,amount_paid,payment_status,is_deleted').eq('user_id', userId),
-    _supabase.from('sales_returns').select('customer_name,total_amount,is_deleted').eq('user_id', userId)
+    _supabase.from('b2b_invoices').select('customer_name,total_amount,amount_paid,payment_status').eq('user_id', userId),
+    _supabase.from('b2c_invoices').select('customer_name,total_amount,amount_paid,payment_status').eq('user_id', userId),
+    _supabase.from('sales_returns').select('customer_name,total_amount').eq('user_id', userId)
   ]);
-  const all = [...(b2b || []), ...(b2c || [])].filter(r => !r.is_deleted && r.customer_name);
+  const all = [...(b2b || []), ...(b2c || [])].filter(r => r.customer_name);
   const byCustomer = {};
   all.forEach(r => {
     const key = r.customer_name;
@@ -68,7 +68,7 @@ async function loadCustomerOutstandingSummary(userId) {
     byCustomer[key].totalPaid += (+r.amount_paid || 0);
     byCustomer[key].outstanding += bal;
   });
-  (srData || []).filter(r => !r.is_deleted && r.customer_name && byCustomer[r.customer_name]).forEach(r => {
+  (srData || []).filter(r => r.customer_name && byCustomer[r.customer_name]).forEach(r => {
     byCustomer[r.customer_name].totalReturned += (+r.total_amount || 0);
   });
   Object.values(byCustomer).forEach(c => {

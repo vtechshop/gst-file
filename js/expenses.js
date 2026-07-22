@@ -36,7 +36,7 @@ function setExpValue(id, v) { const el = document.getElementById(id); if (el) el
 // ── Categories ────────────────────────────────────────
 async function loadExpCategories(userId) {
   const { data } = await _supabase.from('expense_categories').select('*').eq('user_id', userId).order('name', { ascending: true });
-  expCategories = (data || []).filter(c => !c.is_deleted);
+  expCategories = (data || []);
   const sel = document.getElementById('expCategory');
   if (sel) {
     const current = sel.value;
@@ -107,11 +107,11 @@ async function saveExpCategory() {
 }
 
 async function deleteExpCategory(id) {
-  const ok = await showConfirm('Delete this category? Existing expenses keep their recorded category name.');
+  const ok = await showConfirm('Permanently delete this category? Existing expenses keep their recorded category name. This cannot be undone.');
   if (!ok) return;
-  const { error } = await _supabase.from('expense_categories').update({ is_deleted: true, deleted_at: new Date().toISOString() }).eq('id', id);
+  const { error } = await _supabase.from('expense_categories').delete().eq('id', id);
   if (error) { showToast('Error: ' + error.message, 'error'); return; }
-  showToast('Category removed.');
+  showToast('Category permanently deleted.');
   const user = await getCurrentUser();
   if (user) await loadExpCategories(user.id);
 }
@@ -163,7 +163,7 @@ function resetExpense() {
 
 async function loadExpenses(userId) {
   const { data } = await _supabase.from('expenses').select('*').eq('user_id', userId).order('expense_date', { ascending: false });
-  expAllData = (data || []).filter(r => !r.is_deleted);
+  expAllData = (data || []);
   expPage = 1;
   renderExpTable(expAllData);
 }
@@ -234,11 +234,11 @@ function editExpense(id) {
 }
 
 async function deleteExpense(id) {
-  const ok = await showConfirm('Move this expense to Recycle Bin? You can restore it later.');
+  const ok = await showConfirm('Permanently delete this expense? This cannot be undone.');
   if (!ok) return;
-  const { error } = await _supabase.from('expenses').update({ is_deleted: true, deleted_at: new Date().toISOString() }).eq('id', id);
+  const { error } = await _supabase.from('expenses').delete().eq('id', id);
   if (error) { showToast('Error: ' + error.message, 'error'); return; }
-  showToast('Expense moved to Recycle Bin.');
+  showToast('Expense permanently deleted.');
   expAllData = expAllData.filter(r => r.id !== id);
   renderExpTable(expAllData);
 }

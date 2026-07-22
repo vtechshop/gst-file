@@ -45,11 +45,11 @@ async function loadGSTR3B() {
     _supabase.from('invoice_items').select('*').eq('user_id', gstr3bUser.id)
   ]);
 
-  const b2b = (b2bRes.data || []).filter(r => !r.is_deleted);
-  const b2c = (b2cRes.data || []).filter(r => !r.is_deleted);
+  const b2b = (b2bRes.data || []);
+  const b2c = (b2cRes.data || []);
 
   const itemsByInvoice = {};
-  (itemsRes.data || []).filter(r => !r.is_deleted).forEach(r => {
+  (itemsRes.data || []).forEach(r => {
     const key = r.invoice_type + ':' + r.invoice_id;
     (itemsByInvoice[key] = itemsByInvoice[key] || []).push(r);
   });

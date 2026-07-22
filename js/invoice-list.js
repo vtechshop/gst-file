@@ -27,12 +27,12 @@ async function loadInvoiceList(userId) {
     _supabase.from('b2c_invoices').select('*').eq('user_id', userId)
   ]);
 
-  const b2bRows = (b2b || []).filter(r => !r.is_deleted).map(r => ({
+  const b2bRows = (b2b || []).map(r => ({
     type: 'b2b', id: r.id, invoice_number: r.invoice_number, invoice_date: r.invoice_date,
     customer_name: r.customer_name, gstin: r.gst_number, total_amount: +r.total_amount,
     payment_status: r.payment_status || 'unpaid', amount_paid: +r.amount_paid || 0
   }));
-  const b2cRows = (b2c || []).filter(r => !r.is_deleted).map(r => ({
+  const b2cRows = (b2c || []).map(r => ({
     type: 'b2c', id: r.id, invoice_number: r.invoice_number || ('B2C-' + r.id.slice(0, 8).toUpperCase()), invoice_date: r.invoice_date,
     customer_name: r.customer_name || 'Walk-in Customer (B2C)', gstin: r.gst_number || '', total_amount: +r.total_amount,
     payment_status: r.payment_status || 'unpaid', amount_paid: +r.amount_paid || 0
@@ -246,13 +246,13 @@ async function removePayment(paymentId) {
 }
 
 async function deleteInvoiceFromList(type, id) {
-  const ok = await showConfirm('Move this invoice to Recycle Bin? You can restore it later.');
+  const ok = await showConfirm('Permanently delete this invoice? This cannot be undone.');
   if (!ok) return;
   const table = type === 'b2b' ? 'b2b_invoices' : 'b2c_invoices';
-  const { error } = await _supabase.from(table).update({ is_deleted: true, deleted_at: new Date().toISOString() }).eq('id', id);
+  await cascadeInvoiceItemsDelete(type, id); // items + HSN + stock reversal first
+  const { error } = await _supabase.from(table).delete().eq('id', id);
   if (error) { showToast('Error: ' + error.message, 'error'); return; }
-  await cascadeInvoiceItemsDelete(type, id);
-  showToast('Invoice moved to Recycle Bin.', 'success');
+  showToast('Invoice permanently deleted.', 'success');
   if (typeof refreshStorageStatus === 'function') refreshStorageStatus();
   const user = await getCurrentUser();
   if (user) await loadInvoiceList(user.id);

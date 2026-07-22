@@ -246,28 +246,11 @@ async function saveSalesReturnWithItems(headerBase, editId) {
   }
 }
 
-// ── Cascade delete / restore (invoked from sales-returns.js,
-// recycle-bin.js) ────────────────────────────────────
+// ── Cascade permanent delete (invoked from sales-returns.js) ──
 async function cascadeSalesReturnItemsDelete(id) {
   try {
     await apiFetch(`/sales_returns/${id}/cascade-delete`, { method: 'POST' });
   } catch (error) {
     showToast('Error: ' + (error.message || 'cascade delete failed'), 'error');
-  }
-}
-
-async function cascadeSalesReturnItemsRestore(id) {
-  try {
-    await apiFetch(`/sales_returns/${id}/cascade-restore`, { method: 'POST' });
-  } catch (error) {
-    showToast('Error: ' + (error.message || 'cascade restore failed'), 'error');
-  }
-}
-
-async function cascadeSalesReturnItemsHardDelete(id) {
-  try {
-    await apiFetch(`/sales_returns/${id}/cascade-hard-delete`, { method: 'POST' });
-  } catch (error) {
-    showToast('Error: ' + (error.message || 'cascade hard-delete failed'), 'error');
   }
 }

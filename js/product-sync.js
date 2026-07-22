@@ -168,7 +168,7 @@ async function syncProducts(userId) {
     setProductSyncMeta({
       lastSyncAt: new Date().toISOString(),
       status: 'success',
-      message: `Synced ${result.total} product(s) — ${result.inserted} new, ${result.updated} updated, ${result.deactivated} deactivated`
+      message: `Synced ${result.total} product(s) — ${result.inserted} new, ${result.updated} updated`
         + (result.skippedInvalid ? `, ${result.skippedInvalid} unavailable (kept last known version)` : '')
     });
     return { ok: true, ...result };
@@ -219,10 +219,17 @@ function mapRemoteProduct(raw) {
 const PRODUCT_SYNC_COMPARE_FIELDS = ['name','sku','category','hsn_code','gst_percentage','unit','default_rate','warranty','description','image_url','stock'];
 
 function productPayloadChanged(existing, incoming) {
-  return PRODUCT_SYNC_COMPARE_FIELDS.some(f => String(existing[f] ?? '') !== String(incoming[f] ?? ''))
-    || !!existing.is_deleted !== !!incoming.is_deleted;
+  return PRODUCT_SYNC_COMPARE_FIELDS.some(f => String(existing[f] ?? '') !== String(incoming[f] ?? ''));
 }
 
+// No soft-delete/Recycle Bin exists anymore, so sync only ever adds or
+// updates a product — it never removes one. A product the website marks
+// unpublished, or that's missing entirely from this response, is simply
+// left untouched (whatever's already stored here stands) rather than
+// deleted, since an automated sync silently hard-deleting inventory on
+// a false negative (a pagination glitch, a temporary unpublish) would be
+// far more destructive than leaving stale data for the next successful
+// sync to correct.
 async function applyProductSync(userId, remoteRaw) {
   const mapped = remoteRaw.map(mapRemoteProduct);
 
@@ -230,21 +237,15 @@ async function applyProductSync(userId, remoteRaw) {
   const existingByExternalId = {};
   (existing || []).forEach(p => { if (p.external_id) existingByExternalId[p.external_id] = p; });
 
-  let inserted = 0, updated = 0, deactivated = 0, skippedInvalid = 0;
-  const seenExternalIds = new Set();
+  let inserted = 0, updated = 0, skippedInvalid = 0;
 
   for (const rp of mapped) {
     if (!rp.external_id) continue; // no id at all — can't match to anything, ignore entirely
 
-    // Seen in this sync regardless of whether the rest of the record is
-    // usable — this is what stops the deactivation pass below from
-    // treating "one bad record" the same as "genuinely removed".
-    seenExternalIds.add(rp.external_id);
-
-    if (!rp.name) {
-      // A product came back unavailable/incomplete this sync (e.g. a
-      // partial record from the website) — keep the last synchronized
-      // version untouched rather than overwrite it with junk or drop it.
+    if (!rp.name || !rp.active) {
+      // A product came back unavailable/incomplete/unpublished this
+      // sync — keep the last synchronized version untouched rather than
+      // overwrite it with junk or remove it.
       skippedInvalid++;
       continue;
     }
@@ -254,8 +255,7 @@ async function applyProductSync(userId, remoteRaw) {
       user_id: userId, name: rp.name, sku: rp.sku, category: rp.category,
       hsn_code: rp.hsn_code, type: 'goods', gst_percentage: rp.gst_percentage, unit: rp.unit,
       default_rate: rp.default_rate, warranty: rp.warranty, description: rp.description,
-      image_url: rp.image_url, stock: rp.stock, external_id: rp.external_id, source: 'synced',
-      is_deleted: !rp.active, deleted_at: rp.active ? null : new Date().toISOString()
+      image_url: rp.image_url, stock: rp.stock, external_id: rp.external_id, source: 'synced'
     };
     if (match) {
       if (productPayloadChanged(match, payload)) {
@@ -268,14 +268,5 @@ async function applyProductSync(userId, remoteRaw) {
     }
   }
 
-  // Anything previously synced but genuinely absent from this response
-  // (not just malformed) → inactive.
-  for (const p of (existing || [])) {
-    if (p.source === 'synced' && p.external_id && !seenExternalIds.has(p.external_id) && !p.is_deleted) {
-      await _supabase.from('products').update({ is_deleted: true, deleted_at: new Date().toISOString() }).eq('id', p.id);
-      deactivated++;
-    }
-  }
-
-  return { total: mapped.filter(p => p.external_id && p.name).length, inserted, updated, deactivated, skippedInvalid };
+  return { total: mapped.filter(p => p.external_id && p.name).length, inserted, updated, skippedInvalid };
 }

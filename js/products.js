@@ -67,14 +67,14 @@ async function runManualSync() {
   renderSyncStatusBar();
 
   if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fas fa-sync"></i> Sync Now'; }
-  if (result.ok) showToast(`Product sync complete — ${result.inserted} new, ${result.updated} updated, ${result.deactivated} deactivated.`, 'success');
+  if (result.ok) showToast(`Product sync complete — ${result.inserted} new, ${result.updated} updated.`, 'success');
   else if (result.reason === 'not_configured') showToast('Product Sync is not set up yet — add your Product API URL in Business Profile > Settings.', 'warning');
   else showToast('Product sync failed: ' + result.reason, 'error');
 }
 
 async function loadProducts(userId) {
   const { data } = await _supabase.from('products').select('*').eq('user_id', userId).order('name', { ascending: true });
-  prodAllData = (data || []).filter(r => !r.is_deleted);
+  prodAllData = (data || []);
   prodPage = 1;
   renderProdTable(prodAllData);
 }
@@ -140,11 +140,11 @@ function renderProdPagination(total) {
 async function deleteProduct(id) {
   const rec = prodAllData.find(r => r.id === id);
   if (!rec || rec.source !== 'local') return;
-  const ok = await showConfirm('Delete this local draft product? You can restore it later from Recycle Bin.');
+  const ok = await showConfirm('Permanently delete this local draft product? This cannot be undone.');
   if (!ok) return;
-  const { error } = await _supabase.from('products').update({ is_deleted: true, deleted_at: new Date().toISOString() }).eq('id', id);
+  const { error } = await _supabase.from('products').delete().eq('id', id);
   if (error) { showToast('Error: ' + error.message, 'error'); return; }
-  showToast('Product moved to Recycle Bin.');
+  showToast('Product permanently deleted.');
   prodAllData = prodAllData.filter(r => r.id !== id);
   renderProdTable(prodAllData);
 }
@@ -167,7 +167,7 @@ function setupProdSearch() {
 // display, Excel import auto-classification)
 async function loadProductsList(userId) {
   const { data } = await _supabase.from('products').select('*').eq('user_id', userId);
-  return (data || []).filter(r => !r.is_deleted);
+  return (data || []);
 }
 
 function findProductByName(list, name) {

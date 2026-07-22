@@ -52,7 +52,6 @@
       <a href="gstr3b.html"  class="menu-item"><i class="fas fa-calculator"></i> GSTR-3B Summary</a>
       <div class="menu-section">Settings</div>
       <a href="#" class="menu-item" onclick="openProfileModal();return false;"><i class="fas fa-building"></i> Business Profile</a>
-      <a href="recycle-bin.html" class="menu-item"><i class="fas fa-trash-restore"></i> Recycle Bin</a>
     </nav>
     <div class="sidebar-user">
       <div class="user-avatar"><i class="fas fa-user"></i></div>
@@ -366,8 +365,8 @@ async function loadDashboardData(userId, start, end) {
     _supabase.from('b2b_invoices').select('*').eq('user_id', userId).gte('invoice_date', start).lte('invoice_date', end),
     _supabase.from('b2c_invoices').select('*').eq('user_id', userId).gte('invoice_date', start).lte('invoice_date', end)
   ]);
-  const b2b = (b2bRes.data || []).filter(r => !r.is_deleted);
-  const b2c = (b2cRes.data || []).filter(r => !r.is_deleted);
+  const b2b = (b2bRes.data || []);
+  const b2c = (b2cRes.data || []);
   const all = [...b2b, ...b2c];
 
   const totalB2BTax = b2b.reduce((s,r)=>s+ +r.taxable_amount,0);
@@ -411,13 +410,13 @@ async function loadInsights(userId) {
   // any historical HSN entries saved before HSN Summary became a live
   // report, so past product sales aren't lost from this list.
   const [b2bHsnRes, b2cHsnRes, itemsRes] = await Promise.all([
-    _supabase.from('b2b_hsn').select('product_name,total_invoice_value,is_deleted,source').eq('user_id', userId),
-    _supabase.from('b2c_hsn').select('product_name,total_invoice_value,is_deleted,source').eq('user_id', userId),
-    _supabase.from('invoice_items').select('product_name,total_amount,is_deleted').eq('user_id', userId)
+    _supabase.from('b2b_hsn').select('product_name,total_invoice_value,source').eq('user_id', userId),
+    _supabase.from('b2c_hsn').select('product_name,total_invoice_value,source').eq('user_id', userId),
+    _supabase.from('invoice_items').select('product_name,total_amount').eq('user_id', userId)
   ]);
   const totals = {};
-  const legacyRows = [...(b2bHsnRes.data || []), ...(b2cHsnRes.data || [])].filter(r => !r.is_deleted && r.source !== 'auto');
-  const itemRows   = (itemsRes.data || []).filter(r => !r.is_deleted);
+  const legacyRows = [...(b2bHsnRes.data || []), ...(b2cHsnRes.data || [])].filter(r => r.source !== 'auto');
+  const itemRows   = (itemsRes.data || []);
   legacyRows.forEach(r => { totals[r.product_name] = (totals[r.product_name] || 0) + (+r.total_invoice_value || 0); });
   itemRows.forEach(r => { totals[r.product_name] = (totals[r.product_name] || 0) + (+r.total_amount || 0); });
   const top = Object.entries(totals).sort((a, b) => b[1] - a[1]).slice(0, 5);
@@ -444,10 +443,10 @@ async function loadInsights(userId) {
 async function loadTodayStats(userId) {
   const today = toISO(new Date());
   const [{ data: b2b }, { data: b2c }] = await Promise.all([
-    _supabase.from('b2b_invoices').select('total_amount,invoice_date,is_deleted').eq('user_id', userId).eq('invoice_date', today),
-    _supabase.from('b2c_invoices').select('total_amount,invoice_date,is_deleted').eq('user_id', userId).eq('invoice_date', today)
+    _supabase.from('b2b_invoices').select('total_amount,invoice_date').eq('user_id', userId).eq('invoice_date', today),
+    _supabase.from('b2c_invoices').select('total_amount,invoice_date').eq('user_id', userId).eq('invoice_date', today)
   ]);
-  const all = [...(b2b || []), ...(b2c || [])].filter(r => !r.is_deleted);
+  const all = [...(b2b || []), ...(b2c || [])];
   const total = all.reduce((s, r) => s + (+r.total_amount || 0), 0);
   const set = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
   set('statTodaySales', formatCurrency(total));
@@ -461,9 +460,9 @@ async function loadMonthlyExpenses(userId) {
   const now = new Date();
   const start = toISO(new Date(now.getFullYear(), now.getMonth(), 1));
   const end = toISO(new Date(now.getFullYear(), now.getMonth() + 1, 0));
-  const { data } = await _supabase.from('expenses').select('amount,expense_date,is_deleted')
+  const { data } = await _supabase.from('expenses').select('amount,expense_date')
     .eq('user_id', userId).gte('expense_date', start).lte('expense_date', end);
-  const total = (data || []).filter(r => !r.is_deleted).reduce((s, r) => s + (+r.amount || 0), 0);
+  const total = (data || []).reduce((s, r) => s + (+r.amount || 0), 0);
   const set = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
   set('statMonthlyExpenses', formatCurrency(total));
 }
@@ -474,9 +473,9 @@ async function loadMonthlySalesReturns(userId) {
   const now = new Date();
   const start = toISO(new Date(now.getFullYear(), now.getMonth(), 1));
   const end = toISO(new Date(now.getFullYear(), now.getMonth() + 1, 0));
-  const { data } = await _supabase.from('sales_returns').select('total_amount,return_date,is_deleted')
+  const { data } = await _supabase.from('sales_returns').select('total_amount,return_date')
     .eq('user_id', userId).gte('return_date', start).lte('return_date', end);
-  const total = (data || []).filter(r => !r.is_deleted).reduce((s, r) => s + (+r.total_amount || 0), 0);
+  const total = (data || []).reduce((s, r) => s + (+r.total_amount || 0), 0);
   const set = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
   set('statMonthlySalesReturns', formatCurrency(total));
 }
@@ -485,10 +484,10 @@ async function loadMonthlySalesReturns(userId) {
 // selected period; a business needs to know what's owed right now) ──
 async function loadPendingPayments(userId) {
   const [{ data: b2b }, { data: b2c }] = await Promise.all([
-    _supabase.from('b2b_invoices').select('total_amount,amount_paid,payment_status,is_deleted').eq('user_id', userId),
-    _supabase.from('b2c_invoices').select('total_amount,amount_paid,payment_status,is_deleted').eq('user_id', userId)
+    _supabase.from('b2b_invoices').select('total_amount,amount_paid,payment_status').eq('user_id', userId),
+    _supabase.from('b2c_invoices').select('total_amount,amount_paid,payment_status').eq('user_id', userId)
   ]);
-  const all = [...(b2b || []), ...(b2c || [])].filter(r => !r.is_deleted && (r.payment_status || 'unpaid') !== 'paid');
+  const all = [...(b2b || []), ...(b2c || [])].filter(r => (r.payment_status || 'unpaid') !== 'paid');
   const pending = all.reduce((s, r) => s + Math.max(0, (+r.total_amount || 0) - (+r.amount_paid || 0)), 0);
   const set = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
   set('statPendingPayments', formatCurrency(pending));
@@ -499,9 +498,9 @@ async function loadPendingPayments(userId) {
 // have, since that one is revenue-only and includes pre-itemization
 // legacy HSN rows that don't reliably carry a quantity). ──
 async function loadTopSellingProducts(userId) {
-  const { data } = await _supabase.from('invoice_items').select('product_name,quantity,total_amount,is_deleted').eq('user_id', userId);
+  const { data } = await _supabase.from('invoice_items').select('product_name,quantity,total_amount').eq('user_id', userId);
   const byProduct = {};
-  (data || []).filter(r => !r.is_deleted).forEach(r => {
+  (data || []).forEach(r => {
     const key = r.product_name;
     if (!byProduct[key]) byProduct[key] = { name: key, qty: 0, revenue: 0 };
     byProduct[key].qty += +r.quantity || 0;
@@ -521,16 +520,16 @@ async function loadTopSellingProducts(userId) {
 // glance — no new schema, just a sorted read across existing tables. ──
 async function loadRecentActivity(userId) {
   const [b2b, b2c, cust, prod] = await Promise.all([
-    _supabase.from('b2b_invoices').select('customer_name,invoice_number,total_amount,created_at,is_deleted').eq('user_id', userId),
-    _supabase.from('b2c_invoices').select('customer_name,invoice_number,total_amount,created_at,is_deleted').eq('user_id', userId),
-    _supabase.from('customers').select('name,created_at,is_deleted').eq('user_id', userId),
-    _supabase.from('products').select('name,created_at,is_deleted,source').eq('user_id', userId)
+    _supabase.from('b2b_invoices').select('customer_name,invoice_number,total_amount,created_at').eq('user_id', userId),
+    _supabase.from('b2c_invoices').select('customer_name,invoice_number,total_amount,created_at').eq('user_id', userId),
+    _supabase.from('customers').select('name,created_at').eq('user_id', userId),
+    _supabase.from('products').select('name,created_at,source').eq('user_id', userId)
   ]);
   const events = [];
-  (b2b.data || []).filter(r => !r.is_deleted).forEach(r => events.push({ at: r.created_at, icon: 'fa-file-invoice', text: `Invoice ${r.invoice_number || ''} for ${r.customer_name} — ₹${formatNum(r.total_amount)}` }));
-  (b2c.data || []).filter(r => !r.is_deleted).forEach(r => events.push({ at: r.created_at, icon: 'fa-file-invoice', text: `Invoice ${r.invoice_number || ''} for ${r.customer_name || 'Walk-in Customer'} — ₹${formatNum(r.total_amount)}` }));
-  (cust.data || []).filter(r => !r.is_deleted).forEach(r => events.push({ at: r.created_at, icon: 'fa-address-book', text: `New customer added: ${r.name}` }));
-  (prod.data || []).filter(r => !r.is_deleted && r.source === 'local').forEach(r => events.push({ at: r.created_at, icon: 'fa-box', text: `Product added: ${r.name}` }));
+  (b2b.data || []).forEach(r => events.push({ at: r.created_at, icon: 'fa-file-invoice', text: `Invoice ${r.invoice_number || ''} for ${r.customer_name} — ₹${formatNum(r.total_amount)}` }));
+  (b2c.data || []).forEach(r => events.push({ at: r.created_at, icon: 'fa-file-invoice', text: `Invoice ${r.invoice_number || ''} for ${r.customer_name || 'Walk-in Customer'} — ₹${formatNum(r.total_amount)}` }));
+  (cust.data || []).forEach(r => events.push({ at: r.created_at, icon: 'fa-address-book', text: `New customer added: ${r.name}` }));
+  (prod.data || []).filter(r => r.source === 'local').forEach(r => events.push({ at: r.created_at, icon: 'fa-box', text: `Product added: ${r.name}` }));
 
   events.sort((a, b) => (b.at || '').localeCompare(a.at || ''));
   const top = events.slice(0, 10);
@@ -553,7 +552,7 @@ const LOW_STOCK_THRESHOLD = 10;
 
 async function loadInventoryIntelligence(userId) {
   const { data: products } = await _supabase.from('products').select('*').eq('user_id', userId);
-  const tracked = (products || []).filter(p => !p.is_deleted && p.stock !== null && p.stock !== undefined);
+  const tracked = (products || []).filter(p => p.stock !== null && p.stock !== undefined);
 
   const outOfStock = tracked.filter(p => +p.stock <= 0);
   const lowStock = tracked.filter(p => +p.stock > 0 && +p.stock <= LOW_STOCK_THRESHOLD).sort((a, b) => a.stock - b.stock);
@@ -577,16 +576,16 @@ async function loadInventoryIntelligence(userId) {
   // to its invoice's invoice_date via a small id lookup.
   const sinceDate = toISO(new Date(Date.now() - 30 * 24 * 60 * 60 * 1000));
   const [{ data: b2bInv }, { data: b2cInv }, { data: items }] = await Promise.all([
-    _supabase.from('b2b_invoices').select('id,invoice_date,is_deleted').eq('user_id', userId),
-    _supabase.from('b2c_invoices').select('id,invoice_date,is_deleted').eq('user_id', userId),
-    _supabase.from('invoice_items').select('product_id,quantity,invoice_id,invoice_type,is_deleted').eq('user_id', userId)
+    _supabase.from('b2b_invoices').select('id,invoice_date').eq('user_id', userId),
+    _supabase.from('b2c_invoices').select('id,invoice_date').eq('user_id', userId),
+    _supabase.from('invoice_items').select('product_id,quantity,invoice_id,invoice_type').eq('user_id', userId)
   ]);
   const invoiceDate = {};
-  (b2bInv || []).forEach(r => { if (!r.is_deleted) invoiceDate['b2b:' + r.id] = r.invoice_date; });
-  (b2cInv || []).forEach(r => { if (!r.is_deleted) invoiceDate['b2c:' + r.id] = r.invoice_date; });
+  (b2bInv || []).forEach(r => { invoiceDate['b2b:' + r.id] = r.invoice_date; });
+  (b2cInv || []).forEach(r => { invoiceDate['b2c:' + r.id] = r.invoice_date; });
 
   const soldQty = {};
-  (items || []).filter(r => !r.is_deleted && r.product_id).forEach(r => {
+  (items || []).filter(r => r.product_id).forEach(r => {
     const d = invoiceDate[r.invoice_type + ':' + r.invoice_id];
     if (!d || d < sinceDate) return;
     soldQty[r.product_id] = (soldQty[r.product_id] || 0) + (+r.quantity || 0);
@@ -635,8 +634,8 @@ async function loadYearMonthSummary(userId) {
     _supabase.from('b2b_invoices').select('*').eq('user_id', userId).gte('invoice_date', `${y}-01-01`).lte('invoice_date', `${y}-12-31`),
     _supabase.from('b2c_invoices').select('*').eq('user_id', userId).gte('invoice_date', `${y}-01-01`).lte('invoice_date', `${y}-12-31`)
   ]);
-  const b2b = (b2bAll.data || []).filter(r => !r.is_deleted);
-  const b2c = (b2cAll.data || []).filter(r => !r.is_deleted);
+  const b2b = (b2bAll.data || []);
+  const b2c = (b2cAll.data || []);
 
   const tbody = document.getElementById('monthSummaryBody');
   const tfoot = document.getElementById('monthSummaryFoot');
