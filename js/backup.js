@@ -7,17 +7,15 @@
 // instead of the browser's localStorage.
 // =============================================
 
+// Row counts only (server/routes/backup.js's COUNT(*) endpoint) — the
+// storage bar only ever displays numbers, never needs the full backup
+// payload /export returns (that stays reserved for the actual
+// Backup/Restore buttons below, which genuinely need full rows).
 async function getStorageStats() {
   try {
-    const backup = await apiFetch('/backup/export');
-    const stats = {};
-    let total = 0;
-    Object.keys(backup).forEach(k => {
-      if (k.startsWith('_')) return;
-      stats[k] = backup[k].length;
-      total += backup[k].length;
-    });
-    stats.total = total;
+    const counts = await apiFetch('/backup/counts');
+    const stats = { ...counts };
+    stats.total = Object.values(counts).reduce((s, n) => s + (+n || 0), 0);
     const lastBackup = localStorage.getItem('gst_last_backup');
     stats.lastBackup = lastBackup ? new Date(lastBackup).toLocaleString('en-IN') : 'Never';
     return stats;

@@ -359,14 +359,56 @@ async function onYearMonthChange() {
   hideLoader();
 }
 
-// ── Dashboard data load ─────────────────────────────────
-async function loadDashboardData(userId, start, end) {
-  const [b2bRes, b2cRes] = await Promise.all([
-    _supabase.from('b2b_invoices').select('*').eq('user_id', userId).gte('invoice_date', start).lte('invoice_date', end),
-    _supabase.from('b2c_invoices').select('*').eq('user_id', userId).gte('invoice_date', start).lte('invoice_date', end)
+// ── Shared in-memory dashboard data ──────────────────────
+// Every widget function below reads from this ONE cache instead of
+// hitting the network itself. Before this, invoices were fetched up
+// to 6x, products 3x, and invoice_items 3x across one dashboard load
+// (measured) — each widget issuing its own near-identical query. Now
+// b2b_invoices/b2c_invoices/products/invoice_items/b2b_hsn/b2c_hsn/
+// customers are each fetched exactly once per load; every widget
+// filters/aggregates the same in-memory arrays instead.
+let _dashCache = null;
+let _dashUserId = null;
+
+async function loadDashboardSharedData(userId) {
+  const [b2bRes, b2cRes, prodRes, itemsRes, b2bHsnRes, b2cHsnRes, custRes] = await Promise.all([
+    _supabase.from('b2b_invoices').select('*').eq('user_id', userId),
+    _supabase.from('b2c_invoices').select('*').eq('user_id', userId),
+    _supabase.from('products').select('*').eq('user_id', userId),
+    _supabase.from('invoice_items').select('*').eq('user_id', userId),
+    _supabase.from('b2b_hsn').select('product_name,total_invoice_value,source').eq('user_id', userId),
+    _supabase.from('b2c_hsn').select('product_name,total_invoice_value,source').eq('user_id', userId),
+    _supabase.from('customers').select('name,created_at').eq('user_id', userId)
   ]);
-  const b2b = (b2bRes.data || []);
-  const b2c = (b2cRes.data || []);
+  _dashUserId = userId;
+  _dashCache = {
+    b2b: b2bRes.data || [],
+    b2c: b2cRes.data || [],
+    products: prodRes.data || [],
+    items: itemsRes.data || [],
+    b2bHsn: b2bHsnRes.data || [],
+    b2cHsn: b2cHsnRes.data || [],
+    customers: custRes.data || []
+  };
+  return _dashCache;
+}
+
+// Fetches the shared cache if it isn't already populated for this user
+// — the normal init path always populates it up front (see
+// DOMContentLoaded below), so this is a safety fallback for any call
+// path that might run before that (e.g. onYearMonthChange firing
+// unusually early), not the expected common case.
+async function ensureDashCache(userId) {
+  if (!_dashCache || _dashUserId !== userId) await loadDashboardSharedData(userId);
+  return _dashCache;
+}
+
+// ── Dashboard data load (stat cards + charts + top customers) ──────
+// Reads the shared cache — issues no network request of its own.
+async function loadDashboardData(userId, start, end) {
+  const cache = await ensureDashCache(userId);
+  const b2b = cache.b2b.filter(r => r.invoice_date >= start && r.invoice_date <= end);
+  const b2c = cache.b2c.filter(r => r.invoice_date >= start && r.invoice_date <= end);
   const all = [...b2b, ...b2c];
 
   const totalB2BTax = b2b.reduce((s,r)=>s+ +r.taxable_amount,0);
@@ -404,19 +446,16 @@ function renderTopCustomers(b2b) {
     : '<p class="text-muted-sm">No B2B invoices in this period.</p>';
 }
 
-// ── Top Products & Import Statistics (all-time, loaded once) ──
+// ── Top Products & Import Statistics (all-time) ──
+// Reads the shared cache — issues no network request of its own.
 async function loadInsights(userId) {
   // Sourced from invoice line items (the single source of truth) plus
   // any historical HSN entries saved before HSN Summary became a live
   // report, so past product sales aren't lost from this list.
-  const [b2bHsnRes, b2cHsnRes, itemsRes] = await Promise.all([
-    _supabase.from('b2b_hsn').select('product_name,total_invoice_value,source').eq('user_id', userId),
-    _supabase.from('b2c_hsn').select('product_name,total_invoice_value,source').eq('user_id', userId),
-    _supabase.from('invoice_items').select('product_name,total_amount').eq('user_id', userId)
-  ]);
+  const cache = await ensureDashCache(userId);
   const totals = {};
-  const legacyRows = [...(b2bHsnRes.data || []), ...(b2cHsnRes.data || [])].filter(r => r.source !== 'auto');
-  const itemRows   = (itemsRes.data || []);
+  const legacyRows = [...cache.b2bHsn, ...cache.b2cHsn].filter(r => r.source !== 'auto');
+  const itemRows   = cache.items;
   legacyRows.forEach(r => { totals[r.product_name] = (totals[r.product_name] || 0) + (+r.total_invoice_value || 0); });
   itemRows.forEach(r => { totals[r.product_name] = (totals[r.product_name] || 0) + (+r.total_amount || 0); });
   const top = Object.entries(totals).sort((a, b) => b[1] - a[1]).slice(0, 5);
@@ -440,13 +479,11 @@ async function loadInsights(userId) {
 
 // ── Today's Sales / Invoices Today (always "right now", independent
 // of the year/month period filter above) ───────────────
+// Reads the shared cache — issues no network request of its own.
 async function loadTodayStats(userId) {
+  const cache = await ensureDashCache(userId);
   const today = toISO(new Date());
-  const [{ data: b2b }, { data: b2c }] = await Promise.all([
-    _supabase.from('b2b_invoices').select('total_amount,invoice_date').eq('user_id', userId).eq('invoice_date', today),
-    _supabase.from('b2c_invoices').select('total_amount,invoice_date').eq('user_id', userId).eq('invoice_date', today)
-  ]);
-  const all = [...(b2b || []), ...(b2c || [])];
+  const all = [...cache.b2b, ...cache.b2c].filter(r => r.invoice_date === today);
   const total = all.reduce((s, r) => s + (+r.total_amount || 0), 0);
   const set = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
   set('statTodaySales', formatCurrency(total));
@@ -482,12 +519,10 @@ async function loadMonthlySalesReturns(userId) {
 
 // ── Pending Payments (all-time open balance — not scoped to the
 // selected period; a business needs to know what's owed right now) ──
+// Reads the shared cache — issues no network request of its own.
 async function loadPendingPayments(userId) {
-  const [{ data: b2b }, { data: b2c }] = await Promise.all([
-    _supabase.from('b2b_invoices').select('total_amount,amount_paid,payment_status').eq('user_id', userId),
-    _supabase.from('b2c_invoices').select('total_amount,amount_paid,payment_status').eq('user_id', userId)
-  ]);
-  const all = [...(b2b || []), ...(b2c || [])].filter(r => (r.payment_status || 'unpaid') !== 'paid');
+  const cache = await ensureDashCache(userId);
+  const all = [...cache.b2b, ...cache.b2c].filter(r => (r.payment_status || 'unpaid') !== 'paid');
   const pending = all.reduce((s, r) => s + Math.max(0, (+r.total_amount || 0) - (+r.amount_paid || 0)), 0);
   const set = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
   set('statPendingPayments', formatCurrency(pending));
@@ -497,10 +532,11 @@ async function loadPendingPayments(userId) {
 // items — the actual per-product unit count Top Products above doesn't
 // have, since that one is revenue-only and includes pre-itemization
 // legacy HSN rows that don't reliably carry a quantity). ──
+// Reads the shared cache — issues no network request of its own.
 async function loadTopSellingProducts(userId) {
-  const { data } = await _supabase.from('invoice_items').select('product_name,quantity,total_amount').eq('user_id', userId);
+  const cache = await ensureDashCache(userId);
   const byProduct = {};
-  (data || []).forEach(r => {
+  cache.items.forEach(r => {
     const key = r.product_name;
     if (!byProduct[key]) byProduct[key] = { name: key, qty: 0, revenue: 0 };
     byProduct[key].qty += +r.quantity || 0;
@@ -518,18 +554,14 @@ async function loadTopSellingProducts(userId) {
 // ── Recent Activity: last few invoices/customers/products by
 // created_at, merged into one feed. Purely a "what happened recently"
 // glance — no new schema, just a sorted read across existing tables. ──
+// Reads the shared cache — issues no network request of its own.
 async function loadRecentActivity(userId) {
-  const [b2b, b2c, cust, prod] = await Promise.all([
-    _supabase.from('b2b_invoices').select('customer_name,invoice_number,total_amount,created_at').eq('user_id', userId),
-    _supabase.from('b2c_invoices').select('customer_name,invoice_number,total_amount,created_at').eq('user_id', userId),
-    _supabase.from('customers').select('name,created_at').eq('user_id', userId),
-    _supabase.from('products').select('name,created_at,source').eq('user_id', userId)
-  ]);
+  const cache = await ensureDashCache(userId);
   const events = [];
-  (b2b.data || []).forEach(r => events.push({ at: r.created_at, icon: 'fa-file-invoice', text: `Invoice ${r.invoice_number || ''} for ${r.customer_name} — ₹${formatNum(r.total_amount)}` }));
-  (b2c.data || []).forEach(r => events.push({ at: r.created_at, icon: 'fa-file-invoice', text: `Invoice ${r.invoice_number || ''} for ${r.customer_name || 'Walk-in Customer'} — ₹${formatNum(r.total_amount)}` }));
-  (cust.data || []).forEach(r => events.push({ at: r.created_at, icon: 'fa-address-book', text: `New customer added: ${r.name}` }));
-  (prod.data || []).filter(r => r.source === 'local').forEach(r => events.push({ at: r.created_at, icon: 'fa-box', text: `Product added: ${r.name}` }));
+  cache.b2b.forEach(r => events.push({ at: r.created_at, icon: 'fa-file-invoice', text: `Invoice ${r.invoice_number || ''} for ${r.customer_name} — ₹${formatNum(r.total_amount)}` }));
+  cache.b2c.forEach(r => events.push({ at: r.created_at, icon: 'fa-file-invoice', text: `Invoice ${r.invoice_number || ''} for ${r.customer_name || 'Walk-in Customer'} — ₹${formatNum(r.total_amount)}` }));
+  cache.customers.forEach(r => events.push({ at: r.created_at, icon: 'fa-address-book', text: `New customer added: ${r.name}` }));
+  cache.products.filter(r => r.source === 'local').forEach(r => events.push({ at: r.created_at, icon: 'fa-box', text: `Product added: ${r.name}` }));
 
   events.sort((a, b) => (b.at || '').localeCompare(a.at || ''));
   const top = events.slice(0, 10);
@@ -550,9 +582,10 @@ async function loadRecentActivity(userId) {
 // have nothing meaningful to show here.
 const LOW_STOCK_THRESHOLD = 10;
 
+// Reads the shared cache — issues no network request of its own.
 async function loadInventoryIntelligence(userId) {
-  const { data: products } = await _supabase.from('products').select('*').eq('user_id', userId);
-  const tracked = (products || []).filter(p => p.stock !== null && p.stock !== undefined);
+  const cache = await ensureDashCache(userId);
+  const tracked = cache.products.filter(p => p.stock !== null && p.stock !== undefined);
 
   const outOfStock = tracked.filter(p => +p.stock <= 0);
   const lowStock = tracked.filter(p => +p.stock > 0 && +p.stock <= LOW_STOCK_THRESHOLD).sort((a, b) => a.stock - b.stock);
@@ -575,17 +608,12 @@ async function loadInventoryIntelligence(userId) {
   // invoice_items has no date of its own, so each line is matched back
   // to its invoice's invoice_date via a small id lookup.
   const sinceDate = toISO(new Date(Date.now() - 30 * 24 * 60 * 60 * 1000));
-  const [{ data: b2bInv }, { data: b2cInv }, { data: items }] = await Promise.all([
-    _supabase.from('b2b_invoices').select('id,invoice_date').eq('user_id', userId),
-    _supabase.from('b2c_invoices').select('id,invoice_date').eq('user_id', userId),
-    _supabase.from('invoice_items').select('product_id,quantity,invoice_id,invoice_type').eq('user_id', userId)
-  ]);
   const invoiceDate = {};
-  (b2bInv || []).forEach(r => { invoiceDate['b2b:' + r.id] = r.invoice_date; });
-  (b2cInv || []).forEach(r => { invoiceDate['b2c:' + r.id] = r.invoice_date; });
+  cache.b2b.forEach(r => { invoiceDate['b2b:' + r.id] = r.invoice_date; });
+  cache.b2c.forEach(r => { invoiceDate['b2c:' + r.id] = r.invoice_date; });
 
   const soldQty = {};
-  (items || []).filter(r => r.product_id).forEach(r => {
+  cache.items.filter(r => r.product_id).forEach(r => {
     const d = invoiceDate[r.invoice_type + ':' + r.invoice_id];
     if (!d || d < sinceDate) return;
     soldQty[r.product_id] = (soldQty[r.product_id] || 0) + (+r.quantity || 0);
@@ -630,12 +658,11 @@ async function loadYearMonthSummary(userId) {
     });
   }
 
-  const [b2bAll, b2cAll] = await Promise.all([
-    _supabase.from('b2b_invoices').select('*').eq('user_id', userId).gte('invoice_date', `${y}-01-01`).lte('invoice_date', `${y}-12-31`),
-    _supabase.from('b2c_invoices').select('*').eq('user_id', userId).gte('invoice_date', `${y}-01-01`).lte('invoice_date', `${y}-12-31`)
-  ]);
-  const b2b = (b2bAll.data || []);
-  const b2c = (b2cAll.data || []);
+  // Reads the shared cache — issues no network request of its own.
+  const cache = await ensureDashCache(userId);
+  const yearStart = `${y}-01-01`, yearEnd = `${y}-12-31`;
+  const b2b = cache.b2b.filter(r => r.invoice_date >= yearStart && r.invoice_date <= yearEnd);
+  const b2c = cache.b2c.filter(r => r.invoice_date >= yearStart && r.invoice_date <= yearEnd);
 
   const tbody = document.getElementById('monthSummaryBody');
   const tfoot = document.getElementById('monthSummaryFoot');
@@ -716,19 +743,47 @@ document.addEventListener('DOMContentLoaded', async () => {
   const user = await requireAuth();
   if (!user) return;
   initNavUser(user);
-  await checkAndShowProfileSetup(user.id);   // ask GST details if first time
   const { start, end } = getYearMonthRange();
-  await loadDashboardData(user.id, start, end);
-  await loadYearMonthSummary(user.id);
-  await loadInsights(user.id);
-  await loadTodayStats(user.id);
-  await loadMonthlyExpenses(user.id);
-  await loadMonthlySalesReturns(user.id);
-  await loadPendingPayments(user.id);
-  await loadTopSellingProducts(user.id);
-  await loadRecentActivity(user.id);
-  await loadInventoryIntelligence(user.id);
+
+  // Phase 2: every independent data source runs in parallel instead of
+  // a 10-stage sequential waterfall (measured at ~8s wall-clock in
+  // production, mostly per-request round-trip latency stacked 10x).
+  // loadDashboardSharedData is the one real prerequisite several
+  // critical-path renders below depend on; checkAndShowProfileSetup,
+  // Monthly Expenses, and Monthly Sales Returns are all genuinely
+  // independent of it and of each other, so they run alongside it.
+  await Promise.all([
+    loadDashboardSharedData(user.id),
+    checkAndShowProfileSetup(user.id),   // ask GST details if first time
+    loadMonthlyExpenses(user.id),
+    loadMonthlySalesReturns(user.id)
+  ]);
+
+  // Critical path: main stat cards + charts. Each of these now just
+  // filters the cache Promise.all already populated above — no further
+  // network round trips — so batching them is a formality, not a real
+  // parallelism win, but keeps the "no sequential awaits without a data
+  // dependency" rule consistent throughout.
+  await Promise.all([
+    loadDashboardData(user.id, start, end),
+    loadTodayStats(user.id),
+    loadPendingPayments(user.id)
+  ]);
+
+  // Phase 3: the loading overlay disappears as soon as the main stat
+  // cards and charts above are ready — everything below is secondary
+  // (12-month table, Top Products, Top Selling Products, Recent
+  // Activity, Inventory Intelligence) and continues loading in the
+  // background after the dashboard is already visible. Deferred via
+  // setTimeout(...,0) so the browser gets a paint pass in first.
   hideLoader();
+  setTimeout(async () => {
+    await loadYearMonthSummary(user.id);
+    await loadInsights(user.id);
+    await loadTopSellingProducts(user.id);
+    await loadRecentActivity(user.id);
+    await loadInventoryIntelligence(user.id);
+  }, 0);
 });
 </script>
 

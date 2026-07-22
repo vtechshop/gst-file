@@ -24,6 +24,20 @@ router.get('/export', asyncRoute(async (req, res) => {
   res.json(backup);
 }));
 
+// Lightweight companion to /export — the Dashboard's "Local Storage"
+// stat bar and Settings' "Data Storage" tile only ever need row counts,
+// never the full rows. COUNT(*) per table instead of SELECT * avoids
+// pulling (and JSON-serializing) the user's entire dataset just to
+// display a handful of numbers.
+router.get('/counts', asyncRoute(async (req, res) => {
+  const counts = {};
+  for (const table of DB_TABLES) {
+    const { rows } = await pool.query(`SELECT COUNT(*)::int AS n FROM ${table} WHERE user_id = $1`, [req.userId]);
+    counts[table] = rows[0].n;
+  }
+  res.json(counts);
+}));
+
 router.post('/import', asyncRoute(async (req, res) => {
   const backup = req.body;
   if (!backup || !backup._version) {
