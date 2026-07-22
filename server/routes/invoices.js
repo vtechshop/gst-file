@@ -4,11 +4,12 @@
 // single-table CRUD router (routes/generic.js):
 //   1. POST /:type/save-with-items   — invoice header + line items + stock
 //   2. POST /reserve-number           — Auto Generate invoice numbering
-//   3. POST /:type/:id/cascade-*      — Recycle Bin delete/restore/hard-delete
+//   3. POST /:type/:id/cascade-delete — permanent delete cascade (items +
+//                                       HSN + stock reversal)
 //
 // Frontend call sites (unchanged signatures, only their internals swap
 // to a single fetch() each): js/invoice-items.js's saveInvoiceWithItems()
-// and cascadeInvoiceItemsDelete/Restore/HardDelete(), js/invoice-entry.js's
+// and cascadeInvoiceItemsDelete(), js/invoice-entry.js's
 // reserveNextInvoiceNumber().
 const express = require('express');
 const pool = require('../db/pool');
@@ -57,7 +58,7 @@ router.post('/:type/save-with-items', asyncRoute(async (req, res) => {
   if (editId) badId(editId);
 
   const headerCols = TABLES[table].columns.filter(c => c !== 'id' && c !== 'user_id' && header && Object.prototype.hasOwnProperty.call(header, c));
-  const itemCols = TABLES.invoice_items.columns.filter(c => !['id','user_id','invoice_id','invoice_type','sort_order','is_deleted','deleted_at','created_at','updated_at'].includes(c));
+  const itemCols = TABLES.invoice_items.columns.filter(c => !['id','user_id','invoice_id','invoice_type','sort_order','created_at','updated_at'].includes(c));
 
   const client = await pool.connect();
   try {
@@ -140,8 +141,6 @@ router.post('/reserve-number', asyncRoute(async (req, res) => {
     const format = profRows[0]?.invoice_number_format || 'INV-###';
     let seq = Math.max(1, parseInt(profRows[0]?.invoice_current_sequence, 10) || 1);
 
-    // Both tables, INCLUDING soft-deleted rows — a deleted invoice's
-    // number must never be reissued.
     const [{ rows: b2bRows }, { rows: b2cRows }] = await Promise.all([
       client.query('SELECT invoice_number FROM b2b_invoices WHERE user_id = $1', [req.userId]),
       client.query('SELECT invoice_number FROM b2c_invoices WHERE user_id = $1', [req.userId])
@@ -168,12 +167,11 @@ router.post('/reserve-number', asyncRoute(async (req, res) => {
   }
 }));
 
-// ── 3) Recycle Bin cascades — invoice_items + HSN (+ stock), one transaction ──
-// The invoice HEADER row's own soft-delete/restore/hard-delete happens
-// separately via the generic router (js/recycle-bin.js and
-// js/invoice-list.js both already do that plain update/delete call
-// themselves) — these three endpoints only ever touch the DOWNSTREAM
-// rows a header row's state change cascades to.
+// ── 3) Permanent delete cascade — invoice_items + HSN + stock reversal,
+// one transaction. The invoice HEADER row's own delete happens
+// separately via the generic router's plain (already permanent)
+// DELETE (js/invoice-list.js does that call itself) — this endpoint
+// only ever touches the DOWNSTREAM rows a header delete cascades to.
 router.post('/:type/:id/cascade-delete', asyncRoute(async (req, res) => {
   badType(req.params.type);
   const { type, id } = req.params;
@@ -187,62 +185,6 @@ router.post('/:type/:id/cascade-delete', asyncRoute(async (req, res) => {
     );
     for (const it of items) await applyStockDelta(client, req.userId, it.product_id, +it.quantity || 0);
 
-    const now = new Date().toISOString();
-    await client.query(
-      'UPDATE invoice_items SET is_deleted = true, deleted_at = $1 WHERE invoice_id = $2 AND invoice_type = $3 AND user_id = $4',
-      [now, id, type, req.userId]
-    );
-    await client.query(
-      `UPDATE ${hsnTable(type)} SET is_deleted = true, deleted_at = $1 WHERE source_invoice_id = $2 AND source_invoice_type = $3 AND user_id = $4`,
-      [now, id, type, req.userId]
-    );
-    await client.query('COMMIT');
-    res.json({ ok: true });
-  } catch (err) {
-    await client.query('ROLLBACK');
-    throw err;
-  } finally {
-    client.release();
-  }
-}));
-
-router.post('/:type/:id/cascade-restore', asyncRoute(async (req, res) => {
-  badType(req.params.type);
-  const { type, id } = req.params;
-  badId(id);
-  const client = await pool.connect();
-  try {
-    await client.query('BEGIN');
-    await client.query(
-      'UPDATE invoice_items SET is_deleted = false, deleted_at = null WHERE invoice_id = $1 AND invoice_type = $2 AND user_id = $3',
-      [id, type, req.userId]
-    );
-    await client.query(
-      `UPDATE ${hsnTable(type)} SET is_deleted = false, deleted_at = null WHERE source_invoice_id = $1 AND source_invoice_type = $2 AND user_id = $3`,
-      [id, type, req.userId]
-    );
-    const { rows: items } = await client.query(
-      'SELECT product_id, quantity FROM invoice_items WHERE invoice_id = $1 AND invoice_type = $2 AND user_id = $3',
-      [id, type, req.userId]
-    );
-    for (const it of items) await applyStockDelta(client, req.userId, it.product_id, -(+it.quantity || 0));
-    await client.query('COMMIT');
-    res.json({ ok: true });
-  } catch (err) {
-    await client.query('ROLLBACK');
-    throw err;
-  } finally {
-    client.release();
-  }
-}));
-
-router.post('/:type/:id/cascade-hard-delete', asyncRoute(async (req, res) => {
-  badType(req.params.type);
-  const { type, id } = req.params;
-  badId(id);
-  const client = await pool.connect();
-  try {
-    await client.query('BEGIN');
     await client.query('DELETE FROM invoice_items WHERE invoice_id = $1 AND invoice_type = $2 AND user_id = $3', [id, type, req.userId]);
     await client.query(
       `DELETE FROM ${hsnTable(type)} WHERE source_invoice_id = $1 AND source_invoice_type = $2 AND user_id = $3`,

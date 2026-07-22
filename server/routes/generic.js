@@ -113,18 +113,18 @@ const TABLES = {
   },
   customers: {
     columns: ['id','user_id','name','gstin','phone','email','address','state',
-      'is_deleted','deleted_at','created_at','updated_at']
+      'created_at','updated_at']
   },
   cdn_notes: {
     columns: ['id','user_id','note_type','note_number','note_date','original_invoice',
       'customer_name','gstin','reason','taxable_amount','gst_percentage','supply_type',
-      'igst','cgst','sgst','gst_amount','total_amount','is_deleted','deleted_at',
+      'igst','cgst','sgst','gst_amount','total_amount',
       'created_at','updated_at']
   },
   products: {
     columns: ['id','user_id','name','hsn_code','type','gst_percentage','default_rate',
       'unit','description','sku','category','warranty','image_url','external_id',
-      'source','stock','is_deleted','deleted_at','created_at','updated_at']
+      'source','stock','created_at','updated_at']
   },
   import_mappings: {
     columns: ['id','user_id','import_type','mapping','created_at','updated_at']
@@ -139,7 +139,7 @@ const TABLES = {
       'total_amount','supply_type','igst','cgst','sgst','transport_required',
       'vehicle_number','transporter_name','transport_mode','transport_distance_km',
       'lr_number','lr_date','transporter_gstin','vehicle_type','dispatch_from','dispatch_to',
-      'payment_status','amount_paid','is_deleted','deleted_at',
+      'payment_status','amount_paid',
       'created_at','updated_at']
   },
   b2c_invoices: {
@@ -148,77 +148,77 @@ const TABLES = {
       'supply_type','igst','cgst','sgst','invoice_date','transport_required',
       'vehicle_number','transporter_name','transport_mode','transport_distance_km',
       'lr_number','lr_date','transporter_gstin','vehicle_type','dispatch_from','dispatch_to',
-      'payment_status','amount_paid','is_deleted','deleted_at',
+      'payment_status','amount_paid',
       'created_at','updated_at']
   },
   b2b_hsn: {
     // Legacy — no longer written to directly by normal invoice flow, but
-    // the Recycle Bin cascade paths still need PATCH (restore) and
-    // DELETE (hard-delete) here, so only direct INSERT is blocked.
+    // the cascade-delete path (server/routes/invoices.js) still needs
+    // DELETE here, so only direct INSERT is blocked.
     insertable: false,
     columns: ['id','user_id','hsn_code','product_name','type','quantity','taxable_value',
       'gst_percentage','supply_type','igst','cgst','sgst','total_gst','total_invoice_value',
-      'entry_date','source','source_invoice_id','source_invoice_type','is_deleted',
-      'deleted_at','created_at','updated_at']
+      'entry_date','source','source_invoice_id','source_invoice_type',
+      'created_at','updated_at']
   },
   b2c_hsn: {
     insertable: false,
     columns: ['id','user_id','hsn_code','product_name','type','taxable_value',
       'gst_percentage','supply_type','igst','cgst','sgst','total_gst','total_invoice_value',
-      'entry_date','source','source_invoice_id','source_invoice_type','is_deleted',
-      'deleted_at','created_at','updated_at']
+      'entry_date','source','source_invoice_id','source_invoice_type',
+      'created_at','updated_at']
   },
   invoice_items: {
     columns: ['id','user_id','invoice_id','invoice_type','product_id','product_name',
       'hsn_code','unit','quantity','rate','discount_percentage','gst_percentage',
       'taxable_value','gst_amount','igst','cgst','sgst','total_amount','sort_order',
-      'is_deleted','deleted_at','created_at','updated_at']
+      'created_at','updated_at']
   },
   vendors: {
     columns: ['id','user_id','name','gstin','phone','email','address','state',
-      'is_deleted','deleted_at','created_at','updated_at']
+      'created_at','updated_at']
   },
   purchases: {
     columns: ['id','user_id','vendor_id','vendor_name','vendor_gstin','phone','address','state',
       'purchase_number','purchase_date','taxable_amount','gst_percentage','gst_amount',
       'total_amount','supply_type','igst','cgst','sgst','payment_status','amount_paid',
-      'is_deleted','deleted_at','created_at','updated_at']
+      'created_at','updated_at']
   },
   purchase_items: {
     columns: ['id','user_id','purchase_id','product_id','product_name','hsn_code','unit',
       'quantity','rate','discount_percentage','gst_percentage','taxable_value','gst_amount',
-      'igst','cgst','sgst','total_amount','sort_order','is_deleted','deleted_at',
+      'igst','cgst','sgst','total_amount','sort_order',
       'created_at','updated_at']
   },
   purchase_returns: {
     columns: ['id','user_id','vendor_id','vendor_name','vendor_gstin','return_number','return_date',
       'original_purchase_id','original_purchase_number','reason','taxable_amount','gst_percentage',
-      'gst_amount','total_amount','supply_type','igst','cgst','sgst','is_deleted','deleted_at',
+      'gst_amount','total_amount','supply_type','igst','cgst','sgst',
       'created_at','updated_at']
   },
   purchase_return_items: {
     columns: ['id','user_id','return_id','product_id','product_name','hsn_code','unit',
       'quantity','rate','discount_percentage','gst_percentage','taxable_value','gst_amount',
-      'igst','cgst','sgst','total_amount','sort_order','is_deleted','deleted_at',
+      'igst','cgst','sgst','total_amount','sort_order',
       'created_at','updated_at']
   },
   expense_categories: {
-    columns: ['id','user_id','name','description','is_deleted','deleted_at','created_at','updated_at']
+    columns: ['id','user_id','name','description','created_at','updated_at']
   },
   expenses: {
     columns: ['id','user_id','category_id','category_name','expense_date','amount',
-      'payment_method','payee','description','is_deleted','deleted_at','created_at','updated_at']
+      'payment_method','payee','description','created_at','updated_at']
   },
   sales_returns: {
     columns: ['id','user_id','original_invoice_id','original_invoice_type','original_invoice_number',
       'customer_name','customer_gstin','phone','address','state','return_number','return_date','reason',
       'taxable_amount','gst_percentage','gst_amount','total_amount','supply_type','igst','cgst','sgst',
-      'is_deleted','deleted_at','created_at','updated_at']
+      'created_at','updated_at']
   },
   sales_return_items: {
     columns: ['id','user_id','return_id','product_id','product_name','hsn_code','unit',
       'quantity','rate','discount_percentage','gst_percentage','taxable_value','gst_amount',
-      'igst','cgst','sgst','total_amount','sort_order','is_deleted','deleted_at',
+      'igst','cgst','sgst','total_amount','sort_order',
       'created_at','updated_at']
   }
 };

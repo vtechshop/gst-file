@@ -1,8 +1,8 @@
 // Bespoke transactional endpoints for the Sales Return module — same
 // shape as server/routes/purchases.js's transactional endpoints (header
-// + line items + stock, one Postgres transaction; Recycle Bin cascades
-// as a second transaction), simplified to a single kind since Sales
-// Return only ever writes to one header/items table pair, unlike
+// + line items + stock, one Postgres transaction; permanent-delete
+// cascade as a second transaction), simplified to a single kind since
+// Sales Return only ever writes to one header/items table pair, unlike
 // Purchase's purchase/return split.
 //
 // A sales return always increases stock (goods physically come back
@@ -39,7 +39,7 @@ router.post('/save-with-items', asyncRoute(async (req, res) => {
   if (editId) badId(editId);
 
   const headerCols = TABLES.sales_returns.columns.filter(c => c !== 'id' && c !== 'user_id' && header && Object.prototype.hasOwnProperty.call(header, c));
-  const itemCols = TABLES.sales_return_items.columns.filter(c => !['id','user_id','return_id','sort_order','is_deleted','deleted_at','created_at','updated_at'].includes(c));
+  const itemCols = TABLES.sales_return_items.columns.filter(c => !['id','user_id','return_id','sort_order','created_at','updated_at'].includes(c));
 
   const client = await pool.connect();
   try {
@@ -106,10 +106,11 @@ router.post('/save-with-items', asyncRoute(async (req, res) => {
   }
 }));
 
-// ── 2) Recycle Bin cascades — line items (+ stock), one transaction ──
-// The header row's own soft-delete/restore/hard-delete happens
-// separately via the generic router — these only touch the downstream
-// line-item rows, same pattern as invoices.js/purchases.js.
+// ── 2) Permanent delete cascade — line items + stock reversal, one
+// transaction. The header row's own delete happens separately via the
+// generic router's plain (already permanent) DELETE — this only
+// touches the downstream line-item rows, same pattern as
+// invoices.js/purchases.js.
 router.post('/:id/cascade-delete', asyncRoute(async (req, res) => {
   const { id } = req.params;
   badId(id);
@@ -123,52 +124,6 @@ router.post('/:id/cascade-delete', asyncRoute(async (req, res) => {
     // Deleting a saved return un-applies the stock it added back.
     for (const it of items) await applyStockDelta(client, req.userId, it.product_id, -(+it.quantity || 0));
 
-    const now = new Date().toISOString();
-    await client.query(
-      'UPDATE sales_return_items SET is_deleted = true, deleted_at = $1 WHERE return_id = $2 AND user_id = $3',
-      [now, id, req.userId]
-    );
-    await client.query('COMMIT');
-    res.json({ ok: true });
-  } catch (err) {
-    await client.query('ROLLBACK');
-    throw err;
-  } finally {
-    client.release();
-  }
-}));
-
-router.post('/:id/cascade-restore', asyncRoute(async (req, res) => {
-  const { id } = req.params;
-  badId(id);
-  const client = await pool.connect();
-  try {
-    await client.query('BEGIN');
-    await client.query(
-      'UPDATE sales_return_items SET is_deleted = false, deleted_at = null WHERE return_id = $1 AND user_id = $2',
-      [id, req.userId]
-    );
-    const { rows: items } = await client.query(
-      'SELECT product_id, quantity FROM sales_return_items WHERE return_id = $1 AND user_id = $2',
-      [id, req.userId]
-    );
-    for (const it of items) await applyStockDelta(client, req.userId, it.product_id, +it.quantity || 0);
-    await client.query('COMMIT');
-    res.json({ ok: true });
-  } catch (err) {
-    await client.query('ROLLBACK');
-    throw err;
-  } finally {
-    client.release();
-  }
-}));
-
-router.post('/:id/cascade-hard-delete', asyncRoute(async (req, res) => {
-  const { id } = req.params;
-  badId(id);
-  const client = await pool.connect();
-  try {
-    await client.query('BEGIN');
     await client.query('DELETE FROM sales_return_items WHERE return_id = $1 AND user_id = $2', [id, req.userId]);
     await client.query('COMMIT');
     res.json({ ok: true });

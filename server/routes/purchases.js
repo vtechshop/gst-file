@@ -1,10 +1,11 @@
 // Bespoke transactional endpoints for the Purchase Module — mirrors
 // server/routes/invoices.js exactly (same header+items+stock-in-one-
-// transaction shape, same Recycle Bin cascade shape), generalized over
-// `kind` ('purchase' | 'return') instead of hardcoding one header/items
-// table pair, since Purchase Entry and Purchase Returns are two
-// genuinely separate table pairs (not one shared-with-discriminator
-// table the way b2b_invoices/b2c_invoices share invoice_items).
+// transaction shape, same permanent-delete cascade shape), generalized
+// over `kind` ('purchase' | 'return') instead of hardcoding one
+// header/items table pair, since Purchase Entry and Purchase Returns
+// are two genuinely separate table pairs (not one shared-with-
+// discriminator table the way b2b_invoices/b2c_invoices share
+// invoice_items).
 //
 // Stock direction is the one real difference between the two kinds: a
 // purchase increases stock, a return decreases it — both expressed as
@@ -12,7 +13,7 @@
 // reimplemented — same row-locked SELECT...FOR UPDATE race-safety).
 //
 // Frontend call site: js/purchase-items.js's savePurchaseWithItems() /
-// cascadePurchaseItemsDelete/Restore/HardDelete().
+// cascadePurchaseItemsDelete().
 const express = require('express');
 const pool = require('../db/pool');
 const { requireAuth } = require('../middleware/auth');
@@ -57,7 +58,7 @@ router.post('/:kind/save-with-items', asyncRoute(async (req, res) => {
   if (editId) badId(editId);
 
   const headerCols = TABLES[headerTable].columns.filter(c => c !== 'id' && c !== 'user_id' && header && Object.prototype.hasOwnProperty.call(header, c));
-  const itemCols = TABLES[itemsTable].columns.filter(c => !['id','user_id',itemFk,'sort_order','is_deleted','deleted_at','created_at','updated_at'].includes(c));
+  const itemCols = TABLES[itemsTable].columns.filter(c => !['id','user_id',itemFk,'sort_order','created_at','updated_at'].includes(c));
 
   const client = await pool.connect();
   try {
@@ -121,10 +122,10 @@ router.post('/:kind/save-with-items', asyncRoute(async (req, res) => {
   }
 }));
 
-// ── 2) Recycle Bin cascades — line items (+ stock), one transaction ──
-// The header row's own soft-delete/restore/hard-delete happens
-// separately via the generic router (same pattern invoices.js's cascade
-// endpoints use) — these only touch the downstream line-item rows.
+// ── 2) Permanent delete cascade — line items + stock reversal, one
+// transaction. The header row's own delete happens separately via the
+// generic router's plain (already permanent) DELETE — this only
+// touches the downstream line-item rows.
 router.post('/:kind/:id/cascade-delete', asyncRoute(async (req, res) => {
   badKind(req.params.kind);
   const { kind, id } = req.params;
@@ -143,56 +144,6 @@ router.post('/:kind/:id/cascade-delete', asyncRoute(async (req, res) => {
     // the original apply, same magnitude.
     for (const it of items) await applyStockDelta(client, req.userId, it.product_id, -stockSign * (+it.quantity || 0));
 
-    const now = new Date().toISOString();
-    await client.query(
-      `UPDATE ${itemsTable} SET is_deleted = true, deleted_at = $1 WHERE ${itemFk} = $2 AND user_id = $3`,
-      [now, id, req.userId]
-    );
-    await client.query('COMMIT');
-    res.json({ ok: true });
-  } catch (err) {
-    await client.query('ROLLBACK');
-    throw err;
-  } finally {
-    client.release();
-  }
-}));
-
-router.post('/:kind/:id/cascade-restore', asyncRoute(async (req, res) => {
-  badKind(req.params.kind);
-  const { kind, id } = req.params;
-  badId(id);
-  const { itemsTable, itemFk, stockSign } = KIND_CONFIG[kind];
-  const client = await pool.connect();
-  try {
-    await client.query('BEGIN');
-    await client.query(
-      `UPDATE ${itemsTable} SET is_deleted = false, deleted_at = null WHERE ${itemFk} = $1 AND user_id = $2`,
-      [id, req.userId]
-    );
-    const { rows: items } = await client.query(
-      `SELECT product_id, quantity FROM ${itemsTable} WHERE ${itemFk} = $1 AND user_id = $2`,
-      [id, req.userId]
-    );
-    for (const it of items) await applyStockDelta(client, req.userId, it.product_id, stockSign * (+it.quantity || 0));
-    await client.query('COMMIT');
-    res.json({ ok: true });
-  } catch (err) {
-    await client.query('ROLLBACK');
-    throw err;
-  } finally {
-    client.release();
-  }
-}));
-
-router.post('/:kind/:id/cascade-hard-delete', asyncRoute(async (req, res) => {
-  badKind(req.params.kind);
-  const { kind, id } = req.params;
-  badId(id);
-  const { itemsTable, itemFk } = KIND_CONFIG[kind];
-  const client = await pool.connect();
-  try {
-    await client.query('BEGIN');
     await client.query(`DELETE FROM ${itemsTable} WHERE ${itemFk} = $1 AND user_id = $2`, [id, req.userId]);
     await client.query('COMMIT');
     res.json({ ok: true });

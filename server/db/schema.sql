@@ -94,8 +94,6 @@ CREATE TABLE IF NOT EXISTS b2b_invoices (
   dispatch_to TEXT,
   payment_status TEXT NOT NULL DEFAULT 'unpaid' CHECK (payment_status IN ('unpaid','partial','paid')),
   amount_paid DECIMAL(15,2) NOT NULL DEFAULT 0,
-  is_deleted BOOLEAN NOT NULL DEFAULT FALSE,
-  deleted_at TIMESTAMPTZ,
   created_at TIMESTAMPTZ DEFAULT NOW(),
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
@@ -132,21 +130,19 @@ CREATE TABLE IF NOT EXISTS b2c_invoices (
   dispatch_to TEXT,
   payment_status TEXT NOT NULL DEFAULT 'unpaid' CHECK (payment_status IN ('unpaid','partial','paid')),
   amount_paid DECIMAL(15,2) NOT NULL DEFAULT 0,
-  is_deleted BOOLEAN NOT NULL DEFAULT FALSE,
-  deleted_at TIMESTAMPTZ,
   created_at TIMESTAMPTZ DEFAULT NOW(),
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- Deleted invoices must never have their number reissued, and no two
--- active invoices (either type shares one numbering sequence) may share
+-- No two invoices (either type shares one numbering sequence) may share
 -- a number — enforced today only by an app-level scan; this is a real
--- DB-level backstop. Partial (WHERE is_deleted = false) so a deleted
--- invoice's old number doesn't block a legitimately-reused slot from
--- ever being reachable again by a *different* still-active row, and
--- NULLs (rare/legacy) never conflict with each other under a unique index.
-CREATE UNIQUE INDEX IF NOT EXISTS idx_b2b_invoices_number_active ON b2b_invoices(user_id, invoice_number) WHERE is_deleted = false;
-CREATE UNIQUE INDEX IF NOT EXISTS idx_b2c_invoices_number_active ON b2c_invoices(user_id, invoice_number) WHERE is_deleted = false;
+-- DB-level backstop. Delete is permanent (no soft-delete/Recycle Bin),
+-- so a deleted invoice's number is simply gone and free to reuse —
+-- nothing partial needed here, a plain unique index is the correct
+-- shape. NULLs (rare/legacy) never conflict with each other under a
+-- unique index.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_b2b_invoices_number_active ON b2b_invoices(user_id, invoice_number);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_b2c_invoices_number_active ON b2c_invoices(user_id, invoice_number);
 
 -- New indexes (invoice_number, customer_name, gst_number, date)
 CREATE INDEX IF NOT EXISTS idx_b2b_invoices_date ON b2b_invoices(user_id, invoice_date);
@@ -157,7 +153,7 @@ CREATE INDEX IF NOT EXISTS idx_b2b_invoices_gst_number ON b2b_invoices(user_id, 
 CREATE INDEX IF NOT EXISTS idx_b2c_invoices_gst_number ON b2c_invoices(user_id, gst_number);
 
 -- ── B2B HSN (legacy — no longer written to; HSN Summary is computed
---    live from invoice_items. Kept for historical rows + Recycle Bin.) ──
+--    live from invoice_items. Kept for historical rows.) ──
 CREATE TABLE IF NOT EXISTS b2b_hsn (
   id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
   user_id UUID REFERENCES users(id) ON DELETE CASCADE NOT NULL,
@@ -177,8 +173,6 @@ CREATE TABLE IF NOT EXISTS b2b_hsn (
   source TEXT NOT NULL DEFAULT 'manual' CHECK (source IN ('manual','import','auto')),
   source_invoice_id UUID,
   source_invoice_type TEXT CHECK (source_invoice_type IN ('b2b','b2c')),
-  is_deleted BOOLEAN NOT NULL DEFAULT FALSE,
-  deleted_at TIMESTAMPTZ,
   created_at TIMESTAMPTZ DEFAULT NOW(),
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
@@ -201,8 +195,6 @@ CREATE TABLE IF NOT EXISTS b2c_hsn (
   source TEXT NOT NULL DEFAULT 'manual' CHECK (source IN ('manual','import','auto')),
   source_invoice_id UUID,
   source_invoice_type TEXT CHECK (source_invoice_type IN ('b2b','b2c')),
-  is_deleted BOOLEAN NOT NULL DEFAULT FALSE,
-  deleted_at TIMESTAMPTZ,
   created_at TIMESTAMPTZ DEFAULT NOW(),
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
@@ -223,8 +215,6 @@ CREATE TABLE IF NOT EXISTS customers (
   email TEXT,
   address TEXT,
   state TEXT,
-  is_deleted BOOLEAN NOT NULL DEFAULT FALSE,
-  deleted_at TIMESTAMPTZ,
   created_at TIMESTAMPTZ DEFAULT NOW(),
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
@@ -252,8 +242,6 @@ CREATE TABLE IF NOT EXISTS cdn_notes (
   sgst DECIMAL(15,2) DEFAULT 0,
   gst_amount DECIMAL(15,2) NOT NULL,
   total_amount DECIMAL(15,2) NOT NULL,
-  is_deleted BOOLEAN NOT NULL DEFAULT FALSE,
-  deleted_at TIMESTAMPTZ,
   created_at TIMESTAMPTZ DEFAULT NOW(),
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
@@ -283,8 +271,6 @@ CREATE TABLE IF NOT EXISTS products (
   external_id TEXT,
   source TEXT NOT NULL DEFAULT 'local' CHECK (source IN ('local','synced')),
   stock DECIMAL(15,3),
-  is_deleted BOOLEAN NOT NULL DEFAULT FALSE,
-  deleted_at TIMESTAMPTZ,
   created_at TIMESTAMPTZ DEFAULT NOW(),
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
@@ -332,8 +318,6 @@ CREATE TABLE IF NOT EXISTS invoice_items (
   sgst DECIMAL(15,2) DEFAULT 0,
   total_amount DECIMAL(15,2) NOT NULL DEFAULT 0,
   sort_order INTEGER NOT NULL DEFAULT 0,
-  is_deleted BOOLEAN NOT NULL DEFAULT FALSE,
-  deleted_at TIMESTAMPTZ,
   created_at TIMESTAMPTZ DEFAULT NOW(),
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
@@ -370,8 +354,6 @@ CREATE TABLE IF NOT EXISTS vendors (
   email TEXT,
   address TEXT,
   state TEXT,
-  is_deleted BOOLEAN NOT NULL DEFAULT FALSE,
-  deleted_at TIMESTAMPTZ,
   created_at TIMESTAMPTZ DEFAULT NOW(),
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
@@ -401,13 +383,11 @@ CREATE TABLE IF NOT EXISTS purchases (
   sgst DECIMAL(15,2) DEFAULT 0,
   payment_status TEXT NOT NULL DEFAULT 'unpaid' CHECK (payment_status IN ('unpaid','partial','paid')),
   amount_paid DECIMAL(15,2) NOT NULL DEFAULT 0,
-  is_deleted BOOLEAN NOT NULL DEFAULT FALSE,
-  deleted_at TIMESTAMPTZ,
   created_at TIMESTAMPTZ DEFAULT NOW(),
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
-CREATE UNIQUE INDEX IF NOT EXISTS idx_purchases_number_active ON purchases(user_id, purchase_number) WHERE is_deleted = false;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_purchases_number_active ON purchases(user_id, purchase_number);
 CREATE INDEX IF NOT EXISTS idx_purchases_date ON purchases(user_id, purchase_date);
 CREATE INDEX IF NOT EXISTS idx_purchases_vendor_name ON purchases(user_id, vendor_name);
 
@@ -431,8 +411,6 @@ CREATE TABLE IF NOT EXISTS purchase_items (
   sgst DECIMAL(15,2) DEFAULT 0,
   total_amount DECIMAL(15,2) NOT NULL DEFAULT 0,
   sort_order INTEGER NOT NULL DEFAULT 0,
-  is_deleted BOOLEAN NOT NULL DEFAULT FALSE,
-  deleted_at TIMESTAMPTZ,
   created_at TIMESTAMPTZ DEFAULT NOW(),
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
@@ -459,13 +437,11 @@ CREATE TABLE IF NOT EXISTS purchase_returns (
   igst DECIMAL(15,2) DEFAULT 0,
   cgst DECIMAL(15,2) DEFAULT 0,
   sgst DECIMAL(15,2) DEFAULT 0,
-  is_deleted BOOLEAN NOT NULL DEFAULT FALSE,
-  deleted_at TIMESTAMPTZ,
   created_at TIMESTAMPTZ DEFAULT NOW(),
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
-CREATE UNIQUE INDEX IF NOT EXISTS idx_purchase_returns_number_active ON purchase_returns(user_id, return_number) WHERE is_deleted = false;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_purchase_returns_number_active ON purchase_returns(user_id, return_number);
 CREATE INDEX IF NOT EXISTS idx_purchase_returns_date ON purchase_returns(user_id, return_date);
 
 -- ── Purchase Return Line Items ─────────────────────────
@@ -488,8 +464,6 @@ CREATE TABLE IF NOT EXISTS purchase_return_items (
   sgst DECIMAL(15,2) DEFAULT 0,
   total_amount DECIMAL(15,2) NOT NULL DEFAULT 0,
   sort_order INTEGER NOT NULL DEFAULT 0,
-  is_deleted BOOLEAN NOT NULL DEFAULT FALSE,
-  deleted_at TIMESTAMPTZ,
   created_at TIMESTAMPTZ DEFAULT NOW(),
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
@@ -502,8 +476,6 @@ CREATE TABLE IF NOT EXISTS expense_categories (
   user_id UUID REFERENCES users(id) ON DELETE CASCADE NOT NULL,
   name TEXT NOT NULL,
   description TEXT,
-  is_deleted BOOLEAN NOT NULL DEFAULT FALSE,
-  deleted_at TIMESTAMPTZ,
   created_at TIMESTAMPTZ DEFAULT NOW(),
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
@@ -521,8 +493,6 @@ CREATE TABLE IF NOT EXISTS expenses (
   payment_method TEXT NOT NULL DEFAULT 'cash' CHECK (payment_method IN ('cash','upi','bank_transfer','cheque','card','other')),
   payee TEXT,
   description TEXT,
-  is_deleted BOOLEAN NOT NULL DEFAULT FALSE,
-  deleted_at TIMESTAMPTZ,
   created_at TIMESTAMPTZ DEFAULT NOW(),
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
@@ -555,13 +525,11 @@ CREATE TABLE IF NOT EXISTS sales_returns (
   igst DECIMAL(15,2) DEFAULT 0,
   cgst DECIMAL(15,2) DEFAULT 0,
   sgst DECIMAL(15,2) DEFAULT 0,
-  is_deleted BOOLEAN NOT NULL DEFAULT FALSE,
-  deleted_at TIMESTAMPTZ,
   created_at TIMESTAMPTZ DEFAULT NOW(),
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
-CREATE UNIQUE INDEX IF NOT EXISTS idx_sales_returns_number_active ON sales_returns(user_id, return_number) WHERE is_deleted = false;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_sales_returns_number_active ON sales_returns(user_id, return_number);
 CREATE INDEX IF NOT EXISTS idx_sales_returns_date ON sales_returns(user_id, return_date);
 CREATE INDEX IF NOT EXISTS idx_sales_returns_customer_name ON sales_returns(user_id, customer_name);
 CREATE INDEX IF NOT EXISTS idx_sales_returns_original_invoice ON sales_returns(original_invoice_id, original_invoice_type);
@@ -586,8 +554,6 @@ CREATE TABLE IF NOT EXISTS sales_return_items (
   sgst DECIMAL(15,2) DEFAULT 0,
   total_amount DECIMAL(15,2) NOT NULL DEFAULT 0,
   sort_order INTEGER NOT NULL DEFAULT 0,
-  is_deleted BOOLEAN NOT NULL DEFAULT FALSE,
-  deleted_at TIMESTAMPTZ,
   created_at TIMESTAMPTZ DEFAULT NOW(),
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
