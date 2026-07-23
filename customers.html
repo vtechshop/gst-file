@@ -81,25 +81,29 @@
           <div class="form-grid cols-2 mb-16">
             <div class="form-group">
               <label for="custName">Customer Name <span class="text-required">*</span></label>
-              <input type="text" id="custName" class="form-control">
+              <input type="text" id="custName" class="form-control" oninput="validateCustomerForm()">
+              <div id="custNameError" class="fs-11 text-danger d-none" style="margin-top:4px;"></div>
             </div>
             <div class="form-group">
               <label for="custGSTIN">GSTIN</label>
-              <input type="text" id="custGSTIN" class="form-control uppercase" maxlength="15" oninput="this.value=this.value.toUpperCase()">
+              <input type="text" id="custGSTIN" class="form-control uppercase" maxlength="15" oninput="this.value=this.value.toUpperCase();validateCustomerForm()">
+              <div id="custGSTINError" class="fs-11 text-danger d-none" style="margin-top:4px;"></div>
             </div>
           </div>
           <div class="form-grid cols-3 mb-16">
             <div class="form-group">
-              <label for="custPhone">Phone</label>
-              <input type="tel" id="custPhone" class="form-control">
+              <label for="custPhone">Phone <span class="text-required">*</span></label>
+              <input type="tel" id="custPhone" class="form-control" maxlength="10" oninput="validateCustomerForm()">
+              <div id="custPhoneError" class="fs-11 text-danger d-none" style="margin-top:4px;"></div>
             </div>
             <div class="form-group">
               <label for="custEmail">Email</label>
-              <input type="email" id="custEmail" class="form-control">
+              <input type="email" id="custEmail" class="form-control" oninput="validateCustomerForm()">
+              <div id="custEmailError" class="fs-11 text-danger d-none" style="margin-top:4px;"></div>
             </div>
             <div class="form-group">
-              <label for="custState">State</label>
-              <select id="custState" class="form-control">
+              <label for="custState">State <span class="text-required">*</span></label>
+              <select id="custState" class="form-control" onchange="validateCustomerForm()">
                 <option value="">Select State</option>
                 <option>Andhra Pradesh</option><option>Arunachal Pradesh</option><option>Assam</option>
                 <option>Bihar</option><option>Chhattisgarh</option><option>Goa</option>
@@ -113,6 +117,7 @@
                 <option>West Bengal</option><option>Delhi</option><option>Jammu and Kashmir</option>
                 <option>Ladakh</option><option>Puducherry</option><option>Chandigarh</option>
               </select>
+              <div id="custStateError" class="fs-11 text-danger d-none" style="margin-top:4px;"></div>
             </div>
           </div>
           <div class="form-group mb-16">

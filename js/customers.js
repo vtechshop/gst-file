@@ -17,6 +17,7 @@ async function initCustomers() {
   await loadCustomers(user.id);
   await loadCustomerOutstanding(user.id);
   applyIncomingSearchQuery('custSearch');
+  validateCustomerForm(); // Save starts disabled — the blank form has no required fields filled yet
 }
 
 async function loadCustomerOutstanding(userId) {
@@ -35,9 +36,63 @@ async function loadCustomerOutstanding(userId) {
     : '<tr><td colspan="6" class="empty-state">No invoices yet.</td></tr>';
 }
 
+// ── Validation ──────────────────────────────────────────
+// Mirrors server/utils/validation.js's validateCustomerPayload()
+// exactly (same required fields, same phone/GSTIN/email rules) so a
+// submission that passes here is guaranteed to pass there too — the
+// backend check is a defense-in-depth backstop, not a second opinion.
+// validateGstin() itself (checksum, state code, PAN format) is the
+// same shared helper Invoice Entry and Vendor Master already use
+// (js/utils.js), not reimplemented here.
+function getCustomerFormErrors() {
+  const name  = document.getElementById('custName')?.value?.trim() || '';
+  const gstin = document.getElementById('custGSTIN')?.value?.trim().toUpperCase() || '';
+  const phone = document.getElementById('custPhone')?.value?.trim() || '';
+  const email = document.getElementById('custEmail')?.value?.trim() || '';
+  const state = document.getElementById('custState')?.value || '';
+
+  const errors = {};
+  if (!name) errors.name = 'Customer name is required.';
+  if (!phone) errors.phone = 'Phone number is required.';
+  else if (!/^\d{10}$/.test(phone)) errors.phone = 'Phone number must be exactly 10 digits.';
+  if (!state) errors.state = 'State is required.';
+  if (gstin && !validateGstin(gstin).valid) errors.gstin = 'Invalid GSTIN.';
+  if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) errors.email = 'Invalid email address.';
+  return errors;
+}
+
+// Re-run on every relevant field's input/change — writes each error
+// message under its own field (never alert()) and keeps the Save
+// button disabled until every required field is valid. Returns the
+// error map so saveCustomer() can reuse the same result.
+function validateCustomerForm() {
+  const errors = getCustomerFormErrors();
+  const showFieldError = (field, errId) => {
+    const el = document.getElementById(errId);
+    if (!el) return;
+    if (errors[field]) { el.textContent = errors[field]; el.classList.remove('d-none'); }
+    else { el.textContent = ''; el.classList.add('d-none'); }
+  };
+  showFieldError('name', 'custNameError');
+  showFieldError('phone', 'custPhoneError');
+  showFieldError('state', 'custStateError');
+  showFieldError('gstin', 'custGSTINError');
+  showFieldError('email', 'custEmailError');
+
+  const btn = document.getElementById('custSaveBtn');
+  if (btn) btn.disabled = Object.keys(errors).length > 0;
+
+  return errors;
+}
+
 async function saveCustomer() {
   const user = await getCurrentUser();
   if (!user) return;
+
+  // Re-validate (not just trust the disabled-button state) — the
+  // button's disabled attribute is the UX guard, this is the real gate.
+  const errors = validateCustomerForm();
+  if (Object.keys(errors).length > 0) return;
 
   const name  = document.getElementById('custName')?.value?.trim();
   const gstin = document.getElementById('custGSTIN')?.value?.trim().toUpperCase();
@@ -45,9 +100,6 @@ async function saveCustomer() {
   const email = document.getElementById('custEmail')?.value?.trim();
   const addr  = document.getElementById('custAddr')?.value?.trim();
   const state = document.getElementById('custState')?.value;
-
-  if (!name) { showToast('Customer name is required.', 'error'); return; }
-  if (gstin && gstin.length !== 15) { showToast('GSTIN must be 15 characters.', 'error'); return; }
 
   const payload = { user_id: user.id, name, gstin, phone, email, address: addr, state };
 
@@ -60,6 +112,8 @@ async function saveCustomer() {
     ({ error } = await _supabase.from('customers').insert(payload));
   }
 
+  // The backend runs the exact same checks — this only fires if the
+  // request reached the API some other way than this validated form.
   if (error) { showToast('Error: ' + error.message, 'error'); return; }
   showToast(custEditId ? 'Customer updated!' : 'Customer saved!');
   custEditId = null;
@@ -77,6 +131,7 @@ function resetCustomer() {
   if (title) title.textContent = 'Add Customer';
   const btn = document.getElementById('custSaveBtn');
   if (btn) btn.innerHTML = '<i class="fas fa-save"></i> Save Customer';
+  validateCustomerForm();
 }
 
 async function loadCustomers(userId) {
@@ -145,6 +200,11 @@ function editCustomer(id) {
   document.getElementById('custFormTitle').textContent = 'Edit Customer';
   document.getElementById('custSaveBtn').innerHTML = '<i class="fas fa-save"></i> Update Customer';
   document.getElementById('custName').scrollIntoView({ behavior: 'smooth', block: 'center' });
+  // A legacy record saved before this validation existed (e.g. name
+  // only, matching the exact bug this fixes) will correctly show as
+  // invalid here — Save stays disabled until the missing required
+  // fields are filled in, same as a brand new customer.
+  validateCustomerForm();
 }
 
 async function deleteCustomer(id) {

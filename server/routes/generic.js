@@ -23,6 +23,7 @@ const express = require('express');
 const pool = require('../db/pool');
 const { requireAuth } = require('../middleware/auth');
 const { asyncRoute } = require('../middleware/errorHandler');
+const { validateCustomerPayload } = require('../utils/validation');
 
 function buildWhere(query, ownerColumn, userId, columns) {
   const clauses = [`${ownerColumn} = $1`];
@@ -53,7 +54,24 @@ function buildSelect(selectParam, columns) {
   return requested.length ? requested.join(',') : '*';
 }
 
-function makeCrudRouter(table, { columns, insertable = true, ownerColumn = 'user_id' }) {
+// Runs a table's optional `validate(payload)` hook (see TABLES.customers
+// below for the one real user) and throws a 400 with every failure
+// reason joined into one message — same { error: { message } } shape
+// every other rejection in this app already uses, not a new response
+// shape just for this. Applied on both insert and update: the frontend
+// always sends the full field set either way (never a partial patch),
+// so validating the incoming body wholesale is correct for both.
+function runValidate(validate, body) {
+  if (!validate) return;
+  const result = validate(body);
+  if (!result.valid) {
+    const e = new Error(Object.values(result.errors).join(' '));
+    e.status = 400; e.expose = true;
+    throw e;
+  }
+}
+
+function makeCrudRouter(table, { columns, insertable = true, ownerColumn = 'user_id', validate }) {
   const router = express.Router();
   router.use(requireAuth);
 
@@ -67,6 +85,7 @@ function makeCrudRouter(table, { columns, insertable = true, ownerColumn = 'user
 
   router.post('/', asyncRoute(async (req, res) => {
     if (!insertable) { const e = new Error(`${table} does not accept direct inserts.`); e.status = 405; e.expose = true; throw e; }
+    runValidate(validate, req.body);
     // Ownership is always forced from the JWT, never trusted from the
     // body — this also correctly handles `profiles`, where ownerColumn
     // is `id` itself: whatever `id` the client sent gets overwritten
@@ -83,6 +102,7 @@ function makeCrudRouter(table, { columns, insertable = true, ownerColumn = 'user
   }));
 
   router.patch('/', asyncRoute(async (req, res) => {
+    runValidate(validate, req.body);
     const { where, params } = buildWhere(req.query, ownerColumn, req.userId, columns);
     const patchCols = Object.keys(req.body).filter(c => columns.includes(c) && c !== ownerColumn); // ownership is never reassignable
     if (!patchCols.length) { const e = new Error('No valid fields to update.'); e.status = 400; e.expose = true; throw e; }
@@ -113,7 +133,8 @@ const TABLES = {
   },
   customers: {
     columns: ['id','user_id','name','gstin','phone','email','address','state',
-      'created_at','updated_at']
+      'created_at','updated_at'],
+    validate: validateCustomerPayload
   },
   cdn_notes: {
     columns: ['id','user_id','note_type','note_number','note_date','original_invoice',
