@@ -233,6 +233,7 @@ CREATE TABLE IF NOT EXISTS cdn_notes (
   original_invoice TEXT,
   customer_name TEXT NOT NULL,
   gstin TEXT,
+  state TEXT,
   reason TEXT,
   taxable_amount DECIMAL(15,2) NOT NULL,
   gst_percentage DECIMAL(5,2) NOT NULL,

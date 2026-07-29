@@ -138,7 +138,7 @@ const TABLES = {
   },
   cdn_notes: {
     columns: ['id','user_id','note_type','note_number','note_date','original_invoice',
-      'customer_name','gstin','reason','taxable_amount','gst_percentage','supply_type',
+      'customer_name','gstin','state','reason','taxable_amount','gst_percentage','supply_type',
       'igst','cgst','sgst','gst_amount','total_amount',
       'created_at','updated_at']
   },

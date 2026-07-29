@@ -147,109 +147,11 @@ function exportB2CPDF(invoices) {
   exportToPDF('GSTR-1 B2C Invoice Report', cols, rows, 'B2C_Invoices');
 }
 
-// ── GSTR-1 JSON Export (Government Portal Format) ─────────────────────────
-function exportGSTR1JSON(b2bData, b2cData, b2bHsn) {
-  const p = (typeof getCachedProfile === 'function') ? getCachedProfile() : null;
-  const now = new Date();
-  const fp  = String(now.getMonth() + 1).padStart(2,'0') + String(now.getFullYear());
-
-  // Group B2B by GSTIN
-  const b2bGroup = {};
-  b2bData.forEach(inv => {
-    const gstin = inv.gst_number;
-    if (!b2bGroup[gstin]) b2bGroup[gstin] = [];
-    b2bGroup[gstin].push({
-      inum: inv.invoice_number,
-      idt:  formatDateDDMMYYYY(inv.invoice_date),
-      val:  +inv.total_amount,
-      pos:  getStateCode(inv.supply_type === 'interstate' ? '' : (p ? p.state : '')),
-      rchrg: 'N',
-      inv_typ: 'R',
-      itms: [{
-        num: 1,
-        itm_det: {
-          txval: +inv.taxable_amount,
-          rt:    +inv.gst_percentage,
-          iamt:  +inv.igst,
-          camt:  +inv.cgst,
-          samt:  +inv.sgst,
-          csamt: 0
-        }
-      }]
-    });
-  });
-  const b2bJson = Object.entries(b2bGroup).map(([ctin, inv]) => ({ ctin, inv }));
-
-  // B2CS grouping by state + rate
-  const b2csMap = {};
-  b2cData.forEach(inv => {
-    const key = `${inv.state || 'OTH'}_${inv.gst_percentage}_${inv.supply_type}`;
-    if (!b2csMap[key]) b2csMap[key] = { sply_ty: inv.supply_type === 'interstate' ? 'INTER' : 'INTRA', pos: getStateCode(inv.state || ''), typ: 'OE', rt: +inv.gst_percentage, txval: 0, iamt: 0, camt: 0, samt: 0, csamt: 0 };
-    b2csMap[key].txval += +inv.taxable_amount;
-    b2csMap[key].iamt  += +inv.igst;
-    b2csMap[key].camt  += +inv.cgst;
-    b2csMap[key].samt  += +inv.sgst;
-  });
-  const b2csJson = Object.values(b2csMap).map(r => ({ ...r, txval: round2(r.txval), iamt: round2(r.iamt), camt: round2(r.camt), samt: round2(r.samt) }));
-
-  // HSN Summary
-  const hsnJson = { data: b2bHsn.map((r, i) => ({
-    num:    i + 1,
-    hsn_sc: r.hsn_code,
-    desc:   r.product_name,
-    uqc:    'NOS',
-    qty:    +r.quantity || 0,
-    txval:  +r.taxable_value,
-    rt:     +r.gst_percentage,
-    iamt:   +r.igst,
-    camt:   +r.cgst,
-    samt:   +r.sgst,
-    csamt:  0
-  })) };
-
-  const gstr1 = {
-    gstin: p ? (p.gstin || '') : '',
-    fp,
-    gt:   round2(b2bData.reduce((s,r)=>s+ +r.total_amount,0) + b2cData.reduce((s,r)=>s+ +r.total_amount,0)),
-    cur_gt: round2(b2bData.reduce((s,r)=>s+ +r.total_amount,0) + b2cData.reduce((s,r)=>s+ +r.total_amount,0)),
-    b2b:  b2bJson,
-    b2cs: b2csJson,
-    hsn:  hsnJson
-  };
-
-  const blob = new Blob([JSON.stringify(gstr1, null, 2)], { type: 'application/json' });
-  const url  = URL.createObjectURL(blob);
-  const a    = document.createElement('a');
-  a.href     = url;
-  a.download = `GSTR1_${fp}.json`;
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-  URL.revokeObjectURL(url);
-  showToast('GSTR-1 JSON exported! Upload to GST Portal.', 'success');
-}
-
-function formatDateDDMMYYYY(d) {
-  if (!d) return '';
-  const parts = String(d).split('-');
-  if (parts.length === 3) return `${parts[2]}-${parts[1]}-${parts[0]}`;
-  return d;
-}
-
-function getStateCode(stateName) {
-  const map = {
-    'andhra pradesh':'37','arunachal pradesh':'12','assam':'18','bihar':'10',
-    'chhattisgarh':'22','goa':'30','gujarat':'24','haryana':'06','himachal pradesh':'02',
-    'jharkhand':'20','karnataka':'29','kerala':'32','madhya pradesh':'23','maharashtra':'27',
-    'manipur':'14','meghalaya':'17','mizoram':'15','nagaland':'13','odisha':'21',
-    'punjab':'03','rajasthan':'08','sikkim':'11','tamil nadu':'33','telangana':'36',
-    'tripura':'16','uttar pradesh':'09','uttarakhand':'05','west bengal':'19',
-    'andaman and nicobar':'35','chandigarh':'04','dadra and nagar haveli':'26',
-    'daman and diu':'25','delhi':'07','jammu and kashmir':'01','ladakh':'38',
-    'lakshadweep':'31','puducherry':'34'
-  };
-  return map[(stateName || '').toLowerCase()] || '99';
-}
+// GSTR-1 JSON export (Government Portal format) now lives in
+// js/gstr1-export.js — a dedicated compliance engine (validation,
+// recompute-from-items, POS/B2CL/CDNR handling) rather than the simple
+// cached-totals passthrough this used to be. getStateCode() and
+// formatDateDDMMYYYY() moved there too since they're only used by it.
 
 function printReport(elementId, reportTitle) {
   const el = document.getElementById(elementId);

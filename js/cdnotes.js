@@ -50,6 +50,7 @@ async function saveCDNote() {
   const origInv    = document.getElementById('cdOrigInv')?.value?.trim();
   const custName   = document.getElementById('cdCustName')?.value?.trim();
   const gstin      = document.getElementById('cdGSTIN')?.value?.trim().toUpperCase();
+  const state      = document.getElementById('cdState')?.value || '';
   const reason     = document.getElementById('cdReason')?.value?.trim();
   const taxable    = parseFloat(document.getElementById('cdTaxable')?.value) || 0;
   const gstPct     = parseFloat(document.getElementById('cdGstPct')?.value)  || 0;
@@ -61,7 +62,7 @@ async function saveCDNote() {
   const r = calcGST(taxable, gstPct, supply);
   const payload = {
     user_id: user.id, note_type: noteType, note_number: noteNum, note_date: noteDate,
-    original_invoice: origInv, customer_name: custName, gstin,
+    original_invoice: origInv, customer_name: custName, gstin, state,
     reason, taxable_amount: taxable, gst_percentage: gstPct, supply_type: supply,
     igst: r.igst, cgst: r.cgst, sgst: r.sgst,
     gst_amount: r.gstAmount, total_amount: r.totalAmount
@@ -87,6 +88,7 @@ function resetCDNote() {
     const el = document.getElementById(id); if (el) el.value = '';
   });
   document.getElementById('cdNoteDate').value   = new Date().toISOString().split('T')[0];
+  document.getElementById('cdState').value      = '';
   document.getElementById('cdNoteType').value   = 'credit';
   document.getElementById('cdGstPct').value     = '18';
   document.getElementById('cdSupply').value     = 'intrastate';
@@ -162,6 +164,7 @@ function editCDNote(id) {
   document.getElementById('cdOrigInv').value    = rec.original_invoice || '';
   document.getElementById('cdCustName').value   = rec.customer_name;
   document.getElementById('cdGSTIN').value      = rec.gstin || '';
+  document.getElementById('cdState').value      = rec.state || '';
   document.getElementById('cdReason').value     = rec.reason || '';
   document.getElementById('cdTaxable').value    = rec.taxable_amount;
   document.getElementById('cdGstPct').value     = rec.gst_percentage;

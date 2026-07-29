@@ -20,6 +20,7 @@
   <script src="js/export.js"></script>
   <script src="js/future.js"></script>
   <script src="js/reports.js"></script>
+  <script src="js/gstr1-export.js"></script>
 </head>
 <body>
 <div class="app-layout">
@@ -117,14 +118,14 @@
           <span class="card-title"><i class="fas fa-download"></i> Export Options</span>
         </div>
         <div class="card-body d-flex gap-12 flex-wrap">
-          <button type="button" class="btn btn-primary" onclick="exportGSTR1JSON(repB2B, repB2C, repB2BHSN)" title="Generates the GSTR-1 return in GST portal JSON format from your saved invoices"><i class="fas fa-file-signature"></i> Generate Return</button>
+          <button type="button" class="btn btn-primary" onclick="exportGSTR1JSON()" title="Generates the GSTR-1 return in GST portal JSON format from your saved invoices"><i class="fas fa-file-signature"></i> Generate Return</button>
           <button type="button" class="btn btn-success" onclick="exportFullGSTR1()"><i class="fas fa-file-excel"></i> Export Full GSTR-1 (Excel)</button>
           <button type="button" class="btn btn-danger"  onclick="exportSummaryPDF()"><i class="fas fa-file-pdf"></i> Export Summary (PDF)</button>
           <button type="button" class="btn btn-primary" onclick="exportB2BExcel(repB2B)"><i class="fas fa-file-excel"></i> B2B Excel</button>
           <button type="button" class="btn btn-primary" onclick="exportB2CExcel(repB2C)"><i class="fas fa-file-excel"></i> B2C Excel</button>
           <button type="button" class="btn btn-warning" onclick="exportHSNExcel(repB2BHSN, repB2CHSN)"><i class="fas fa-file-excel"></i> HSN Excel</button>
           <button type="button" class="btn btn-secondary" onclick="printReport('reportPrintArea','GSTR-1 Summary Report')"><i class="fas fa-print"></i> Print Report</button>
-          <button type="button" class="btn btn-info btn-info-alt" onclick="exportGSTR1JSON(repB2B, repB2C, repB2BHSN)"><i class="fas fa-file-code"></i> GSTR-1 JSON (Portal)</button>
+          <button type="button" class="btn btn-info btn-info-alt" onclick="exportGSTR1JSON()"><i class="fas fa-file-code"></i> GSTR-1 JSON (Portal)</button>
           <a href="gstr3b.html" class="btn btn-secondary"><i class="fas fa-calculator"></i> GSTR-3B Summary</a>
           <button type="button" class="btn btn-secondary" onclick="generateEInvoiceIRN()" title="Coming soon"><i class="fas fa-qrcode"></i> E-Invoice (IRN) &mdash; Coming Soon</button>
           <button type="button" class="btn btn-secondary" onclick="generateEWayBill()" title="Coming soon"><i class="fas fa-truck"></i> E-Way Bill &mdash; Coming Soon</button>
@@ -403,6 +404,23 @@
 <script>
 document.addEventListener('DOMContentLoaded', initReports);
 </script>
+
+<!-- GSTR-1 Validation Errors Modal — shown instead of downloading
+     whenever buildGSTR1Payload()/runFinalGSTR1Audit() (js/gstr1-export.js)
+     find anything wrong; the JSON is never written to disk when this
+     is showing. -->
+<div class="modal-overlay" id="gstr1ValidationModal">
+  <div class="modal modal-lg">
+    <div class="modal-header">
+      <span class="modal-title"><i class="fas fa-triangle-exclamation" style="color:var(--danger, #d32f2f);"></i> GSTR-1 Export Blocked — Validation Failed</span>
+      <button type="button" class="modal-close" onclick="closeGSTR1ValidationModal()" aria-label="Close"><i class="fas fa-times"></i></button>
+    </div>
+    <div class="modal-body">
+      <p class="text-muted-sm mb-16">The JSON was <b>not</b> generated. Fix the issue(s) below and try again.</p>
+      <ul id="gstr1ValidationList" style="margin:0;padding-left:20px;line-height:1.9;"></ul>
+    </div>
+  </div>
+</div>
 
 <!-- Global Search Modal -->
 <div class="modal-overlay" id="globalSearchModal">
