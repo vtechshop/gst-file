@@ -328,15 +328,16 @@ CREATE INDEX IF NOT EXISTS idx_invoice_items_invoice ON invoice_items(invoice_id
 CREATE INDEX IF NOT EXISTS idx_invoice_items_hsn_code ON invoice_items(user_id, hsn_code);
 
 -- ── Payment History (itemized ledger behind
---    b2b_invoices/b2c_invoices.amount_paid/payment_status) ───
+--    b2b_invoices/b2c_invoices/purchases.amount_paid/payment_status) ───
 CREATE TABLE IF NOT EXISTS payments (
   id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
   user_id UUID REFERENCES users(id) ON DELETE CASCADE NOT NULL,
   invoice_id UUID NOT NULL,
-  invoice_type TEXT NOT NULL CHECK (invoice_type IN ('b2b','b2c')),
+  invoice_type TEXT NOT NULL CHECK (invoice_type IN ('b2b','b2c','purchase')),
   amount DECIMAL(15,2) NOT NULL,
   method TEXT NOT NULL DEFAULT 'cash' CHECK (method IN ('cash','upi','bank_transfer','cheque','card','other')),
   payment_date DATE NOT NULL DEFAULT CURRENT_DATE,
+  reference_number TEXT,
   note TEXT,
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
@@ -425,6 +426,7 @@ CREATE TABLE IF NOT EXISTS purchase_returns (
   vendor_id UUID REFERENCES vendors(id) ON DELETE SET NULL,
   vendor_name TEXT NOT NULL,
   vendor_gstin TEXT,
+  state TEXT,
   return_number TEXT NOT NULL,
   return_date DATE NOT NULL,
   original_purchase_id UUID,

@@ -14,6 +14,7 @@
   <script src="js/utils.js"></script>
   <script src="js/search.js"></script>
   <script src="js/profile.js"></script>
+  <script src="js/payments.js"></script>
   <script src="js/purchase-items.js"></script>
   <script src="js/purchase-list.js"></script>
 </head>
@@ -38,9 +39,11 @@
       <a href="hsn.html#b2c" class="menu-item"><i class="fas fa-tags"></i> B2C HSN</a>
       <div class="menu-section">Masters</div>
       <a href="customers.html" class="menu-item"><i class="fas fa-address-book"></i> Customers</a>
+      <a href="customer-ledger.html" class="menu-item"><i class="fas fa-book"></i> Customer Ledger</a>
       <a href="products.html" class="menu-item"><i class="fas fa-box"></i> Products</a>
       <div class="menu-section">Purchases</div>
       <a href="vendors.html" class="menu-item"><i class="fas fa-truck"></i> Vendors</a>
+      <a href="vendor-ledger.html" class="menu-item"><i class="fas fa-book"></i> Vendor Ledger</a>
       <a href="purchases.html" class="menu-item"><i class="fas fa-cart-plus"></i> New Purchase</a>
       <a href="purchase-list.html" class="menu-item active"><i class="fas fa-boxes"></i> Purchase List</a>
       <a href="purchase-returns.html" class="menu-item"><i class="fas fa-undo"></i> Purchase Returns</a>
@@ -94,11 +97,11 @@
               <thead>
                 <tr>
                   <th>#</th><th>Purchase No</th><th>Date</th><th>Vendor</th>
-                  <th>Total</th><th>Payment</th><th>Actions</th>
+                  <th>Total</th><th>Paid</th><th>Balance</th><th>Payment</th><th>Actions</th>
                 </tr>
               </thead>
               <tbody id="purchListTableBody">
-                <tr><td colspan="7" class="empty-state"><i class="fas fa-spinner fa-spin table-loading-icon"></i>Loading...</td></tr>
+                <tr><td colspan="9" class="empty-state"><i class="fas fa-spinner fa-spin table-loading-icon"></i>Loading...</td></tr>
               </tbody>
               <tfoot id="purchListTableTotal"></tfoot>
             </table>
@@ -117,6 +120,60 @@ document.addEventListener('DOMContentLoaded', () => {
   initPurchaseList();
 });
 </script>
+
+<!-- Record Payment Modal -->
+<div class="modal-overlay" id="markPurchPaymentModal">
+  <div class="modal">
+    <div class="modal-header">
+      <span class="modal-title"><i class="fas fa-rupee-sign"></i> Payment &mdash; <span id="mppPurchaseLabel"></span></span>
+      <button type="button" class="modal-close" onclick="closeMarkPurchPaymentModal()" aria-label="Close"><i class="fas fa-times"></i></button>
+    </div>
+    <div class="modal-body">
+      <div class="calc-box mb-16">
+        <div class="calc-row"><span class="label">Purchase Total</span><span class="value" id="mppPurchaseTotal">&#8377;0.00</span></div>
+        <div class="calc-row"><span class="label">Paid So Far</span><span class="value" id="mppPaidSoFar">&#8377;0.00</span></div>
+        <div class="calc-row total"><span class="label">Outstanding Balance</span><span class="value" id="mppOutstanding">&#8377;0.00</span></div>
+      </div>
+
+      <div class="section-title mb-14">Record Payment</div>
+      <div class="form-grid cols-2 mb-16">
+        <div class="form-group">
+          <label for="mppAmount">Amount (&#8377;)</label>
+          <input type="number" id="mppAmount" class="form-control" min="0" step="0.01">
+        </div>
+        <div class="form-group">
+          <label for="mppMethod">Payment Method</label>
+          <select id="mppMethod" class="form-control">
+            <option value="cash">Cash</option>
+            <option value="upi">UPI</option>
+            <option value="bank_transfer">Bank Transfer</option>
+            <option value="cheque">Cheque</option>
+            <option value="card">Card</option>
+            <option value="other">Other</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label for="mppDate">Date</label>
+          <input type="date" id="mppDate" class="form-control">
+        </div>
+        <div class="form-group">
+          <label for="mppReference">Reference Number <span class="fs-11 text-muted-sm">(Optional)</span></label>
+          <input type="text" id="mppReference" class="form-control">
+        </div>
+        <div class="form-group">
+          <label for="mppNote">Note</label>
+          <input type="text" id="mppNote" class="form-control">
+        </div>
+      </div>
+      <div class="btn-group mb-20">
+        <button type="button" class="btn btn-primary" onclick="submitPurchPayment()"><i class="fas fa-check"></i> Record Payment</button>
+      </div>
+
+      <div class="section-title mb-14">Payment History</div>
+      <div id="mppHistoryList"><p class="text-muted-sm">No payments recorded yet.</p></div>
+    </div>
+  </div>
+</div>
 
 <!-- Global Search Modal -->
 <div class="modal-overlay" id="globalSearchModal">

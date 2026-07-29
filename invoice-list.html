@@ -45,9 +45,11 @@
       <a href="hsn.html#b2c" class="menu-item"><i class="fas fa-tags"></i> B2C HSN</a>
       <div class="menu-section">Masters</div>
       <a href="customers.html" class="menu-item"><i class="fas fa-address-book"></i> Customers</a>
+      <a href="customer-ledger.html" class="menu-item"><i class="fas fa-book"></i> Customer Ledger</a>
       <a href="products.html" class="menu-item"><i class="fas fa-box"></i> Products</a>
       <div class="menu-section">Purchases</div>
       <a href="vendors.html" class="menu-item"><i class="fas fa-truck"></i> Vendors</a>
+      <a href="vendor-ledger.html" class="menu-item"><i class="fas fa-book"></i> Vendor Ledger</a>
       <a href="purchases.html" class="menu-item"><i class="fas fa-cart-plus"></i> New Purchase</a>
       <a href="purchase-list.html" class="menu-item"><i class="fas fa-boxes"></i> Purchase List</a>
       <a href="purchase-returns.html" class="menu-item"><i class="fas fa-undo"></i> Purchase Returns</a>
@@ -106,11 +108,11 @@
               <thead>
                 <tr>
                   <th>#</th><th>Invoice No</th><th>Date</th><th>Customer</th><th>Type</th>
-                  <th>Total</th><th>Payment</th><th>Actions</th>
+                  <th>Total</th><th>Paid</th><th>Balance</th><th>Payment</th><th>Actions</th>
                 </tr>
               </thead>
               <tbody id="invListTableBody">
-                <tr><td colspan="8" class="empty-state"><i class="fas fa-spinner fa-spin table-loading-icon"></i>Loading...</td></tr>
+                <tr><td colspan="10" class="empty-state"><i class="fas fa-spinner fa-spin table-loading-icon"></i>Loading...</td></tr>
               </tbody>
               <tfoot id="invListTableTotal"></tfoot>
             </table>
@@ -177,6 +179,10 @@ document.addEventListener('DOMContentLoaded', () => {
         <div class="form-group">
           <label for="mpDate">Date</label>
           <input type="date" id="mpDate" class="form-control">
+        </div>
+        <div class="form-group">
+          <label for="mpReference">Reference Number <span class="fs-11 text-muted-sm">(Optional)</span></label>
+          <input type="text" id="mpReference" class="form-control">
         </div>
         <div class="form-group">
           <label for="mpNote">Note</label>

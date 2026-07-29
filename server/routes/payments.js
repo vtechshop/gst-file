@@ -18,9 +18,10 @@ const { asyncRoute } = require('../middleware/errorHandler');
 const router = express.Router();
 router.use(requireAuth);
 
-function invoiceTable(type) { return type === 'b2b' ? 'b2b_invoices' : 'b2c_invoices'; }
+const TYPE_TABLE = { b2b: 'b2b_invoices', b2c: 'b2c_invoices', purchase: 'purchases' };
+function invoiceTable(type) { return TYPE_TABLE[type]; }
 function badType(type) {
-  if (type !== 'b2b' && type !== 'b2c') { const e = new Error('type must be b2b or b2c.'); e.status = 400; e.expose = true; throw e; }
+  if (!TYPE_TABLE[type]) { const e = new Error('type must be b2b, b2c, or purchase.'); e.status = 400; e.expose = true; throw e; }
 }
 function round2(n) { return Math.round((parseFloat(n) || 0) * 100) / 100; }
 
@@ -58,14 +59,35 @@ router.post('/:type/:invoiceId/record', asyncRoute(async (req, res) => {
   if (amount <= 0) { const e = new Error('Enter an amount greater than zero.'); e.status = 400; e.expose = true; throw e; }
   const method = req.body.method || 'cash';
   const date = req.body.date || new Date().toISOString().slice(0, 10);
+  const referenceNumber = req.body.reference_number || null;
   const note = req.body.note || '';
 
+  const table = invoiceTable(type);
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
+
+    // Paid Amount can never exceed Total — checked against the ledger's
+    // current sum (inside the same transaction, so it can't race with a
+    // concurrent payment on the same record) rather than trusting the
+    // client's own balance display.
+    const { rows: invRows } = await client.query(
+      `SELECT total_amount FROM ${table} WHERE id = $1 AND user_id = $2`, [invoiceId, req.userId]
+    );
+    if (!invRows.length) { const e = new Error('Record not found.'); e.status = 404; e.expose = true; throw e; }
+    const { rows: payRows } = await client.query(
+      'SELECT amount FROM payments WHERE invoice_id = $1 AND invoice_type = $2 AND user_id = $3',
+      [invoiceId, type, req.userId]
+    );
+    const alreadyPaid = payRows.reduce((s, p) => s + (+p.amount || 0), 0);
+    const remaining = (+invRows[0].total_amount || 0) - alreadyPaid;
+    if (amount > remaining + 0.005) {
+      const e = new Error(`Amount exceeds the outstanding balance of ${remaining.toFixed(2)}.`); e.status = 400; e.expose = true; throw e;
+    }
+
     await client.query(
-      'INSERT INTO payments (user_id, invoice_id, invoice_type, amount, method, payment_date, note) VALUES ($1,$2,$3,$4,$5,$6,$7)',
-      [req.userId, invoiceId, type, amount, method, date, note]
+      'INSERT INTO payments (user_id, invoice_id, invoice_type, amount, method, payment_date, reference_number, note) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)',
+      [req.userId, invoiceId, type, amount, method, date, referenceNumber, note]
     );
     const summary = await recomputeAndApply(client, req.userId, type, invoiceId);
     await client.query('COMMIT');

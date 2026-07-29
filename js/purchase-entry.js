@@ -73,11 +73,17 @@ function detectPurchSupplyType() {
   const vendorGstin = getPurchText('purchGstin').toUpperCase();
   const vendorState = document.getElementById('purchState')?.value || '';
 
+  // State (the actual "place of supply" field) takes priority whenever
+  // it's filled in — see Invoice Entry's detectSupplyType() for why: a
+  // vendor GSTIN left over from before the State dropdown was changed
+  // can't be allowed to silently outrank the state just explicitly
+  // picked. Same fix applied here and to Purchase Return's
+  // detectRetSupplyType() during the release audit.
   let supply = 'intrastate';
-  if (businessGstin.length >= 2 && vendorGstin.length >= 2) {
-    supply = businessGstin.slice(0, 2) === vendorGstin.slice(0, 2) ? 'intrastate' : 'interstate';
-  } else if (businessState && vendorState) {
+  if (businessState && vendorState) {
     supply = businessState === vendorState ? 'intrastate' : 'interstate';
+  } else if (businessGstin.length >= 2 && vendorGstin.length >= 2) {
+    supply = businessGstin.slice(0, 2) === vendorGstin.slice(0, 2) ? 'intrastate' : 'interstate';
   }
 
   const hidden = document.getElementById('purchSupply');
@@ -157,14 +163,35 @@ async function saveVendorFromPurchaseForm() {
   await loadPurchVendorsList(user.id);
 }
 
-// ── Payment (to vendor) section ──────────────────────
+// ── Payment (to vendor) section — new-purchase only, mirrors Invoice
+// Entry's Payment section exactly; editing an existing purchase's
+// payments happens on Purchase List (see loadPurchaseForEdit() below) ──
 function onPurchPaymentStatusChange() {
   const status = document.getElementById('purchPaymentStatus')?.value;
   const show = status === 'partial';
   document.getElementById('purchPaymentAmountGroup')?.classList.toggle('collapsed', !show);
-  const amountEl = document.getElementById('purchPaymentAmount');
-  if (amountEl) amountEl.disabled = !show;
-  if (!show) setPurchValue('purchPaymentAmount', '');
+  document.getElementById('purchPaymentDetailGroup')?.classList.toggle('collapsed', !show);
+  ['purchPaymentAmount','purchPaymentDate','purchPaymentMode','purchPaymentReference','purchPaymentNote'].forEach(id => {
+    const el = document.getElementById(id); if (el) el.disabled = !show;
+  });
+  if (!show) {
+    ['purchPaymentAmount','purchPaymentReference','purchPaymentNote'].forEach(id => setPurchValue(id, ''));
+    setPurchValue('purchPaymentDate', '');
+    setPurchValue('purchPaymentMode', 'cash');
+  } else {
+    if (!getPurchText('purchPaymentDate')) setPurchValue('purchPaymentDate', toISO(new Date()));
+  }
+}
+
+function setPurchPaymentSectionMode(editable, statusLabel) {
+  document.getElementById('purchPaymentEditableFields')?.classList.toggle('d-none', !editable);
+  document.getElementById('purchPaymentDetailGroup')?.classList.toggle('d-none', !editable);
+  document.getElementById('purchPaymentEditNote')?.classList.toggle('d-none', editable);
+  if (!editable) {
+    const label = { unpaid: 'Unpaid', partial: 'Partially Paid', paid: 'Paid in Full' }[statusLabel] || 'Unpaid';
+    const el = document.getElementById('purchPaymentEditStatusText');
+    if (el) el.textContent = label;
+  }
 }
 
 // ── Edit mode ────────────────────────────────────────
@@ -183,9 +210,7 @@ async function loadPurchaseForEdit(id) {
   setPurchValue('purchNum', rec.purchase_number || '');
   setPurchValue('purchDate', rec.purchase_date || '');
   setPurchValue('purchSupply', rec.supply_type || 'intrastate');
-  setPurchValue('purchPaymentStatus', rec.payment_status || 'unpaid');
-  setPurchValue('purchPaymentAmount', rec.amount_paid || '');
-  onPurchPaymentStatusChange();
+  setPurchPaymentSectionMode(false, rec.payment_status);
 
   const { data: items } = await _supabase.from('purchase_items').select('*').eq('purchase_id', id);
   const activeItems = (items || []).sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0));
@@ -229,24 +254,38 @@ async function savePurchase() {
     user_id: user.id,
     vendor_id: purchSelectedVendorId,
     vendor_name: vendorName, vendor_gstin: gstin || null, phone, address, state,
-    purchase_number: purchNum, purchase_date: purchDate, supply_type: supply,
-    payment_status: document.getElementById('purchPaymentStatus')?.value || 'unpaid',
-    // "Paid in Full" is patched in below once totals are known (amount_paid
-    // is NOT NULL, so it starts at 0 here rather than null).
-    amount_paid: (document.getElementById('purchPaymentStatus')?.value === 'paid')
-      ? 0
-      : (parseFloat(getPurchText('purchPaymentAmount')) || 0)
+    purchase_number: purchNum, purchase_date: purchDate, supply_type: supply
   };
+  // payment_status/amount_paid are ledger-derived (server/routes/payments.js
+  // recomputes them from the `payments` table) — never written here directly.
+  // On a brand-new purchase they start at unpaid/0; any initial payment goes
+  // through recordPayment() below, same as Invoice Entry. On edit, they're
+  // simply left out of headerBase so save-with-items doesn't touch them —
+  // editing an existing purchase's payments happens on Purchase List instead.
+  if (wasNew) { headerBase.payment_status = 'unpaid'; headerBase.amount_paid = 0; }
 
   const id = await savePurchaseWithItems('purchase', headerBase, purchEditId, user.id);
   if (!id) return;
 
-  // "Paid in Full" needs the grand total, only known after the line
-  // items are rolled up inside savePurchaseWithItems() — patch it in
-  // as a tiny follow-up rather than duplicating the rollup math here.
-  if (headerBase.payment_status === 'paid') {
-    const rollups = computePurchRollups();
-    await _supabase.from('purchases').update({ amount_paid: rollups.total_amount }).eq('id', id);
+  // Initial payment, if the user marked one on the creation form — goes
+  // through the real payments ledger (same as Invoice Entry) so it shows
+  // up in Payment History rather than being a number with no record
+  // behind it. Only for a brand-new purchase; editing manages payments
+  // from Purchase List instead (see loadPurchaseForEdit()).
+  if (wasNew) {
+    const payStatus = document.getElementById('purchPaymentStatus')?.value || 'unpaid';
+    if (payStatus !== 'unpaid') {
+      const rollups = computePurchRollups();
+      const amount = payStatus === 'paid' ? rollups.total_amount : (parseFloat(getPurchText('purchPaymentAmount')) || 0);
+      if (amount > 0) {
+        const method = payStatus === 'paid' ? 'cash' : (document.getElementById('purchPaymentMode')?.value || 'cash');
+        const payDate = payStatus === 'paid' ? purchDate : (getPurchText('purchPaymentDate') || purchDate);
+        const referenceNumber = payStatus === 'paid' ? '' : getPurchText('purchPaymentReference');
+        const note = payStatus === 'paid' ? 'Recorded at purchase creation' : (getPurchText('purchPaymentNote') || 'Recorded at purchase creation');
+        const payResult = await recordPayment('purchase', id, user.id, { amount, method, date: payDate, referenceNumber, note });
+        if (!payResult.ok) showToast('Purchase saved, but the payment could not be recorded: ' + (payResult.reason || 'unknown error'), 'error');
+      }
+    }
   }
 
   showToast(wasNew ? 'Purchase saved successfully!' : 'Purchase updated successfully!');
@@ -268,7 +307,10 @@ function clearPurchaseFormFields() {
   setPurchValue('purchDate', toISO(new Date()));
   setPurchValue('purchSupply', 'intrastate');
   setPurchValue('purchPaymentStatus', 'unpaid');
+  ['purchPaymentAmount','purchPaymentDate','purchPaymentReference','purchPaymentNote'].forEach(id => setPurchValue(id, ''));
+  setPurchValue('purchPaymentMode', 'cash');
   onPurchPaymentStatusChange();
+  setPurchPaymentSectionMode(true);
   purchSelectedVendorId = null;
   purchEditId = null;
   updatePurchGstinValidationStatus();

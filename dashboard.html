@@ -39,9 +39,11 @@
       <a href="hsn.html#b2c" class="menu-item"><i class="fas fa-tags"></i> B2C HSN</a>
       <div class="menu-section">Masters</div>
       <a href="customers.html" class="menu-item"><i class="fas fa-address-book"></i> Customers</a>
+      <a href="customer-ledger.html" class="menu-item"><i class="fas fa-book"></i> Customer Ledger</a>
       <a href="products.html" class="menu-item"><i class="fas fa-box"></i> Products</a>
       <div class="menu-section">Purchases</div>
       <a href="vendors.html" class="menu-item"><i class="fas fa-truck"></i> Vendors</a>
+      <a href="vendor-ledger.html" class="menu-item"><i class="fas fa-book"></i> Vendor Ledger</a>
       <a href="purchases.html" class="menu-item"><i class="fas fa-cart-plus"></i> New Purchase</a>
       <a href="purchase-list.html" class="menu-item"><i class="fas fa-boxes"></i> Purchase List</a>
       <a href="purchase-returns.html" class="menu-item"><i class="fas fa-undo"></i> Purchase Returns</a>
@@ -136,7 +138,11 @@
         </div>
         <div class="stat-card border-red">
           <div class="stat-icon red"><i class="fas fa-hourglass-half"></i></div>
-          <div class="stat-info"><div class="stat-label">Pending Payments</div><div class="stat-value" id="statPendingPayments">&#8377;0.00</div></div>
+          <div class="stat-info"><div class="stat-label">Outstanding Receivables</div><div class="stat-value" id="statOutstandingReceivables">&#8377;0.00</div></div>
+        </div>
+        <div class="stat-card border-red">
+          <div class="stat-icon red"><i class="fas fa-file-invoice-dollar"></i></div>
+          <div class="stat-info"><div class="stat-label">Outstanding Payables</div><div class="stat-value" id="statOutstandingPayables">&#8377;0.00</div></div>
         </div>
         <div class="stat-card border-purple">
           <div class="stat-icon purple"><i class="fas fa-rotate-left"></i></div>
@@ -371,14 +377,15 @@ let _dashCache = null;
 let _dashUserId = null;
 
 async function loadDashboardSharedData(userId) {
-  const [b2bRes, b2cRes, prodRes, itemsRes, b2bHsnRes, b2cHsnRes, custRes] = await Promise.all([
+  const [b2bRes, b2cRes, prodRes, itemsRes, b2bHsnRes, b2cHsnRes, custRes, purchRes] = await Promise.all([
     _supabase.from('b2b_invoices').select('*').eq('user_id', userId),
     _supabase.from('b2c_invoices').select('*').eq('user_id', userId),
     _supabase.from('products').select('*').eq('user_id', userId),
     _supabase.from('invoice_items').select('*').eq('user_id', userId),
     _supabase.from('b2b_hsn').select('product_name,total_invoice_value,source').eq('user_id', userId),
     _supabase.from('b2c_hsn').select('product_name,total_invoice_value,source').eq('user_id', userId),
-    _supabase.from('customers').select('name,created_at').eq('user_id', userId)
+    _supabase.from('customers').select('name,created_at').eq('user_id', userId),
+    _supabase.from('purchases').select('total_amount,amount_paid,payment_status').eq('user_id', userId)
   ]);
   _dashUserId = userId;
   _dashCache = {
@@ -388,7 +395,8 @@ async function loadDashboardSharedData(userId) {
     items: itemsRes.data || [],
     b2bHsn: b2bHsnRes.data || [],
     b2cHsn: b2cHsnRes.data || [],
-    customers: custRes.data || []
+    customers: custRes.data || [],
+    purchases: purchRes.data || []
   };
   return _dashCache;
 }
@@ -517,15 +525,24 @@ async function loadMonthlySalesReturns(userId) {
   set('statMonthlySalesReturns', formatCurrency(total));
 }
 
-// ── Pending Payments (all-time open balance — not scoped to the
-// selected period; a business needs to know what's owed right now) ──
-// Reads the shared cache — issues no network request of its own.
-async function loadPendingPayments(userId) {
+// ── Outstanding Receivables / Payables (all-time open balance — not
+// scoped to the selected period; a business needs to know what's owed
+// right now). Reads the shared cache — issues no network request of
+// its own. ─────────────────────────────────────
+async function loadOutstandingReceivables(userId) {
   const cache = await ensureDashCache(userId);
   const all = [...cache.b2b, ...cache.b2c].filter(r => (r.payment_status || 'unpaid') !== 'paid');
   const pending = all.reduce((s, r) => s + Math.max(0, (+r.total_amount || 0) - (+r.amount_paid || 0)), 0);
   const set = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
-  set('statPendingPayments', formatCurrency(pending));
+  set('statOutstandingReceivables', formatCurrency(pending));
+}
+
+async function loadOutstandingPayables(userId) {
+  const cache = await ensureDashCache(userId);
+  const all = cache.purchases.filter(r => (r.payment_status || 'unpaid') !== 'paid');
+  const pending = all.reduce((s, r) => s + Math.max(0, (+r.total_amount || 0) - (+r.amount_paid || 0)), 0);
+  const set = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
+  set('statOutstandingPayables', formatCurrency(pending));
 }
 
 // ── Top Selling Products by quantity (all-time, from invoice line
@@ -767,7 +784,8 @@ document.addEventListener('DOMContentLoaded', async () => {
   await Promise.all([
     loadDashboardData(user.id, start, end),
     loadTodayStats(user.id),
-    loadPendingPayments(user.id)
+    loadOutstandingReceivables(user.id),
+    loadOutstandingPayables(user.id)
   ]);
 
   // Phase 3: the loading overlay disappears as soon as the main stat

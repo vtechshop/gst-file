@@ -86,8 +86,23 @@ function calcGST(taxableAmount, gstPct, supplyType) {
   };
 }
 
+// Single source of truth for every 2-decimal money/GST rounding in the
+// app. The naive `Math.round(n * 100) / 100` is a well-known JS trap:
+// binary floating point can't represent most decimals exactly, so a
+// value like 1.005 is actually stored as ~1.00499999999999989 — meaning
+// `1.005 * 100` evaluates to 100.49999999999999, and Math.round wrongly
+// floors it to 1.00 instead of 1.01. This silently under-rounds roughly
+// half of all values ending in an exact half-paisa (confirmed with a
+// 2-million-value randomized sweep during the GSTR-1 production audit —
+// see js/gstr1-export.js). Reformatting through exponential notation
+// (`n + 'e2'`) instead of multiplying sidesteps the problem entirely:
+// the string "1.005e2" parses directly to the nearest double for 100.5,
+// which — unlike 1.005 — IS exactly representable in binary, so no
+// compounding error survives into the round step.
 function round2(n) {
-  return Math.round((parseFloat(n) || 0) * 100) / 100;
+  n = parseFloat(n) || 0;
+  if (!isFinite(n)) return 0;
+  return Number(Math.round(Number(n + 'e2')) + 'e-2');
 }
 
 function formatCurrency(n) {
@@ -370,6 +385,43 @@ const INDIAN_STATES = [
   'Chandigarh','Dadra and Nagar Haveli and Daman and Diu','Delhi',
   'Jammu and Kashmir','Ladakh','Lakshadweep','Puducherry'
 ];
+
+// GST's official UQC (Unit Quantity Code) master — reconstructed from the
+// documented GSTN/offline-utility UQC list (the same source already used
+// for js/gstr1-export.js's UQC handling) — worth re-confirming against
+// the live GST Portal dropdown if it's ever revised. Shared source of
+// truth for every "pick a unit" control in the app, so a code entered on
+// an invoice line is always one GSTN actually recognizes.
+const GST_UQC_MASTER = [
+  { code: 'BAG', label: 'BAGS' }, { code: 'BAL', label: 'BALE' }, { code: 'BDL', label: 'BUNDLES' },
+  { code: 'BKL', label: 'BUCKLES' }, { code: 'BOU', label: 'BILLIONS OF UNITS' }, { code: 'BOX', label: 'BOX' },
+  { code: 'BTL', label: 'BOTTLES' }, { code: 'BUN', label: 'BUNCHES' }, { code: 'CAN', label: 'CANS' },
+  { code: 'CBM', label: 'CUBIC METERS' }, { code: 'CCM', label: 'CUBIC CENTIMETERS' }, { code: 'CMS', label: 'CENTIMETERS' },
+  { code: 'CTN', label: 'CARTONS' }, { code: 'DOZ', label: 'DOZENS' }, { code: 'DRM', label: 'DRUMS' },
+  { code: 'GGK', label: 'GREAT GROSS' }, { code: 'GMS', label: 'GRAMMES' }, { code: 'GRS', label: 'GROSS' },
+  { code: 'GYD', label: 'GROSS YARDS' }, { code: 'KGS', label: 'KILOGRAMS' }, { code: 'KLR', label: 'KILOLITRE' },
+  { code: 'KME', label: 'KILOMETRE' }, { code: 'MLT', label: 'MILILITRE' }, { code: 'MTR', label: 'METERS' },
+  { code: 'MTS', label: 'METRIC TON' }, { code: 'NOS', label: 'NUMBERS' }, { code: 'PAC', label: 'PACKS' },
+  { code: 'PCS', label: 'PIECES' }, { code: 'PRS', label: 'PAIRS' }, { code: 'QTL', label: 'QUINTAL' },
+  { code: 'ROL', label: 'ROLLS' }, { code: 'SET', label: 'SETS' }, { code: 'SQF', label: 'SQUARE FEET' },
+  { code: 'SQM', label: 'SQUARE METERS' }, { code: 'SQY', label: 'SQUARE YARDS' }, { code: 'TBS', label: 'TABLETS' },
+  { code: 'TGM', label: 'TEN GROSS' }, { code: 'THD', label: 'THOUSANDS' }, { code: 'TON', label: 'TONNES' },
+  { code: 'TUB', label: 'TUBES' }, { code: 'UGS', label: 'US GALLONS' }, { code: 'UNT', label: 'UNITS' },
+  { code: 'YDS', label: 'YARDS' }, { code: 'OTH', label: 'OTHERS' }
+];
+
+// GST's fixed rate slabs (nil/0.1%/0.25% cover gems & precious stones,
+// 1%/1.5%/3% cover unpolished/polished stones and precious metals,
+// 5/12/18/28% are the standard goods & services slabs). Any invoice
+// line's GST % must be one of these — never free-typed.
+const GST_RATE_SLABS = [0, 0.1, 0.25, 1, 1.5, 3, 5, 6, 12, 18, 28];
+
+function isValidHsnFormat(hsn) {
+  // GSTN accepts 4/6/8-digit HSN codes (which tier applies depends on
+  // the filer's aggregate turnover, not tracked here) — this checks the
+  // code is *a* valid HSN shape.
+  return /^(\d{4}|\d{6}|\d{8})$/.test((hsn || '').trim());
+}
 
 // ── Number to words (Indian numbering: lakh/crore) ──
 function numberToWordsINR(n) {

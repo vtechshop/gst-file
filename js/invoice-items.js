@@ -71,20 +71,20 @@ function renderItemsSectionShell(containerId) {
   container.innerHTML = `
     <div class="section-title mb-14">Products</div>
     <div id="productSyncNotice" class="fs-12 text-muted-sm mb-10"></div>
-    <div class="table-wrapper mb-16">
-      <table class="data-table" id="itemsTable">
+    <div class="table-wrapper items-table-wrapper mb-16">
+      <table class="data-table items-table-fixed" id="itemsTable">
         <thead>
           <tr>
-            <th class="min-w-280">Product <span class="text-required">*</span></th>
-            <th style="min-width:90px;">HSN</th>
-            <th style="min-width:80px;">Unit</th>
-            <th class="text-center" style="min-width:85px;">Qty</th>
-            <th class="text-right" style="min-width:100px;">Rate (&#8377;)</th>
-            <th class="text-center" style="min-width:90px;">Discount %</th>
-            <th class="text-center" style="min-width:85px;">GST %</th>
-            <th class="text-right" style="min-width:110px;">Taxable Value</th>
-            <th class="text-right" style="min-width:110px;">Total</th>
-            <th style="min-width:44px;"></th>
+            <th>Product <span class="text-required">*</span></th>
+            <th>HSN</th>
+            <th>Unit</th>
+            <th class="text-center">Qty</th>
+            <th class="text-right">Rate (&#8377;)</th>
+            <th class="text-center">Discount %</th>
+            <th class="text-center">GST %</th>
+            <th class="text-right">Taxable Value</th>
+            <th class="text-right">Total</th>
+            <th></th>
           </tr>
         </thead>
         <tbody id="itemsTableBody"></tbody>
@@ -202,31 +202,139 @@ function renderItemsTable() {
   tbody.innerHTML = currentItems.map(row => `
     <tr data-row="${row.rowId}">
       <td>
-        <input type="text" class="form-control" autocomplete="off"
+        <input type="text" class="form-control item-product-input" autocomplete="off"
+          title="${escItemHtml(row.product_name)}"
           value="${escItemHtml(row.product_name)}"
-          oninput="onItemProductInput('${row.rowId}', this.value); showProductDropdown('${row.rowId}', this, this.value)"
+          oninput="if (!onItemProductInput('${row.rowId}', this.value)) showProductDropdown('${row.rowId}', this, this.value)"
           onfocus="showProductDropdown('${row.rowId}', this, this.value)"
           onblur="onItemProductBlur('${row.rowId}', this.value)"
           onkeydown="onItemProductKeydown(event, '${row.rowId}')">
       </td>
-      <td><input type="text" class="form-control" value="${escItemHtml(row.hsn_code)}" ${row.locked ? 'readonly' : ''}
-          onchange="onItemFieldChange('${row.rowId}','hsn_code',this.value)"></td>
-      <td><input type="text" class="form-control" value="${escItemHtml(row.unit)}" ${row.locked ? 'readonly' : ''}
-          onchange="onItemFieldChange('${row.rowId}','unit',this.value)"></td>
-      <td><input type="number" class="form-control text-center" min="0.001" step="0.001" value="${row.quantity}"
-          oninput="onItemFieldChange('${row.rowId}','quantity',this.value)"></td>
+      <td>
+        <div data-field-wrap="hsn">
+          <input type="text" class="form-control${hsnCodeError(row.hsn_code) ? ' error' : ''}" inputmode="numeric" maxlength="8"
+            value="${escItemHtml(row.hsn_code)}"
+            title="Auto-filled from Product Master — editable for this invoice line only. Digits only, 4/6/8 digits."
+            oninput="onItemHsnInput('${row.rowId}', this)">
+          <div class="item-field-error">${hsnCodeError(row.hsn_code)}</div>
+        </div>
+      </td>
+      <td><select class="form-control" onchange="onItemFieldChange('${row.rowId}','unit',this.value)">${unitSelectOptions(row.unit)}</select></td>
+      <td>
+        <div data-field-wrap="qty">
+          <input type="number" class="form-control text-center" min="0.001" step="0.001" value="${row.quantity}"
+            oninput="onItemQtyInput('${row.rowId}', this)">
+          <div class="item-field-error">${qtyError(row)}</div>
+        </div>
+      </td>
       <td><input type="number" class="form-control text-right" min="0" step="0.01" value="${row.rate}"
-          oninput="onItemFieldChange('${row.rowId}','rate',this.value)"></td>
+          oninput="onItemFieldChange('${row.rowId}','rate',this.value)"
+          onblur="onItemRateBlur('${row.rowId}', this)"></td>
       <td><input type="number" class="form-control text-center" min="0" max="100" step="0.01" value="${row.discount_percentage}"
           oninput="onItemFieldChange('${row.rowId}','discount_percentage',this.value)"></td>
-      <td><input type="number" class="form-control text-center" min="0" max="100" step="0.01" value="${row.gst_percentage}"
-          oninput="onItemFieldChange('${row.rowId}','gst_percentage',this.value)"
-          onblur="onItemGstBlur('${row.rowId}', this)"
-          title="Auto-filled from Product Master — editable for this invoice line only"></td>
+      <td><select class="form-control" onchange="onItemFieldChange('${row.rowId}','gst_percentage',this.value)"
+          title="Auto-filled from Product Master — editable for this invoice line only">${gstRateSelectOptions(row.gst_percentage)}</select></td>
       <td class="text-right fw-600 item-taxable-cell">&#8377;${formatNum(row.taxable_value)}</td>
       <td class="text-right fw-700 item-total-cell">&#8377;${formatNum(row.total_amount)}</td>
       <td><button type="button" class="btn btn-danger btn-sm btn-icon" onclick="removeItemRow('${row.rowId}')" title="Remove row"><i class="fas fa-trash"></i></button></td>
     </tr>`).join('');
+}
+
+// ── Field-level validation helpers (pure functions — used both to
+// render the initial error state and to re-check live on every
+// keystroke via updateItemFieldValidationUI()) ──
+function hsnCodeError(hsn) {
+  const trimmed = (hsn || '').trim();
+  if (!trimmed) return ''; // blank is allowed — not every line item tracks HSN
+  return isValidHsnFormat(trimmed) ? '' : 'HSN must be 4, 6, or 8 digits.';
+}
+function qtyError(row) {
+  if (!row.product_name) return ''; // an unused blank row has nothing to complain about yet
+  const q = +row.quantity;
+  return (isNaN(q) || q <= 0) ? 'Quantity must be greater than zero.' : '';
+}
+
+// GST_UQC_MASTER/GST_RATE_SLABS live in js/utils.js (shared source of
+// truth — also usable by any future line-item table in the app). Both
+// select-builders below preserve an existing row's non-standard value
+// (e.g. a legacy free-typed unit, or a pre-GST-slab-dropdown invoice's
+// odd rate) as one extra, clearly-flagged option instead of silently
+// discarding it — so opening an old invoice never shows something
+// different from what's actually stored. validateInvoiceItems() still
+// requires a real value before Save; this is display-only.
+function unitSelectOptions(currentUnit) {
+  const norm = (currentUnit || '').trim().toUpperCase();
+  const known = GST_UQC_MASTER.some(u => u.code === norm);
+  let html = `<option value="">Select Unit</option>` +
+    GST_UQC_MASTER.map(u => `<option value="${u.code}"${u.code === norm ? ' selected' : ''}>${u.code} - ${u.label}</option>`).join('');
+  if (norm && !known) html += `<option value="${escItemHtml(norm)}" selected>${escItemHtml(norm)} (not a standard GST unit)</option>`;
+  return html;
+}
+function gstRateSelectOptions(currentRate) {
+  const rate = +currentRate || 0;
+  const known = GST_RATE_SLABS.includes(rate);
+  let html = GST_RATE_SLABS.map(r => `<option value="${r}"${r === rate ? ' selected' : ''}>${r}%</option>`).join('');
+  if (!known) html += `<option value="${rate}" selected>${rate}% (non-standard)</option>`;
+  return html;
+}
+
+// Patches just one field's validity styling/message in place — never
+// calls renderItemsTable() (same reason recalcItemRowLive() doesn't:
+// that would replace every <input> in the row and drop focus/cursor
+// mid-keystroke).
+function updateItemFieldValidationUI(rowId, field, errorMsg) {
+  const tr = document.querySelector(`#itemsTableBody tr[data-row="${rowId}"]`);
+  const wrap = tr?.querySelector(`[data-field-wrap="${field}"]`);
+  if (!wrap) return;
+  wrap.querySelector('input')?.classList.toggle('error', !!errorMsg);
+  const errEl = wrap.querySelector('.item-field-error');
+  if (errEl) errEl.textContent = errorMsg || '';
+}
+
+// HSN: digits only, capped at 8 — sanitized on every keystroke (an
+// invalid character can never even stay typed, not just get flagged
+// after the fact), with the cursor position preserved across the strip
+// so typing mid-string doesn't jump to the end (same technique already
+// used by the Vehicle Number uppercase-on-type field).
+function onItemHsnInput(rowId, el) {
+  const row = currentItems.find(r => r.rowId === rowId);
+  if (!row) return;
+  const cursorPos = el.selectionStart;
+  const before = el.value;
+  const digitsOnly = before.replace(/\D/g, '').slice(0, 8);
+  if (before !== digitsOnly) {
+    const keptBeforeCursor = before.slice(0, cursorPos).replace(/\D/g, '').length;
+    el.value = digitsOnly;
+    el.setSelectionRange(keptBeforeCursor, keptBeforeCursor);
+  }
+  row.hsn_code = digitsOnly;
+  updateItemFieldValidationUI(rowId, 'hsn', hsnCodeError(digitsOnly));
+  persistItemsDraft();
+}
+
+// Quantity: stores exactly what's typed (even 0/negative/blank) rather
+// than silently clamping it, so the inline error always matches what's
+// actually in the field — Save is what actually blocks on it
+// (validateInvoiceItems()), this is just live feedback.
+function onItemQtyInput(rowId, el) {
+  const row = currentItems.find(r => r.rowId === rowId);
+  if (!row) return;
+  const parsed = parseFloat(el.value);
+  row.quantity = isNaN(parsed) ? 0 : parsed;
+  updateItemFieldValidationUI(rowId, 'qty', qtyError(row));
+  recalcItemRowLive(rowId);
+}
+
+// Rate: snapped to 2 decimals on blur only — never while typing, so a
+// user mid-keystroke on "10.5" typing toward "10.55" never has the
+// field rewritten out from under their cursor (same reasoning as
+// onItemGstBlur used to apply to the old free-typed GST % field).
+function onItemRateBlur(rowId, el) {
+  const row = currentItems.find(r => r.rowId === rowId);
+  if (!row) return;
+  row.rate = round2(Math.max(0, parseFloat(el.value) || 0));
+  el.value = row.rate;
+  recalcItemRowLive(rowId);
 }
 
 // ── Product autocomplete / autofill / lock ─────────
@@ -237,15 +345,27 @@ function renderItemsTable() {
 // "product not found" flow right after a valid selection was made.
 let justSelectedFromDropdown = null;
 
+// Returns true when an exact match was applied — applyProductToRow()
+// calls renderItemsTable(), which replaces every row's <input> with a
+// fresh DOM node, so the caller (the inline oninput handler, which also
+// wants to open the search dropdown using the SAME "this" it already
+// has a reference to) must not go on to use that same "this" afterward:
+// it's now a detached node. getBoundingClientRect() on a detached
+// element returns an all-zero rect, which showProductDropdown() was
+// still happily positioning the dropdown against — a ~0×0 box pinned to
+// the page's top-left corner. Chromium's click-retry logic occasionally
+// muddled through it; Firefox correctly refused to click something that
+// wasn't really there, which is how this was actually caught.
 function onItemProductInput(rowId, name) {
   const row = currentItems.find(r => r.rowId === rowId);
-  if (!row) return;
+  if (!row) return false;
   row.product_name = name;
   const match = findProductByName(itemsProductsList, name);
   // An exact-name match while typing is still "a product was selected" —
   // same as a dropdown click or blur match, it must refresh every
   // auto-filled field (Rate included) and recalculate immediately.
-  if (match) { applyProductToRow(row, match); recalcItemRow(rowId); }
+  if (match) { applyProductToRow(row, match); recalcItemRow(rowId); hideProductDropdown(); return true; }
+  return false;
 }
 
 // ── Product search dropdown (name + SKU + HSN) ─────
@@ -394,7 +514,7 @@ function selectProductFromDropdown(rowId, productId) {
   // otherwise the next digit typed inserts at whatever cursor position
   // the browser happens to place it (often position 0), silently
   // corrupting the quantity (e.g. typing "3" over "1" becoming "31").
-  document.querySelector(`#itemsTableBody tr[data-row="${rowId}"] input[oninput*="'quantity'"]`)?.select();
+  document.querySelector(`#itemsTableBody tr[data-row="${rowId}"] [data-field-wrap="qty"] input`)?.select();
 }
 
 async function onItemProductBlur(rowId, name) {
@@ -457,7 +577,7 @@ function applyProductToRow(row, product) {
 function onItemFieldChange(rowId, field, value) {
   const row = currentItems.find(r => r.rowId === rowId);
   if (!row) return;
-  if (field === 'hsn_code' || field === 'unit') {
+  if (field === 'unit') {
     row[field] = value;
   } else if (field === 'discount_percentage' || field === 'gst_percentage') {
     // Same 0-100 clamp as Discount — a manually overridden GST % never
@@ -477,21 +597,6 @@ function onItemFieldChange(rowId, field, value) {
   recalcItemRowLive(rowId);
 }
 
-// GST % accepts free typing (including a transient "-" or a value briefly
-// above 100 mid-keystroke) without interrupting the user with a toast on
-// every character — onItemFieldChange above already clamps it for
-// calculation purposes on every keystroke. Once the user leaves the
-// field, this reconciles what's displayed with what was actually clamped
-// and stored, and surfaces one validation message if a correction happened.
-function onItemGstBlur(rowId, el) {
-  const row = currentItems.find(r => r.rowId === rowId);
-  if (!row) return;
-  const raw = el.value.trim();
-  const parsed = parseFloat(raw);
-  const wasInvalid = raw !== '' && (isNaN(parsed) || parsed < 0 || parsed > 100);
-  if (wasInvalid) showToast('GST % must be a number between 0 and 100 — corrected to ' + row.gst_percentage + '%.', 'error');
-  el.value = row.gst_percentage;
-}
 
 // ── Quick Add Product modal ─────────────────────────
 function ensureQuickAddProductModal() {
@@ -694,6 +799,18 @@ function computeInvoiceRollups() {
 function validateInvoiceItems() {
   const rows = currentItems.filter(r => r.product_name && r.quantity > 0 && r.rate >= 0);
   if (!rows.length) { showToast('Add at least one product with a quantity and rate.', 'error'); return false; }
+
+  // Per-row blocking checks — an empty/unused row (no product entered)
+  // is silently ignored, same as it always has been; anything with a
+  // product must pass all of these before Save is allowed.
+  for (const row of currentItems) {
+    if (!row.product_name) continue;
+    if (!(+row.quantity > 0)) { showToast(`"${row.product_name}": quantity must be greater than zero.`, 'error'); return false; }
+    if (+row.rate < 0) { showToast(`"${row.product_name}": rate cannot be negative.`, 'error'); return false; }
+    if (row.hsn_code && !isValidHsnFormat(row.hsn_code)) { showToast(`"${row.product_name}": HSN code must be 4, 6, or 8 digits.`, 'error'); return false; }
+    if (row.unit && !GST_UQC_MASTER.some(u => u.code === row.unit)) { showToast(`"${row.product_name}": "${row.unit}" is not a valid GST unit — pick one from the Unit list.`, 'error'); return false; }
+    if (!GST_RATE_SLABS.includes(+row.gst_percentage)) { showToast(`"${row.product_name}": ${row.gst_percentage}% is not a standard GST slab — pick one from the GST % list.`, 'error'); return false; }
+  }
   return true;
 }
 

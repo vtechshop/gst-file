@@ -57,14 +57,25 @@ function detectRetSupplyType() {
   const vendorGstin = getRetText('retGstin').toUpperCase();
   const vendorState = document.getElementById('retState')?.value || '';
 
+  // State (the actual "place of supply" field) takes priority whenever
+  // it's filled in — see the identical fix on Invoice Entry's
+  // detectSupplyType() for why: a vendor GSTIN left over from before the
+  // user changed the State dropdown can't be allowed to silently
+  // outrank the state they just explicitly picked.
   let supply = 'intrastate';
-  if (businessGstin.length >= 2 && vendorGstin.length >= 2) {
-    supply = businessGstin.slice(0, 2) === vendorGstin.slice(0, 2) ? 'intrastate' : 'interstate';
-  } else if (businessState && vendorState) {
+  if (businessState && vendorState) {
     supply = businessState === vendorState ? 'intrastate' : 'interstate';
+  } else if (businessGstin.length >= 2 && vendorGstin.length >= 2) {
+    supply = businessGstin.slice(0, 2) === vendorGstin.slice(0, 2) ? 'intrastate' : 'interstate';
   }
 
-  const hidden = document.getElementById('purchSupply');
+  // Was reading/writing 'purchSupply' — an id that only exists on
+  // purchases.html, not this page — so the computed value here was
+  // never actually saved anywhere; savePurchaseReturn() always fell
+  // back to hardcoded 'intrastate' regardless of what this function (or
+  // the badge) correctly showed. Found via a real save/edit cycle
+  // during the release audit, not by inspection.
+  const hidden = document.getElementById('retSupply');
   if (hidden) {
     const changed = hidden.value !== supply;
     hidden.value = supply;
@@ -111,7 +122,8 @@ async function savePurchaseReturn() {
   const returnDate  = getRetText('retDate');
   const reason      = getRetText('retReason');
   const origNum     = getRetText('retOrigPurchase');
-  const supply      = document.getElementById('purchSupply')?.value || 'intrastate';
+  const state       = document.getElementById('retState')?.value || '';
+  const supply      = document.getElementById('retSupply')?.value || 'intrastate';
   const wasNew      = !retEditId;
 
   if (!vendorName) { showToast('Please enter the vendor name.', 'error'); return; }
@@ -130,7 +142,7 @@ async function savePurchaseReturn() {
   const headerBase = {
     user_id: user.id,
     vendor_id: retSelectedVendorId,
-    vendor_name: vendorName, vendor_gstin: gstin || null,
+    vendor_name: vendorName, vendor_gstin: gstin || null, state: state || null,
     return_number: returnNum, return_date: returnDate, supply_type: supply,
     original_purchase_number: origNum || null,
     reason: reason || null

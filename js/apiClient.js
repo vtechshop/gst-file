@@ -51,6 +51,7 @@ class RestQueryBuilder {
     this._filters = {};
     this._gteF    = {};
     this._lteF    = {};
+    this._inF     = {};
     this._orderField = null;
     this._orderAsc   = false;
     this._isSingle   = false;
@@ -71,6 +72,13 @@ class RestQueryBuilder {
   eq(f, v)       { this._filters[f] = v; return this; }
   gte(f, v)      { this._gteF[f] = v;    return this; }
   lte(f, v)      { this._lteF[f] = v;    return this; }
+  // Scopes to a set of values in one round trip (server/routes/generic.js's
+  // in_<column> filter) — for tables with no date column of their own
+  // (e.g. invoice_items, keyed to a parent invoice id rather than
+  // carrying its own date) so a caller can filter to a known set of
+  // parent ids without either fetching the whole table or firing one
+  // request per id.
+  in(f, values)  { this._inF[f] = values; return this; }
   order(f, opts) { this._orderField = f; this._orderAsc = opts?.ascending !== false; return this; }
   single()       { this._isSingle = true; return this; }
 
@@ -79,6 +87,7 @@ class RestQueryBuilder {
     Object.entries(this._filters).forEach(([f, v]) => params.append('eq_' + f, v));
     Object.entries(this._gteF).forEach(([f, v]) => params.append('gte_' + f, v));
     Object.entries(this._lteF).forEach(([f, v]) => params.append('lte_' + f, v));
+    Object.entries(this._inF).forEach(([f, values]) => { if (values && values.length) params.append('in_' + f, values.join(',')); });
     if (this._orderField) params.set('order', this._orderField + '.' + (this._orderAsc ? 'asc' : 'desc'));
     return params.toString();
   }

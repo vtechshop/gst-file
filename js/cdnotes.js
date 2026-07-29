@@ -6,12 +6,21 @@ let cdAllData = [];
 let cdPage = 1;
 const CD_PAGE = 10;
 
+// Single source of truth for every state dropdown app-wide — see
+// INDIAN_STATES in js/utils.js.
+function populateCDStateOptions() {
+  const sel = document.getElementById('cdState');
+  if (!sel) return;
+  sel.innerHTML = '<option value="">Select State</option>' + INDIAN_STATES.map(s => `<option value="${s}">${s}</option>`).join('');
+}
+
 async function initCDNotes() {
   const user = await requireAuth();
   if (!user) return;
   initNavUser(user);
   setupLogoutBtn();
   setupMobileMenu();
+  populateCDStateOptions();
   loadUserProfile(user.id);
   setupCDCalc();
   setupCDSearch();

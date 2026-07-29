@@ -33,10 +33,26 @@ function buildWhere(query, ownerColumn, userId, columns) {
     if (key.startsWith('eq_')) { field = key.slice(3); op = '='; }
     else if (key.startsWith('gte_')) { field = key.slice(4); op = '>='; }
     else if (key.startsWith('lte_')) { field = key.slice(4); op = '<='; }
+    // `in_<column>=id1,id2,id3` — lets a caller scope a table with no
+    // date column of its own (e.g. invoice_items, keyed to a parent
+    // invoice's id rather than carrying its own date) down to a
+    // specific set of parent rows, instead of either fetching that
+    // table's entire history for the user (unbounded — the GSTR-1
+    // exporter used to do exactly this) or issuing one request per id
+    // (real N+1). Every value is still bound as its own parameter, same
+    // as eq_/gte_/lte_ — never string-concatenated.
+    else if (key.startsWith('in_')) { field = key.slice(3); op = 'IN'; }
     else continue;
     if (!columns.includes(field)) continue; // unknown/unsafe column — silently ignored, never interpolated
-    params.push(query[key]);
-    clauses.push(`${field} ${op} $${params.length}`);
+    if (op === 'IN') {
+      const values = String(query[key]).split(',').map(v => v.trim()).filter(Boolean);
+      if (!values.length) continue;
+      const placeholders = values.map(v => { params.push(v); return `$${params.length}`; });
+      clauses.push(`${field} IN (${placeholders.join(',')})`);
+    } else {
+      params.push(query[key]);
+      clauses.push(`${field} ${op} $${params.length}`);
+    }
   }
   return { where: 'WHERE ' + clauses.join(' AND '), params };
 }
@@ -212,7 +228,7 @@ const TABLES = {
       'created_at','updated_at']
   },
   purchase_returns: {
-    columns: ['id','user_id','vendor_id','vendor_name','vendor_gstin','return_number','return_date',
+    columns: ['id','user_id','vendor_id','vendor_name','vendor_gstin','state','return_number','return_date',
       'original_purchase_id','original_purchase_number','reason','taxable_amount','gst_percentage',
       'gst_amount','total_amount','supply_type','igst','cgst','sgst',
       'created_at','updated_at']

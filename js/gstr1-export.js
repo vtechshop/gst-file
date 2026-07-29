@@ -52,6 +52,21 @@
 // this for an actual filing; thresholds like this do get revised.
 const GSTR1_B2CL_THRESHOLD = 100000;
 
+// One rounding-tolerance constant for every "do these two independently
+// computed money figures agree" check in this file (was previously two
+// different unnamed magic numbers — 0.02 on the cached-total checks,
+// 0.05 on the final-audit checks — with no reason for the two figures
+// to differ). ₹0.05 comfortably absorbs legitimate per-line round2()
+// noise across several summed items without masking a real mismatch.
+const GSTR1_RECONCILE_TOLERANCE = 0.05;
+
+// Server-side `in_<column>` filters (server/routes/generic.js) are still
+// passed as one query-string value — chunking the id list keeps any
+// single request's URL comfortably under typical server/proxy length
+// limits even for a filing period with several thousand invoices,
+// without falling back to one request per invoice (real N+1).
+const GSTR1_ID_CHUNK_SIZE = 300;
+
 // UQC (Unit Quantity Code) — the GST Portal's official master list uses
 // compound codes like "PCS-PIECES", never the bare unit text this app
 // stores on invoice_items.unit (see COMMON_UNITS in js/utils.js).
@@ -86,6 +101,27 @@ function gstr1HsnFormatOk(hsn) {
 }
 function gstr1DateOk(ddmmyyyy) {
   return /^\d{2}-\d{2}-\d{4}$/.test(ddmmyyyy || '');
+}
+
+// A corrupted/hand-edited invoice_items.taxable_value would previously
+// flow straight through — gstr1RecomputeItem() only re-derives the TAX
+// portion (igst/cgst/sgst) from taxable_value, it never re-derives
+// taxable_value itself. This closes that gap by recomputing it from the
+// same quantity/rate/discount_percentage formula js/invoice-items.js's
+// recalcItemRow() uses at entry time (round2(qty*rate*(1-discount/100))
+// — see that file), so a tampered taxable_value with unchanged
+// quantity/rate is caught here instead of silently exported. Only
+// applies to live invoice_items rows — a legacy pre-line-item invoice's
+// pseudo-item (built in gstr1ItemsForInvoice from a b2b_hsn/b2c_hsn row)
+// carries no rate/discount_percentage of its own to recompute from, so
+// there is nothing to cross-check there.
+function gstr1CheckItemTaxable(item, errCtx, errors) {
+  if (item.rate === undefined || item.discount_percentage === undefined) return; // legacy pseudo-item, nothing to cross-check
+  const expected = round2((+item.quantity || 0) * (+item.rate || 0) * (1 - (+item.discount_percentage || 0) / 100));
+  const actual = round2(+item.taxable_value || 0);
+  if (Math.abs(expected - actual) > GSTR1_RECONCILE_TOLERANCE) {
+    errors.push(`${errCtx}: stored taxable value (₹${actual}) does not match quantity×rate×(1−discount%) (₹${expected}) — the line item's stored taxable value is stale/corrupted.`);
+  }
 }
 
 // ── Recompute every money figure from line items — never trust the
@@ -184,24 +220,54 @@ async function buildGSTR1Payload(userId, profile, periodFilter) {
   if (!businessGstinCheck.valid) {
     errors.push(`Business Profile GSTIN "${businessGstin}" is invalid (${businessGstinCheck.reason}). Fix it in Business Profile before generating a return.`);
   }
+  // The business's own GSTIN, once validated, is the single authoritative
+  // source for "which state is this registration in" — never the
+  // separately-typed Business Profile State text field, which can drift
+  // out of sync with the GSTIN (the same class of bug the earlier
+  // Interstate/Intrastate entry-form fix addressed for the customer
+  // side: a free-text state field silently overriding a more
+  // authoritative GSTIN-derived one). Only falls back to the text field
+  // when the GSTIN itself is invalid — at which point export is already
+  // blocked by the check above, so this fallback only matters for
+  // producing a sane (not necessarily final) POS-agreement message.
+  const businessStateCode = businessGstinCheck.valid ? businessGstin.slice(0, 2) : getStateCode(businessState);
 
-  const [b2bRes, b2cRes, itemsRes, hsnB2BRes, hsnB2CRes, cdnRes, srRes, srItemsRes] = await Promise.all([
+  const todayISO = toISO(new Date());
+
+  // Round 1: everything that can be scoped by its own date column.
+  const [b2bRes, b2cRes, cdnRes, srRes, srItemsRes] = await Promise.all([
     _supabase.from('b2b_invoices').select('*').eq('user_id', userId).gte('invoice_date', start).lte('invoice_date', end),
     _supabase.from('b2c_invoices').select('*').eq('user_id', userId).gte('invoice_date', start).lte('invoice_date', end),
-    _supabase.from('invoice_items').select('*').eq('user_id', userId),
-    _supabase.from('b2b_hsn').select('*').eq('user_id', userId),
-    _supabase.from('b2c_hsn').select('*').eq('user_id', userId),
     _supabase.from('cdn_notes').select('*').eq('user_id', userId).gte('note_date', start).lte('note_date', end),
     _supabase.from('sales_returns').select('*').eq('user_id', userId).gte('return_date', start).lte('return_date', end),
     _supabase.from('sales_return_items').select('*').eq('user_id', userId)
   ]);
 
   const b2bData = b2bRes.data || [], b2cData = b2cRes.data || [];
-  const allItems = itemsRes.data || [];
-  const legacyHsnRows = [...(hsnB2BRes.data || []), ...(hsnB2CRes.data || [])];
   const cdnNotes = cdnRes.data || [];
   const salesReturns = srRes.data || [];
   const srItemsAll = srItemsRes.data || [];
+
+  // Round 2: invoice_items and the legacy HSN tables have no date column
+  // of their own (items belong to an invoice, not a day) — the old
+  // generator fetched ALL of them for the user, every export, forever,
+  // regardless of period (a real scaling problem: a business with years
+  // of history would re-download its entire item history on every
+  // single month's filing). Scoped here instead to exactly this
+  // period's invoice ids via the ids already known from round 1, chunked
+  // to keep any one request's URL length safe even for a filing period
+  // with several thousand invoices.
+  const periodInvoiceIds = [...b2bData.map(r => r.id), ...b2cData.map(r => r.id)];
+  const chunk = (arr, size) => { const out = []; for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size)); return out; };
+  const idChunks = chunk(periodInvoiceIds, GSTR1_ID_CHUNK_SIZE);
+
+  const [itemsChunks, hsnB2BChunks, hsnB2CChunks] = await Promise.all([
+    Promise.all(idChunks.map(ids => _supabase.from('invoice_items').select('*').eq('user_id', userId).in('invoice_id', ids))),
+    Promise.all(idChunks.map(ids => _supabase.from('b2b_hsn').select('*').eq('user_id', userId).in('source_invoice_id', ids))),
+    Promise.all(idChunks.map(ids => _supabase.from('b2c_hsn').select('*').eq('user_id', userId).in('source_invoice_id', ids)))
+  ]);
+  const allItems = itemsChunks.flatMap(r => r.data || []);
+  const legacyHsnRows = [...hsnB2BChunks.flatMap(r => r.data || []), ...hsnB2CChunks.flatMap(r => r.data || [])];
 
   const itemsByInvoice = {};
   allItems.forEach(r => {
@@ -228,6 +294,15 @@ async function buildGSTR1Payload(userId, profile, periodFilter) {
     const key = hsnCode + '|' + r.rate;
     if (!hsnBuckets.has(key)) hsnBuckets.set(key, { hsn_sc: hsnCode, desc: desc || '', uqc, qty: 0, taxable: 0, igst: 0, cgst: 0, sgst: 0 });
     const b = hsnBuckets.get(key);
+    // GSTN's schema allows exactly one row per HSN+rate — different
+    // units genuinely selling under the same HSN+rate can't become two
+    // rows (that would itself be a duplicate-HSN-row rejection) or be
+    // silently summed together (a combined "8 units" of 5kg + 3pcs is
+    // meaningless). Flagged for a human to resolve rather than guessed.
+    if (b.uqc !== 'OTH-OTHERS' && uqc !== 'OTH-OTHERS' && b.uqc !== uqc) {
+      errors.push(`${errCtx}: HSN ${hsnCode} at ${r.rate}% has items in two different units (${b.uqc} and ${uqc}) — GSTN allows only one UQC per HSN+rate row. Use distinct HSN codes, or make the unit consistent for this HSN+rate.`);
+      return;
+    }
     b.qty = round2(b.qty + (qty || 0));
     b.taxable = round2(b.taxable + r.taxable); b.igst = round2(b.igst + r.igst);
     b.cgst = round2(b.cgst + r.cgst); b.sgst = round2(b.sgst + r.sgst);
@@ -246,6 +321,7 @@ async function buildGSTR1Payload(userId, profile, periodFilter) {
     if (!gstr1InvoiceNumberOk(inv.invoice_number)) { errors.push(`${ctx}: invoice number is not portal-valid (max 16 chars, letters/digits/-/ only).`); return; }
     const idt = formatDateDDMMYYYY(inv.invoice_date);
     if (!gstr1DateOk(idt)) { errors.push(`${ctx}: invoice date "${inv.invoice_date}" did not convert to a valid DD-MM-YYYY date.`); return; }
+    if (inv.invoice_date > todayISO) { errors.push(`${ctx}: invoice date (${inv.invoice_date}) is in the future.`); return; }
     if (inv.supply_type !== 'interstate' && inv.supply_type !== 'intrastate') { errors.push(`${ctx}: supply_type "${inv.supply_type}" is neither interstate nor intrastate.`); return; }
 
     const pos = gstr1PosRegistered(gstin);
@@ -253,7 +329,7 @@ async function buildGSTR1Payload(userId, profile, periodFilter) {
     // POS vs supply_type must agree — if they don't, one of the two is
     // stale/wrong (see the earlier Interstate/Intrastate detection fix
     // for exactly this class of bug on the entry form itself).
-    const expectedSupplyType = pos === getStateCode(businessState) ? 'intrastate' : 'interstate';
+    const expectedSupplyType = pos === businessStateCode ? 'intrastate' : 'interstate';
     if (expectedSupplyType !== inv.supply_type) {
       errors.push(`${ctx}: supply_type is "${inv.supply_type}" but the customer GSTIN's state code ("${pos}") implies "${expectedSupplyType}" — these must agree.`);
     }
@@ -262,15 +338,19 @@ async function buildGSTR1Payload(userId, profile, periodFilter) {
     if (!items.length) { errors.push(`${ctx}: has no line items (neither current nor legacy) — cannot compute taxable/tax values.`); return; }
     let itemsOk = true;
     items.forEach((it, idx) => {
-      if (+it.quantity <= 0) { errors.push(`${ctx}, item ${idx + 1} ("${it.product_name}"): quantity must be greater than zero (got ${it.quantity}).`); itemsOk = false; }
-      if (+it.taxable_value < 0) { errors.push(`${ctx}, item ${idx + 1} ("${it.product_name}"): taxable value cannot be negative (got ${it.taxable_value}).`); itemsOk = false; }
+      const itemCtx = `${ctx}, item ${idx + 1} ("${it.product_name}")`;
+      if (+it.quantity <= 0) { errors.push(`${itemCtx}: quantity must be greater than zero (got ${it.quantity}).`); itemsOk = false; }
+      if (+it.taxable_value < 0) { errors.push(`${itemCtx}: taxable value cannot be negative (got ${it.taxable_value}).`); itemsOk = false; }
+      const preErrCount = errors.length;
+      gstr1CheckItemTaxable(it, itemCtx, errors);
+      if (errors.length > preErrCount) itemsOk = false;
       const uqc = gstr1ToUQC(it.unit);
-      addToHsn(it.hsn_code, it.product_name, uqc, +it.quantity || 0, gstr1RecomputeItem(it, inv.supply_type), `${ctx}, item ${idx + 1}`);
+      addToHsn(it.hsn_code, it.product_name, uqc, +it.quantity || 0, gstr1RecomputeItem(it, inv.supply_type), itemCtx);
     });
     if (!itemsOk) return;
 
     const recomputed = gstr1RecomputeInvoice(items, inv.supply_type);
-    if (Math.abs(recomputed.total - round2(+inv.total_amount)) > 0.02) {
+    if (Math.abs(recomputed.total - round2(+inv.total_amount)) > GSTR1_RECONCILE_TOLERANCE) {
       errors.push(`${ctx}: cached total (₹${round2(+inv.total_amount)}) does not match the total recomputed from line items (₹${recomputed.total}) — the invoice's stored totals are stale/corrupted.`);
       return;
     }
@@ -295,6 +375,7 @@ async function buildGSTR1Payload(userId, profile, periodFilter) {
     if (inv.supply_type !== 'interstate' && inv.supply_type !== 'intrastate') { errors.push(`${ctx}: supply_type "${inv.supply_type}" is neither interstate nor intrastate.`); return; }
     const idt = formatDateDDMMYYYY(inv.invoice_date);
     if (!gstr1DateOk(idt)) { errors.push(`${ctx}: invoice date "${inv.invoice_date}" did not convert to a valid DD-MM-YYYY date.`); return; }
+    if (inv.invoice_date > todayISO) { errors.push(`${ctx}: invoice date (${inv.invoice_date}) is in the future.`); return; }
 
     const pos = gstr1PosUnregistered(inv.state, errors, ctx);
     if (!GST_VALID_STATE_CODES.has(pos) && pos !== '99') { errors.push(`${ctx}: derived POS "${pos}" is not a recognized state code.`); return; }
@@ -303,15 +384,19 @@ async function buildGSTR1Payload(userId, profile, periodFilter) {
     if (!items.length) { errors.push(`${ctx}: has no line items (neither current nor legacy) — cannot compute taxable/tax values.`); return; }
     let itemsOk = true;
     items.forEach((it, idx) => {
-      if (+it.quantity <= 0) { errors.push(`${ctx}, item ${idx + 1} ("${it.product_name}"): quantity must be greater than zero (got ${it.quantity}).`); itemsOk = false; }
-      if (+it.taxable_value < 0) { errors.push(`${ctx}, item ${idx + 1} ("${it.product_name}"): taxable value cannot be negative (got ${it.taxable_value}).`); itemsOk = false; }
+      const itemCtx = `${ctx}, item ${idx + 1} ("${it.product_name}")`;
+      if (+it.quantity <= 0) { errors.push(`${itemCtx}: quantity must be greater than zero (got ${it.quantity}).`); itemsOk = false; }
+      if (+it.taxable_value < 0) { errors.push(`${itemCtx}: taxable value cannot be negative (got ${it.taxable_value}).`); itemsOk = false; }
+      const preErrCount = errors.length;
+      gstr1CheckItemTaxable(it, itemCtx, errors);
+      if (errors.length > preErrCount) itemsOk = false;
       const uqc = gstr1ToUQC(it.unit);
-      addToHsn(it.hsn_code, it.product_name, uqc, +it.quantity || 0, gstr1RecomputeItem(it, inv.supply_type), `${ctx}, item ${idx + 1}`);
+      addToHsn(it.hsn_code, it.product_name, uqc, +it.quantity || 0, gstr1RecomputeItem(it, inv.supply_type), itemCtx);
     });
     if (!itemsOk) return;
 
     const recomputed = gstr1RecomputeInvoice(items, inv.supply_type);
-    if (Math.abs(recomputed.total - round2(+inv.total_amount)) > 0.02) {
+    if (Math.abs(recomputed.total - round2(+inv.total_amount)) > GSTR1_RECONCILE_TOLERANCE) {
       errors.push(`${ctx}: cached total (₹${round2(+inv.total_amount)}) does not match the total recomputed from line items (₹${recomputed.total}) — the invoice's stored totals are stale/corrupted.`);
       return;
     }
@@ -353,9 +438,11 @@ async function buildGSTR1Payload(userId, profile, periodFilter) {
   // kept apart from CDNR/CDNUR's effect on turnover.
   let salesReturnNettedTaxable = 0;
   salesReturns.forEach(ret => {
+    const retCtx = `Sales Return ${ret.return_number || ret.id}`;
+    if (ret.return_date > todayISO) { errors.push(`${retCtx}: return date (${ret.return_date}) is in the future.`); return; }
     const items = srItemsByReturn[ret.id] || [];
     items.forEach((it, idx) => {
-      const ctx = `Sales Return ${ret.return_number || ret.id}, item ${idx + 1} ("${it.product_name}")`;
+      const ctx = `${retCtx}, item ${idx + 1} ("${it.product_name}")`;
       if (+it.quantity <= 0) { errors.push(`${ctx}: return quantity must be greater than zero.`); return; }
       if (!gstr1HsnFormatOk(it.hsn_code)) { errors.push(`${ctx}: HSN code "${it.hsn_code}" is not a valid 4/6/8-digit code.`); return; }
       const r = gstr1RecomputeItem(it, ret.supply_type);
@@ -392,6 +479,7 @@ async function buildGSTR1Payload(userId, profile, periodFilter) {
     const ntty = note.note_type === 'credit' ? 'C' : 'D';
     const ntDt = formatDateDDMMYYYY(note.note_date);
     if (!gstr1DateOk(ntDt)) { errors.push(`${ctx}: note date "${note.note_date}" did not convert to a valid DD-MM-YYYY date.`); return; }
+    if (note.note_date > todayISO) { errors.push(`${ctx}: note date (${note.note_date}) is in the future.`); return; }
     if (+note.taxable_amount <= 0) { errors.push(`${ctx}: taxable amount must be greater than zero (got ${note.taxable_amount}).`); return; }
 
     const taxable = round2(+note.taxable_amount);
@@ -493,14 +581,14 @@ function runFinalGSTR1Audit(payload, errors, context) {
   const salesReturnNettedTaxable = round2(context?.salesReturnNettedTaxable || 0);
   const invoiceSideTaxable = round2(b2bTaxable + b2clTaxable + b2csTaxable - salesReturnNettedTaxable);
   const hsnTaxable = round2(reparsed.hsn.data.reduce((s, r) => s + r.txval, 0));
-  if (Math.abs(invoiceSideTaxable - hsnTaxable) > 0.05) {
+  if (Math.abs(invoiceSideTaxable - hsnTaxable) > GSTR1_RECONCILE_TOLERANCE) {
     errors.push(`Final audit — RECONCILIATION FAILED: (B2B + B2CL + B2CS − Sales Return adjustments) = ₹${invoiceSideTaxable} does not equal HSN section taxable total (₹${hsnTaxable}). Difference: ₹${round2(invoiceSideTaxable - hsnTaxable)}.`);
   }
 
   // 5b. CDNR/CDNUR self-consistency — each note's stated val must equal
   // its own itms' taxable + tax (this is what actually needs to
   // reconcile for notes, since HSN structurally can't).
-  const noteValOk = (n) => Math.abs(n.val - round2(n.itms.reduce((s, it) => s + it.itm_det.txval + (it.itm_det.iamt || 0) + (it.itm_det.camt || 0) + (it.itm_det.samt || 0), 0))) <= 0.05;
+  const noteValOk = (n) => Math.abs(n.val - round2(n.itms.reduce((s, it) => s + it.itm_det.txval + (it.itm_det.iamt || 0) + (it.itm_det.camt || 0) + (it.itm_det.samt || 0), 0))) <= GSTR1_RECONCILE_TOLERANCE;
   reparsed.cdnr.forEach(g => g.nt.forEach(n => { if (!noteValOk(n)) errors.push(`Final audit: CDNR note ${n.nt_num} val (₹${n.val}) does not match its own item total.`); }));
   reparsed.cdnur.forEach(n => { if (!noteValOk(n)) errors.push(`Final audit: CDNUR note ${n.nt_num} val (₹${n.val}) does not match its own item total.`); });
 
@@ -513,7 +601,7 @@ function runFinalGSTR1Audit(payload, errors, context) {
   const cdnrVal = reparsed.cdnr.reduce((s, g) => s + g.nt.reduce((s2, n) => s2 + (n.ntty === 'C' ? n.val : -n.val), 0), 0);
   const cdnurVal = reparsed.cdnur.reduce((s, n) => s + (n.ntty === 'C' ? n.val : -n.val), 0);
   const recomputedGt = round2(b2bVal + b2clVal + b2csVal - cdnrVal - cdnurVal);
-  if (Math.abs(recomputedGt - reparsed.gt) > 0.05) {
+  if (Math.abs(recomputedGt - reparsed.gt) > GSTR1_RECONCILE_TOLERANCE) {
     errors.push(`Final audit — GRAND TOTAL MISMATCH: payload.gt (₹${reparsed.gt}) does not equal the independently recomputed grand total (₹${recomputedGt}).`);
   }
   if (reparsed.gt !== reparsed.cur_gt) errors.push(`Final audit: gt (₹${reparsed.gt}) and cur_gt (₹${reparsed.cur_gt}) must be equal for a first-time filing.`);

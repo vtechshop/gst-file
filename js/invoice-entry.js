@@ -351,13 +351,23 @@ function onInvPaymentStatusChange() {
   const status = document.getElementById('invPaymentStatus')?.value;
   const show = status === 'partial';
   document.getElementById('invPaymentAmountGroup')?.classList.toggle('collapsed', !show);
-  const amountEl = document.getElementById('invPaymentAmount');
-  if (amountEl) amountEl.disabled = !show; // keep collapsed field out of Tab order, see syncInvoiceTypeUI()
-  if (!show) setInvValue('invPaymentAmount', '');
+  document.getElementById('invPaymentDetailGroup')?.classList.toggle('collapsed', !show);
+  // Keep collapsed fields out of Tab order, see syncInvoiceTypeUI()
+  ['invPaymentAmount','invPaymentDate','invPaymentMode','invPaymentReference','invPaymentNote'].forEach(id => {
+    const el = document.getElementById(id); if (el) el.disabled = !show;
+  });
+  if (!show) {
+    ['invPaymentAmount','invPaymentReference','invPaymentNote'].forEach(id => setInvValue(id, ''));
+    setInvValue('invPaymentDate', '');
+    setInvValue('invPaymentMode', 'cash');
+  } else {
+    if (!getInvText('invPaymentDate')) setInvValue('invPaymentDate', toISO(new Date()));
+  }
 }
 
 function setPaymentSectionMode(editable, statusLabel) {
   document.getElementById('invPaymentEditableFields')?.classList.toggle('d-none', !editable);
+  document.getElementById('invPaymentDetailGroup')?.classList.toggle('d-none', !editable);
   document.getElementById('invPaymentEditNote')?.classList.toggle('d-none', editable);
   if (!editable) {
     const label = { unpaid: 'Unpaid', partial: 'Partially Paid', paid: 'Paid in Full' }[statusLabel] || 'Unpaid';
@@ -493,6 +503,8 @@ async function loadInvoiceDuplicateDraft() {
   // A duplicate is a brand-new sale, not a copy of the old one's
   // payment state — starts fresh at Unpaid, editable, same as any new invoice.
   setInvValue('invPaymentStatus', 'unpaid');
+  ['invPaymentAmount','invPaymentDate','invPaymentReference','invPaymentNote'].forEach(id => setInvValue(id, ''));
+  setInvValue('invPaymentMode', 'cash');
   onInvPaymentStatusChange();
   setPaymentSectionMode(true);
 
@@ -636,7 +648,14 @@ async function saveInvoice() {
     if (payStatus !== 'unpaid') {
       const rollups = computeInvoiceRollups();
       const amount = payStatus === 'paid' ? rollups.total_amount : (parseFloat(getInvText('invPaymentAmount')) || 0);
-      if (amount > 0) await recordPayment(type, invoiceId, user.id, { amount, method: 'cash', date: invDate, note: 'Recorded at invoice creation' });
+      if (amount > 0) {
+        const method = payStatus === 'paid' ? 'cash' : (document.getElementById('invPaymentMode')?.value || 'cash');
+        const payDate = payStatus === 'paid' ? invDate : (getInvText('invPaymentDate') || invDate);
+        const referenceNumber = payStatus === 'paid' ? '' : getInvText('invPaymentReference');
+        const note = payStatus === 'paid' ? 'Recorded at invoice creation' : (getInvText('invPaymentNote') || 'Recorded at invoice creation');
+        const payResult = await recordPayment(type, invoiceId, user.id, { amount, method, date: payDate, referenceNumber, note });
+        if (!payResult.ok) showToast('Invoice saved, but the payment could not be recorded: ' + (payResult.reason || 'unknown error'), 'error');
+      }
     }
   }
 
@@ -701,6 +720,8 @@ function clearInvoiceFormFields() {
    'invTransporterGstin','invVehicleType','invDispatchFrom','invDispatchTo'].forEach(id => setInvValue(id, ''));
 
   setInvValue('invPaymentStatus', 'unpaid');
+  ['invPaymentAmount','invPaymentDate','invPaymentReference','invPaymentNote'].forEach(id => setInvValue(id, ''));
+  setInvValue('invPaymentMode', 'cash');
   onInvPaymentStatusChange();
   setPaymentSectionMode(true);
 
@@ -748,7 +769,7 @@ function focusNextFormField(current) {
 function focusNewItemRowProduct() {
   const rows = document.querySelectorAll('#itemsTableBody tr');
   const lastRow = rows[rows.length - 1];
-  lastRow?.querySelector('input[oninput*="onItemProductInput"]')?.focus();
+  lastRow?.querySelector('.item-product-input')?.focus();
 }
 
 document.addEventListener('keydown', (e) => {
@@ -761,7 +782,13 @@ document.addEventListener('keydown', (e) => {
 
   // Quantity field: Enter = add a new row and jump straight to its
   // Product field, so a full row can be entered without touching the mouse.
-  if (el.matches('#itemsTableBody input[oninput*="\'quantity\'"]')) {
+  // Matched by data-field-wrap (a stable marker) rather than the old
+  // "does the oninput attribute's text contain 'quantity'" substring
+  // check — that broke silently the moment the handler it was matching
+  // against got renamed (onItemFieldChange -> onItemQtyInput), which is
+  // exactly what happened here; a semantic attribute can't go stale the
+  // same way a copy of another function's call text can.
+  if (el.matches('#itemsTableBody [data-field-wrap="qty"] input')) {
     e.preventDefault();
     addItemRow();
     focusNewItemRowProduct();
@@ -770,7 +797,7 @@ document.addEventListener('keydown', (e) => {
   // Product field: Enter = pick whichever option Arrow keys highlighted
   // (top match by default) — selectProductFromDropdown() itself focuses
   // Qty next. See js/invoice-items.js for the Arrow-key highlight logic.
-  if (el.matches('#itemsTableBody input[oninput*="onItemProductInput"]')) {
+  if (el.matches('#itemsTableBody .item-product-input')) {
     e.preventDefault();
     const tr = el.closest('tr[data-row]');
     if (tr) selectHighlightedProductOption(tr.getAttribute('data-row'));

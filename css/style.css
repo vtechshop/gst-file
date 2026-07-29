@@ -498,6 +498,82 @@ table.data-table {
 .data-table tfoot tr { background: var(--primary-xlight); font-weight: 700; }
 .data-table tfoot td { padding: 10px 14px; border-top: 2px solid var(--primary-light); }
 
+/* ---- Invoice Entry product/line-item table: fixed, generous per-column
+   widths so a long product name, a full 4/6/8-digit HSN code, a large
+   rupee amount, or a full unit code (NOS/KGS/LTR/BOX...) is never
+   truncated or wrapped. table-layout:fixed makes each <th> width below
+   the actual column width rather than a hint content can override.
+   .table-wrapper's existing overflow-x:auto (not changed here) is what
+   turns this into smooth horizontal scrolling on narrower screens —
+   the table itself is never compressed to fit. Scoped to this one table
+   (not table.data-table generally) so every other table in the app
+   keeps its existing auto/100%-width layout untouched. ---- */
+.items-table-fixed { table-layout: fixed; width: 1420px; max-width: none; }
+.items-table-fixed th:nth-child(1),  .items-table-fixed td:nth-child(1)  { width: 320px; }
+.items-table-fixed th:nth-child(2),  .items-table-fixed td:nth-child(2)  { width: 140px; }
+.items-table-fixed th:nth-child(3),  .items-table-fixed td:nth-child(3)  { width: 120px; }
+.items-table-fixed th:nth-child(4),  .items-table-fixed td:nth-child(4)  { width: 90px; }
+.items-table-fixed th:nth-child(5),  .items-table-fixed td:nth-child(5)  { width: 140px; }
+.items-table-fixed th:nth-child(6),  .items-table-fixed td:nth-child(6)  { width: 110px; }
+.items-table-fixed th:nth-child(7),  .items-table-fixed td:nth-child(7)  { width: 90px; }
+.items-table-fixed th:nth-child(8),  .items-table-fixed td:nth-child(8)  { width: 170px; }
+.items-table-fixed th:nth-child(9),  .items-table-fixed td:nth-child(9)  { width: 170px; }
+.items-table-fixed th:nth-child(10), .items-table-fixed td:nth-child(10) { width: 70px; }
+
+/* A bit more breathing room than the app's other data tables — this one
+   packs inputs/selects/inline validation text into every cell, not
+   plain text. #itemsTable (id, not the class) so it wins over the base
+   ".data-table tbody td" rule regardless of source order. */
+#itemsTable td { padding: 12px 14px; vertical-align: top; }
+
+/* Product name: ellipsis only kicks in when the value genuinely
+   overflows the column — a short name never looks truncated. Full name
+   always available via the native title-attribute tooltip on hover,
+   and via the browser's own caret-follows-focus scrolling once the
+   field is actually being edited. */
+.item-product-input { text-overflow: ellipsis; overflow: hidden; white-space: nowrap; }
+
+/* Reserved, fixed-height space under HSN/Qty whether or not an error is
+   currently showing — so a row never visibly grows/shifts the instant
+   a validation message appears, it's simply already there. */
+.item-field-error { color: var(--danger); font-size: 10.5px; line-height: 1.3; min-height: 13px; margin-top: 3px; }
+
+/* The items table gets its own bounded, internally-scrollable wrapper
+   (rather than relying on page-level scroll) for two reasons: it's what
+   makes a 500-row table usable at all (the page itself would otherwise
+   grow to tens of thousands of pixels tall), and — found the hard way —
+   .table-wrapper's plain overflow-x:auto silently makes it a scroll
+   container on BOTH axes too (the CSS overflow spec computes the
+   perpendicular axis to auto once the other is non-visible), so a
+   sticky header inside it was already measuring its "stuck" offset
+   against the wrapper, not the page, and started 60px into row 1 from
+   the very first render — never actually reachable. Making that
+   explicit and intentional here fixes it correctly instead of fighting
+   the implicit computation. */
+.items-table-wrapper { max-height: 60vh; overflow-y: auto; }
+
+/* Sticky header (while scrolling within the table's own bounded area)
+   and sticky first column (while scrolling the table horizontally on a
+   narrow screen). top:0 is relative to .items-table-wrapper itself now
+   that it's the real, explicit scroll container. */
+.items-table-fixed thead th {
+  position: sticky;
+  top: 0;
+  z-index: 50;
+  background: var(--primary-dark);
+}
+.items-table-fixed th:nth-child(1),
+.items-table-fixed td:nth-child(1) {
+  position: sticky;
+  left: 0;
+  z-index: 2;
+  background: #fff;
+}
+.items-table-fixed thead th:nth-child(1) { z-index: 51; }
+.items-table-fixed tbody tr:hover td:nth-child(1) { background: var(--primary-xlight); }
+:root[data-theme="dark"] .items-table-fixed td:nth-child(1) { background: #1b2523; }
+:root[data-theme="dark"] .items-table-fixed tbody tr:hover td:nth-child(1) { background: #16302c; }
+
 .badge {
   display: inline-flex; align-items: center;
   padding: 3px 9px;

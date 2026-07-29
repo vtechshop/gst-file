@@ -9,12 +9,21 @@ let vendAllData = [];
 let vendPage = 1;
 const VEND_PAGE = 15;
 
+// Single source of truth for every state dropdown app-wide — see
+// INDIAN_STATES in js/utils.js.
+function populateVendStateOptions() {
+  const sel = document.getElementById('vendState');
+  if (!sel) return;
+  sel.innerHTML = '<option value="">Select State</option>' + INDIAN_STATES.map(s => `<option value="${s}">${s}</option>`).join('');
+}
+
 async function initVendors() {
   const user = await requireAuth();
   if (!user) return;
   initNavUser(user);
   setupLogoutBtn();
   setupMobileMenu();
+  populateVendStateOptions();
   loadUserProfile(user.id);
   setupVendSearch();
   await loadVendors(user.id);

@@ -21,13 +21,16 @@ async function loadPaymentsForInvoice(type, invoiceId) {
 // payments.js wraps both in one Postgres transaction (see the comment
 // there) so they can never drift apart the way two separate client-side
 // calls could if the second one failed after the first succeeded.
-async function recordPayment(type, invoiceId, userId, { amount, method, date, note }) {
+async function recordPayment(type, invoiceId, userId, { amount, method, date, referenceNumber, note }) {
   amount = +amount || 0;
   if (amount <= 0) return { ok: false, reason: 'Enter an amount greater than zero.' };
   try {
     const summary = await apiFetch(`/payments/${type}/${invoiceId}/record`, {
       method: 'POST',
-      body: JSON.stringify({ amount, method: method || 'cash', date: date || toISO(new Date()), note: note || '' })
+      body: JSON.stringify({
+        amount, method: method || 'cash', date: date || toISO(new Date()),
+        reference_number: referenceNumber || '', note: note || ''
+      })
     });
     return { ok: true, ...summary };
   } catch (error) {
@@ -75,4 +78,24 @@ async function loadCustomerOutstandingSummary(userId) {
     c.outstanding = Math.max(0, c.outstanding - c.totalReturned);
   });
   return Object.values(byCustomer).sort((a, b) => b.outstanding - a.outstanding);
+}
+
+// Outstanding balance per vendor, across `purchases` — same shape as
+// loadCustomerOutstandingSummary() above, matched by vendor_name. No
+// returns-netting: Purchase Returns don't carry payment tracking (out
+// of scope — a return reduces what's owed to the vendor on the next
+// purchase, it isn't itself a payable).
+async function loadVendorOutstandingSummary(userId) {
+  const { data } = await _supabase.from('purchases').select('vendor_name,total_amount,amount_paid,payment_status').eq('user_id', userId);
+  const byVendor = {};
+  (data || []).filter(r => r.vendor_name).forEach(r => {
+    const key = r.vendor_name;
+    if (!byVendor[key]) byVendor[key] = { name: key, purchaseCount: 0, totalBilled: 0, totalPaid: 0, outstanding: 0 };
+    const bal = Math.max(0, (+r.total_amount || 0) - (+r.amount_paid || 0));
+    byVendor[key].purchaseCount += 1;
+    byVendor[key].totalBilled += (+r.total_amount || 0);
+    byVendor[key].totalPaid += (+r.amount_paid || 0);
+    byVendor[key].outstanding += bal;
+  });
+  return Object.values(byVendor).sort((a, b) => b.outstanding - a.outstanding);
 }

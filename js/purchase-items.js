@@ -150,7 +150,7 @@ function renderPurchItemsTable() {
       <td>
         <input type="text" class="form-control" autocomplete="off"
           value="${escItemHtml(row.product_name)}"
-          oninput="onPurchProductInput('${row.rowId}', this.value); showPurchProductDropdown('${row.rowId}', this, this.value)"
+          oninput="if (!onPurchProductInput('${row.rowId}', this.value)) showPurchProductDropdown('${row.rowId}', this, this.value)"
           onfocus="showPurchProductDropdown('${row.rowId}', this, this.value)"
           onblur="onPurchProductBlur('${row.rowId}', this.value)"
           onkeydown="onPurchProductKeydown(event, '${row.rowId}')">
@@ -178,12 +178,16 @@ function renderPurchItemsTable() {
 // ── Product autocomplete / autofill / lock ─────────
 let purchJustSelectedFromDropdown = null;
 
+// Returns true when an exact match was applied and the row re-rendered —
+// see the identical note on js/invoice-items.js's onItemProductInput()
+// for why the caller must not reuse its old "this" reference afterward.
 function onPurchProductInput(rowId, name) {
   const row = purchItems.find(r => r.rowId === rowId);
-  if (!row) return;
+  if (!row) return false;
   row.product_name = name;
   const match = findProductByName(purchProductsList, name);
-  if (match) { applyProductToPurchRow(row, match); recalcPurchItemRow(rowId); }
+  if (match) { applyProductToPurchRow(row, match); recalcPurchItemRow(rowId); hidePurchProductDropdown(); return true; }
+  return false;
 }
 
 let purchActiveDropdownRowId = null;

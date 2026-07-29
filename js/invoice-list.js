@@ -92,14 +92,16 @@ function renderInvoiceListTable(data) {
   const page  = data.slice(start, start + INV_LIST_PAGE_SIZE);
 
   if (!data.length) {
-    tbody.innerHTML = '<tr><td colspan="8" class="empty-state"><i class="fas fa-file-invoice table-loading-icon"></i>No invoices found. Click New Invoice to create one.</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="10" class="empty-state"><i class="fas fa-file-invoice table-loading-icon"></i>No invoices found. Click New Invoice to create one.</td></tr>';
     if (tfoot) tfoot.innerHTML = '';
     renderInvListPagination(0, 0, () => {});
     return;
   }
 
   const paymentBadge = { unpaid: 'badge-red', partial: 'badge-orange', paid: 'badge-green' };
-  tbody.innerHTML = page.map((r, i) => `
+  tbody.innerHTML = page.map((r, i) => {
+    const balance = round2(Math.max(0, (r.total_amount || 0) - (r.amount_paid || 0)));
+    return `
     <tr>
       <td>${start + i + 1}</td>
       <td class="fw-600">${r.invoice_number}</td>
@@ -107,6 +109,8 @@ function renderInvoiceListTable(data) {
       <td>${r.customer_name}</td>
       <td><span class="badge ${r.type === 'b2b' ? 'badge-blue' : 'badge-green'}">${r.type.toUpperCase()}</span></td>
       <td class="text-right fw-700 text-primary-dark">₹${formatNum(r.total_amount)}</td>
+      <td class="text-right">₹${formatNum(r.amount_paid)}</td>
+      <td class="text-right ${balance > 0 ? 'text-danger' : ''}">₹${formatNum(balance)}</td>
       <td>
         <span class="badge ${paymentBadge[r.payment_status] || 'badge-red'} clickable" onclick="openMarkPaymentModal('${r.type}','${r.id}')" title="Click to record payment">${r.payment_status.toUpperCase()}</span>
       </td>
@@ -122,10 +126,13 @@ function renderInvoiceListTable(data) {
           <button type="button" class="btn btn-danger btn-sm btn-icon" onclick="deleteInvoiceFromList('${r.type}','${r.id}')" title="Delete"><i class="fas fa-trash"></i></button>
         </div>
       </td>
-    </tr>`).join('');
+    </tr>`;
+  }).join('');
 
   const total = data.reduce((s, r) => s + (r.total_amount || 0), 0);
-  if (tfoot) tfoot.innerHTML = `<tr><td colspan="5" class="fw-700">TOTALS (${data.length} invoices)</td><td class="text-right fw-700">₹${formatNum(total)}</td><td></td><td></td></tr>`;
+  const totalPaid = data.reduce((s, r) => s + (r.amount_paid || 0), 0);
+  const totalBalance = round2(Math.max(0, total - totalPaid));
+  if (tfoot) tfoot.innerHTML = `<tr><td colspan="5" class="fw-700">TOTALS (${data.length} invoices)</td><td class="text-right fw-700">₹${formatNum(total)}</td><td class="text-right fw-700">₹${formatNum(totalPaid)}</td><td class="text-right fw-700">₹${formatNum(totalBalance)}</td><td></td><td></td></tr>`;
 
   renderInvListPagination(data.length, invListPage, (p) => { invListPage = p; renderInvoiceListTable(data); });
 }
@@ -171,6 +178,7 @@ async function openMarkPaymentModal(type, id) {
   setInvListValue('mpAmount', '');
   setInvListValue('mpMethod', 'cash');
   setInvListValue('mpDate', toISO(new Date()));
+  setInvListValue('mpReference', '');
   setInvListValue('mpNote', '');
   document.getElementById('markPaymentModal')?.classList.add('open');
   await refreshPaymentModal();
@@ -201,7 +209,7 @@ async function refreshPaymentModal() {
     listEl.innerHTML = history.length
       ? history.map(p => `
         <div class="mini-list-row">
-          <span>${formatDate(p.payment_date)} &middot; ${PAYMENT_METHOD_LABELS[p.method] || p.method}${p.note ? ' &middot; ' + escBinHtml(p.note) : ''}</span>
+          <span>${formatDate(p.payment_date)} &middot; ${PAYMENT_METHOD_LABELS[p.method] || p.method}${p.reference_number ? ' &middot; Ref: ' + escBinHtml(p.reference_number) : ''}${p.note ? ' &middot; ' + escBinHtml(p.note) : ''}</span>
           <span class="d-flex align-center gap-10">
             <b>₹${formatNum(p.amount)}</b>
             <button type="button" class="btn btn-danger btn-sm btn-icon" onclick="removePayment('${p.id}')" title="Remove this payment"><i class="fas fa-times"></i></button>
@@ -220,13 +228,15 @@ async function submitReceivePayment() {
   const amount = parseFloat(document.getElementById('mpAmount')?.value);
   const method = document.getElementById('mpMethod')?.value;
   const date = document.getElementById('mpDate')?.value;
+  const referenceNumber = document.getElementById('mpReference')?.value;
   const note = document.getElementById('mpNote')?.value;
 
-  const result = await recordPayment(mpTarget.type, mpTarget.id, user.id, { amount, method, date, note });
+  const result = await recordPayment(mpTarget.type, mpTarget.id, user.id, { amount, method, date, referenceNumber, note });
   if (!result.ok) { showToast(result.reason || 'Could not record payment.', 'error'); return; }
 
   showToast('Payment recorded.', 'success');
   setInvListValue('mpAmount', '');
+  setInvListValue('mpReference', '');
   setInvListValue('mpNote', '');
   await loadInvoiceList(user.id);
   await refreshPaymentModal();

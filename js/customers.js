@@ -6,12 +6,24 @@ let custAllData = [];
 let custPage = 1;
 const CUST_PAGE = 15;
 
+// The 36 India State/UT names live in exactly one place — INDIAN_STATES
+// (js/utils.js) — every state dropdown app-wide (Invoice Entry, Purchase
+// Entry, Purchase Returns, Business Profile, and this one) is populated
+// from it, so there's no separate hardcoded copy to fall out of sync or
+// drift incomplete over time.
+function populateCustStateOptions() {
+  const sel = document.getElementById('custState');
+  if (!sel) return;
+  sel.innerHTML = '<option value="">Select State</option>' + INDIAN_STATES.map(s => `<option value="${s}">${s}</option>`).join('');
+}
+
 async function initCustomers() {
   const user = await requireAuth();
   if (!user) return;
   initNavUser(user);
   setupLogoutBtn();
   setupMobileMenu();
+  populateCustStateOptions();
   loadUserProfile(user.id);
   setupCustSearch();
   await loadCustomers(user.id);
