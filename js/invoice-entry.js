@@ -234,11 +234,20 @@ function detectSupplyType() {
   const customerGstin = getInvText('invGstin').toUpperCase();
   const customerState = document.getElementById('invState')?.value || '';
 
+  // State (the actual "place of supply" field) takes priority whenever
+  // it's filled in — GSTIN comparison is only a fallback for when no
+  // State has been chosen yet. State must win when both are present:
+  // GST Number is auto-filled from a selected customer only if it was
+  // empty (see onInvoiceCustomerInput/onInvoiceGstinBlur) and is never
+  // cleared on customer switch, so it can carry a stale value from a
+  // previously-selected customer after the user manually changes the
+  // State dropdown — checking GSTIN first was silently trusting that
+  // stale value over the state the user just explicitly picked.
   let supply = 'intrastate';
-  if (businessGstin.length >= 2 && customerGstin.length >= 2) {
-    supply = businessGstin.slice(0, 2) === customerGstin.slice(0, 2) ? 'intrastate' : 'interstate';
-  } else if (businessState && customerState) {
+  if (businessState && customerState) {
     supply = businessState === customerState ? 'intrastate' : 'interstate';
+  } else if (businessGstin.length >= 2 && customerGstin.length >= 2) {
+    supply = businessGstin.slice(0, 2) === customerGstin.slice(0, 2) ? 'intrastate' : 'interstate';
   }
 
   const hidden = document.getElementById('invSupply');
