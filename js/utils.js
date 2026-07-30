@@ -489,6 +489,22 @@ function isValidHsnFormat(hsn) {
   return /^(\d{4}|\d{6}|\d{8})$/.test((hsn || '').trim());
 }
 
+// Mandatory-HSN check for products created by hand (the Quick Add Product
+// dialogs, which save with source 'local'). Builds on isValidHsnFormat()
+// above rather than restating the pattern, so the accepted shape is
+// defined in exactly one place. Returns '' when acceptable, otherwise the
+// message to display.
+//
+// Deliberately NOT applied to catalog products from Product Sync
+// (source 'synced'): those legitimately arrive without an HSN and must
+// keep importing. The backend draws the same line — see
+// validateProductPayload() in server/utils/validation.js.
+function hsnMandatoryError(hsn) {
+  const trimmed = (hsn || '').trim();
+  if (!trimmed) return 'HSN Code is mandatory.';
+  return isValidHsnFormat(trimmed) ? '' : 'HSN Code must be 4, 6 or 8 digits.';
+}
+
 // ── Number to words (Indian numbering: lakh/crore) ──
 function numberToWordsINR(n) {
   const num = Math.round(Math.abs(+n || 0));

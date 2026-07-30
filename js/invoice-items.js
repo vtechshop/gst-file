@@ -618,8 +618,10 @@ function ensureQuickAddProductModal() {
             <input type="text" id="qapName" class="form-control">
           </div>
           <div class="form-group">
-            <label for="qapHSN">HSN Code</label>
-            <input type="text" id="qapHSN" class="form-control">
+            <label for="qapHSN">HSN Code <span class="text-required">*</span></label>
+            <input type="text" id="qapHSN" class="form-control" inputmode="numeric" maxlength="8"
+                   oninput="clearQuickAddHsnError()" aria-describedby="qapHSNError">
+            <div class="item-field-error" id="qapHSNError"></div>
           </div>
         </div>
         <div class="form-grid cols-3 mb-16">
@@ -661,6 +663,7 @@ function openQuickAddProductModal(rowId, prefillName) {
   quickAddTargetRowId = rowId;
   document.getElementById('qapName').value = prefillName || '';
   document.getElementById('qapHSN').value = '';
+  clearQuickAddHsnError();   // fresh dialog starts without a stale warning
   document.getElementById('qapGstPct').value = '18';
   document.getElementById('qapUnit').value = '';
   document.getElementById('qapRate').value = '';
@@ -674,6 +677,21 @@ function closeQuickAddProductModal() {
   quickAddTargetRowId = null;
 }
 
+// Marks the HSN field and shows the reason inline, then focuses it so the
+// user can correct it without hunting. Every other field keeps its value.
+function showQuickAddHsnError(message) {
+  const input = document.getElementById('qapHSN');
+  const slot = document.getElementById('qapHSNError');
+  if (slot) slot.textContent = message;
+  if (input) { input.classList.add('error'); input.focus(); input.select(); }
+}
+
+function clearQuickAddHsnError() {
+  document.getElementById('qapHSN')?.classList.remove('error');
+  const slot = document.getElementById('qapHSNError');
+  if (slot) slot.textContent = '';
+}
+
 async function saveQuickAddProduct() {
   const name = document.getElementById('qapName')?.value?.trim();
   if (!name) { showToast('Product name is required.', 'error'); return; }
@@ -681,6 +699,12 @@ async function saveQuickAddProduct() {
   if (dup) { showToast('Product already exists — select it from the list instead.', 'warning'); return; }
 
   const hsn = document.getElementById('qapHSN')?.value?.trim();
+  // HSN is mandatory for hand-created products. Checked before the request
+  // so nothing is sent and nothing already typed is cleared — the dialog
+  // stays exactly as the user left it, with the offending field marked
+  // and focused. The backend enforces the same rule for source 'local'.
+  const hsnError = hsnMandatoryError(hsn);
+  if (hsnError) { showQuickAddHsnError(hsnError); return; }
   const gstPct = parseFloat(document.getElementById('qapGstPct')?.value) || 0;
   const unit = document.getElementById('qapUnit')?.value?.trim() || '';
   const rate = parseFloat(document.getElementById('qapRate')?.value) || 0;

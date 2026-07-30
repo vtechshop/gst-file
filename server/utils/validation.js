@@ -69,4 +69,32 @@ function validateCustomerPayload(payload) {
   return { valid: Object.keys(errors).length === 0, errors };
 }
 
-module.exports = { validateGstin, isValidPhone, validateCustomerPayload };
+// GSTN accepts 4/6/8-digit HSN codes — same shape rule the frontend applies
+// in isValidHsnFormat() (js/utils.js).
+const HSN_FORMAT_REGEX = /^(\d{4}|\d{6}|\d{8})$/;
+
+// HSN is mandatory on every product write EXCEPT those from Product Sync.
+//
+// Product Sync (source 'synced') is the single exemption: the company's
+// website catalog legitimately contains items with no HSN, and those must
+// keep importing exactly as before — enforcing the rule there would fail
+// every sync run for such an item.
+//
+// The test is deliberately "is it synced?" rather than "is it local?".
+// Keying off 'local' would let a payload with a missing, empty or unexpected
+// `source` slip through unvalidated, which is the weaker default: a caller
+// that forgets the field would silently bypass the rule. Requiring an
+// explicit 'synced' to opt out means anything else — including undefined —
+// is validated.
+function validateProductPayload(payload) {
+  const errors = {};
+  if ((payload.source || '') === 'synced') return { valid: true, errors };
+
+  const hsn = (payload.hsn_code || '').trim();
+  if (!hsn || !HSN_FORMAT_REGEX.test(hsn)) {
+    errors.hsn_code = 'HSN Code is mandatory and must be 4, 6 or 8 digits.';
+  }
+  return { valid: Object.keys(errors).length === 0, errors };
+}
+
+module.exports = { validateGstin, isValidPhone, validateCustomerPayload, validateProductPayload };

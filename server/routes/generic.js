@@ -23,7 +23,7 @@ const express = require('express');
 const pool = require('../db/pool');
 const { requireAuth } = require('../middleware/auth');
 const { asyncRoute } = require('../middleware/errorHandler');
-const { validateCustomerPayload } = require('../utils/validation');
+const { validateCustomerPayload, validateProductPayload } = require('../utils/validation');
 
 function buildWhere(query, ownerColumn, userId, columns) {
   const clauses = [`${ownerColumn} = $1`];
@@ -161,7 +161,11 @@ const TABLES = {
   products: {
     columns: ['id','user_id','name','hsn_code','type','gst_percentage','default_rate',
       'unit','description','sku','category','warranty','image_url','external_id',
-      'source','stock','created_at','updated_at']
+      'source','stock','created_at','updated_at'],
+    // Requires a valid HSN on hand-created products only (source 'local').
+    // Product Sync writes source 'synced' and is deliberately unaffected —
+    // see validateProductPayload() for why.
+    validate: validateProductPayload
   },
   import_mappings: {
     columns: ['id','user_id','import_type','mapping','created_at','updated_at']

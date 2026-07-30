@@ -403,8 +403,10 @@ function ensurePurchQuickAddProductModal() {
             <input type="text" id="pqapName" class="form-control">
           </div>
           <div class="form-group">
-            <label for="pqapHSN">HSN Code</label>
-            <input type="text" id="pqapHSN" class="form-control">
+            <label for="pqapHSN">HSN Code <span class="text-required">*</span></label>
+            <input type="text" id="pqapHSN" class="form-control" inputmode="numeric" maxlength="8"
+                   oninput="clearPurchQuickAddHsnError()" aria-describedby="pqapHSNError">
+            <div class="item-field-error" id="pqapHSNError"></div>
           </div>
         </div>
         <div class="form-grid cols-3 mb-16">
@@ -442,6 +444,7 @@ function openPurchQuickAddProductModal(rowId, prefillName) {
   purchQuickAddTargetRowId = rowId;
   document.getElementById('pqapName').value = prefillName || '';
   document.getElementById('pqapHSN').value = '';
+  clearPurchQuickAddHsnError();   // fresh dialog starts without a stale warning
   document.getElementById('pqapGstPct').value = '18';
   document.getElementById('pqapUnit').value = '';
   document.getElementById('pqapRate').value = '';
@@ -453,6 +456,23 @@ function closePurchQuickAddProductModal() {
   purchQuickAddTargetRowId = null;
 }
 
+// Mirrors showQuickAddHsnError()/clearQuickAddHsnError() in
+// js/invoice-items.js — the two Quick Add dialogs are separate DOM trees
+// with their own element ids, so each owns its display helper while the
+// rule itself stays in hsnMandatoryError() (js/utils.js).
+function showPurchQuickAddHsnError(message) {
+  const input = document.getElementById('pqapHSN');
+  const slot = document.getElementById('pqapHSNError');
+  if (slot) slot.textContent = message;
+  if (input) { input.classList.add('error'); input.focus(); input.select(); }
+}
+
+function clearPurchQuickAddHsnError() {
+  document.getElementById('pqapHSN')?.classList.remove('error');
+  const slot = document.getElementById('pqapHSNError');
+  if (slot) slot.textContent = '';
+}
+
 async function savePurchQuickAddProduct() {
   const name = document.getElementById('pqapName')?.value?.trim();
   if (!name) { showToast('Product name is required.', 'error'); return; }
@@ -460,6 +480,10 @@ async function savePurchQuickAddProduct() {
   if (dup) { showToast('Product already exists — select it from the list instead.', 'warning'); return; }
 
   const hsn = document.getElementById('pqapHSN')?.value?.trim();
+  // Same mandatory-HSN rule as Invoice Entry's Quick Add — validated before
+  // the request, leaving every other entered value untouched.
+  const hsnError = hsnMandatoryError(hsn);
+  if (hsnError) { showPurchQuickAddHsnError(hsnError); return; }
   const gstPct = parseFloat(document.getElementById('pqapGstPct')?.value) || 0;
   const unit = document.getElementById('pqapUnit')?.value?.trim() || '';
   const rate = parseFloat(document.getElementById('pqapRate')?.value) || 0;
