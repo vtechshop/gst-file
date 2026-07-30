@@ -168,7 +168,7 @@ const TABLES = {
   },
   payments: {
     columns: ['id','user_id','invoice_id','invoice_type','amount','method',
-      'payment_date','note','created_at']
+      'payment_date','reference_number','note','created_at']
   },
   b2b_invoices: {
     columns: ['id','user_id','gst_number','customer_name','phone','address','state',
