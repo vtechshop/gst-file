@@ -28,7 +28,19 @@ async function loadPurchaseList(userId) {
   purchListAllData = (data || [])
     .sort((a, b) => (b.purchase_date || '').localeCompare(a.purchase_date || ''));
   purchListPage = 1;
+  // Built from the rows just loaded — `state` (the vendor's state, i.e.
+  // the place of supply) is already on them, so the State column and its
+  // filter add no extra request.
+  populatePurchListStateFilter();
   renderPurchListTable(purchListAllData);
+}
+
+// Rebuilt from what's in memory, preserving the current selection so a
+// refresh after recording a payment doesn't silently reset the filter.
+function populatePurchListStateFilter() {
+  const sel = document.getElementById('purchListStateFilter');
+  if (!sel) return;
+  sel.innerHTML = buildStateFilterOptions(purchListAllData, r => r.state, sel.value);
 }
 
 function populatePurchListFilters() {
@@ -52,9 +64,12 @@ function setupPurchListSearch() {
 
 function applyPurchListFilters() {
   const q = document.getElementById('purchListSearch')?.value?.toLowerCase() || '';
+  const state = document.getElementById('purchListStateFilter')?.value || '';
   const month = document.getElementById('purchListMonthFilter')?.value || '';
   const year  = document.getElementById('purchListYearFilter')?.value || '';
 
+  // Each filter narrows the same list in turn, so State combines with
+  // Search/Month/Year rather than replacing them.
   let filtered = purchListAllData;
   if (q) {
     filtered = filtered.filter(r =>
@@ -62,6 +77,7 @@ function applyPurchListFilters() {
       (r.vendor_name || '').toLowerCase().includes(q) ||
       (r.vendor_gstin || '').toLowerCase().includes(q));
   }
+  if (state) filtered = filtered.filter(r => r.state === state);
   if (month) filtered = filtered.filter(r => r.purchase_date && (new Date(r.purchase_date).getMonth() + 1) === +month);
   if (year)  filtered = filtered.filter(r => r.purchase_date && new Date(r.purchase_date).getFullYear() === +year);
 
@@ -78,7 +94,13 @@ function renderPurchListTable(data) {
   const page  = data.slice(start, start + PURCH_LIST_PAGE_SIZE);
 
   if (!data.length) {
-    tbody.innerHTML = '<tr><td colspan="9" class="empty-state"><i class="fas fa-cart-plus table-loading-icon"></i>No purchases found. Click New Purchase to create one.</td></tr>';
+    // Name the filter that emptied the table — the generic "create one"
+    // prompt is wrong advice while a filter is active.
+    const stateName = document.getElementById('purchListStateFilter')?.value || '';
+    const message = stateName
+      ? 'No purchases found for the selected state.'
+      : 'No purchases found. Click New Purchase to create one.';
+    tbody.innerHTML = `<tr><td colspan="10" class="empty-state"><i class="fas fa-cart-plus table-loading-icon"></i>${message}</td></tr>`;
     if (tfoot) tfoot.innerHTML = '';
     renderPurchListPagination(0, 0, () => {});
     return;
@@ -91,6 +113,7 @@ function renderPurchListTable(data) {
       <td class="fw-600">${r.purchase_number}</td>
       <td>${formatDate(r.purchase_date)}</td>
       <td>${r.vendor_name}</td>
+      <td>${stateCellHtml(r.state)}</td>
       <td class="text-right fw-700 text-primary-dark">₹${formatNum(r.total_amount)}</td>
       <td class="text-right">₹${formatNum(r.amount_paid)}</td>
       <td class="text-right ${balance > 0 ? 'text-danger' : ''}">₹${formatNum(balance)}</td>
@@ -107,7 +130,7 @@ function renderPurchListTable(data) {
   const total = data.reduce((s, r) => s + (+r.total_amount || 0), 0);
   const totalPaid = data.reduce((s, r) => s + (+r.amount_paid || 0), 0);
   const totalBalance = round2(Math.max(0, total - totalPaid));
-  if (tfoot) tfoot.innerHTML = `<tr><td colspan="4" class="fw-700">TOTALS (${data.length} purchases)</td><td class="text-right fw-700">₹${formatNum(total)}</td><td class="text-right fw-700">₹${formatNum(totalPaid)}</td><td class="text-right fw-700">₹${formatNum(totalBalance)}</td><td></td><td></td></tr>`;
+  if (tfoot) tfoot.innerHTML = `<tr><td colspan="5" class="fw-700">TOTALS (${data.length} purchases)</td><td class="text-right fw-700">₹${formatNum(total)}</td><td class="text-right fw-700">₹${formatNum(totalPaid)}</td><td class="text-right fw-700">₹${formatNum(totalBalance)}</td><td></td><td></td></tr>`;
 
   renderPurchListPagination(data.length, purchListPage, (p) => { purchListPage = p; renderPurchListTable(data); });
 }

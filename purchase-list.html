@@ -87,6 +87,7 @@
               <i class="fas fa-search"></i>
               <input type="text" id="purchListSearch" class="form-control" aria-label="Search purchases">
             </div>
+            <select id="purchListStateFilter" class="form-control w-130" onchange="applyPurchListFilters()" aria-label="Filter by state"><option value="">All States</option></select>
             <select id="purchListMonthFilter" class="form-control w-130" onchange="applyPurchListFilters()" aria-label="Filter by month"></select>
             <select id="purchListYearFilter" class="form-control w-100" onchange="applyPurchListFilters()" aria-label="Filter by year"></select>
           </div>
@@ -96,7 +97,7 @@
             <table class="data-table">
               <thead>
                 <tr>
-                  <th>#</th><th>Purchase No</th><th>Date</th><th>Vendor</th>
+                  <th>#</th><th>Purchase No</th><th>Date</th><th>Vendor</th><th>State</th>
                   <th>Total</th><th>Paid</th><th>Balance</th><th>Payment</th><th>Actions</th>
                 </tr>
               </thead>

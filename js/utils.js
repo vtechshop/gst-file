@@ -386,6 +386,72 @@ const INDIAN_STATES = [
   'Jammu and Kashmir','Ladakh','Lakshadweep','Puducherry'
 ];
 
+// Two-letter state codes, for compact display only — the full state name
+// stays the stored value everywhere (it is the GST place of supply and
+// drives the intrastate/interstate split). Keyed off INDIAN_STATES above
+// so the two can't drift; getStateCode() in js/gstr1-export.js maps the
+// same states to their NUMERIC GST codes for the filing export, which is
+// a different thing and stays where it is.
+const GST_STATE_SHORT_CODES = {
+  'Andhra Pradesh':'AP','Arunachal Pradesh':'AR','Assam':'AS','Bihar':'BR',
+  'Chhattisgarh':'CG','Goa':'GA','Gujarat':'GJ','Haryana':'HR',
+  'Himachal Pradesh':'HP','Jharkhand':'JH','Karnataka':'KA','Kerala':'KL',
+  'Madhya Pradesh':'MP','Maharashtra':'MH','Manipur':'MN','Meghalaya':'ML',
+  'Mizoram':'MZ','Nagaland':'NL','Odisha':'OD','Punjab':'PB','Rajasthan':'RJ',
+  'Sikkim':'SK','Tamil Nadu':'TN','Telangana':'TS','Tripura':'TR',
+  'Uttar Pradesh':'UP','Uttarakhand':'UK','West Bengal':'WB',
+  'Andaman and Nicobar Islands':'AN','Chandigarh':'CH',
+  'Dadra and Nagar Haveli and Daman and Diu':'DH','Delhi':'DL',
+  'Jammu and Kashmir':'JK','Ladakh':'LA','Lakshadweep':'LD','Puducherry':'PY'
+};
+
+// Lookup is case- and punctuation-tolerant: records saved before the
+// State dropdown existed can hold free text like "TAMILNADU" or
+// "Jammu & Kashmir", and those should still show their code rather than
+// falling through to the unknown marker.
+const _STATE_CODE_LOOKUP = (() => {
+  const norm = s => (s || '').toLowerCase().replace(/&/g, 'and').replace(/[^a-z]/g, '');
+  const map = {};
+  Object.entries(GST_STATE_SHORT_CODES).forEach(([name, code]) => { map[norm(name)] = code; });
+  return { norm, map };
+})();
+
+// 'Tamil Nadu' -> 'TN'. Returns '' for a blank/unrecognised state so
+// callers can decide how to render the gap.
+function stateShortCode(stateName) {
+  if (!stateName) return '';
+  return _STATE_CODE_LOOKUP.map[_STATE_CODE_LOOKUP.norm(stateName)] || '';
+}
+
+// Table cell contents for a state: the short code, with the full name as
+// a tooltip so the column stays narrow without losing information. An
+// unknown/blank state renders as a muted dash rather than an empty cell,
+// so the column still lines up and reads as "not recorded".
+function stateCellHtml(stateName) {
+  const code = stateShortCode(stateName);
+  if (!code) return '<span class="text-muted-sm" title="No state recorded">&mdash;</span>';
+  return `<span title="${escHtmlAttr(stateName)}">${code}</span>`;
+}
+
+function escHtmlAttr(v) {
+  return (v || '').toString().replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
+}
+
+// Builds the <option> list for a "All States" filter from records ALREADY
+// in memory — deliberately not a query. Only states present in the loaded
+// rows appear, de-duplicated and sorted by their full name. `getState` is
+// how to read the state off one record, so invoices (customer state) and
+// purchases (vendor state / place of supply) can share this.
+function buildStateFilterOptions(records, getState, selected) {
+  const names = [...new Set((records || []).map(getState).filter(Boolean))]
+    .sort((a, b) => a.localeCompare(b));
+  return '<option value="">All States</option>' + names.map(n => {
+    const code = stateShortCode(n);
+    const label = code ? `${code} — ${n}` : n;
+    return `<option value="${escHtmlAttr(n)}"${n === selected ? ' selected' : ''}>${label}</option>`;
+  }).join('');
+}
+
 // GST's official UQC (Unit Quantity Code) master — reconstructed from the
 // documented GSTN/offline-utility UQC list (the same source already used
 // for js/gstr1-export.js's UQC handling) — worth re-confirming against

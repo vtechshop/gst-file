@@ -93,6 +93,7 @@
               <i class="fas fa-search"></i>
               <input type="text" id="invListSearch" class="form-control" aria-label="Search invoices">
             </div>
+            <select id="invListStateFilter" class="form-control w-130" onchange="applyInvoiceListFilters()" aria-label="Filter by state"><option value="">All States</option></select>
             <select id="invListMonthFilter" class="form-control w-130" onchange="applyInvoiceListFilters()" aria-label="Filter by month"></select>
             <select id="invListYearFilter" class="form-control w-100" onchange="applyInvoiceListFilters()" aria-label="Filter by year"></select>
             <select id="invListTypeFilter" class="form-control w-130" onchange="applyInvoiceListFilters()" aria-label="Filter by type">
@@ -107,7 +108,7 @@
             <table class="data-table">
               <thead>
                 <tr>
-                  <th>#</th><th>Invoice No</th><th>Date</th><th>Customer</th><th>Type</th>
+                  <th>#</th><th>Invoice No</th><th>Date</th><th>Customer</th><th>Type</th><th>State</th>
                   <th>Total</th><th>Paid</th><th>Balance</th><th>Payment</th><th>Actions</th>
                 </tr>
               </thead>

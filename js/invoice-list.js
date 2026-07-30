@@ -27,20 +27,36 @@ async function loadInvoiceList(userId) {
     _supabase.from('b2c_invoices').select('*').eq('user_id', userId)
   ]);
 
+  // `state` comes from the rows already fetched above — the select('*')
+  // has always returned it, it just wasn't carried into the view model.
+  // No extra request is made for the State column or its filter.
   const b2bRows = (b2b || []).map(r => ({
     type: 'b2b', id: r.id, invoice_number: r.invoice_number, invoice_date: r.invoice_date,
     customer_name: r.customer_name, gstin: r.gst_number, total_amount: +r.total_amount,
+    state: r.state || '',
     payment_status: r.payment_status || 'unpaid', amount_paid: +r.amount_paid || 0
   }));
   const b2cRows = (b2c || []).map(r => ({
     type: 'b2c', id: r.id, invoice_number: r.invoice_number || ('B2C-' + r.id.slice(0, 8).toUpperCase()), invoice_date: r.invoice_date,
     customer_name: r.customer_name || 'Walk-in Customer (B2C)', gstin: r.gst_number || '', total_amount: +r.total_amount,
+    state: r.state || '',
     payment_status: r.payment_status || 'unpaid', amount_paid: +r.amount_paid || 0
   }));
 
   invListAllData = [...b2bRows, ...b2cRows].sort((a, b) => (b.invoice_date || '').localeCompare(a.invoice_date || ''));
   invListPage = 1;
+  // Populated here rather than in populateInvoiceListFilters(): the option
+  // list is derived from the loaded records, which don't exist until now.
+  populateInvoiceListStateFilter();
   renderInvoiceListTable(invListAllData);
+}
+
+// Rebuilt from whatever is in memory, preserving the current selection so
+// a refresh after recording a payment doesn't silently reset the filter.
+function populateInvoiceListStateFilter() {
+  const sel = document.getElementById('invListStateFilter');
+  if (!sel) return;
+  sel.innerHTML = buildStateFilterOptions(invListAllData, r => r.state, sel.value);
 }
 
 function populateInvoiceListFilters() {
@@ -64,10 +80,13 @@ function setupInvoiceListSearch() {
 
 function applyInvoiceListFilters() {
   const q = document.getElementById('invListSearch')?.value?.toLowerCase() || '';
+  const state = document.getElementById('invListStateFilter')?.value || '';
   const month = document.getElementById('invListMonthFilter')?.value || '';
   const year  = document.getElementById('invListYearFilter')?.value || '';
   const type  = document.getElementById('invListTypeFilter')?.value || '';
 
+  // Every filter narrows the same list in turn, so they combine rather
+  // than override — State works alongside Search/Month/Year/Type.
   let filtered = invListAllData;
   if (q) {
     filtered = filtered.filter(r =>
@@ -75,6 +94,7 @@ function applyInvoiceListFilters() {
       (r.customer_name  || '').toLowerCase().includes(q) ||
       (r.gstin || '').toLowerCase().includes(q));
   }
+  if (state) filtered = filtered.filter(r => r.state === state);
   if (month) filtered = filtered.filter(r => r.invoice_date && (new Date(r.invoice_date).getMonth() + 1) === +month);
   if (year)  filtered = filtered.filter(r => r.invoice_date && new Date(r.invoice_date).getFullYear() === +year);
   if (type)  filtered = filtered.filter(r => r.type === type);
@@ -92,7 +112,13 @@ function renderInvoiceListTable(data) {
   const page  = data.slice(start, start + INV_LIST_PAGE_SIZE);
 
   if (!data.length) {
-    tbody.innerHTML = '<tr><td colspan="10" class="empty-state"><i class="fas fa-file-invoice table-loading-icon"></i>No invoices found. Click New Invoice to create one.</td></tr>';
+    // Naming the filter that emptied the table is more useful than the
+    // generic "create one" prompt, which is wrong advice mid-filter.
+    const stateName = document.getElementById('invListStateFilter')?.value || '';
+    const message = stateName
+      ? 'No invoices found for the selected state.'
+      : 'No invoices found. Click New Invoice to create one.';
+    tbody.innerHTML = `<tr><td colspan="11" class="empty-state"><i class="fas fa-file-invoice table-loading-icon"></i>${message}</td></tr>`;
     if (tfoot) tfoot.innerHTML = '';
     renderInvListPagination(0, 0, () => {});
     return;
@@ -106,6 +132,7 @@ function renderInvoiceListTable(data) {
       <td>${formatDate(r.invoice_date)}</td>
       <td>${r.customer_name}</td>
       <td><span class="badge ${r.type === 'b2b' ? 'badge-blue' : 'badge-green'}">${r.type.toUpperCase()}</span></td>
+      <td>${stateCellHtml(r.state)}</td>
       <td class="text-right fw-700 text-primary-dark">₹${formatNum(r.total_amount)}</td>
       <td class="text-right">₹${formatNum(r.amount_paid)}</td>
       <td class="text-right ${balance > 0 ? 'text-danger' : ''}">₹${formatNum(balance)}</td>
@@ -130,7 +157,7 @@ function renderInvoiceListTable(data) {
   const total = data.reduce((s, r) => s + (r.total_amount || 0), 0);
   const totalPaid = data.reduce((s, r) => s + (r.amount_paid || 0), 0);
   const totalBalance = round2(Math.max(0, total - totalPaid));
-  if (tfoot) tfoot.innerHTML = `<tr><td colspan="5" class="fw-700">TOTALS (${data.length} invoices)</td><td class="text-right fw-700">₹${formatNum(total)}</td><td class="text-right fw-700">₹${formatNum(totalPaid)}</td><td class="text-right fw-700">₹${formatNum(totalBalance)}</td><td></td><td></td></tr>`;
+  if (tfoot) tfoot.innerHTML = `<tr><td colspan="6" class="fw-700">TOTALS (${data.length} invoices)</td><td class="text-right fw-700">₹${formatNum(total)}</td><td class="text-right fw-700">₹${formatNum(totalPaid)}</td><td class="text-right fw-700">₹${formatNum(totalBalance)}</td><td></td><td></td></tr>`;
 
   renderInvListPagination(data.length, invListPage, (p) => { invListPage = p; renderInvoiceListTable(data); });
 }
