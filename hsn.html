@@ -96,6 +96,24 @@
           </div>
         </div>
 
+        <!-- HSN Analytics — search one HSN code and see its totals and the
+             products behind it. Aggregated in js/hsn.js from the summary data
+             already loaded for the table below; no extra request is made, and
+             the table and its Excel export are left untouched. -->
+        <div class="card mb-20">
+          <div class="card-body">
+            <div class="d-flex gap-10 align-center flex-wrap">
+              <label for="hsnB2BSearch" class="fw-600">HSN Code</label>
+              <input type="text" id="hsnB2BSearch" class="form-control w-200" inputmode="numeric" maxlength="8"
+                     placeholder="e.g. 84386000" aria-label="Search B2B HSN code"
+                     onkeydown="if (event.key === 'Enter') { event.preventDefault(); runHsnSearch('b2b'); }">
+              <button type="button" class="btn btn-primary btn-sm" onclick="runHsnSearch('b2b')"><i class="fas fa-search"></i> Search</button>
+              <button type="button" class="btn btn-secondary btn-sm" onclick="clearHsnSearch('b2b')"><i class="fas fa-times"></i> Clear</button>
+            </div>
+            <div id="hsnB2BAnalytics"></div>
+          </div>
+        </div>
+
         <div class="card">
           <div class="card-header">
             <span class="card-title"><i class="fas fa-list"></i> B2B HSN Summary</span>
@@ -126,6 +144,22 @@
           <div class="banner-text">
             HSN Summary is generated automatically from the products on your B2C invoices &mdash; there is nothing to enter here.
             Add or edit products on the <a href="invoice.html">New Invoice</a> page and this updates on its own.
+          </div>
+        </div>
+
+        <!-- HSN Analytics — identical to the B2B pane above, aggregated only
+             from B2C data. See runHsnSearch() in js/hsn.js. -->
+        <div class="card mb-20">
+          <div class="card-body">
+            <div class="d-flex gap-10 align-center flex-wrap">
+              <label for="hsnB2CSearch" class="fw-600">HSN Code</label>
+              <input type="text" id="hsnB2CSearch" class="form-control w-200" inputmode="numeric" maxlength="8"
+                     placeholder="e.g. 84386000" aria-label="Search B2C HSN code"
+                     onkeydown="if (event.key === 'Enter') { event.preventDefault(); runHsnSearch('b2c'); }">
+              <button type="button" class="btn btn-primary btn-sm" onclick="runHsnSearch('b2c')"><i class="fas fa-search"></i> Search</button>
+              <button type="button" class="btn btn-secondary btn-sm" onclick="clearHsnSearch('b2c')"><i class="fas fa-times"></i> Clear</button>
+            </div>
+            <div id="hsnB2CAnalytics"></div>
           </div>
         </div>
 

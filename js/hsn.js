@@ -50,11 +50,22 @@ async function buildHSNSummary(userId, type) {
         id: 'computed:' + key, source: 'computed', hsn_code: it.hsn_code, productNames: new Set(),
         type: 'goods', quantity: 0, taxable_value: 0, gst_percentage: +it.gst_percentage,
         supply_type: supply, igst: 0, cgst: 0, sgst: 0, total_gst: 0, total_invoice_value: 0,
-        invoiceIds: new Set()
+        invoiceIds: new Set(),
+        // Per-product running totals, kept while we're already walking the
+        // line items. HSN Analytics' product breakdown reads these instead of
+        // re-querying invoice_items — this loop is the only pass over that
+        // table, for the table and the analytics alike.
+        productStats: {}
       };
     }
     const g = groups[key];
     g.productNames.add(it.product_name);
+    const ps = g.productStats[it.product_name] ||
+      (g.productStats[it.product_name] = { quantity: 0, taxable_value: 0, total_gst: 0, total_invoice_value: 0 });
+    ps.quantity += +it.quantity || 0;
+    ps.taxable_value = round2(ps.taxable_value + (+it.taxable_value || 0));
+    ps.total_gst = round2(ps.total_gst + (+it.gst_amount || 0));
+    ps.total_invoice_value = round2(ps.total_invoice_value + (+it.total_amount || 0));
     g.quantity += +it.quantity || 0;
     g.taxable_value = round2(g.taxable_value + (+it.taxable_value || 0));
     g.igst = round2(g.igst + (+it.igst || 0));
@@ -136,6 +147,128 @@ function renderHSNTable(prefix, data) {
   };
   const cols = prefix === 'b2b' ? 5 : 4;
   if (tfoot) tfoot.innerHTML = `<tr><td colspan="${cols}" style="font-weight:700;">TOTALS (${data.length})</td><td></td><td></td><td style="text-align:right;font-weight:700;">₹${formatNum(totals.igst)}</td><td style="text-align:right;font-weight:700;">C+S: ₹${formatNum(totals.cgst + totals.sgst)}</td><td style="text-align:right;font-weight:700;">₹${formatNum(totals.totalGst)}</td><td style="text-align:right;font-weight:700;">₹${formatNum(totals.totalInv)}</td><td></td></tr>`;
+}
+
+// ── HSN Analytics ────────────────────────────────────
+// Search one HSN code and see its totals plus the products behind it.
+//
+// Works entirely off hsnB2BData / hsnB2CData — the arrays buildHSNSummary()
+// already produced for the table — so searching issues no request at all.
+// B2B and B2C keep their own array, which is what keeps the two figures
+// separate; nothing here ever reads the other type's data.
+//
+// The summary table below is deliberately NOT filtered: it stays complete,
+// so the Excel export (which reads the same arrays) is byte-for-byte what it
+// was before this feature existed.
+
+// Aggregates every row carrying `hsnCode` into one set of figures. A single
+// HSN can span several rows — the table groups by HSN + GST% + supply type —
+// so this re-unions them. invoiceIds is a Set union rather than a sum of
+// invoiceCount: one invoice may contribute lines to more than one of those
+// groups and must be counted once.
+function computeHsnAnalytics(data, hsnCode) {
+  const wanted = (hsnCode || '').trim();
+  const rows = (data || []).filter(r => (r.hsn_code || '').trim() === wanted);
+  if (!rows.length) return null;
+
+  const invoiceIds = new Set();
+  const products = {};
+  const totals = { quantity: 0, taxable_value: 0, total_gst: 0, total_invoice_value: 0 };
+
+  rows.forEach(r => {
+    if (r.invoiceIds) r.invoiceIds.forEach(id => invoiceIds.add(id));   // historical rows have none
+    totals.quantity += +r.quantity || 0;
+    totals.taxable_value = round2(totals.taxable_value + (+r.taxable_value || 0));
+    totals.total_gst = round2(totals.total_gst + (+r.total_gst || 0));
+    totals.total_invoice_value = round2(totals.total_invoice_value + (+r.total_invoice_value || 0));
+
+    // Computed rows carry per-product totals. Historical rows predate that
+    // and only have a product_name plus their own totals, so they fold in as
+    // a single entry rather than being dropped — otherwise the breakdown
+    // wouldn't reconcile with the card above it.
+    const stats = r.productStats || { [r.product_name || '—']: {
+      quantity: +r.quantity || 0, taxable_value: +r.taxable_value || 0,
+      total_gst: +r.total_gst || 0, total_invoice_value: +r.total_invoice_value || 0 } };
+    Object.entries(stats).forEach(([name, s]) => {
+      const p = products[name] ||
+        (products[name] = { name, quantity: 0, taxable_value: 0, total_gst: 0, total_invoice_value: 0 });
+      p.quantity += +s.quantity || 0;
+      p.taxable_value = round2(p.taxable_value + (+s.taxable_value || 0));
+      p.total_gst = round2(p.total_gst + (+s.total_gst || 0));
+      p.total_invoice_value = round2(p.total_invoice_value + (+s.total_invoice_value || 0));
+    });
+  });
+
+  const productList = Object.values(products).sort((a, b) => b.total_invoice_value - a.total_invoice_value);
+  return {
+    hsn_code: wanted,
+    productsSold: productList.length,
+    invoiceCount: invoiceIds.size,
+    quantity: round2(totals.quantity),
+    taxable_value: totals.taxable_value,
+    total_gst: totals.total_gst,
+    total_invoice_value: totals.total_invoice_value,
+    products: productList
+  };
+}
+
+function hsnAnalyticsHtml(a) {
+  const label = (k, v) => `<div class="calc-row"><span class="label">${k}</span><span class="value">${v}</span></div>`;
+  return `
+    <div class="calc-box mt-16">
+      <div class="calc-row"><span class="label">HSN Code</span><span class="value"><b>${escHsnHtml(a.hsn_code)}</b></span></div>
+      ${label('Products Sold', a.productsSold)}
+      ${label('Invoice Count', a.invoiceCount)}
+      ${label('Quantity Sold', formatNum(a.quantity))}
+      ${label('Taxable Value', '₹' + formatNum(a.taxable_value))}
+      ${label('GST Amount', '₹' + formatNum(a.total_gst))}
+      <div class="calc-row total"><span class="label">Total Sales</span><span class="value">₹${formatNum(a.total_invoice_value)}</span></div>
+    </div>
+    <div class="section-title mb-14 mt-20">Products under this HSN</div>
+    <div class="table-wrapper">
+      <table class="data-table">
+        <thead>
+          <tr><th>#</th><th>Product Name</th><th style="text-align:center;">Quantity Sold</th>
+              <th style="text-align:right;">Taxable Value</th><th style="text-align:right;">GST</th>
+              <th style="text-align:right;">Total Sales</th></tr>
+        </thead>
+        <tbody>
+          ${a.products.map((p, i) => `
+            <tr>
+              <td>${i + 1}</td>
+              <td>${escHsnHtml(p.name)}</td>
+              <td style="text-align:center;">${formatNum(p.quantity)}</td>
+              <td style="text-align:right;">₹${formatNum(p.taxable_value)}</td>
+              <td style="text-align:right;">₹${formatNum(p.total_gst)}</td>
+              <td style="text-align:right;font-weight:700;color:var(--primary-dark);">₹${formatNum(p.total_invoice_value)}</td>
+            </tr>`).join('')}
+        </tbody>
+      </table>
+    </div>`;
+}
+
+function escHsnHtml(v) { return (v || '').toString().replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;'); }
+
+function runHsnSearch(prefix) {
+  const slot = document.getElementById(`hsn${prefix.toUpperCase()}Analytics`);
+  if (!slot) return;
+  const code = document.getElementById(`hsn${prefix.toUpperCase()}Search`)?.value?.trim() || '';
+
+  // Empty box means "no analytics" — the complete table below is already
+  // there and is never filtered, so there is nothing to restore.
+  if (!code) { slot.innerHTML = ''; return; }
+
+  const analytics = computeHsnAnalytics(prefix === 'b2b' ? hsnB2BData : hsnB2CData, code);
+  slot.innerHTML = analytics
+    ? hsnAnalyticsHtml(analytics)
+    : `<div class="empty-state mt-16"><i class="fas fa-barcode" style="display:block;font-size:32px;margin-bottom:8px;"></i>No records found for this HSN Code.</div>`;
+}
+
+function clearHsnSearch(prefix) {
+  const input = document.getElementById(`hsn${prefix.toUpperCase()}Search`);
+  if (input) { input.value = ''; input.focus(); }
+  const slot = document.getElementById(`hsn${prefix.toUpperCase()}Analytics`);
+  if (slot) slot.innerHTML = '';
 }
 
 // Only historical rows (source !== 'computed') can be deleted — a
