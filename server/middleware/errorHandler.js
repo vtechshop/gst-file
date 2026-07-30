@@ -22,26 +22,7 @@ function errorHandler(err, req, res, next) {
   }
 
   const status = err.status || 500;
-  const body = { error: { message: err.expose ? err.message : 'Something went wrong on the server.' } };
-
-  // ── TEMPORARY DIAGNOSTIC — remove once the payment 500 is identified ──
-  // Attaches the underlying Postgres/JS error detail to the response so the
-  // real cause is readable from the browser's Network tab without needing
-  // access to platform logs.
-  // Gated ONLY behind DEBUG_ERRORS=true.
-  // The normal error message, status codes and response format remain unchanged.
-  if (process.env.DEBUG_ERRORS === 'true') {
-    body.error.diagnostics = {
-      code: err.code,
-      routine: err.routine,
-      constraint: err.constraint,
-      detail: err.detail,
-      where: err.where,
-      stack: err.stack
-    };
-  }
-
-  res.status(status).json(body);
+  res.status(status).json({ error: { message: err.expose ? err.message : 'Something went wrong on the server.' } });
 }
 
 module.exports = { asyncRoute, errorHandler };
