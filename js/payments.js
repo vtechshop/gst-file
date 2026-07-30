@@ -11,6 +11,21 @@ const PAYMENT_METHOD_LABELS = {
   cheque: 'Cheque', card: 'Card', other: 'Other'
 };
 
+// The three payment states, named and coloured in ONE place so every list
+// and ledger reads the same. Previously each page uppercased the raw
+// column value, which rendered the middle state as "PARTIAL" while the
+// entry forms called it "Partially Paid" — same state, two names.
+// paymentStatusLabel() also normalises a missing/unknown value to
+// 'unpaid', which every caller was already doing inline.
+const PAYMENT_STATUS_LABELS = { unpaid: 'UNPAID', partial: 'PARTIALLY PAID', paid: 'PAID' };
+const PAYMENT_STATUS_BADGES = { unpaid: 'badge-red', partial: 'badge-orange', paid: 'badge-green' };
+
+function paymentStatusKey(status) {
+  return PAYMENT_STATUS_LABELS[status] ? status : 'unpaid';
+}
+function paymentStatusLabel(status) { return PAYMENT_STATUS_LABELS[paymentStatusKey(status)]; }
+function paymentStatusBadge(status) { return PAYMENT_STATUS_BADGES[paymentStatusKey(status)]; }
+
 // ── Before-Save payment preview (display only) ───────
 // Shared by Invoice Entry and Purchase Entry so the two can't drift:
 // both show Grand Total / amount / Remaining Balance and a status

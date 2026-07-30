@@ -76,8 +76,6 @@ function renderVendLedgerTable(data) {
     renderVendLedgerPagination(0, 0, () => {});
     return;
   }
-
-  const paymentBadge = { unpaid: 'badge-red', partial: 'badge-orange', paid: 'badge-green' };
   tbody.innerHTML = page.map((r, i) => {
     const balance = round2(Math.max(0, r.total_amount - r.amount_paid));
     return `
@@ -89,7 +87,7 @@ function renderVendLedgerTable(data) {
       <td class="text-right fw-700 text-primary-dark">₹${formatNum(r.total_amount)}</td>
       <td class="text-right">₹${formatNum(r.amount_paid)}</td>
       <td class="text-right ${balance > 0 ? 'text-danger' : ''}">₹${formatNum(balance)}</td>
-      <td><span class="badge ${paymentBadge[r.payment_status] || 'badge-red'}">${r.payment_status.toUpperCase()}</span></td>
+      <td><span class="badge ${paymentStatusBadge(r.payment_status)}">${paymentStatusLabel(r.payment_status)}</span></td>
     </tr>`;
   }).join('');
 

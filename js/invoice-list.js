@@ -97,8 +97,6 @@ function renderInvoiceListTable(data) {
     renderInvListPagination(0, 0, () => {});
     return;
   }
-
-  const paymentBadge = { unpaid: 'badge-red', partial: 'badge-orange', paid: 'badge-green' };
   tbody.innerHTML = page.map((r, i) => {
     const balance = round2(Math.max(0, (r.total_amount || 0) - (r.amount_paid || 0)));
     return `
@@ -112,7 +110,7 @@ function renderInvoiceListTable(data) {
       <td class="text-right">₹${formatNum(r.amount_paid)}</td>
       <td class="text-right ${balance > 0 ? 'text-danger' : ''}">₹${formatNum(balance)}</td>
       <td>
-        <span class="badge ${paymentBadge[r.payment_status] || 'badge-red'} clickable" onclick="openMarkPaymentModal('${r.type}','${r.id}')" title="Click to record payment">${r.payment_status.toUpperCase()}</span>
+        <span class="badge ${paymentStatusBadge(r.payment_status)} clickable" onclick="openMarkPaymentModal('${r.type}','${r.id}')" title="Click to record payment">${paymentStatusLabel(r.payment_status)}</span>
       </td>
       <td>
         <div class="action-btns">
