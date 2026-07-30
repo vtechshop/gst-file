@@ -181,12 +181,43 @@ function onPurchPaymentStatusChange() {
   } else {
     if (!getPurchText('purchPaymentDate')) setPurchValue('purchPaymentDate', toISO(new Date()));
   }
+  renderPurchPaymentPreview();
+}
+
+// ── Live payment preview (display only) ─────────────
+// Element map + thin wrappers over the shared helpers in js/payments.js —
+// the same ones Invoice Entry uses, so both pages behave identically by
+// construction rather than by two copies being kept in step by hand.
+const PURCHASE_PAYMENT_PREVIEW = {
+  box: 'purchPaymentPreview',
+  total: 'purchPreviewTotal',
+  received: 'purchPreviewReceived',
+  balance: 'purchPreviewBalance',
+  status: 'purchPreviewStatus',
+  error: 'purchPaymentAmountError',
+  statusField: 'purchPaymentStatus',
+  amountField: 'purchPaymentAmount',
+  amountLabel: 'Amount Paid',
+  getTotal: () => +computePurchRollups().total_amount || 0
+};
+
+function renderPurchPaymentPreview(grandTotal) {
+  renderPaymentPreview(PURCHASE_PAYMENT_PREVIEW, grandTotal);
+}
+
+function validatePurchPaymentAmount() {
+  return validatePaymentPreviewAmount(PURCHASE_PAYMENT_PREVIEW);
 }
 
 function setPurchPaymentSectionMode(editable, statusLabel) {
   document.getElementById('purchPaymentEditableFields')?.classList.toggle('d-none', !editable);
   document.getElementById('purchPaymentDetailGroup')?.classList.toggle('d-none', !editable);
+  // Same reasoning as Invoice Entry's: the preview is a before-Save aid, and
+  // editing an existing purchase manages payments from Purchase List (which
+  // has the real ledger), so it hides alongside the editable fields.
+  document.getElementById('purchPaymentPreview')?.classList.toggle('d-none', !editable);
   document.getElementById('purchPaymentEditNote')?.classList.toggle('d-none', editable);
+  if (editable) renderPurchPaymentPreview();
   if (!editable) {
     const label = { unpaid: 'Unpaid', partial: 'Partially Paid', paid: 'Paid in Full' }[statusLabel] || 'Unpaid';
     const el = document.getElementById('purchPaymentEditStatusText');
@@ -244,6 +275,11 @@ async function savePurchase() {
     showToast('Vendor GSTIN is invalid — correct it (or clear it) before saving.', 'error');
     return;
   }
+  // Amount Paid can't exceed the Grand Total. The inline error under the
+  // field is the live version of this same check. Only a brand-new
+  // purchase's form records a payment (see the wasNew block below), so
+  // that's the only case to gate — same as Invoice Entry.
+  if (wasNew && !validatePurchPaymentAmount()) return;
 
   if (!purchEditId) {
     const { data: dup } = await _supabase.from('purchases').select('id').eq('user_id', user.id).eq('purchase_number', purchNum).single();

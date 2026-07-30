@@ -11,6 +11,107 @@ const PAYMENT_METHOD_LABELS = {
   cheque: 'Cheque', card: 'Card', other: 'Other'
 };
 
+// ── Before-Save payment preview (display only) ───────
+// Shared by Invoice Entry and Purchase Entry so the two can't drift:
+// both show Grand Total / amount / Remaining Balance and a status
+// preview that updates while the user types, instead of the outcome
+// only becoming visible after the record lands in its list page.
+//
+// This is strictly a mirror of what Save will do. It is NOT a second
+// source of truth and changes no payment behaviour: the total comes
+// from the page's own rollup function (the same one filling its Grand
+// Total box), and the derivation below duplicates what both save
+// handlers already do — 'paid' records the full total, 'partial'
+// records the typed amount, 'unpaid' records nothing. Nothing here
+// touches the payments ledger; that stays entirely server-side in
+// server/routes/payments.js.
+
+// Pure: no DOM, no page-specific naming. Everything the preview and its
+// validation need, derived from three inputs.
+function computePaymentPreview(total, status, typedAmount) {
+  total = +total || 0;
+  const received = status === 'paid'    ? total
+                 : status === 'partial' ? (parseFloat(typedAmount) || 0)
+                 : 0;
+  // Same half-paisa tolerance the server uses when deciding paid vs
+  // partial (see recomputeAndApply() in server/routes/payments.js), so a
+  // full payment can't preview as a ₹0.00 balance that still reads
+  // "Partially Paid" because of a rounding artefact.
+  const settled = received + 0.005 >= total && total > 0;
+  const over    = received > total + 0.005;
+  return {
+    total, received, over,
+    balance: round2(Math.max(0, total - received)),
+    state: over ? 'over' : received <= 0 ? 'unpaid' : settled ? 'paid' : 'partial'
+  };
+}
+
+// Same badge vocabulary Invoice List / Purchase List already use for the
+// real (post-save) status, so the preview reads as the same thing.
+const PAYMENT_PREVIEW_BADGE = { unpaid: 'badge-red', partial: 'badge-orange', paid: 'badge-green', over: 'badge-red' };
+const PAYMENT_PREVIEW_LABEL = { unpaid: 'Unpaid', partial: 'Partially Paid', paid: 'Paid', over: 'Invalid Amount' };
+
+// `cfg` is the per-page element map — see INVOICE_PAYMENT_PREVIEW in
+// js/invoice-entry.js and PURCHASE_PAYMENT_PREVIEW in js/purchase-entry.js.
+// cfg.getTotal() is what keeps this generic: each page hands back its own
+// rollup total rather than this file knowing either page's item model.
+function paymentPreviewValues(cfg, grandTotal) {
+  // The page's rollup function calls the renderer on every item change and
+  // passes its already-computed total in, so we don't call back into it and
+  // recurse. When the payment inputs fire instead, no argument arrives and
+  // we ask for the total on demand. Guarded on typeof number so an Event
+  // object (if ever wired as a listener rather than an inline handler) is
+  // ignored rather than treated as a total.
+  const total = typeof grandTotal === 'number' ? grandTotal : cfg.getTotal();
+  const status = document.getElementById(cfg.statusField)?.value || 'unpaid';
+  const typed  = document.getElementById(cfg.amountField)?.value || '';
+  return computePaymentPreview(total, status, typed);
+}
+
+function renderPaymentPreview(cfg, grandTotal) {
+  if (!document.getElementById(cfg.box)) return; // page has no preview block
+  const { total, received, balance, over, state } = paymentPreviewValues(cfg, grandTotal);
+
+  const money = (id, v) => { const el = document.getElementById(id); if (el) el.value = '₹' + formatNum(v); };
+  money(cfg.total, total);
+  money(cfg.received, received);
+  // An over-payment has no meaningful remaining balance — showing ₹0.00
+  // would read as "settled", the opposite of the error being raised.
+  const balEl = document.getElementById(cfg.balance);
+  if (balEl) balEl.value = over ? '—' : '₹' + formatNum(balance);
+
+  const statusEl = document.getElementById(cfg.status);
+  if (statusEl) statusEl.innerHTML = `<span class="badge ${PAYMENT_PREVIEW_BADGE[state]}">${PAYMENT_PREVIEW_LABEL[state]}</span>`;
+
+  // Inline error that doesn't block typing: the field keeps whatever was
+  // entered (so it can be corrected rather than silently rewritten) and
+  // Save refuses it — see validatePaymentPreviewAmount() below.
+  const errEl = document.getElementById(cfg.error);
+  if (errEl) {
+    errEl.classList.toggle('d-none', !over);
+    errEl.textContent = over
+      ? `${cfg.amountLabel} (₹${formatNum(received)}) is more than the Grand Total (₹${formatNum(total)}). Enter ₹${formatNum(total)} or less.`
+      : '';
+  }
+}
+
+// Blocking check for Save. Only the 'partial' path can over-pay — 'paid'
+// is defined as exactly the total and 'unpaid' records nothing — so this
+// deliberately does not object to a blank/zero amount: leaving it empty
+// already means "record no payment", and that behaviour is unchanged.
+// The server enforces this too (routes/payments.js checks the amount
+// against the ledger sum); catching it here just avoids saving the record
+// and then failing its payment.
+function validatePaymentPreviewAmount(cfg) {
+  if ((document.getElementById(cfg.statusField)?.value || 'unpaid') !== 'partial') return true;
+  const { over, total } = paymentPreviewValues(cfg);
+  if (!over) return true;
+  renderPaymentPreview(cfg);
+  showToast(`${cfg.amountLabel} cannot be more than the Grand Total (₹${formatNum(total)}).`, 'error');
+  document.getElementById(cfg.amountField)?.focus();
+  return false;
+}
+
 async function loadPaymentsForInvoice(type, invoiceId) {
   const { data } = await _supabase.from('payments').select('*').eq('invoice_id', invoiceId).eq('invoice_type', type);
   return (data || []).sort((a, b) => (b.payment_date || '').localeCompare(a.payment_date || '') || (b.created_at || '').localeCompare(a.created_at || ''));

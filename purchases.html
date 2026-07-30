@@ -148,7 +148,10 @@
             </div>
             <div class="form-group inv-collapsible collapsed" id="purchPaymentAmountGroup">
               <label for="purchPaymentAmount">Amount Paid (&#8377;)</label>
-              <input type="number" id="purchPaymentAmount" class="form-control" min="0" step="0.01" disabled>
+              <input type="number" id="purchPaymentAmount" class="form-control" min="0" step="0.01"
+                     oninput="renderPurchPaymentPreview()" disabled
+                     aria-describedby="purchPaymentAmountError">
+              <p class="text-danger fs-12 d-none" id="purchPaymentAmountError" role="alert"></p>
             </div>
           </div>
           <div class="form-grid cols-2 mb-16 inv-collapsible collapsed" id="purchPaymentDetailGroup">
@@ -174,6 +177,31 @@
             <div class="form-group">
               <label for="purchPaymentNote">Notes <span class="fs-11 text-muted-sm">(Optional)</span></label>
               <input type="text" id="purchPaymentNote" class="form-control" disabled>
+            </div>
+          </div>
+          <!-- Live payment preview — identical to Invoice Entry's, driven by the
+               same shared helpers in js/payments.js. Read-only and deliberately
+               NOT a second source of truth: every number comes from the same
+               computePurchRollups() total the Grand Total box above shows, and
+               the wording mirrors what savePurchase() will record in the
+               payments ledger. Reuses .calc-box/.badge so it needs no CSS of
+               its own. See renderPurchPaymentPreview(). -->
+          <div class="calc-box mb-16" id="purchPaymentPreview">
+            <div class="calc-row">
+              <span class="label">Grand Total</span>
+              <span class="value"><input type="text" id="purchPreviewTotal" class="form-control calc-input-sm" readonly tabindex="-1" aria-label="Grand Total"></span>
+            </div>
+            <div class="calc-row">
+              <span class="label">Amount Paid</span>
+              <span class="value"><input type="text" id="purchPreviewReceived" class="form-control calc-input-sm" readonly tabindex="-1" aria-label="Amount Paid"></span>
+            </div>
+            <div class="calc-row total">
+              <span class="label">Remaining Balance</span>
+              <span class="value"><input type="text" id="purchPreviewBalance" class="form-control calc-input-total" readonly tabindex="-1" aria-label="Remaining Balance"></span>
+            </div>
+            <div class="calc-row">
+              <span class="label">Status</span>
+              <span class="value" id="purchPreviewStatus" aria-live="polite"></span>
             </div>
           </div>
           <p class="text-muted-sm fs-12 mb-16 d-none" id="purchPaymentEditNote">Payment status: <b id="purchPaymentEditStatusText">Unpaid</b>. Record further payments from <a href="purchase-list.html">Purchase List</a>.</p>

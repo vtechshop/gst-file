@@ -363,12 +363,45 @@ function onInvPaymentStatusChange() {
   } else {
     if (!getInvText('invPaymentDate')) setInvValue('invPaymentDate', toISO(new Date()));
   }
+  renderInvPaymentPreview();
+}
+
+// ── Live payment preview (display only) ─────────────
+// All the behaviour lives in js/payments.js (computePaymentPreview() and
+// friends), shared with Purchase Entry so the two pages can't drift
+// apart. This is just the element map plus thin named wrappers, which
+// keep the inline oninput= handler and the call sites below readable.
+const INVOICE_PAYMENT_PREVIEW = {
+  box: 'invPaymentPreview',
+  total: 'invPreviewTotal',
+  received: 'invPreviewReceived',
+  balance: 'invPreviewBalance',
+  status: 'invPreviewStatus',
+  error: 'invPaymentAmountError',
+  statusField: 'invPaymentStatus',
+  amountField: 'invPaymentAmount',
+  amountLabel: 'Amount Received',
+  getTotal: () => +computeInvoiceRollups().total_amount || 0
+};
+
+function renderInvPaymentPreview(grandTotal) {
+  renderPaymentPreview(INVOICE_PAYMENT_PREVIEW, grandTotal);
+}
+
+function validateInvPaymentAmount() {
+  return validatePaymentPreviewAmount(INVOICE_PAYMENT_PREVIEW);
 }
 
 function setPaymentSectionMode(editable, statusLabel) {
   document.getElementById('invPaymentEditableFields')?.classList.toggle('d-none', !editable);
   document.getElementById('invPaymentDetailGroup')?.classList.toggle('d-none', !editable);
+  // The preview is a before-Save aid only: editing an existing invoice
+  // manages payments from Invoice List (which has the real ledger), so
+  // it hides alongside the editable fields rather than previewing a
+  // payment this form won't record.
+  document.getElementById('invPaymentPreview')?.classList.toggle('d-none', !editable);
   document.getElementById('invPaymentEditNote')?.classList.toggle('d-none', editable);
+  if (editable) renderInvPaymentPreview();
   if (!editable) {
     const label = { unpaid: 'Unpaid', partial: 'Partially Paid', paid: 'Paid in Full' }[statusLabel] || 'Unpaid';
     const el = document.getElementById('invPaymentEditStatusText');
@@ -569,6 +602,13 @@ async function saveInvoice() {
     showToast('GST Number is invalid — correct it (or clear it) before saving.', 'error');
     return;
   }
+  // Amount Received can't exceed the Grand Total. The inline error under
+  // the field is the live version of this same check. Only a brand-new
+  // invoice's form records a payment (see the wasNewInvoice block below),
+  // so that's the only case to gate. The server enforces this too
+  // (routes/payments.js checks against the ledger sum); catching it here
+  // just avoids saving an invoice and then failing its payment.
+  if (wasNewInvoice && !validateInvPaymentAmount()) return;
 
   // Auto Generate: reserve the authoritative number now, right before
   // the duplicate check — never trust the on-screen preview alone since

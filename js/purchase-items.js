@@ -562,6 +562,14 @@ function computePurchRollups() {
   const wordsEl = document.getElementById('purchItemsAmountWords');
   if (wordsEl) wordsEl.textContent = numberToWordsINR(grandTotal);
 
+  // Keep the Payment section's read-only balance preview in step with the
+  // Grand Total — editing any item line changes what's owed, so the
+  // remaining balance has to follow. Same wiring as Invoice Entry:
+  // grandTotal is passed in explicitly because that function recomputes
+  // from here when called on its own, so handing it the value avoids
+  // recursing back into this one.
+  if (typeof renderPurchPaymentPreview === 'function') renderPurchPaymentPreview(grandTotal);
+
   return { taxable_amount: taxable, gst_percentage: gstPercentage, gst_amount: gstAmt, igst, cgst, sgst, total_amount: grandTotal, round_off: roundOff };
 }
 

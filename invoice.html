@@ -258,7 +258,10 @@
             </div>
             <div class="form-group inv-collapsible collapsed" id="invPaymentAmountGroup">
               <label for="invPaymentAmount">Amount Received (&#8377;)</label>
-              <input type="number" id="invPaymentAmount" class="form-control" min="0" step="0.01" disabled>
+              <input type="number" id="invPaymentAmount" class="form-control" min="0" step="0.01"
+                     oninput="renderInvPaymentPreview()" disabled
+                     aria-describedby="invPaymentAmountError">
+              <p class="text-danger fs-12 d-none" id="invPaymentAmountError" role="alert"></p>
             </div>
           </div>
           <div class="form-grid cols-2 mb-16 inv-collapsible collapsed" id="invPaymentDetailGroup">
@@ -284,6 +287,30 @@
             <div class="form-group">
               <label for="invPaymentNote">Notes <span class="fs-11 text-muted-sm">(Optional)</span></label>
               <input type="text" id="invPaymentNote" class="form-control" disabled>
+            </div>
+          </div>
+          <!-- Live payment preview — read-only, and deliberately NOT a second
+               source of truth: every number here comes from the same
+               computeInvoiceRollups() total the Grand Total box above shows,
+               and the wording mirrors exactly what saveInvoice() will record
+               in the payments ledger. Reuses .calc-box/.badge so it needs no
+               CSS of its own. See renderInvPaymentPreview(). -->
+          <div class="calc-box mb-16" id="invPaymentPreview">
+            <div class="calc-row">
+              <span class="label">Grand Total</span>
+              <span class="value"><input type="text" id="invPreviewTotal" class="form-control calc-input-sm" readonly tabindex="-1" aria-label="Grand Total"></span>
+            </div>
+            <div class="calc-row">
+              <span class="label">Amount Received</span>
+              <span class="value"><input type="text" id="invPreviewReceived" class="form-control calc-input-sm" readonly tabindex="-1" aria-label="Amount Received"></span>
+            </div>
+            <div class="calc-row total">
+              <span class="label">Remaining Balance</span>
+              <span class="value"><input type="text" id="invPreviewBalance" class="form-control calc-input-total" readonly tabindex="-1" aria-label="Remaining Balance"></span>
+            </div>
+            <div class="calc-row">
+              <span class="label">Status</span>
+              <span class="value" id="invPreviewStatus" aria-live="polite"></span>
             </div>
           </div>
           <p class="text-muted-sm fs-12 mb-16 d-none" id="invPaymentEditNote">Payment status: <b id="invPaymentEditStatusText">Unpaid</b>. Record further payments from <a href="invoice-list.html">Invoice List</a>.</p>

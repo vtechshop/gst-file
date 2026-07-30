@@ -793,6 +793,14 @@ function computeInvoiceRollups() {
   const wordsEl = document.getElementById('itemsAmountWords');
   if (wordsEl) wordsEl.textContent = numberToWordsINR(grandTotal);
 
+  // Keep the Payment section's read-only balance preview in step with the
+  // Grand Total — editing any item line changes what's owed, so the
+  // remaining balance has to follow. grandTotal is passed in explicitly
+  // because that function recomputes from here when called on its own;
+  // handing it the value avoids recursing back into this one. Guarded by
+  // typeof because this file also loads on pages with no payment section.
+  if (typeof renderInvPaymentPreview === 'function') renderInvPaymentPreview(grandTotal);
+
   return { taxable_amount: taxable, gst_percentage: gstPercentage, gst_amount: gstAmt, igst, cgst, sgst, total_amount: grandTotal, round_off: roundOff };
 }
 
