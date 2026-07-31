@@ -569,7 +569,16 @@ table.data-table {
   z-index: 2;
   background: #fff;
 }
-.items-table-fixed thead th:nth-child(1) { z-index: 51; }
+/* The sticky-first-column rule above sets background:#fff for BOTH th and
+   td, and its :nth-child() pseudo-class gives it higher specificity than
+   ".items-table-fixed thead th" — so the header's first cell was being
+   painted white while .data-table thead tr kept its text white too,
+   leaving "Product *" invisible against it (only the red asterisk showed,
+   making the header look like it began at HSN). The body cells do want
+   white; only the header cell needs the header colour restored. This
+   selector is more specific again, so it wins without touching widths,
+   column order, stickiness or the horizontal scroll. */
+.items-table-fixed thead th:nth-child(1) { z-index: 51; background: var(--primary-dark); }
 .items-table-fixed tbody tr:hover td:nth-child(1) { background: var(--primary-xlight); }
 :root[data-theme="dark"] .items-table-fixed td:nth-child(1) { background: #1b2523; }
 :root[data-theme="dark"] .items-table-fixed tbody tr:hover td:nth-child(1) { background: #16302c; }
