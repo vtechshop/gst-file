@@ -18,6 +18,10 @@
   <script src="js/payments.js"></script>
   <script src="js/purchase-items.js"></script>
   <script src="js/purchase-entry.js"></script>
+  <!-- Bill scanner. PDF.js / Tesseract.js are NOT loaded here — this file
+       fetches them on demand the first time a bill is uploaded, so manual
+       entry costs nothing extra. -->
+  <script src="js/purchase-ocr.js"></script>
 </head>
 <body>
 <div class="app-layout">
@@ -76,6 +80,24 @@
     </div>
 
     <div class="content">
+
+      <!-- Optional bill scanner. Entirely additive: ignore it and Purchase
+           Entry behaves exactly as before. Extraction only ever proposes
+           values — the existing Save Purchase button remains the sole way
+           anything reaches the database. -->
+      <div class="card mb-20">
+        <div class="card-body d-flex align-center gap-10 flex-wrap">
+          <label class="btn btn-secondary btn-sm" style="cursor:pointer;margin-bottom:0;">
+            <i class="fas fa-file-arrow-up"></i> Upload Purchase Bill
+            <input type="file" id="purchBillInput" accept=".pdf,.jpg,.jpeg,.png" class="file-input-hidden"
+                   onchange="handlePurchaseBillUpload(this.files[0])" aria-label="Upload purchase bill">
+          </label>
+          <span class="fs-12 text-muted-sm">PDF, JPG or PNG &middot; read in your browser, never uploaded &middot; optional &mdash; you can still type everything by hand</span>
+        </div>
+      </div>
+      <div id="purchOcrProgress" class="d-none"></div>
+      <div id="purchOcrReview" class="d-none"></div>
+
       <div class="card mb-20">
         <div class="card-body">
 
