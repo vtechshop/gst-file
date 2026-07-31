@@ -56,15 +56,25 @@ class RestQueryBuilder {
     this._orderAsc   = false;
     this._isSingle   = false;
     this._payload    = null;
+    this._select     = null;
   }
 
-  // Column-projection argument is intentionally not sent to the server
-  // — LocalSupabase always returned full rows regardless of what
-  // .select(cols) was called with, and every page in this app was
-  // built and tested against that. Matching it exactly here avoids a
-  // silent regression where some caller expected a field that a
-  // narrower projection would have dropped.
-  select()  { if (this._op !== 'insert' && this._op !== 'update') this._op = 'select'; return this; }
+  // The column list IS now sent, as `select=` — server/routes/generic.js's
+  // buildSelect() has always accepted it, filters it against that table's
+  // allow-list and falls back to SELECT * if nothing matches, so an
+  // unknown column can never reach SQL.
+  //
+  // This was previously dropped on purpose, because LocalSupabase returned
+  // full rows regardless and a caller might read a field its projection
+  // omitted. Before enabling it, every narrowed .select() call site in the
+  // app was checked against the fields its caller actually reads — all of
+  // them stay within their own projection. '*' and bare select() are
+  // unaffected and still return full rows.
+  select(cols) {
+    if (this._op !== 'insert' && this._op !== 'update') this._op = 'select';
+    if (typeof cols === 'string' && cols.trim() && cols.trim() !== '*') this._select = cols.trim();
+    return this;
+  }
   insert(d) { this._op = 'insert';  this._payload = d; return this; }
   update(d) { this._op = 'update';  this._payload = d; return this; }
   delete()  { this._op = 'delete';  return this; }
@@ -89,6 +99,7 @@ class RestQueryBuilder {
     Object.entries(this._lteF).forEach(([f, v]) => params.append('lte_' + f, v));
     Object.entries(this._inF).forEach(([f, values]) => { if (values && values.length) params.append('in_' + f, values.join(',')); });
     if (this._orderField) params.set('order', this._orderField + '.' + (this._orderAsc ? 'asc' : 'desc'));
+    if (this._select) params.set('select', this._select);
     return params.toString();
   }
 

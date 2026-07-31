@@ -11,6 +11,7 @@
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
+const compression = require('compression');
 const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
 const authRoutes = require('./routes/auth');
@@ -29,6 +30,15 @@ const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGIN || 'http://localhost:5500')
   .split(',').map(s => s.trim()).filter(Boolean);
 
 const app = express();
+
+// Gzip every response big enough to be worth it. These endpoints return
+// plain JSON arrays — highly repetitive keys — which compress by roughly
+// 90%, and the report pages fetch a few MB of them. Mounted before the
+// routes so it wraps every one of them, and before CORS/helmet only by
+// convention: it just wires up res.write/res.end, it never short-circuits.
+// Clients that don't send Accept-Encoding still get identical plain JSON,
+// so no endpoint, payload shape or status code changes.
+app.use(compression());
 
 app.use(helmet());
 app.use(cors({
