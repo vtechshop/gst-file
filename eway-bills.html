@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>E-Way Bills - GST Management System</title>
+  <link rel="stylesheet" href="css/style.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
+  <script src="js/apiClient.js"></script>
+  <script src="js/backup.js"></script>
+  <script src="js/config.js"></script>
+  <script src="js/product-sync.js?v=20260717"></script>
+  <script src="js/auth.js"></script>
+  <script src="js/utils.js"></script>
+  <script src="js/search.js"></script>
+  <script src="js/profile.js"></script>
+  <script src="js/eway-bills.js"></script>
+</head>
+<body>
+<div class="app-layout">
+
+  <aside class="sidebar">
+    <a class="sidebar-brand" href="dashboard.html">
+      <div class="brand-icon"><i class="fas fa-file-invoice-dollar"></i></div>
+      <span>GST Invoice<br>Management</span>
+    </a>
+    <nav class="sidebar-menu">
+      <div class="menu-section">Main</div>
+      <a href="dashboard.html" class="menu-item"><i class="fas fa-tachometer-alt"></i> Dashboard</a>
+      <div class="menu-section">Invoices</div>
+      <a href="invoice.html" class="menu-item"><i class="fas fa-plus-circle"></i> New Invoice</a>
+      <a href="invoice-list.html" class="menu-item"><i class="fas fa-list-alt"></i> Invoice List</a>
+      <a href="cdnotes.html" class="menu-item"><i class="fas fa-file-minus"></i> Credit/Debit Notes</a>
+      <a href="sales-returns.html" class="menu-item"><i class="fas fa-rotate-left"></i> Sales Returns</a>
+      <a href="eway-bills.html" class="menu-item active"><i class="fas fa-truck-fast"></i> E-Way Bills</a>
+      <div class="menu-section">HSN</div>
+      <a href="hsn.html#b2b" class="menu-item"><i class="fas fa-barcode"></i> B2B HSN</a>
+      <a href="hsn.html#b2c" class="menu-item"><i class="fas fa-tags"></i> B2C HSN</a>
+      <div class="menu-section">Masters</div>
+      <a href="customers.html" class="menu-item"><i class="fas fa-address-book"></i> Customers</a>
+      <a href="customer-ledger.html" class="menu-item"><i class="fas fa-book"></i> Customer Ledger</a>
+      <a href="products.html" class="menu-item"><i class="fas fa-box"></i> Products</a>
+      <div class="menu-section">Purchases</div>
+      <a href="vendors.html" class="menu-item"><i class="fas fa-truck"></i> Vendors</a>
+      <a href="vendor-ledger.html" class="menu-item"><i class="fas fa-book"></i> Vendor Ledger</a>
+      <a href="purchases.html" class="menu-item"><i class="fas fa-cart-plus"></i> New Purchase</a>
+      <a href="purchase-list.html" class="menu-item"><i class="fas fa-boxes"></i> Purchase List</a>
+      <a href="purchase-returns.html" class="menu-item"><i class="fas fa-undo"></i> Purchase Returns</a>
+      <div class="menu-section">Expenses</div>
+      <a href="expenses.html" class="menu-item"><i class="fas fa-receipt"></i> Expenses</a>
+      <div class="menu-section">Reports</div>
+      <a href="reports.html" class="menu-item"><i class="fas fa-chart-bar"></i> Reports &amp; Export</a>
+      <a href="gstr3b.html"  class="menu-item"><i class="fas fa-calculator"></i> GSTR-3B Summary</a>
+      <div class="menu-section">Settings</div>
+      <a href="#" class="menu-item" onclick="openProfileModal();return false;"><i class="fas fa-building"></i> Business Profile</a>
+    </nav>
+    <div class="sidebar-user">
+      <div class="user-avatar"><i class="fas fa-user"></i></div>
+      <div class="user-info" onclick="openSettingsModal()" title="Click to open settings">
+        <div class="user-name" id="navUserName">User</div>
+        <div class="user-role">GST Manager</div>
+      </div>
+      <button type="button" class="btn-logout btn-settings" onclick="openSettingsModal()" title="Settings"><i class="fas fa-cog"></i></button>
+      <button type="button" class="btn-logout" id="logoutBtn" title="Logout"><i class="fas fa-sign-out-alt"></i></button>
+    </div>
+  </aside>
+
+  <div class="main-content">
+    <div class="top-bar">
+      <button type="button" class="menu-toggle" id="menuToggle" aria-label="Toggle sidebar menu"><i class="fas fa-bars"></i></button>
+      <span class="page-title"><i class="fas fa-truck-fast"></i><span id="ewbPageTitle">E-Way Bills</span></span>
+      <button type="button" class="btn btn-secondary btn-sm btn-icon ml-auto" onclick="openGlobalSearch()" title="Search everywhere (Ctrl+K)" aria-label="Global search"><i class="fas fa-search"></i></button>
+    </div>
+
+    <div class="content">
+
+      <!-- Sets expectations before anything is entered: this module produces
+           an internal document, not a statutory one. -->
+      <div class="banner-warning mb-20">
+        <div><i class="fas fa-circle-info"></i><b>Internal transport documents only.</b></div>
+        <div>Records created here are for your own transport reference. They are <b>not</b> official NIC
+        E-Way Bills and carry no EWB number until an official one is generated on the GST portal.</div>
+      </div>
+
+      <div class="card mb-20">
+        <div class="card-body">
+
+          <!-- 1. Pick the invoice being shipped -->
+          <div class="section-title mb-14">Select Invoice</div>
+          <datalist id="ewbInvoiceDatalist"></datalist>
+          <div class="form-grid cols-2 mb-16">
+            <div class="form-group">
+              <label for="ewbInvoiceSearch">Invoice Number <span class="text-required">*</span></label>
+              <input type="text" id="ewbInvoiceSearch" class="form-control" list="ewbInvoiceDatalist"
+                     oninput="onEwbInvoiceInput()" placeholder="Type or pick an invoice number" autocomplete="off">
+            </div>
+            <div class="form-group">
+              <label>Status</label>
+              <div id="ewbStatusBadge" class="mt-8"><span class="badge" style="background:#eceff1;color:#546e7a;">No invoice selected</span></div>
+            </div>
+          </div>
+
+          <!-- 2. Everything below is read-only, pulled from the invoice -->
+          <div id="ewbInvoicePanel" class="d-none">
+            <div class="section-title mb-14">Invoice Details <span class="fs-11 text-muted-sm">(from the selected invoice — read only)</span></div>
+            <div class="calc-box mb-16" id="ewbInvoiceSummary"></div>
+            <div class="table-wrapper mb-20">
+              <table class="data-table">
+                <thead>
+                  <tr><th>#</th><th>Product</th><th>HSN</th><th style="text-align:center;">Qty</th>
+                      <th style="text-align:right;">Taxable</th><th style="text-align:right;">GST</th>
+                      <th style="text-align:right;">Total</th></tr>
+                </thead>
+                <tbody id="ewbItemsBody"></tbody>
+                <tfoot id="ewbItemsTotal"></tfoot>
+              </table>
+            </div>
+
+            <!-- 3. The only fields the user fills in -->
+            <div class="section-title mb-14">Transport Details</div>
+            <div class="form-grid cols-3 mb-16">
+              <div class="form-group">
+                <label for="ewbVehicleNo">Vehicle Number</label>
+                <input type="text" id="ewbVehicleNo" class="form-control uppercase" placeholder="TN38AB1234">
+              </div>
+              <div class="form-group">
+                <label for="ewbTransporter">Transporter Name</label>
+                <input type="text" id="ewbTransporter" class="form-control">
+              </div>
+              <div class="form-group">
+                <label for="ewbTransporterGstin">Transporter GSTIN</label>
+                <input type="text" id="ewbTransporterGstin" class="form-control uppercase" maxlength="15">
+              </div>
+            </div>
+            <div class="form-grid cols-3 mb-16">
+              <div class="form-group">
+                <label for="ewbTransportMode">Transport Mode</label>
+                <select id="ewbTransportMode" class="form-control">
+                  <option value="">Select Mode</option>
+                  <option value="road">Road</option>
+                  <option value="rail">Rail</option>
+                  <option value="air">Air</option>
+                  <option value="ship">Ship</option>
+                </select>
+              </div>
+              <div class="form-group">
+                <label for="ewbVehicleType">Vehicle Type</label>
+                <select id="ewbVehicleType" class="form-control">
+                  <option value="">Select Type</option>
+                  <option value="regular">Regular</option>
+                  <option value="over_dimensional_cargo">Over Dimensional Cargo</option>
+                </select>
+              </div>
+              <div class="form-group">
+                <label for="ewbDistance">Distance (KM)</label>
+                <input type="number" id="ewbDistance" class="form-control" min="0" step="0.01">
+              </div>
+            </div>
+            <div class="form-grid cols-2 mb-16">
+              <div class="form-group">
+                <label for="ewbLrNumber">LR Number</label>
+                <input type="text" id="ewbLrNumber" class="form-control">
+              </div>
+              <div class="form-group">
+                <label for="ewbLrDate">LR Date</label>
+                <input type="date" id="ewbLrDate" class="form-control">
+              </div>
+            </div>
+            <div class="form-grid cols-2 mb-16">
+              <div class="form-group">
+                <label for="ewbDispatchFrom">Dispatch From</label>
+                <input type="text" id="ewbDispatchFrom" class="form-control">
+              </div>
+              <div class="form-group">
+                <label for="ewbDispatchTo">Dispatch To</label>
+                <input type="text" id="ewbDispatchTo" class="form-control">
+              </div>
+            </div>
+
+            <div class="btn-group">
+              <button type="button" class="btn btn-primary" id="ewbSaveBtn" onclick="saveEwayBill()"><i class="fas fa-save"></i> Save Transport Document</button>
+              <button type="button" class="btn btn-secondary" onclick="resetEwayBillForm()"><i class="fas fa-redo"></i> Reset</button>
+            </div>
+          </div>
+
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <span class="card-title"><i class="fas fa-list"></i> Saved Transport Documents</span>
+        </div>
+        <div class="card-body p-0">
+          <div class="table-wrapper">
+            <table class="data-table">
+              <thead>
+                <tr><th>#</th><th>Invoice No</th><th>Invoice Date</th><th>Vehicle No</th><th>Transporter</th>
+                    <th>LR No</th><th style="text-align:right;">Distance</th><th>EWB No</th><th>Status</th><th>Actions</th></tr>
+              </thead>
+              <tbody id="ewbTableBody">
+                <tr><td colspan="10" class="empty-state"><i class="fas fa-spinner fa-spin table-loading-icon"></i>Loading...</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <div id="ewbPagination" class="pagination"></div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+</div>
+
+<script>document.addEventListener('DOMContentLoaded', initEwayBills);</script>
+</body>
+</html>

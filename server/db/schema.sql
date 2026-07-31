@@ -346,6 +346,55 @@ CREATE INDEX IF NOT EXISTS idx_payments_invoice ON payments(invoice_id, invoice_
 -- New index (date)
 CREATE INDEX IF NOT EXISTS idx_payments_date ON payments(user_id, payment_date);
 
+-- ── E-Way Bills (internal transport documents) ────────
+--    One record per transport movement, linked to the invoice it ships.
+--    Deliberately its own table rather than more columns on the invoice:
+--    an invoice can be dispatched more than once (part loads, a vehicle
+--    change mid-transit), and the transport details belong to the
+--    movement, not the sale. The invoice's own transport_* columns are
+--    left untouched.
+--
+--    ewb_number/ewb_date/valid_until/status are reserved for a future
+--    NIC E-Way Bill API integration and are NOT written by this phase —
+--    status stays 'not_generated' until a real EWB is obtained, at which
+--    point the same row is updated in place rather than replaced.
+CREATE TABLE IF NOT EXISTS eway_bills (
+  id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
+  user_id UUID REFERENCES users(id) ON DELETE CASCADE NOT NULL,
+
+  -- Source invoice. Same (id, type) pair invoice_items and payments use;
+  -- number/date are denormalised so the list renders without a join.
+  invoice_id UUID NOT NULL,
+  invoice_type TEXT NOT NULL CHECK (invoice_type IN ('b2b','b2c')),
+  invoice_number TEXT NOT NULL,
+  invoice_date DATE,
+
+  -- The only fields the user enters.
+  vehicle_number TEXT,
+  transporter_name TEXT,
+  transport_mode TEXT,
+  transport_distance_km DECIMAL(10,2),
+  lr_number TEXT,
+  lr_date DATE,
+  transporter_gstin TEXT,
+  vehicle_type TEXT,
+  dispatch_from TEXT,
+  dispatch_to TEXT,
+
+  -- Reserved for future NIC integration — see note above.
+  ewb_number TEXT,
+  ewb_date DATE,
+  valid_until DATE,
+  status TEXT NOT NULL DEFAULT 'not_generated'
+    CHECK (status IN ('not_generated','generated','cancelled','expired')),
+
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_eway_bills_invoice ON eway_bills(user_id, invoice_id, invoice_type);
+CREATE INDEX IF NOT EXISTS idx_eway_bills_user ON eway_bills(user_id, created_at);
+
 -- ── Vendor Master ─────────────────────────────────────
 CREATE TABLE IF NOT EXISTS vendors (
   id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
@@ -590,3 +639,4 @@ CREATE TRIGGER expense_categories_upd BEFORE UPDATE ON expense_categories FOR EA
 CREATE TRIGGER expenses_upd           BEFORE UPDATE ON expenses           FOR EACH ROW EXECUTE FUNCTION update_updated_at();
 CREATE TRIGGER sales_returns_upd       BEFORE UPDATE ON sales_returns       FOR EACH ROW EXECUTE FUNCTION update_updated_at();
 CREATE TRIGGER sales_return_items_upd  BEFORE UPDATE ON sales_return_items  FOR EACH ROW EXECUTE FUNCTION update_updated_at();
+CREATE TRIGGER eway_bills_upd          BEFORE UPDATE ON eway_bills          FOR EACH ROW EXECUTE FUNCTION update_updated_at();

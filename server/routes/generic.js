@@ -174,6 +174,15 @@ const TABLES = {
     columns: ['id','user_id','invoice_id','invoice_type','amount','method',
       'payment_date','reference_number','note','created_at']
   },
+  // Internal transport documents. ewb_* / status are exposed now so a future
+  // NIC integration can PATCH them onto the same row without touching this
+  // allow-list; this phase never writes them.
+  eway_bills: {
+    columns: ['id','user_id','invoice_id','invoice_type','invoice_number','invoice_date',
+      'vehicle_number','transporter_name','transport_mode','transport_distance_km',
+      'lr_number','lr_date','transporter_gstin','vehicle_type','dispatch_from','dispatch_to',
+      'ewb_number','ewb_date','valid_until','status','created_at','updated_at']
+  },
   b2b_invoices: {
     columns: ['id','user_id','gst_number','customer_name','phone','address','state',
       'invoice_number','invoice_date','taxable_amount','gst_percentage','gst_amount',
