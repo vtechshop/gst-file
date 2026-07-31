@@ -112,6 +112,19 @@
             <input type="text" id="purchAddress" class="form-control">
           </div>
 
+          <!-- Shown inline (never as a popup) only while the typed vendor name
+               isn't in Vendor Master. Either button dismisses it and the
+               purchase carries on unchanged — see updatePurchVendorPrompt()
+               in js/purchase-entry.js. -->
+          <div class="banner-warning mb-16 d-none" id="purchNewVendorPanel">
+            <div><i class="fas fa-user-plus"></i>This vendor does not exist in Vendor Master.</div>
+            <div class="mb-10">Do you want to save this vendor for future purchases?</div>
+            <div class="d-flex gap-10">
+              <button type="button" class="btn btn-primary btn-sm" id="purchSaveVendorBtn" onclick="saveNewVendorFromPrompt()"><i class="fas fa-save"></i> Save Vendor</button>
+              <button type="button" class="btn btn-secondary btn-sm" onclick="skipNewVendorPrompt()">Skip</button>
+            </div>
+          </div>
+
           <!-- Purchase Info -->
           <div class="section-title mb-14">Purchase Information</div>
           <div class="form-grid cols-3 mb-16">

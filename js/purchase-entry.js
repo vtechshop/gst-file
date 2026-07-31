@@ -119,15 +119,47 @@ async function loadPurchVendorsList(userId) {
   }
 }
 
+// Which vendor fields this page auto-filled, and the exact value written to
+// each. Kept so that switching to a vendor who isn't in Vendor Master can
+// undo precisely those fields — and nothing the user typed themselves.
+let purchAutoFilled = {};
+
+// Fills a field only when it's empty (the long-standing rule: never clobber
+// something already entered) and records what was written.
+function autoFillVendorField(id, value) {
+  const el = document.getElementById(id);
+  if (!el || el.value || !value) return;
+  el.value = value;
+  purchAutoFilled[id] = value;
+}
+
+// Undoes the auto-fill when the vendor name stops matching Vendor Master.
+// A field is only cleared if it still holds exactly what was auto-filled —
+// if the user edited it afterwards, that edit is theirs and is left alone.
+// Fields they filled in before picking a vendor were never auto-filled, so
+// they aren't in the record and are never touched.
+function clearAutoFilledVendorFields() {
+  Object.entries(purchAutoFilled).forEach(([id, filled]) => {
+    const el = document.getElementById(id);
+    if (el && el.value === filled) el.value = '';
+  });
+  purchAutoFilled = {};
+}
+
 function onPurchVendorInput() {
   const name = getPurchText('purchVendorName');
   const vendor = purchVendorsList.find(v => v.name.toLowerCase() === name.toLowerCase());
   purchSelectedVendorId = vendor ? vendor.id : null;
-  if (!vendor) return;
-  const gstEl = document.getElementById('purchGstin');   if (gstEl && !gstEl.value && vendor.gstin)   gstEl.value = vendor.gstin.toUpperCase();
-  const phEl  = document.getElementById('purchPhone');   if (phEl  && !phEl.value  && vendor.phone)   phEl.value  = vendor.phone;
-  const adEl  = document.getElementById('purchAddress'); if (adEl  && !adEl.value  && vendor.address) adEl.value  = vendor.address;
-  const stEl  = document.getElementById('purchState');   if (stEl  && !stEl.value  && vendor.state)   stEl.value  = vendor.state;
+  // Known -> unknown: drop the previous vendor's details so a new vendor is
+  // never saved carrying them, and so a stale GSTIN can't fail validation on
+  // a name it has nothing to do with. A no-op when nothing was auto-filled.
+  if (!vendor) clearAutoFilledVendorFields();
+  updatePurchVendorPrompt();
+  if (!vendor) { detectPurchSupplyType(); updatePurchGstinValidationStatus(); return; }
+  autoFillVendorField('purchGstin',   vendor.gstin ? vendor.gstin.toUpperCase() : '');
+  autoFillVendorField('purchPhone',   vendor.phone);
+  autoFillVendorField('purchAddress', vendor.address);
+  autoFillVendorField('purchState',   vendor.state);
   detectPurchSupplyType();
   updatePurchGstinValidationStatus();
 }
@@ -139,28 +171,73 @@ function onPurchGstinBlur() {
   if (!match) return;
   purchSelectedVendorId = match.id;
   if (!getPurchText('purchVendorName')) setPurchValue('purchVendorName', match.name);
-  const phEl = document.getElementById('purchPhone');   if (phEl && !phEl.value && match.phone)   phEl.value = match.phone;
-  const adEl = document.getElementById('purchAddress'); if (adEl && !adEl.value && match.address) adEl.value = match.address;
-  const stEl = document.getElementById('purchState');   if (stEl && !stEl.value && match.state)   stEl.value = match.state;
+  // Recorded the same way as the name-driven auto-fill, so these are undone
+  // too if the vendor name is later changed to one not in Vendor Master.
+  autoFillVendorField('purchPhone',   match.phone);
+  autoFillVendorField('purchAddress', match.address);
+  autoFillVendorField('purchState',   match.state);
   detectPurchSupplyType();
+  updatePurchVendorPrompt();   // name just resolved to a known vendor — nothing to offer
 }
 
+// ── "New vendor?" inline prompt ──────────────────────
+// Offers to add an unrecognised vendor to Vendor Master, inline under the
+// Vendor Details fields — never a popup, so it can't interrupt data entry.
+// Purely additive: whichever button is pressed (or neither), the purchase
+// saves exactly as it did before.
+
+// Remembers the name the user last chose to Skip, so the panel stays hidden
+// for that vendor but comes back if they type a different new one.
+let purchVendorPromptSkippedFor = null;
+
+function updatePurchVendorPrompt() {
+  const panel = document.getElementById('purchNewVendorPanel');
+  if (!panel) return;
+  const name = getPurchText('purchVendorName');
+  const known = !!purchVendorsList.find(v => v.name.toLowerCase() === name.toLowerCase());
+  const skipped = purchVendorPromptSkippedFor === name.toLowerCase();
+  // Nothing typed, already in Vendor Master, or dismissed for this name.
+  panel.classList.toggle('d-none', !name || known || skipped);
+}
+
+function skipNewVendorPrompt() {
+  purchVendorPromptSkippedFor = getPurchText('purchVendorName').toLowerCase();
+  updatePurchVendorPrompt();
+}
+
+// Reuses saveVendorFromPurchaseForm() rather than repeating the insert and
+// its GSTIN check. On success the vendor list is already refreshed, so
+// re-running the lookup both hides the panel and links this purchase to the
+// newly created vendor exactly as picking an existing one would.
+async function saveNewVendorFromPrompt() {
+  const btn = document.getElementById('purchSaveVendorBtn');
+  if (btn) btn.disabled = true;                    // no double-insert on a double click
+  try {
+    if (await saveVendorFromPurchaseForm()) onPurchVendorInput();
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
+// Returns true only when a vendor row was actually created. The existing
+// header button ignores the value, so its behaviour is unchanged.
 async function saveVendorFromPurchaseForm() {
   const user = await getCurrentUser();
-  if (!user) return;
+  if (!user) return false;
   const name = getPurchText('purchVendorName');
-  if (!name) { showToast('Enter vendor name first.', 'error'); return; }
+  if (!name) { showToast('Enter vendor name first.', 'error'); return false; }
   const exists = purchVendorsList.find(v => v.name.toLowerCase() === name.toLowerCase());
-  if (exists) { showToast('Vendor already saved!', 'warning'); return; }
+  if (exists) { showToast('Vendor already saved!', 'warning'); return false; }
   const gstin = getPurchText('purchGstin');
-  if (gstin && !validateGstin(gstin).valid) { showToast('GSTIN is invalid — correct it (or clear it) before saving to Vendor Master.', 'error'); return; }
+  if (gstin && !validateGstin(gstin).valid) { showToast('GSTIN is invalid — correct it (or clear it) before saving to Vendor Master.', 'error'); return false; }
   const { error } = await _supabase.from('vendors').insert({
     user_id: user.id, name, gstin, phone: getPurchText('purchPhone'),
     address: getPurchText('purchAddress'), state: document.getElementById('purchState')?.value || ''
   });
-  if (error) { showToast('Error: ' + error.message, 'error'); return; }
+  if (error) { showToast('Error: ' + error.message, 'error'); return false; }
   showToast('Vendor saved to master!', 'success');
   await loadPurchVendorsList(user.id);
+  return true;
 }
 
 // ── Payment (to vendor) section — new-purchase only, mirrors Invoice
@@ -349,6 +426,9 @@ function clearPurchaseFormFields() {
   setPurchPaymentSectionMode(true);
   purchSelectedVendorId = null;
   purchEditId = null;
+  purchVendorPromptSkippedFor = null;   // a blank form should offer again
+  purchAutoFilled = {};
+  updatePurchVendorPrompt();
   updatePurchGstinValidationStatus();
   resetPurchaseItems();
   document.getElementById('purchPageTitle').textContent = 'New Purchase';
