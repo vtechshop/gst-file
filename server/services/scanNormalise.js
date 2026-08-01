@@ -55,7 +55,10 @@ const lineItem = p => ({
   gst_percentage: pct(p.gst_percentage),
   reported_taxable_value: num(p.taxable_value),
   reported_gst_amount: num(p.gst_amount),
-  reported_total: num(p.total)
+  // The two schemas name the line's inclusive figure differently
+  // (line_total on a purchase bill, total on a sales invoice); accept
+  // either so this stays the one line-item normaliser.
+  reported_total: num(p.line_total ?? p.total)
 });
 
 // A row with no name is table furniture the model mistook for a product;

@@ -95,9 +95,10 @@ function assertScanShape(b) {
   for (const key of ['vendor', 'purchase']) {
     if (!b[key] || typeof b[key] !== 'object') bad(`missing ${key}`);
   }
-  for (const f of ['vendor_name', 'gstin', 'address', 'state']) {
+  for (const f of ['vendor_name', 'gstin', 'address', 'state', 'phone', 'email']) {
     if (typeof b.vendor[f] !== 'string') bad(`vendor.${f}`);
   }
+  if (!b.totals || typeof b.totals !== 'object') bad('missing totals');
   for (const f of ['purchase_number', 'purchase_date', 'reported_supply_type']) {
     if (typeof b.purchase[f] !== 'string') bad(`purchase.${f}`);
   }
@@ -147,11 +148,14 @@ function renderScanReview(d) {
         <div class="calc-box mb-16">
           ${line('Vendor Name', d.vendor.vendor_name)}
           ${line('GSTIN', d.vendor.gstin)}
+          ${line('Phone', d.vendor.phone)}
+          ${line('Email', d.vendor.email)}
           ${line('Address', d.vendor.address)}
           ${line('State', d.vendor.state)}
           ${line('Purchase Number', d.purchase.purchase_number)}
           ${line('Purchase Date', d.purchase.purchase_date)}
         </div>
+        ${renderBillTotals(d.totals)}
         ${d.products.length ? `<div class="table-wrapper mb-16"><table class="data-table">
           <thead><tr><th>#</th><th>Product</th><th>HSN</th><th class="text-center">Qty</th>
             <th class="text-right">Rate</th><th class="text-center">Disc</th><th class="text-center">GST</th><th class="text-center">Master</th></tr></thead>
@@ -167,6 +171,31 @@ function renderScanReview(d) {
   panel.classList.remove('d-none');
   panel.scrollIntoView({ behavior: 'smooth', block: 'start' });
   warnIfPurchaseNumberExists(d.purchase.purchase_number);
+}
+
+// What the BILL printed, shown for cross-checking only. None of it is
+// imported: the form recomputes every figure from quantity, rate,
+// discount and GST % via calcGST(), exactly as for a typed purchase.
+// Seeing the two side by side is what makes a misread line obvious
+// before the user presses Save Purchase.
+function renderBillTotals(t) {
+  if (!t) return '';
+  const rows = [
+    ['Taxable Value', t.reported_taxable_value ?? t.reported_subtotal],
+    ['CGST', t.reported_cgst_amount],
+    ['SGST', t.reported_sgst_amount],
+    ['IGST', t.reported_igst_amount],
+    ['CESS', t.reported_cess_amount],
+    ['Round Off', t.reported_round_off],
+    ['Grand Total', t.reported_grand_total]
+  ].filter(([, v]) => v !== null && v !== undefined);
+  if (!rows.length) return '';
+
+  return `<div class="calc-box mb-16">
+    <div class="fs-11 text-muted-sm mb-10">Totals printed on the bill &mdash; for checking only. This app recalculates its own figures from the rows below.</div>
+    ${rows.map(([label, v]) => `<div class="calc-row"><span class="label">${label}</span>
+      <span class="value">${formatNum(v)}</span></div>`).join('')}
+  </div>`;
 }
 
 function isHsnOk(hsn) {
@@ -217,6 +246,7 @@ function importScanIntoForm() {
   if (typeof onPurchGstinInput === 'function') onPurchGstinInput(document.getElementById('purchGstin'));
   if (typeof onPurchGstinBlur === 'function') onPurchGstinBlur();       // GSTIN validation + vendor-by-GSTIN lookup
 
+  setIfUntouched('purchPhone', d.vendor.phone);
   setIfUntouched('purchAddress', d.vendor.address);
   setIfUntouched('purchState', matchStateOption(d.vendor.state));
   setIfUntouched('purchNum', d.purchase.purchase_number);

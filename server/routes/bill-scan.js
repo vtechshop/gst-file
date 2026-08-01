@@ -31,7 +31,7 @@ const { asyncRoute } = require('../middleware/errorHandler');
 const { BILL_SCHEMA, BILL_PROMPT } = require('../services/geminiBillPrompt');
 const { extractDocument, GEMINI_MODEL } = require('../services/geminiClient');
 const { makeScanLimiter, makeUploader, logScan } = require('../services/scanUpload');
-const { str, gstin, isoDate, lineItem, isUsableLine } = require('../services/scanNormalise');
+const { str, num, gstin, isoDate, pct, lineItem, isUsableLine } = require('../services/scanNormalise');
 
 const router = express.Router();
 router.use(requireAuth);
@@ -39,6 +39,58 @@ router.use(requireAuth);
 const ACCEPTED_MIME = ['application/pdf', 'image/jpeg', 'image/jpg', 'image/png'];
 const scanLimiter = makeScanLimiter('bill');
 const upload = makeUploader(ACCEPTED_MIME);
+
+// The bill's own tax breakdown, per line and in the summary block. Every
+// one of these is prefixed `reported_` and is for DISPLAY ONLY: the
+// review screen shows what the document printed beside what this app
+// computes, so a misread line is obvious before import. savePurchase()
+// stores the app's figures from calcGST(), never these.
+function reportedTax(p) {
+  return {
+    reported_cgst_percentage: pct(p.cgst_percentage),
+    reported_cgst_amount: num(p.cgst_amount),
+    reported_sgst_percentage: pct(p.sgst_percentage),
+    reported_sgst_amount: num(p.sgst_amount),
+    reported_igst_percentage: pct(p.igst_percentage),
+    reported_igst_amount: num(p.igst_amount),
+    reported_cess_amount: num(p.cess_amount),
+    reported_discount_amount: num(p.discount_amount)
+  };
+}
+
+// Rows from the bill's summary block that the model sometimes lists as
+// products. They must be dropped BEFORE any rate derivation: a "Grand
+// Total" row carries a taxable value, so deriving a rate for it would
+// make it look like a perfectly valid product line and import the
+// invoice total as a purchased item.
+const SUMMARY_ROW = /^(sub\s*total|total|grand\s*total|net\s*(amount|total)|taxable(\s*value)?|round\s*off|c?gst|sgst|igst|cess|amount\s*in\s*words|balance|discount)\b/i;
+const isSummaryRow = p => SUMMARY_ROW.test(p.product_name.trim());
+
+// Handwritten bills routinely omit the rate column and print only the
+// line's taxable value. The prompt asks Gemini to fill rate in that
+// case; this is the backstop for when it doesn't, so a visible taxable
+// value never arrives as a blank rate. It only ever fills a NULL rate,
+// and it reads the bill's own arithmetic rather than inventing a price —
+// the app still recomputes tax from the result via calcGST().
+function deriveRateFromTaxable(p) {
+  if (p.rate !== null || p.reported_taxable_value === null) return p;
+  const qty = p.quantity !== null && p.quantity > 0 ? p.quantity : 1;
+  const derived = p.reported_taxable_value / qty;
+  return Number.isFinite(derived) ? { ...p, rate: Math.round(derived * 100) / 100, rate_derived: true } : p;
+}
+
+function normaliseTotals(t = {}) {
+  return {
+    reported_subtotal: num(t.subtotal),
+    reported_taxable_value: num(t.taxable_value),
+    reported_cgst_amount: num(t.cgst_amount),
+    reported_sgst_amount: num(t.sgst_amount),
+    reported_igst_amount: num(t.igst_amount),
+    reported_cess_amount: num(t.cess_amount),
+    reported_round_off: num(t.round_off),
+    reported_grand_total: num(t.grand_total)
+  };
+}
 
 function normalise(raw) {
   const vendor = raw.vendor || {};
@@ -50,7 +102,9 @@ function normalise(raw) {
       vendor_name: str(vendor.vendor_name).slice(0, 200),
       gstin: gstin(vendor.gstin),
       address: str(vendor.address).slice(0, 300),
-      state: str(vendor.state).slice(0, 60)
+      state: str(vendor.state).slice(0, 60),
+      phone: str(vendor.phone).replace(/[^\d+\-\s]/g, '').trim().slice(0, 20),
+      email: str(vendor.email).slice(0, 120)
     },
     purchase: {
       purchase_number: str(purchase.purchase_number).slice(0, 60),
@@ -59,7 +113,18 @@ function normalise(raw) {
       // from the business/vendor state pair, as it does for typed entry.
       reported_supply_type: supply === 'intrastate' || supply === 'interstate' ? supply : ''
     },
-    products: (Array.isArray(raw.products) ? raw.products : []).map(lineItem).filter(isUsableLine)
+    products: (Array.isArray(raw.products) ? raw.products : [])
+      .map(p => ({
+        ...lineItem(p),
+        product_description: str(p.product_description).slice(0, 300),
+        ...reportedTax(p)
+      }))
+      // Order matters: discard the bill's summary rows first, then fill
+      // a missing rate, then keep only lines that can actually be priced.
+      .filter(p => p.product_name && !isSummaryRow(p))
+      .map(deriveRateFromTaxable)
+      .filter(isUsableLine),
+    totals: normaliseTotals(raw.totals)
   };
 }
 
