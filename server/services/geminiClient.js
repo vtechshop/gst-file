@@ -25,7 +25,34 @@ const { validateAgainstSchema } = require('./schemaCheck');
 // default as perishable: GEMINI_MODEL overrides it without a code
 // change, and a retired ID surfaces as a clear 404 message via
 // explainUpstream() below.
-const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-3.6-flash';
+// Environment variables are hand-entered in a dashboard, and what comes
+// back is routinely not what was meant: a trailing space or newline from
+// a paste, wrapping quotes copied out of a .env line, or the fully
+// qualified "models/gemini-..." form from the REST docs. Any of those is
+// interpolated straight into the request path and earns HTTP 400
+// "GenerateContentRequest.model: unexpected model name format" — an
+// error about the STRING, not about the model existing. Normalising here
+// is what stops a stray keystroke from taking the scanners down.
+function normaliseModelId(raw) {
+  return String(raw || '')
+    .trim()
+    .replace(/^["']+|["']+$/g, '')   // quotes copied along with the value
+    .replace(/^models\//i, '')       // fully-qualified resource name
+    .trim();
+}
+
+const GEMINI_MODEL = normaliseModelId(process.env.GEMINI_MODEL) || 'gemini-3.6-flash';
+
+// A model id is a bare slug — no slashes, spaces or colons, since it is
+// interpolated into ".../models/<id>:generateContent". Anything else
+// would corrupt the path itself, so it is caught before the request
+// rather than after Google rejects it.
+const MODEL_ID_OK = /^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(GEMINI_MODEL);
+
+// Printed once at boot so the resolved value — delimiters included — is
+// visible in the deployment log. Whitespace damage is invisible in a
+// dashboard field but obvious between pipes.
+console.log(`[gemini] model resolved to |${GEMINI_MODEL}|${MODEL_ID_OK ? '' : '  <-- INVALID FORMAT'}`);
 
 const GEMINI_TIMEOUT_MS = parseInt(process.env.GEMINI_TIMEOUT_MS) || 60000;
 
@@ -83,8 +110,13 @@ function explainUpstream(status, raw) {
   if (/quota|RESOURCE_EXHAUSTED/i.test(msg)) {
     return 'The Gemini API quota for this key has been exhausted.';
   }
-  if (/not found|is not supported|NOT_FOUND/i.test(msg)) {
-    return `The configured Gemini model was rejected: ${msg.slice(0, 160)}`;
+  // Google complains about the model NAME (its shape), not the model
+  // itself — so name the offending value and where it comes from.
+  if (/unexpected model name format|model name format/i.test(msg)) {
+    return `The Gemini model name is malformed: "${GEMINI_MODEL}". Check GEMINI_MODEL for stray spaces, quotes or a "models/" prefix.`;
+  }
+  if (/not found|is not supported|no longer available|NOT_FOUND/i.test(msg)) {
+    return `The Gemini model "${GEMINI_MODEL}" was rejected: ${msg.slice(0, 160)}`;
   }
   // Anything else — including schema complaints — is passed through
   // rather than swallowed. It is Google's own validation text, already
@@ -107,6 +139,15 @@ function explainUpstream(status, raw) {
  * @returns {Promise<{ok:true,data:object}|{ok:false,status:number,message:string,reason:string}>}
  */
 async function extractDocument({ apiKey, model, prompt, schema, parts, timeoutMs, label = 'gemini' }) {
+  // Guard the caller's value too — routes read GEMINI_MODEL from here,
+  // but this keeps the check at the point of use rather than trusting
+  // module load order.
+  model = normaliseModelId(model);
+  if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(model)) {
+    console.error(`[${label}] refusing to call Gemini: GEMINI_MODEL is |${model}|, which is not a valid model id`);
+    return fail(500, `The configured Gemini model name is not valid: "${model}". Check the GEMINI_MODEL environment variable.`, 'bad-model-id');
+  }
+
   const totalBytes = parts.reduce((n, p) => n + p.buffer.length, 0);
   if (totalBytes > MAX_INLINE_BYTES) {
     return fail(413, `Those files total ${Math.round(totalBytes / 1024 / 1024)} MB, over the ${Math.round(MAX_INLINE_BYTES / 1024 / 1024)} MB the analysis service accepts in one request. Please send fewer or smaller files.`, 'too-large');
