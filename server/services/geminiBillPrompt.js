@@ -37,7 +37,15 @@ const BILL_SCHEMA = {
       properties: {
         purchase_number: { type: 'STRING', description: 'The supplier bill/invoice number exactly as printed.' },
         purchase_date:   { type: 'STRING', description: 'Bill date as YYYY-MM-DD.' },
-        supply_type:     { type: 'STRING', enum: ['intrastate', 'interstate', ''], description: 'intrastate if CGST+SGST are charged, interstate if IGST is charged.' }
+        // Deliberately a plain STRING, not an enum. Gemini's Schema.enum
+        // requires format:"enum" and every member to be a real value —
+        // it cannot express "one of these, or blank if the bill does not
+        // say". A strict enum would force the model to pick intrastate
+        // or interstate even when it cannot tell, which is exactly the
+        // guessing the rest of this prompt forbids. The permitted values
+        // are stated below and enforced by normalise() in
+        // routes/bill-scan.js, which blanks anything else.
+        supply_type:     { type: 'STRING', description: 'Exactly "intrastate" if CGST+SGST are charged, exactly "interstate" if IGST is charged, or "" if the bill does not make it clear.' }
       },
       required: ['purchase_number', 'purchase_date', 'supply_type']
     },
