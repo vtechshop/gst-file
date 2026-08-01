@@ -54,13 +54,15 @@ async function handleInvoiceScanUpload(fileList) {
     const body = await sendInvoicesForScan(files);
     hideInvScanProgress();
     console.log(`[invoice-scan] ${Date.now() - started}ms model=${body.model || 'unknown'} OK invoices=${body.invoices.length}`);
+    // A new upload replaces whatever was left from the previous one —
+    // the second of the three conditions for clearing the cache.
     invScanResults = body.invoices;
     invScanSelectedId = invScanResults.length ? invScanResults[0].id : null;
     if (!invScanResults.length) {
       showToast('No invoices could be read from that file. Please enter it manually.', 'warning');
       return;
     }
-    renderInvScanReview();
+    renderInvScanReview({ scroll: true });
   } catch (err) {
     hideInvScanProgress();
     console.log(`[invoice-scan] ${Date.now() - started}ms FAIL ${err.message || 'unknown'}`);
@@ -127,7 +129,11 @@ function assertInvScanShape(b) {
 // ── Review screen ────────────────────────────────────
 // Every extracted invoice is listed; one is selected at a time and shown
 // in full. Nothing reaches the form until the user presses Import.
-function renderInvScanReview() {
+// scroll: jump the page to the panel. True only when a scan has just
+// finished and the user needs to be shown the results. False on every
+// re-render — after an import the user is working in the form below, and
+// yanking them back up to the list would fight them.
+function renderInvScanReview({ scroll = false } = {}) {
   const panel = document.getElementById('invScanReview');
   if (!panel) return;
 
@@ -150,7 +156,9 @@ function renderInvScanReview() {
     <div class="card mb-20" id="invScanCard">
       <div class="card-header">
         <span class="card-title"><i class="fas fa-file-invoice-dollar"></i> Scanned Invoices</span>
-        <span class="fs-12 text-muted-sm">${invScanResults.length} invoice(s) found</span>
+        <!-- "still to import" rather than "found": the list shrinks by
+             one on each import, so a "found" count would go stale. -->
+        <span class="fs-12 text-muted-sm">${invScanResults.length} invoice(s) still to import</span>
       </div>
       <div class="card-body">
         <div class="banner-warning mb-16">
@@ -163,7 +171,7 @@ function renderInvScanReview() {
       </div>
     </div>`;
   panel.classList.remove('d-none');
-  panel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  if (scroll) panel.scrollIntoView({ behavior: 'smooth', block: 'start' });
   warnIfInvoiceNumberExists(selected.invoice_number);
 }
 
@@ -212,7 +220,10 @@ function renderInvScanDetail(inv) {
     <div class="fs-11 text-muted-sm mb-16">Blank fields are ones the reader could not read with confidence. Amounts are recalculated by this app from quantity, rate, discount and GST %, not taken from the document.</div>
     <div class="d-flex gap-10">
       <button type="button" class="btn btn-primary" onclick="importScannedInvoice()"><i class="fas fa-file-import"></i> Import into Form</button>
-      <button type="button" class="btn btn-secondary" onclick="dismissInvScanReview()">Cancel</button>
+      <!-- Says what it does: with several invoices still queued, a bare
+           "Cancel" reads as "cancel this selection" when it actually
+           throws the whole scan away. -->
+      <button type="button" class="btn btn-secondary" onclick="dismissInvScanReview()">Clear Scanned List</button>
     </div>`;
 }
 
@@ -296,8 +307,25 @@ function importScannedInvoice() {
   applyScannedTransport(inv.transport);
   if (inv.products.length) importScannedItems(inv.products);
 
-  dismissInvScanReview();
-  showToast(`Imported invoice ${inv.invoice_number || ''} with ${inv.products.length} item(s). Review, then press Save Invoice.`, 'success');
+  // Take ONLY this invoice off the list. The rest stay in memory exactly
+  // as they were, so the user can save this one and come straight back
+  // for the next without re-uploading — a scan is slow and costs money,
+  // and one upload legitimately holds several invoices.
+  invScanResults = invScanResults.filter(i => i.id !== inv.id);
+  const remaining = invScanResults.length;
+
+  if (!remaining) {
+    // Everything from this upload has been imported — one of the three
+    // conditions for clearing the cache.
+    dismissInvScanReview();
+    showToast(`Imported invoice ${inv.invoice_number || ''}. That was the last scanned invoice — press Save Invoice to finish.`, 'success');
+    return;
+  }
+
+  // Move the selection on to the next one so it is ready to import.
+  invScanSelectedId = invScanResults[0].id;
+  renderInvScanReview({ scroll: false });
+  showToast(`Imported invoice ${inv.invoice_number || ''} with ${inv.products.length} item(s). Save it, then import the next of ${remaining} remaining.`, 'success');
 }
 
 // Only opens the transport section when the document actually carried
