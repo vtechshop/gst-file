@@ -534,8 +534,10 @@ async function loadInvoiceDuplicateDraft() {
   // of gst_number alone can no longer be used to infer B2B/B2C.
   setInvoiceTypeToggle(draft.type || (draft.gst_number ? 'b2b' : 'b2c'));
   // A duplicate is a brand-new sale, not a copy of the old one's
-  // payment state — starts fresh at Unpaid, editable, same as any new invoice.
-  setInvValue('invPaymentStatus', 'unpaid');
+  // payment state — it starts fresh and editable, at the same default as
+  // any other new invoice (Paid in Full). The source invoice's own
+  // payment status is deliberately not carried over.
+  setInvValue('invPaymentStatus', 'paid');
   ['invPaymentAmount','invPaymentDate','invPaymentReference','invPaymentNote'].forEach(id => setInvValue(id, ''));
   setInvValue('invPaymentMode', 'cash');
   onInvPaymentStatusChange();
@@ -759,7 +761,8 @@ function clearInvoiceFormFields() {
   ['invVehicleNo','invTransporter','invLrNumber','invTransportMode','invDistance','invLrDate',
    'invTransporterGstin','invVehicleType','invDispatchFrom','invDispatchTo'].forEach(id => setInvValue(id, ''));
 
-  setInvValue('invPaymentStatus', 'unpaid');
+  // Same default as the markup: a new invoice starts at Paid in Full.
+  setInvValue('invPaymentStatus', 'paid');
   ['invPaymentAmount','invPaymentDate','invPaymentReference','invPaymentNote'].forEach(id => setInvValue(id, ''));
   setInvValue('invPaymentMode', 'cash');
   onInvPaymentStatusChange();

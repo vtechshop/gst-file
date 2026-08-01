@@ -274,8 +274,14 @@
             <div class="form-group">
               <label for="invPaymentStatus">Payment Status</label>
               <select id="invPaymentStatus" class="form-control" onchange="onInvPaymentStatusChange()">
-                <option value="unpaid" selected>Unpaid</option>
-                <option value="paid">Paid in Full</option>
+                <!-- New invoices default to Paid in Full: most sales are
+                     settled at the counter, so this is the common case.
+                     Options and their values are unchanged, and this
+                     default applies to new invoices only — opening an
+                     existing one hides this select entirely and shows
+                     the stored status instead (loadInvoiceForEdit). -->
+                <option value="unpaid">Unpaid</option>
+                <option value="paid" selected>Paid in Full</option>
                 <option value="partial">Partially Paid</option>
               </select>
             </div>
