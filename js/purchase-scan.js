@@ -99,6 +99,7 @@ function assertScanShape(b) {
     if (typeof b.vendor[f] !== 'string') bad(`vendor.${f}`);
   }
   if (!b.totals || typeof b.totals !== 'object') bad('missing totals');
+  if (!Array.isArray(b.warnings)) bad('warnings is not a list');
   for (const f of ['purchase_number', 'purchase_date', 'reported_supply_type']) {
     if (typeof b.purchase[f] !== 'string') bad(`purchase.${f}`);
   }
@@ -127,8 +128,8 @@ function renderScanReview(d) {
       <td>${i + 1}</td>
       <td>${escScan(it.product_name)}</td>
       <td>${escScan(it.hsn_code) || '&mdash;'} ${it.hsn_code && !isHsnOk(it.hsn_code) ? '<span class="badge badge-red" style="font-size:9px;">HSN?</span>' : ''}</td>
-      <td class="text-center">${it.quantity ?? '&mdash;'}</td>
-      <td class="text-right">${it.rate ?? '&mdash;'}</td>
+      <td class="text-center">${it.quantity ?? '<span class="badge badge-red" style="font-size:9px;">not read</span>'}</td>
+      <td class="text-right">${it.rate ?? '<span class="badge badge-red" style="font-size:9px;">not read</span>'}</td>
       <td class="text-center">${it.discount_percentage ?? 0}%</td>
       <td class="text-center">${it.gst_percentage ?? 0}%</td>
       <td class="text-center">${productMatchBadge(it.product_name)}</td>
@@ -145,6 +146,7 @@ function renderScanReview(d) {
           <div><i class="fas fa-circle-info"></i>Nothing is saved yet. Check the values below, press <b>Import</b> to fill the form, edit anything you like, then press <b>Save Purchase</b>.</div>
         </div>
         <div id="purchOcrDupWarn" class="fs-12 mb-10"></div>
+        ${renderScanWarnings(d.warnings)}
         <div class="calc-box mb-16">
           ${line('Vendor Name', d.vendor.vendor_name)}
           ${line('GSTIN', d.vendor.gstin)}
@@ -171,6 +173,18 @@ function renderScanReview(d) {
   panel.classList.remove('d-none');
   panel.scrollIntoView({ behavior: 'smooth', block: 'start' });
   warnIfPurchaseNumberExists(d.purchase.purchase_number);
+}
+
+// Things the scan is not confident about. Shown before the values
+// themselves, because they change how the rest of the panel should be
+// read: a figure left blank on a handwritten bill was not missing, it
+// was unreadable, and someone has to look at the paper to settle it.
+function renderScanWarnings(warnings) {
+  if (!warnings || !warnings.length) return '';
+  return `<div class="banner-warning mb-16"><div>
+    <i class="fas fa-triangle-exclamation"></i>
+    ${warnings.map(escScan).join('<br>')}
+  </div></div>`;
 }
 
 // What the BILL printed, shown for cross-checking only. None of it is

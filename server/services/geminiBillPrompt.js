@@ -73,12 +73,21 @@ const BILL_SCHEMA = {
           igst_percentage:     { type: 'NUMBER', nullable: true },
           igst_amount:         { type: 'NUMBER', nullable: true },
           cess_amount:         { type: 'NUMBER', nullable: true },
-          line_total:          { type: 'NUMBER', nullable: true, description: 'Line value including tax, as printed.' }
+          line_total:          { type: 'NUMBER', nullable: true, description: 'Line value including tax, as printed.' },
+          // How sure you are you read THAT figure correctly, 0..1.
+          // Anything below 0.75 is discarded server-side and left blank,
+          // so an honest low score is always better than a confident
+          // guess — a blank box gets checked, a wrong number gets saved.
+          qty_confidence:      { type: 'NUMBER', nullable: true, description: '0..1 confidence in quantity.' },
+          rate_confidence:     { type: 'NUMBER', nullable: true, description: '0..1 confidence in rate.' },
+          taxable_confidence:  { type: 'NUMBER', nullable: true, description: '0..1 confidence in taxable_value.' },
+          gst_confidence:      { type: 'NUMBER', nullable: true, description: '0..1 confidence in gst_percentage.' }
         },
         required: ['product_name', 'product_description', 'hsn_code', 'unit', 'quantity', 'rate',
                    'discount_amount', 'discount_percentage', 'taxable_value', 'gst_percentage',
                    'cgst_percentage', 'cgst_amount', 'sgst_percentage', 'sgst_amount',
-                   'igst_percentage', 'igst_amount', 'cess_amount', 'line_total']
+                   'igst_percentage', 'igst_amount', 'cess_amount', 'line_total',
+                   'qty_confidence', 'rate_confidence', 'taxable_confidence', 'gst_confidence']
       }
     },
     // The bill's own summary block. Extracted so the review screen can
@@ -96,10 +105,14 @@ const BILL_SCHEMA = {
         igst_amount:   { type: 'NUMBER', nullable: true },
         cess_amount:   { type: 'NUMBER', nullable: true },
         round_off:     { type: 'NUMBER', nullable: true },
-        grand_total:   { type: 'NUMBER', nullable: true, description: 'Final payable amount / Invoice Total.' }
+        grand_total:   { type: 'NUMBER', nullable: true, description: 'Final payable amount / Invoice Total.' },
+        taxable_confidence:     { type: 'NUMBER', nullable: true, description: '0..1 confidence in taxable_value.' },
+        gst_confidence:         { type: 'NUMBER', nullable: true, description: '0..1 confidence in the tax amounts.' },
+        grand_total_confidence: { type: 'NUMBER', nullable: true, description: '0..1 confidence in grand_total.' }
       },
       required: ['subtotal', 'taxable_value', 'cgst_amount', 'sgst_amount',
-                 'igst_amount', 'cess_amount', 'round_off', 'grand_total']
+                 'igst_amount', 'cess_amount', 'round_off', 'grand_total',
+                 'taxable_confidence', 'gst_confidence', 'grand_total_confidence']
     }
   },
   required: ['vendor', 'purchase', 'products', 'totals']
@@ -136,18 +149,39 @@ ACCURACY RULES
   read 05/07/2026 as 2026-07-05. If the date is ambiguous, return "".
 - state must be a full Indian state name, e.g. "Tamil Nadu", "Karnataka".
 
-QUANTITY
+ACCURACY BEATS COMPLETENESS
+A blank field gets checked by a human. A wrong number gets saved and
+becomes a wrong tax return. When those two conflict, return the blank.
+
+QUANTITY — NEVER GUESSED
 Quantity is a bare number. Strip any unit written beside it:
   "1", "1 No", "1 Nos", "1 Pc", "1 Piece"  ->  quantity = 1
-Put the unit in the "unit" field instead. Never guess a quantity, and
-never return 2 when the bill shows 1.
+Put the unit in the "unit" field instead.
+- If the quantity is unclear, smudged, overwritten or absent, return
+  null. Do NOT fall back to 1.
+- NEVER infer quantity from an amount. If the line shows only a value,
+  that tells you nothing about how many units were bought.
+- Never return 2 when the bill shows 1.
 
 RATE
-If the rate column is empty but the line's taxable value is printed:
-  - with quantity 1, rate = that taxable value
-  - otherwise rate = taxable value / quantity
-This is reading the bill's own arithmetic, not guessing. Never leave rate
-null when the taxable value is clearly visible.
+If the rate column is empty but the line's taxable value is printed AND
+the quantity is known:
+  - quantity 1  ->  rate = that taxable value
+  - otherwise   ->  rate = taxable value / quantity
+This is reading the bill's own arithmetic, not guessing. If the quantity
+is NOT known, leave rate null — dividing by an assumed quantity invents a
+price.
+
+SINGLE-PRODUCT CONSISTENCY
+When the invoice has exactly ONE product line and quantity is 1 with no
+discount, rate, taxable_value and the line total must agree. Example:
+quantity 1, taxable 17966.10 -> rate must be 17966.10. If your first
+reading disagrees, re-read that line before answering.
+
+NUMBERS OUTRANK WORDS
+Financial figures matter more than descriptions. If a smudge forces a
+choice between reading the product name and reading the amount, spend
+the effort on the amount.
 
 GST DETECTION
 - If a GST % is printed, return it exactly.
@@ -159,11 +193,20 @@ GST DETECTION
   sgst_percentage = 9.
 - Never return 0 for GST when GST amounts are visible on the bill.
 
-PRODUCT LINES
+PRODUCT LINES — CLASSIFY BY POSITION, NOT JUST WORDS
 - Return EVERY product row from EVERY page, in the order printed.
-- Ignore non-product rows: subtotals, tax summary rows, grand total,
-  round-off, amount-in-words, terms, declarations, bank details, and any
-  HSN-wise tax summary table. Their figures belong in "totals", not here.
+- Decide what is a product using the row's PLACE IN THE TABLE first:
+  a product row sits inside the itemised grid, has a description in the
+  item column, and normally carries a quantity or a rate. The summary
+  block sits BELOW the last item row, is usually right-aligned, spans
+  fewer columns, and has no item description.
+- Any row in that summary block — Subtotal, Taxable Value, CGST, SGST,
+  IGST, CESS, Round Off, Grand Total, Balance — is NEVER a product, even
+  when it carries the largest figure on the page. Its numbers belong in
+  "totals". Keyword matching alone is not enough; a row sitting under the
+  grid with only an amount is a summary row whatever it is labelled.
+- Also exclude amount-in-words, terms, declarations, bank details and any
+  HSN-wise tax summary table.
 - Strip leading serial numbers from product names ("1. Mixer" -> "Mixer").
 - Put extra wording printed under or beside the name into
   product_description, not into product_name.
@@ -179,6 +222,29 @@ total null when it is printed.
 
 IGNORE
 - QR codes, barcodes, IRN strings, digital signature blocks and logos.
+
+BEFORE YOU ANSWER — SECOND PASS ON THE MONEY
+Having drafted an answer, go back over the document once more and re-read
+ONLY these: quantity, rate, taxable value, GST %, CGST, SGST, IGST and
+grand total. Handwriting is easy to misread the first time. If the second
+reading is clearer than the first, keep the second reading.
+
+Then check the arithmetic:
+    taxable + CGST + SGST + IGST + CESS ± round off  ≈  grand total
+If that does not hold within a rupee or two, the financial section has
+been misread. Re-read it before answering, and lower your confidence on
+whichever figures you are still unsure of.
+
+CONFIDENCE SCORES
+For every financial field with a *_confidence property, return how sure
+you are that you read THAT figure correctly, from 0 to 1:
+  1.0  = crisp, unambiguous, cross-checks with the rest of the bill
+  0.75 = legible, no real doubt
+  0.5  = plausible but a digit could be wrong
+  0.2  = barely legible, largely a guess
+Score honestly. Anything below 0.75 is discarded and shown to the user as
+blank, which is the correct outcome for a figure you cannot actually
+read. Do not inflate a score to make a field survive.
 
 Return only the JSON.`;
 
