@@ -585,14 +585,11 @@ table.data-table {
 
 /* ── Purchase Bill Scanner ──────────────────────────
    Marks fields the scanner filled in, so it's obvious at a glance what
-   came off the bill rather than from the keyboard. .ocr-low is the
-   stronger amber warning for a value the scanner is unsure about
-   (low OCR word confidence, or a weak parse on the PDF text-layer path,
-   which carries no confidence score of its own). Both clear the moment
-   the user edits the field — see setIfUntouched() in js/purchase-ocr.js. */
-.ocr-filled { border-left: 3px solid var(--primary); }
-.ocr-low { border-left: 3px solid #f57c00; background: #fff8e1; }
-tr.ocr-low td { background: #fff8e1; }
+   came off the bill rather than from the keyboard. There is no
+   "uncertain" variant: a field the reader isn't sure of is left blank
+   rather than filled in and flagged. Clears the moment the user edits
+   the field — see setIfUntouched() in js/purchase-scan.js. */
+.scan-filled { border-left: 3px solid var(--primary); }
 
 .badge {
   display: inline-flex; align-items: center;

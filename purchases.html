@@ -18,10 +18,9 @@
   <script src="js/payments.js"></script>
   <script src="js/purchase-items.js"></script>
   <script src="js/purchase-entry.js"></script>
-  <!-- Bill scanner. PDF.js / Tesseract.js are NOT loaded here — this file
-       fetches them on demand the first time a bill is uploaded, so manual
-       entry costs nothing extra. -->
-  <script src="js/purchase-ocr.js"></script>
+  <!-- Bill scanner. Uploads to /api/bill-scan, which calls Gemini with a
+       server-held key; no OCR library is loaded in the browser at all. -->
+  <script src="js/purchase-scan.js"></script>
 </head>
 <body>
 <div class="app-layout">
@@ -92,7 +91,7 @@
             <input type="file" id="purchBillInput" accept=".pdf,.jpg,.jpeg,.png" class="file-input-hidden"
                    onchange="handlePurchaseBillUpload(this.files[0])" aria-label="Upload purchase bill">
           </label>
-          <span class="fs-12 text-muted-sm">PDF, JPG or PNG &middot; read in your browser, never uploaded &middot; optional &mdash; you can still type everything by hand</span>
+          <span class="fs-12 text-muted-sm">PDF, JPG or PNG &middot; read automatically, nothing is saved until you press Save Purchase &middot; optional &mdash; you can still type everything by hand</span>
         </div>
       </div>
       <div id="purchOcrProgress" class="d-none"></div>

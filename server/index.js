@@ -22,6 +22,7 @@ const salesReturnRoutes = require('./routes/sales-returns');
 const paymentsRoutes = require('./routes/payments');
 const uploadRoutes = require('./routes/uploads');
 const productSyncRoutes = require('./routes/product-sync');
+const billScanRoutes = require('./routes/bill-scan');
 const { mountGenericRoutes } = require('./routes/generic');
 const { errorHandler } = require('./middleware/errorHandler');
 
@@ -88,6 +89,11 @@ app.use('/api/uploads', uploadRoutes);
 // internally (every sub-route), so mounted the same bare way as
 // uploadRoutes above.
 app.use('/api/product-sync', productSyncRoutes);
+// Purchase Bill Scanner — reads an uploaded bill via Gemini and returns
+// structured JSON for the Purchase Entry form to propose. Holds the
+// Gemini key server-side; cannot write to the database. requireAuth'd
+// internally, so mounted the same bare way as uploadRoutes above.
+app.use('/api/bill-scan', billScanRoutes);
 mountGenericRoutes(app);
 
 // Must be mounted last — Express only routes an error to this once no
