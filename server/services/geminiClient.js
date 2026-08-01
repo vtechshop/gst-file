@@ -14,6 +14,19 @@
 // =============================================
 const { validateAgainstSchema } = require('./schemaCheck');
 
+// THE single definition of which model both scanners use. It lives here,
+// with the rest of the Gemini connection settings, rather than in the
+// prompt files — those were each declaring their own copy, which is
+// precisely how the Purchase and Invoice scanners could silently end up
+// on different models.
+//
+// Google retires model IDs on a short cycle and starts refusing them for
+// new projects ahead of the published shutdown date, so treat this
+// default as perishable: GEMINI_MODEL overrides it without a code
+// change, and a retired ID surfaces as a clear 404 message via
+// explainUpstream() below.
+const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-3.6-flash';
+
 const GEMINI_TIMEOUT_MS = parseInt(process.env.GEMINI_TIMEOUT_MS) || 60000;
 
 // Every failure is returned, never thrown: the caller needs both an HTTP
@@ -173,4 +186,4 @@ async function extractDocument({ apiKey, model, prompt, schema, parts, timeoutMs
   return { ok: true, data: parsed };
 }
 
-module.exports = { extractDocument, GEMINI_TIMEOUT_MS };
+module.exports = { extractDocument, GEMINI_MODEL, GEMINI_TIMEOUT_MS };

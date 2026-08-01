@@ -12,10 +12,9 @@
 // the route trust JSON.parse() instead of scraping prose for values.
 // =============================================
 
-// Overridable per-environment so a model can be swapped without a deploy
-// of new code. Flash is the right default here: bill extraction is a
-// short, highly-structured vision task, not a reasoning problem.
-const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-2.5-flash';
+// The model is NOT declared here — it lives once in
+// services/geminiClient.js so both scanners cannot drift onto different
+// models. This file is only the prompt and the schema.
 
 // Gemini's Schema type is the OpenAPI subset, with type names as proto
 // enum spellings (STRING/NUMBER/...), not JSON-Schema lowercase.
@@ -119,4 +118,4 @@ IGNORE
 
 Return only the JSON.`;
 
-module.exports = { GEMINI_MODEL, BILL_SCHEMA, BILL_PROMPT };
+module.exports = { BILL_SCHEMA, BILL_PROMPT };

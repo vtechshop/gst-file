@@ -28,8 +28,8 @@
 const express = require('express');
 const { requireAuth } = require('../middleware/auth');
 const { asyncRoute } = require('../middleware/errorHandler');
-const { GEMINI_MODEL, BILL_SCHEMA, BILL_PROMPT } = require('../services/geminiBillPrompt');
-const { extractDocument } = require('../services/geminiClient');
+const { BILL_SCHEMA, BILL_PROMPT } = require('../services/geminiBillPrompt');
+const { extractDocument, GEMINI_MODEL } = require('../services/geminiClient');
 const { makeScanLimiter, makeUploader, logScan } = require('../services/scanUpload');
 const { str, gstin, isoDate, lineItem, isUsableLine } = require('../services/scanNormalise');
 
