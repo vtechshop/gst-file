@@ -23,6 +23,7 @@ const paymentsRoutes = require('./routes/payments');
 const uploadRoutes = require('./routes/uploads');
 const productSyncRoutes = require('./routes/product-sync');
 const billScanRoutes = require('./routes/bill-scan');
+const invoiceScanRoutes = require('./routes/invoice-scan');
 const { mountGenericRoutes } = require('./routes/generic');
 const { errorHandler } = require('./middleware/errorHandler');
 
@@ -94,6 +95,11 @@ app.use('/api/product-sync', productSyncRoutes);
 // Gemini key server-side; cannot write to the database. requireAuth'd
 // internally, so mounted the same bare way as uploadRoutes above.
 app.use('/api/bill-scan', billScanRoutes);
+// Customer Invoice Scanner — same shape as bill-scan above, but returns
+// a LIST of invoices (one upload can hold several) for the user to pick
+// from. Shares the Gemini client, upload plumbing and sanitisers with
+// it; also cannot write to the database.
+app.use('/api/invoice-scan', invoiceScanRoutes);
 mountGenericRoutes(app);
 
 // Must be mounted last — Express only routes an error to this once no
