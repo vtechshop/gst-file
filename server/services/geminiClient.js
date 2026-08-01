@@ -26,18 +26,25 @@ const { validateAgainstSchema } = require('./schemaCheck');
 // change, and a retired ID surfaces as a clear 404 message via
 // explainUpstream() below.
 // Environment variables are hand-entered in a dashboard, and what comes
-// back is routinely not what was meant: a trailing space or newline from
-// a paste, wrapping quotes copied out of a .env line, or the fully
-// qualified "models/gemini-..." form from the REST docs. Any of those is
-// interpolated straight into the request path and earns HTTP 400
+// back is routinely not what was meant. Any of these is interpolated
+// straight into the request path and earns HTTP 400
 // "GenerateContentRequest.model: unexpected model name format" — an
 // error about the STRING, not about the model existing. Normalising here
 // is what stops a stray keystroke from taking the scanners down.
+//
+// The KEY=VALUE case is the one that actually bit us in production:
+// pasting a whole `GEMINI_MODEL=gemini-3.6-flash` line into a dashboard
+// field that wants only the value. The variable then literally holds
+// "GEMINI_MODEL=gemini-3.6-flash", and the request goes to
+// .../models/GEMINI_MODEL=gemini-3.6-flash:generateContent. A real model
+// id never contains "=", so stripping a leading NAME= prefix is
+// unambiguous and cannot damage a correct value.
 function normaliseModelId(raw) {
   return String(raw || '')
     .trim()
-    .replace(/^["']+|["']+$/g, '')   // quotes copied along with the value
-    .replace(/^models\//i, '')       // fully-qualified resource name
+    .replace(/^[A-Za-z_][A-Za-z0-9_]*\s*=\s*/, '')   // a whole KEY=VALUE line pasted in
+    .replace(/^["']+|["']+$/g, '')                   // quotes copied along with the value
+    .replace(/^models\//i, '')                       // fully-qualified resource name
     .trim();
 }
 
