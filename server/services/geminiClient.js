@@ -63,6 +63,21 @@ console.log(`[gemini] model resolved to |${GEMINI_MODEL}|${MODEL_ID_OK ? '' : ' 
 
 const GEMINI_TIMEOUT_MS = parseInt(process.env.GEMINI_TIMEOUT_MS) || 60000;
 
+// ── Retry policy ─────────────────────────────────────
+// Gemini sheds load under pressure with 429 (rate limited) and 503
+// ("currently experiencing high demand"). Both mean "the same request
+// would probably succeed shortly", so they are the only two statuses
+// worth repeating. Every other status — 400, 401, 403, 404, and schema
+// complaints — describes a request that is wrong on its own terms and
+// will fail identically however many times it is sent; retrying those
+// would just add latency to a certain failure.
+const RETRY_STATUSES = new Set([429, 503]);
+const MAX_ATTEMPTS = 3;
+// Indexed by attempt number - 1: fire immediately, then back off.
+const RETRY_DELAYS_MS = [0, 2000, 4000];
+
+const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+
 // Every failure is returned, never thrown: the caller needs both an HTTP
 // status for the browser and a short reason string for the log line, and
 // an exception would carry neither without extra plumbing.
@@ -176,19 +191,52 @@ async function extractDocument({ apiKey, model, prompt, schema, parts, timeoutMs
     }
   };
 
+  // The request body is built ONCE and reused byte-for-byte across
+  // attempts — a retry must be the identical request, not a rebuilt one.
+  const payload = JSON.stringify(body);
+
   let upstream;
-  try {
-    upstream = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey },
-      body: JSON.stringify(body),
-      signal: AbortSignal.timeout(timeoutMs || GEMINI_TIMEOUT_MS)
-    });
-  } catch (err) {
-    console.error(`[${label}] request failed:`, err.name, err.message);
-    return err.name === 'TimeoutError'
-      ? fail(504, 'The document took too long to analyse. Try a smaller or clearer file.', 'timeout')
-      : fail(504, 'Could not reach the document analysis service.', 'unreachable');
+  let raw = '';
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    // Attempt 1 fires immediately; 2 and 3 wait 2s and 4s.
+    const wait = RETRY_DELAYS_MS[attempt - 1];
+    if (wait) {
+      console.warn(`[${label}] retry attempt ${attempt} of ${MAX_ATTEMPTS} after ${wait}ms (previous attempt returned HTTP ${upstream.status})`);
+      await sleep(wait);
+    }
+
+    try {
+      upstream = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey },
+        body: payload,
+        signal: AbortSignal.timeout(timeoutMs || GEMINI_TIMEOUT_MS)
+      });
+    } catch (err) {
+      // Not retried: the brief is to retry 429 and 503 only, and a
+      // timeout has already consumed the caller's whole time budget.
+      console.error(`[${label}] request failed:`, err.name, err.message);
+      return err.name === 'TimeoutError'
+        ? fail(504, 'The document took too long to analyse. Try a smaller or clearer file.', 'timeout')
+        : fail(504, 'Could not reach the document analysis service.', 'unreachable');
+    }
+
+    if (upstream.ok) break;
+
+    // The body can only be read once, so it is captured here and reused
+    // below whether this attempt is retried or is the last one.
+    raw = redactKey(await upstream.text().catch(() => ''), apiKey);
+
+    // Only capacity errors are transient. 400/401/403/404 and anything
+    // else describe a request that will fail identically next time, so
+    // retrying them just adds latency to a certain failure.
+    const retryable = RETRY_STATUSES.has(upstream.status);
+    if (!retryable) break;
+    if (attempt === MAX_ATTEMPTS) {
+      console.error(`[${label}] giving up after ${MAX_ATTEMPTS} attempts; last status HTTP ${upstream.status}`);
+      break;
+    }
+    console.warn(`[${label}] HTTP ${upstream.status} from Gemini (attempt ${attempt} of ${MAX_ATTEMPTS}) — transient, will retry`);
   }
 
   if (!upstream.ok) {
@@ -198,15 +246,19 @@ async function extractDocument({ apiKey, model, prompt, schema, parts, timeoutMs
     // unactionable "upstream HTTP 400". The key is redacted first —
     // error bodies can quote the request back, and server logs get
     // shipped, retained and read by people who should never see it.
-    const raw = redactKey(await upstream.text().catch(() => ''), apiKey);
+    //
+    // `raw` was captured inside the retry loop — a Response body can only
+    // be read once, so it cannot be re-read here.
     console.error(`[${label}] upstream HTTP ${upstream.status}. Full Google response follows:\n${raw}`);
+    // The final Google error is returned unchanged: retries never alter
+    // the status, the message or the reason the caller sees.
     return fail(502, explainUpstream(upstream.status, raw), `upstream-http-${upstream.status}`);
   }
 
-  const payload = await upstream.json().catch(() => null);
-  const text = payload?.candidates?.[0]?.content?.parts?.map(p => p.text).filter(Boolean).join('') || '';
+  const reply = await upstream.json().catch(() => null);
+  const text = reply?.candidates?.[0]?.content?.parts?.map(p => p.text).filter(Boolean).join('') || '';
   if (!text) {
-    const reason = payload?.candidates?.[0]?.finishReason || payload?.promptFeedback?.blockReason;
+    const reason = reply?.candidates?.[0]?.finishReason || reply?.promptFeedback?.blockReason;
     console.error(`[${label}] returned no content - finishReason:`, reason);
     return fail(502, 'The document could not be read. Try a clearer scan, or enter it manually.', `no-content:${reason || 'unknown'}`);
   }
