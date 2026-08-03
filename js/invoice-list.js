@@ -9,15 +9,15 @@ let invListAllData = [];
 let invListPage = 1;
 const INV_LIST_PAGE_SIZE = 10;
 
-// The rows currently on screen, after filtering and sorting.
+// The rows to page through: the full list after filtering, searching and
+// sorting have all been applied. Pagination only ever slices THIS — it
+// never filters or sorts, so the order of operations is fixed by
+// construction rather than by convention:
 //
-// This exists because renderInvListPagination() serialises its callback
-// with Function.toString() into an inline onclick=, which then runs in
-// global scope. Any variable the callback closed over is gone by then —
-// the previous `renderInvoiceListTable(data)` threw "data is not
-// defined" on every page click, so paging simply did not work. Holding
-// the view in a module-level variable gives the revived function
-// something it can actually reach.
+//   invListAllData -> filters -> search -> sort -> invListView -> slice
+//
+// invListPage above is the single source of truth for which page is
+// showing; nothing else tracks it.
 let invListView = [];
 
 // ── Invoice number ordering ─────────────────────────
@@ -160,20 +160,39 @@ function applyInvoiceListFilters() {
   if (year)  filtered = filtered.filter(r => r.invoice_date && new Date(r.invoice_date).getFullYear() === +year);
   if (type)  filtered = filtered.filter(r => r.type === type);
 
-  invListPage = 1;
-  // invListAllData is already in invoice-number order, and filtering
-  // preserves order — sorting again here is belt-and-braces so the table
-  // is ordered no matter which path reached it.
+  // The pipeline, in order: full list -> filters -> search -> sort, and
+  // only then hand the result over to be paginated. Pagination slices
+  // whatever it is given and never reorders, so this is the one place
+  // the order is decided. renderInvoiceListTable() resets to page 1.
   renderInvoiceListTable(sortInvoicesByNumber(filtered));
 }
 
+// Entry point: hand it the filtered+sorted rows and it becomes the view.
+// Page always resets to 1 here, because a new filter/sort/search means
+// the old page number refers to a set that no longer exists.
 function renderInvoiceListTable(data) {
+  invListView = Array.isArray(data) ? data : [];
+  invListPage = 1;
+  renderInvoiceListPage();
+}
+
+// Moves to a page and redraws. The ONLY way the page number changes.
+function goToInvoiceListPage(page) {
+  const pages = Math.max(1, Math.ceil(invListView.length / INV_LIST_PAGE_SIZE));
+  const next = Math.min(Math.max(1, Number(page) || 1), pages);
+  if (next === invListPage) return;
+  invListPage = next;
+  renderInvoiceListPage();
+}
+
+// Draws the rows for the current page, the totals, and the pager.
+// Re-reads invListView and invListPage every time, so it is safe to call
+// from anywhere without passing state around.
+function renderInvoiceListPage() {
+  const data = invListView;
   const tbody = document.getElementById('invListTableBody');
   const tfoot = document.getElementById('invListTableTotal');
   if (!tbody) return;
-
-  // Kept for the pagination callback, which cannot see local scope.
-  invListView = data;
 
   const start = (invListPage - 1) * INV_LIST_PAGE_SIZE;
   const page  = data.slice(start, start + INV_LIST_PAGE_SIZE);
@@ -187,7 +206,7 @@ function renderInvoiceListTable(data) {
       : 'No invoices found. Click New Invoice to create one.';
     tbody.innerHTML = `<tr><td colspan="11" class="empty-state"><i class="fas fa-file-invoice table-loading-icon"></i>${message}</td></tr>`;
     if (tfoot) tfoot.innerHTML = '';
-    renderInvListPagination(0, 0, () => {});
+    renderInvListPagination();
     return;
   }
   tbody.innerHTML = page.map((r, i) => {
@@ -226,9 +245,7 @@ function renderInvoiceListTable(data) {
   const totalBalance = round2(Math.max(0, total - totalPaid));
   if (tfoot) tfoot.innerHTML = `<tr><td colspan="6" class="fw-700">TOTALS (${data.length} invoices)</td><td class="text-right fw-700">₹${formatNum(total)}</td><td class="text-right fw-700">₹${formatNum(totalPaid)}</td><td class="text-right fw-700">₹${formatNum(totalBalance)}</td><td></td><td></td></tr>`;
 
-  // References invListView, not `data`: this function is stringified and
-  // re-parsed in global scope, where a closed-over `data` does not exist.
-  renderInvListPagination(data.length, invListPage, (p) => { invListPage = p; renderInvoiceListTable(invListView); });
+  renderInvListPagination();
 }
 
 // ── View (read-only preview, reusing the exact same markup printInvoice()
@@ -362,15 +379,36 @@ async function deleteInvoiceFromList(type, id) {
   if (user) await loadInvoiceList(user.id);
 }
 
-function renderInvListPagination(total, current, onChange) {
+// Built from real DOM nodes with real listeners.
+//
+// The previous version wrote the handler into an inline onclick= by
+// running Function.toString() over the callback. That silently loses
+// everything the callback closed over, because the reconstructed
+// function is parsed fresh in global scope — so the click threw and the
+// table never changed. A listener holds an actual reference to the
+// function, which is why this works and string reconstruction cannot.
+function renderInvListPagination() {
   const container = document.getElementById('invListPagination');
   if (!container) return;
-  const pages = Math.ceil(total / INV_LIST_PAGE_SIZE);
-  if (pages <= 1) { container.innerHTML = ''; return; }
-  let html = `<button class="page-btn" onclick="(${onChange.toString()})(${current-1})" ${current===1?'disabled':''}>&#8249;</button>`;
+
+  const pages = Math.ceil(invListView.length / INV_LIST_PAGE_SIZE);
+  container.replaceChildren();                 // drops old nodes and their listeners
+  if (pages <= 1) return;
+
+  const button = (label, targetPage, { disabled = false, active = false } = {}) => {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'page-btn' + (active ? ' active' : '');
+    b.textContent = label;
+    b.disabled = disabled;
+    if (active) b.setAttribute('aria-current', 'page');
+    b.addEventListener('click', () => goToInvoiceListPage(targetPage));
+    return b;
+  };
+
+  container.appendChild(button('‹', invListPage - 1, { disabled: invListPage === 1 }));
   for (let i = 1; i <= pages; i++) {
-    html += `<button class="page-btn ${i===current?'active':''}" onclick="(${onChange.toString()})(${i})">${i}</button>`;
+    container.appendChild(button(String(i), i, { active: i === invListPage }));
   }
-  html += `<button class="page-btn" onclick="(${onChange.toString()})(${current+1})" ${current===pages?'disabled':''}>&#8250;</button>`;
-  container.innerHTML = html;
+  container.appendChild(button('›', invListPage + 1, { disabled: invListPage === pages }));
 }
