@@ -102,6 +102,12 @@
               <option value="b2b">B2B</option>
               <option value="b2c">B2C</option>
             </select>
+            <!-- Ordering, not filtering: it re-sorts the whole list, so it
+                 has its own handler rather than applyInvoiceListFilters(). -->
+            <select id="invListSortOrder" class="form-control w-220" onchange="onInvoiceListSortChange()" aria-label="Sort by invoice number">
+              <option value="desc" selected>Invoice Number (Newest First)</option>
+              <option value="asc">Invoice Number (Oldest First)</option>
+            </select>
           </div>
         </div>
         <div class="card-body p-0">

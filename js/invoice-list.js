@@ -9,6 +9,65 @@ let invListAllData = [];
 let invListPage = 1;
 const INV_LIST_PAGE_SIZE = 10;
 
+// The rows currently on screen, after filtering and sorting.
+//
+// This exists because renderInvListPagination() serialises its callback
+// with Function.toString() into an inline onclick=, which then runs in
+// global scope. Any variable the callback closed over is gone by then —
+// the previous `renderInvoiceListTable(data)` threw "data is not
+// defined" on every page click, so paging simply did not work. Holding
+// the view in a module-level variable gives the revived function
+// something it can actually reach.
+let invListView = [];
+
+// ── Invoice number ordering ─────────────────────────
+// 'desc' = highest number first, which is the default: the newest
+// invoice is the one people look for.
+let invListSort = 'desc';
+
+// Invoice numbers must order numerically, not as text — plain string
+// comparison puts "142" after "1419" and, once a prefix is involved,
+// scatters a sequence entirely. This splits each number into digit and
+// non-digit runs and compares run by run, digits as numbers. That gives
+// 138 < 139 < 142 < 149 for bare numbers, and keeps prefixed formats
+// like INV-2026-00124 in sequence too, without assuming either shape.
+function compareInvoiceNumbersAsc(a, b) {
+  const chunks = v => String(v ?? '').match(/\d+|\D+/g) || [];
+  const A = chunks(a), B = chunks(b);
+  for (let i = 0; i < Math.max(A.length, B.length); i++) {
+    const x = A[i], y = B[i];
+    if (x === undefined) return -1;      // shorter run sorts first
+    if (y === undefined) return 1;
+    const bothNumeric = /^\d/.test(x) && /^\d/.test(y);
+    const d = bothNumeric ? Number(x) - Number(y) : x.localeCompare(y);
+    if (d) return d;
+  }
+  return 0;
+}
+
+// Sorts a COPY, so callers can re-sort the same source list repeatedly
+// without the order of a previous pass leaking into the next.
+function sortInvoicesByNumber(rows, direction = invListSort) {
+  const dir = direction === 'asc' ? 1 : -1;
+  return [...rows].sort((a, b) => {
+    const byNumber = compareInvoiceNumbersAsc(a.invoice_number, b.invoice_number);
+    if (byNumber) return byNumber * dir;
+    // Same number on both a B2B and a B2C invoice: fall back to date and
+    // then id purely so the order is stable between renders.
+    const byDate = (a.invoice_date || '').localeCompare(b.invoice_date || '');
+    return byDate ? byDate * dir : String(a.id).localeCompare(String(b.id));
+  });
+}
+
+function onInvoiceListSortChange() {
+  invListSort = document.getElementById('invListSortOrder')?.value === 'asc' ? 'asc' : 'desc';
+  // Re-sort the master list so every downstream view — filtering and
+  // pagination alike — inherits the new order rather than each applying
+  // its own.
+  invListAllData = sortInvoicesByNumber(invListAllData);
+  applyInvoiceListFilters();
+}
+
 async function initInvoiceList() {
   const user = await requireAuth();
   if (!user) return;
@@ -43,7 +102,9 @@ async function loadInvoiceList(userId) {
     payment_status: r.payment_status || 'unpaid', amount_paid: +r.amount_paid || 0
   }));
 
-  invListAllData = [...b2bRows, ...b2cRows].sort((a, b) => (b.invoice_date || '').localeCompare(a.invoice_date || ''));
+  // Ordered by invoice number the moment it is loaded, so filtering and
+  // pagination both operate on an already-sorted list.
+  invListAllData = sortInvoicesByNumber([...b2bRows, ...b2cRows]);
   invListPage = 1;
   // Populated here rather than in populateInvoiceListFilters(): the option
   // list is derived from the loaded records, which don't exist until now.
@@ -100,13 +161,19 @@ function applyInvoiceListFilters() {
   if (type)  filtered = filtered.filter(r => r.type === type);
 
   invListPage = 1;
-  renderInvoiceListTable(filtered);
+  // invListAllData is already in invoice-number order, and filtering
+  // preserves order — sorting again here is belt-and-braces so the table
+  // is ordered no matter which path reached it.
+  renderInvoiceListTable(sortInvoicesByNumber(filtered));
 }
 
 function renderInvoiceListTable(data) {
   const tbody = document.getElementById('invListTableBody');
   const tfoot = document.getElementById('invListTableTotal');
   if (!tbody) return;
+
+  // Kept for the pagination callback, which cannot see local scope.
+  invListView = data;
 
   const start = (invListPage - 1) * INV_LIST_PAGE_SIZE;
   const page  = data.slice(start, start + INV_LIST_PAGE_SIZE);
@@ -159,7 +226,9 @@ function renderInvoiceListTable(data) {
   const totalBalance = round2(Math.max(0, total - totalPaid));
   if (tfoot) tfoot.innerHTML = `<tr><td colspan="6" class="fw-700">TOTALS (${data.length} invoices)</td><td class="text-right fw-700">₹${formatNum(total)}</td><td class="text-right fw-700">₹${formatNum(totalPaid)}</td><td class="text-right fw-700">₹${formatNum(totalBalance)}</td><td></td><td></td></tr>`;
 
-  renderInvListPagination(data.length, invListPage, (p) => { invListPage = p; renderInvoiceListTable(data); });
+  // References invListView, not `data`: this function is stringified and
+  // re-parsed in global scope, where a closed-over `data` does not exist.
+  renderInvListPagination(data.length, invListPage, (p) => { invListPage = p; renderInvoiceListTable(invListView); });
 }
 
 // ── View (read-only preview, reusing the exact same markup printInvoice()
