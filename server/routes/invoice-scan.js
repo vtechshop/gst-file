@@ -38,6 +38,7 @@ const { asyncRoute } = require('../middleware/errorHandler');
 const { INVOICE_SCHEMA, INVOICE_PROMPT } = require('../services/geminiInvoicePrompt');
 const { extractDocument, GEMINI_MODEL } = require('../services/geminiClient');
 const { makeScanLimiter, makeUploader, logScan, MAX_FILES } = require('../services/scanUpload');
+const scanJobs = require('../services/scanJobs');
 const { str, gstin, isoDate, lineItem, isUsableLine } = require('../services/scanNormalise');
 
 const router = express.Router();
@@ -152,6 +153,8 @@ router.post('/', scanLimiter, (req, res, next) => {
   }
 
   // Spreadsheets become CSV text; everything else goes to Gemini as-is.
+  // Done before the response so a corrupt workbook is still reported as a
+  // plain 400 rather than as a job that fails a moment later.
   const parts = [];
   for (const f of req.files) {
     if (!XLSX_MIME.includes(f.mimetype)) {
@@ -174,25 +177,72 @@ router.post('/', scanLimiter, (req, res, next) => {
     }
   }
 
-  const out = await extractDocument({
-    apiKey, model: GEMINI_MODEL, prompt: INVOICE_PROMPT, schema: INVOICE_SCHEMA,
-    parts, label: 'invoice-scan'
+  // Hand the work to a background job and answer immediately. From here
+  // the browser is only a viewer: it can navigate, refresh or close, and
+  // the scan carries on regardless.
+  const job = scanJobs.create(req.userId, {
+    fileCount: req.files.length,
+    fileNames: req.files.map(f => f.originalname).slice(0, 10)
   });
-  if (!out.ok) {
-    logScan('invoice-scan', req, GEMINI_MODEL, started, 'FAIL', out.reason);
-    return res.status(out.status).json({ error: { message: out.message } });
+  const logCtx = { userId: req.userId, files: req.files.map(f => ({ size: f.size, mimetype: f.mimetype })) };
+
+  runScanJob(job.id, { apiKey, parts, started, logCtx });
+
+  console.log(`[invoice-scan] job ${job.id} started for user ${req.userId} (${req.files.length} file(s))`);
+  res.status(202).json(scanJobs.toClient(job));
+}));
+
+// The long-running half. Deliberately NOT awaited by the route — it owns
+// the job from here and records its own outcome. Nothing in this
+// function is aware of a request or a response, which is what makes it
+// survive the browser going away.
+async function runScanJob(jobId, { apiKey, parts, started, logCtx }) {
+  const log = (outcome, extra) =>
+    logScan('invoice-scan', { userId: logCtx.userId, files: logCtx.files }, GEMINI_MODEL, started, outcome, extra);
+  try {
+    const out = await extractDocument({
+      apiKey, model: GEMINI_MODEL, prompt: INVOICE_PROMPT, schema: INVOICE_SCHEMA,
+      parts, label: 'invoice-scan'
+    });
+    if (!out.ok) {
+      log('FAIL', `job=${jobId} ${out.reason}`);
+      return scanJobs.fail(jobId, out.status, out.message, out.reason);
+    }
+
+    // An invoice with neither a number nor any product row is not an
+    // invoice the user can do anything with — usually a cover page or a
+    // stray sheet the model listed for completeness.
+    const invoices = (Array.isArray(out.data.invoices) ? out.data.invoices : [])
+      .map(normaliseInvoice)
+      .filter(inv => inv.invoice_number || inv.products.length);
+
+    log('OK', `job=${jobId} files=${logCtx.files.length} invoices=${invoices.length}`);
+    scanJobs.finish(jobId, invoices);
+  } catch (err) {
+    // A job must always reach a terminal state — a thrown error here
+    // would otherwise leave the browser polling 'running' forever.
+    console.error(`[invoice-scan] job ${jobId} crashed:`, err);
+    log('FAIL', `job=${jobId} crashed`);
+    scanJobs.fail(jobId, 500, 'The scan failed unexpectedly. Please try again.', 'crashed');
   }
+}
 
-  // An invoice with neither a number nor any product row is not an
-  // invoice the user can do anything with — usually a cover page or a
-  // stray sheet the model listed for completeness.
-  const invoices = (Array.isArray(out.data.invoices) ? out.data.invoices : [])
-    .map(normaliseInvoice)
-    .filter(inv => inv.invoice_number || inv.products.length);
+// ── Job endpoints ────────────────────────────────────
+// What a returning page asks first when it has no jobId of its own.
+router.get('/jobs/active', asyncRoute(async (req, res) => {
+  const job = scanJobs.activeForUser(req.userId);
+  res.json(job ? scanJobs.toClient(job) : { status: 'none' });
+}));
 
-  logScan('invoice-scan', req, GEMINI_MODEL, started, 'OK',
-    `files=${req.files.length} invoices=${invoices.length}`);
-  res.json({ model: GEMINI_MODEL, invoices });
+router.get('/jobs/:id', asyncRoute(async (req, res) => {
+  const job = scanJobs.get(req.params.id, req.userId);
+  if (!job) return res.status(404).json({ error: { message: 'That scan is no longer available.' } });
+  res.json(scanJobs.toClient(job));
+}));
+
+// Called once the review has been imported or explicitly discarded.
+router.delete('/jobs/:id', asyncRoute(async (req, res) => {
+  res.json({ deleted: scanJobs.remove(req.params.id, req.userId) });
 }));
 
 module.exports = router;

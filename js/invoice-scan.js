@@ -29,6 +29,35 @@ let invScanResults = [];      // every invoice from the last scan
 let invScanSelectedId = null; // which one the user is looking at
 let invScanApplied = {};      // what Import wrote, per field id — basis of "never overwrite user edits"
 
+// ── Background job tracking ──────────────────────────
+// The scan itself belongs to the server (see server/services/scanJobs.js
+// and routes/invoice-scan.js). This page is a viewer: it starts a job,
+// then polls it. Leaving the page, refreshing, or closing the tab stops
+// the polling and nothing else — the work carries on, and coming back
+// reconnects to the same job by id rather than re-uploading anything.
+const INV_SCAN_JOB_KEY = 'gst_invoice_scan_job';
+const INV_SCAN_POLL_MS = 2000;
+let invScanJobId = null;
+let invScanPollTimer = null;
+
+const rememberScanJob = id => { invScanJobId = id; try { localStorage.setItem(INV_SCAN_JOB_KEY, id); } catch {} };
+const forgetScanJob = () => { invScanJobId = null; try { localStorage.removeItem(INV_SCAN_JOB_KEY); } catch {} };
+const storedScanJob = () => { try { return localStorage.getItem(INV_SCAN_JOB_KEY); } catch { return null; } };
+
+function stopInvScanPolling() {
+  if (invScanPollTimer) { clearTimeout(invScanPollTimer); invScanPollTimer = null; }
+}
+
+async function invScanApi(path, options = {}) {
+  const token = localStorage.getItem('gst_jwt');
+  const res = await fetch(API_BASE_URL + '/invoice-scan' + path, {
+    ...options,
+    headers: { ...(options.headers || {}), ...(token ? { Authorization: 'Bearer ' + token } : {}) }
+  });
+  const body = await res.json().catch(() => null);
+  return { ok: res.ok, status: res.status, body };
+}
+
 // ── Entry point ──────────────────────────────────────
 async function handleInvoiceScanUpload(fileList) {
   const files = Array.from(fileList || []);
@@ -49,28 +78,121 @@ async function handleInvoiceScanUpload(fileList) {
     ? 'Analysing document…'
     : `Analysing ${files.length} documents…`);
 
-  const started = Date.now();
+  // A new upload replaces whatever was left from the previous one — the
+  // second of the three conditions for clearing the cache. The server
+  // supersedes the old job too, so only one scan exists per upload.
+  stopInvScanPolling();
+  invScanResults = [];
+  invScanSelectedId = null;
+  dismissInvScanReview({ keepJob: true });
+
   try {
-    const body = await sendInvoicesForScan(files);
-    hideInvScanProgress();
-    console.log(`[invoice-scan] ${Date.now() - started}ms model=${body.model || 'unknown'} OK invoices=${body.invoices.length}`);
-    // A new upload replaces whatever was left from the previous one —
-    // the second of the three conditions for clearing the cache.
-    invScanResults = body.invoices;
-    invScanSelectedId = invScanResults.length ? invScanResults[0].id : null;
-    if (!invScanResults.length) {
-      showToast('No invoices could be read from that file. Please enter it manually.', 'warning');
-      return;
-    }
-    renderInvScanReview({ scroll: true });
+    // Returns as soon as the job is registered; the analysis itself runs
+    // on the server from here.
+    const job = await sendInvoicesForScan(files);
+    rememberScanJob(job.jobId);
+    console.log(`[invoice-scan] job ${job.jobId} started`);
+    showInvScanProgress(scanProgressText(job));
+    pollInvScanJob();
   } catch (err) {
     hideInvScanProgress();
-    console.log(`[invoice-scan] ${Date.now() - started}ms FAIL ${err.message || 'unknown'}`);
-    showToast(err.message || 'Could not read that file.', 'error');
+    console.log(`[invoice-scan] start FAILED: ${err.message || 'unknown'}`);
+    showToast(err.message || 'Could not start the scan.', 'error');
   } finally {
     if (input) { input.disabled = false; input.value = ''; }   // let the same file be picked again
   }
 }
+
+const scanProgressText = job =>
+  (job.fileCount > 1 ? `Analysing ${job.fileCount} documents…` : 'Analysing document…');
+
+// ── Polling ──────────────────────────────────────────
+// Each tick asks the server how the job is doing. Only the timer lives
+// in the page, so navigating away simply stops asking — it never
+// cancels anything.
+function pollInvScanJob() {
+  stopInvScanPolling();
+  invScanPollTimer = setTimeout(async () => {
+    if (!invScanJobId) return;
+    const { ok, status, body } = await invScanApi('/jobs/' + encodeURIComponent(invScanJobId))
+      .catch(() => ({ ok: false, status: 0, body: null }));
+
+    if (!ok) {
+      // 404 means the job expired or was already cleared; anything else
+      // is a blip worth retrying rather than throwing the scan away.
+      if (status === 404) { forgetScanJob(); hideInvScanProgress(); return; }
+      return pollInvScanJob();
+    }
+    applyInvScanJobState(body);
+  }, INV_SCAN_POLL_MS);
+}
+
+// Single place that turns a job's server-side state into what the page
+// shows, used by both polling and the reconnect-on-load path.
+function applyInvScanJobState(job) {
+  if (!job || job.status === 'none') { hideInvScanProgress(); return; }
+
+  if (job.status === 'running') {
+    showInvScanProgress(scanProgressText(job));
+    pollInvScanJob();
+    return;
+  }
+
+  stopInvScanPolling();
+  hideInvScanProgress();
+
+  if (job.status === 'error') {
+    // deleteInvScanJob() captures the id before clearing it — calling
+    // forgetScanJob() first would leave the failed job on the server.
+    deleteInvScanJob();
+    showToast((job.error && job.error.message) || 'The scan failed.', 'error');
+    return;
+  }
+
+  // done
+  assertInvScanShape(job);
+  invScanResults = job.invoices;
+  invScanSelectedId = invScanResults.length ? invScanResults[0].id : null;
+  if (!invScanResults.length) {
+    showToast('No invoices could be read from that file. Please enter it manually.', 'warning');
+    deleteInvScanJob();
+    return;
+  }
+  renderInvScanReview({ scroll: true });
+}
+
+// Tell the server it can drop the job — the review is now either
+// imported or discarded, so nothing further will be read from it.
+function deleteInvScanJob() {
+  const id = invScanJobId;
+  forgetScanJob();
+  stopInvScanPolling();
+  if (id) invScanApi('/jobs/' + encodeURIComponent(id), { method: 'DELETE' }).catch(() => {});
+}
+
+// ── Reconnect on page load ───────────────────────────
+// Runs on every visit to Invoice Entry. Uses the jobId this browser
+// remembered if it has one, and otherwise asks the server what is
+// running for this account — which covers a refresh that cleared
+// storage, or a scan started in another tab.
+async function reconnectInvScanJob() {
+  if (!document.getElementById('invScanReview')) return;   // not the invoice page
+  if (!localStorage.getItem('gst_jwt')) return;            // not signed in yet
+
+  const stored = storedScanJob();
+  let res = stored ? await invScanApi('/jobs/' + encodeURIComponent(stored)).catch(() => null) : null;
+  if (!res || !res.ok) {
+    if (stored) forgetScanJob();
+    res = await invScanApi('/jobs/active').catch(() => null);
+  }
+  if (!res || !res.ok || !res.body || res.body.status === 'none') return;
+
+  rememberScanJob(res.body.jobId);
+  console.log(`[invoice-scan] reconnected to job ${res.body.jobId} (${res.body.status})`);
+  applyInvScanJobState(res.body);
+}
+
+document.addEventListener('DOMContentLoaded', () => { reconnectInvScanJob(); });
 
 // Plain fetch rather than apiFetch(): this is multipart, and apiFetch
 // forces Content-Type: application/json, which would stop the browser
@@ -93,7 +215,12 @@ async function sendInvoicesForScan(files) {
 
   const body = await res.json().catch(() => null);
   if (!res.ok) throw new Error((body && body.error && body.error.message) || `Invoice analysis failed (${res.status}).`);
-  assertInvScanShape(body);
+  // 202 with a jobId — the analysis has not run yet, so there is nothing
+  // invoice-shaped to validate here. assertInvScanShape() is applied to
+  // the finished job instead, in applyInvScanJobState().
+  if (!body || typeof body.jobId !== 'string') {
+    throw new Error('The scanner did not start correctly. Please try again.');
+  }
   return body;
 }
 
@@ -264,11 +391,17 @@ async function warnIfInvoiceNumberExists(num) {
   } catch { /* no match, or offline — the save-time check remains authoritative */ }
 }
 
-function dismissInvScanReview() {
+// keepJob: used when a NEW upload is replacing this one, where the
+// server is already superseding the job and deleting it here would race
+// the job that has just been created.
+function dismissInvScanReview({ keepJob = false } = {}) {
   invScanResults = [];
   invScanSelectedId = null;
   const panel = document.getElementById('invScanReview');
   if (panel) { panel.innerHTML = ''; panel.classList.add('d-none'); }
+  // Explicitly discarding the review is one of the three conditions for
+  // the server dropping the job.
+  if (!keepJob) deleteInvScanJob();
 }
 
 // ── Import into the form ─────────────────────────────
