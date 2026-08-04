@@ -18,6 +18,10 @@ const { requireAuth } = require('../middleware/auth');
 const { asyncRoute } = require('../middleware/errorHandler');
 const { TABLES } = require('./generic');
 const { applyStockDelta } = require('./invoices');
+// The SAME rule file the browser loads — see js/shared/sales-return-rules.js.
+// Requiring it rather than restating the arithmetic is what guarantees the
+// limit the user was shown is the limit actually enforced here.
+const { validateReturnQty } = require('../../js/shared/sales-return-rules');
 
 const router = express.Router();
 router.use(requireAuth);
@@ -25,6 +29,71 @@ router.use(requireAuth);
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 function badId(id) {
   if (!UUID_RE.test(id)) { const e = new Error('Invalid id.'); e.status = 400; e.expose = true; throw e; }
+}
+
+// Re-derives sold and already-returned quantities FROM THE DATABASE and
+// checks every submitted line against them.
+//
+// The browser performs the same check, but a request can be replayed,
+// edited or crafted by hand — so the frontend result is treated as a
+// convenience, never as authority. Runs inside the caller's transaction
+// so it reads the same snapshot the write will use.
+async function assertReturnQuantitiesAllowed(client, userId, header, items, editId) {
+  const invoiceId = header.original_invoice_id;
+  const invoiceType = header.original_invoice_type;
+  if (!invoiceId || !invoiceType) return;      // nothing to validate against
+
+  // What was sold on the original invoice.
+  const { rows: soldRows } = await client.query(
+    `SELECT product_id, product_name, SUM(quantity) AS qty
+       FROM invoice_items
+      WHERE invoice_id = $1 AND invoice_type = $2 AND user_id = $3
+      GROUP BY product_id, product_name`,
+    [invoiceId, invoiceType, userId]
+  );
+
+  // What OTHER returns against this same invoice have already taken —
+  // excluding the return being edited, whose own quantities are being
+  // replaced by this request.
+  const { rows: returnedRows } = await client.query(
+    `SELECT i.product_id, i.product_name, SUM(i.quantity) AS qty
+       FROM sales_return_items i
+       JOIN sales_returns r ON r.id = i.return_id
+      WHERE r.user_id = $1
+        AND r.original_invoice_id = $2
+        AND r.original_invoice_type = $3
+        AND ($4::uuid IS NULL OR r.id <> $4::uuid)
+      GROUP BY i.product_id, i.product_name`,
+    [userId, invoiceId, invoiceType, editId || null]
+  );
+
+  // Keyed on product_id where there is one, else the name — matching how
+  // the frontend pairs a return line back to its invoice line.
+  const key = r => (r.product_id ? 'id:' + r.product_id : 'name:' + (r.product_name || ''));
+  const sold = new Map(soldRows.map(r => [key(r), Number(r.qty) || 0]));
+  const returned = new Map(returnedRows.map(r => [key(r), Number(r.qty) || 0]));
+
+  // Several submitted lines can point at the same product; they must be
+  // judged together, not one at a time.
+  const wanted = new Map();
+  for (const it of items) {
+    const k = key(it);
+    wanted.set(k, (wanted.get(k) || 0) + (Number(it.quantity) || 0));
+  }
+
+  for (const [k, qty] of wanted) {
+    const soldQty = sold.get(k) || 0;
+    if (!sold.has(k)) {
+      const e = new Error('That product is not on the original invoice and cannot be returned.');
+      e.status = 400; e.expose = true; throw e;
+    }
+    const verdict = validateReturnQty(soldQty, returned.get(k) || 0, qty);
+    if (!verdict.valid) {
+      const name = items.find(it => key(it) === k)?.product_name || 'item';
+      const e = new Error(`${name}: ${verdict.message}`);
+      e.status = 400; e.expose = true; throw e;
+    }
+  }
 }
 
 // ── 1) Save header + line items + stock, one transaction ──
@@ -44,6 +113,11 @@ router.post('/save-with-items', asyncRoute(async (req, res) => {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
+
+    // Before anything is written. A rejection here rolls the whole
+    // transaction back, so an over-quantity return never reaches the
+    // database even partially.
+    await assertReturnQuantitiesAllowed(client, req.userId, header, items, editId);
 
     let returnId = editId;
     let oldItems = [];

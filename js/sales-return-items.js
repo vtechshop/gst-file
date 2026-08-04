@@ -94,7 +94,15 @@ function loadOriginalInvoiceItems(invoiceItems, alreadyReturnedByProduct) {
       hsn_code: it.hsn_code || '',
       unit: it.unit || '',
       original_qty: +it.quantity || 0,
+      // Kept alongside max_qty because the rules need it to explain WHY
+      // a quantity was refused ("2 items have already been returned"),
+      // not merely that it was.
+      already_returned: alreadyReturned,
       max_qty: maxQty,
+      // Set by validateSrRow() on every change; drives the inline error,
+      // the red border, whether the row counts towards the totals, and
+      // whether Save is available.
+      error: '',
       rate: +it.rate || 0,
       discount_percentage: +it.discount_percentage || 0,
       gst_percentage: +it.gst_percentage || 0,
@@ -110,6 +118,7 @@ function loadOriginalInvoiceItems(invoiceItems, alreadyReturnedByProduct) {
   });
   renderSrItemsTable();
   computeSrRollups();
+  refreshSrSaveState();
 }
 
 // Pre-fills return_qty on each row from an existing sales return's own
@@ -120,6 +129,10 @@ function prefillSrReturnQuantities(savedItems) {
   (savedItems || []).forEach(saved => {
     const row = srItems.find(r => r.product_id === saved.product_id && r.product_name === saved.product_name);
     if (row) {
+      // Editing a return must not be blocked by its own earlier
+      // quantities, so they are handed back to this row — both to the
+      // cap and to the already-returned figure the messages quote.
+      row.already_returned = Math.max(0, round2(row.already_returned - (+saved.quantity || 0)));
       row.max_qty = round2(row.max_qty + (+saved.quantity || 0));
       row.return_qty = Math.min(row.max_qty, +saved.quantity || 0);
       // Editing an existing return: a line that was returned is already
@@ -127,10 +140,12 @@ function prefillSrReturnQuantities(savedItems) {
       // table would reopen unchecked and the user would appear to have
       // lost their return.
       row.selected = row.return_qty > 0;
+      validateSrRow(row);
     }
   });
   renderSrItemsTable();
   computeSrRollups();
+  refreshSrSaveState();
 }
 
 function resetSalesReturnItems() {
@@ -149,10 +164,11 @@ function renderSrItemsTable() {
   tbody.innerHTML = srItems.map(row => {
     // Nothing left to return on this line — there is no quantity the
     // user could legitimately choose, so the row cannot be selected.
-    const exhausted = row.max_qty <= 0;
+    const exhausted = availableReturnQty(row.original_qty, row.already_returned) <= 0;
     const title = exhausted
       ? 'Already fully returned on an earlier sales return'
-      : (row.max_qty < row.original_qty ? 'Max returnable: ' + formatNum(row.max_qty) + ' (some already returned)' : '');
+      : (row.already_returned > 0 ? 'Available to return: ' + formatNum(row.max_qty) +
+          ' (' + formatNum(row.already_returned) + ' already returned)' : '');
     return `
     <tr data-row="${row.rowId}" class="${row.selected ? 'sr-row-selected' : ''}">
       <td class="text-center">
@@ -161,22 +177,64 @@ function renderSrItemsTable() {
           title="${title}"
           aria-label="Return ${escItemHtml(row.product_name)}">
       </td>
-      <td><b>${escItemHtml(row.product_name)}</b></td>
+      <td>
+        <b>${escItemHtml(row.product_name)}</b>
+        ${exhausted ? '<span class="badge badge-red sr-fully-returned" style="font-size:9px;margin-left:6px;">Fully Returned</span>' : ''}
+      </td>
       <td>${escItemHtml(row.hsn_code) || '&mdash;'}</td>
       <td>${escItemHtml(row.unit) || '&mdash;'}</td>
       <td class="text-center">${formatNum(row.original_qty)}</td>
       <td class="text-right">&#8377;${formatNum(row.rate)}</td>
       <td>
-        <input type="number" class="form-control text-center sr-return-qty" min="0" max="${row.max_qty}" step="0.001"
+        <input type="number" class="form-control text-center sr-return-qty${row.error ? ' error' : ''}"
+          min="0" max="${row.max_qty}" step="0.001"
           value="${row.return_qty}" ${row.selected ? '' : 'disabled'}
           oninput="onSrReturnQtyChange('${row.rowId}', this.value)"
           aria-label="Return quantity for ${escItemHtml(row.product_name)}"
+          aria-invalid="${row.error ? 'true' : 'false'}"
           title="${title}">
+        <!-- Error sits directly under its own field, so on a long
+             invoice it is obvious which line is at fault. -->
+        <div class="sr-qty-error item-field-error">${row.error ? escItemHtml(row.error) : ''}</div>
       </td>
       <td class="text-right fw-600 sr-taxable-cell">&#8377;${formatNum(row.taxable_value)}</td>
       <td class="text-right fw-700 sr-total-cell">&#8377;${formatNum(row.total_amount)}</td>
     </tr>`;
   }).join('');
+}
+
+// Applies the shared rule to one row and records the outcome. The single
+// place the frontend decides whether a quantity is acceptable.
+function validateSrRow(row) {
+  const verdict = validateReturnQty(row.original_qty, row.already_returned, row.selected ? row.return_qty : 0);
+  row.error = verdict.valid ? '' : verdict.message;
+  return verdict.valid;
+}
+
+// Updates just this row's error text and border, without re-rendering
+// the table — a re-render on every keystroke would destroy the input
+// being typed into and lose the caret.
+function paintSrRowError(row) {
+  const tr = document.querySelector(`#srItemsTableBody tr[data-row="${row.rowId}"]`);
+  if (!tr) return;
+  const input = tr.querySelector('.sr-return-qty');
+  const slot = tr.querySelector('.sr-qty-error');
+  if (input) {
+    input.classList.toggle('error', !!row.error);
+    input.setAttribute('aria-invalid', row.error ? 'true' : 'false');
+  }
+  if (slot) slot.textContent = row.error || '';
+}
+
+// Save is only meaningful when every selected quantity is legal, so the
+// button is the honest place to reflect that rather than letting the
+// user press it and be refused.
+function refreshSrSaveState() {
+  const btn = document.getElementById('srSaveBtn');
+  if (!btn) return;
+  const invalid = srItems.some(r => r.error);
+  btn.disabled = invalid;
+  btn.title = invalid ? 'Fix the highlighted return quantities first' : '';
 }
 
 // Ticking a row opens it for return and seeds a sensible quantity;
@@ -185,7 +243,7 @@ function onSrRowToggle(rowId, checked) {
   const row = srItems.find(r => r.rowId === rowId);
   if (!row) return;
 
-  if (checked && row.max_qty > 0) {
+  if (checked && availableReturnQty(row.original_qty, row.already_returned) > 0) {
     row.selected = true;
     // Default to one unit whether one or many were sold — returning a
     // single item is much the commonest case, and with only one sold
@@ -196,33 +254,44 @@ function onSrRowToggle(rowId, checked) {
     row.selected = false;
     row.return_qty = 0;
   }
+  validateSrRow(row);          // unticking also clears any error it had
   recalcSrRow(row);
   renderSrItemsTable();
   computeSrRollups();
+  refreshSrSaveState();
 }
 
+// Validates as the user types. The entered value is kept rather than
+// silently clamped: quietly rewriting 3 to 2 tells the user nothing,
+// whereas holding their number and explaining the limit does.
 function onSrReturnQtyChange(rowId, value) {
   const row = srItems.find(r => r.rowId === rowId);
   if (!row || !row.selected) return;   // a disabled input cannot contribute
-  let qty = parseFloat(value);
-  if (isNaN(qty) || qty < 0) qty = 0;
-  if (qty > row.max_qty) qty = row.max_qty;
-  row.return_qty = qty;
+  const qty = parseFloat(value);
+  row.return_qty = isNaN(qty) ? 0 : qty;
+  validateSrRow(row);
   recalcSrRow(row);
+  paintSrRowError(row);
   computeSrRollups();
+  refreshSrSaveState();
 }
 
 // Full Return ticks every returnable row and fills each to its maximum;
 // Clear All unticks everything and empties the quantities.
 function setAllSrReturnQty(full) {
   srItems.forEach(row => {
-    const selectable = full && row.max_qty > 0;
+    // "Sold qty" for a line with earlier returns means what is still
+    // available, so Full Return can never produce an invalid quantity.
+    const available = availableReturnQty(row.original_qty, row.already_returned);
+    const selectable = full && available > 0;
     row.selected = selectable;
-    row.return_qty = selectable ? row.max_qty : 0;
+    row.return_qty = selectable ? available : 0;
+    validateSrRow(row);
     recalcSrRow(row);
   });
   renderSrItemsTable();
   computeSrRollups();
+  refreshSrSaveState();
 }
 
 function recalcSrRow(row) {
@@ -248,7 +317,10 @@ function updateSrRowComputedCells(row) {
 // Totals, validation and the save all read from this, so what the user
 // sees added up is exactly what gets stored.
 function selectedSrRows() {
-  return srItems.filter(r => r.selected && r.return_qty > 0);
+  // An over-quantity row is not a return line — including it would show
+  // the user a total for goods that cannot be returned, and the save
+  // would then be refused anyway.
+  return srItems.filter(r => r.selected && r.return_qty > 0 && !r.error);
 }
 
 function computeSrRollups() {
@@ -279,6 +351,14 @@ function computeSrRollups() {
 
 function validateSalesReturnItems() {
   if (!srItems.length) { showToast('Select an invoice to load its items first.', 'error'); return false; }
+
+  // Re-check every row against the shared rule rather than trusting the
+  // flags left by typing — this is the gate immediately before Save.
+  srItems.forEach(row => { validateSrRow(row); paintSrRowError(row); });
+  refreshSrSaveState();
+  const bad = srItems.find(r => r.error);
+  if (bad) { showToast(bad.error, 'error'); return false; }
+
   if (!selectedSrRows().length) {
     // Names the checkbox, since that is now the action being asked for.
     showToast('Tick the Return checkbox on at least one product.', 'error');

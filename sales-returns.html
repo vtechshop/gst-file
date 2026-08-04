@@ -18,6 +18,10 @@
   <script src="js/search.js"></script>
   <script src="js/profile.js"></script>
   <script src="js/invoice-pdf.js"></script>
+  <!-- The quantity rules, shared verbatim with the server (see
+       server/routes/sales-returns.js) so the browser and the database
+       enforce the same limit. Must load before sales-return-items.js. -->
+  <script src="js/shared/sales-return-rules.js"></script>
   <script src="js/sales-return-items.js"></script>
   <script src="js/sales-return-pdf.js"></script>
   <script src="js/sales-returns.js"></script>
