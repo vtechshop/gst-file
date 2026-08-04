@@ -16,7 +16,9 @@ let srEditId = null;
 let srAllData = [];        // the CURRENT page of history rows, not all of them
 let srPage = 1;
 let srTotalCount = 0;      // rows across the whole history, for the pager
-let srTotalAmount = 0;     // SUM(total_amount) across the whole history, for the footer
+// Column totals across the WHOLE history (not the visible page), summed
+// by Postgres for the footer.
+let srTotals = { taxable_amount: 0, cgst: 0, sgst: 0, igst: 0, gst_amount: 0, total_amount: 0 };
 const SR_PAGE = 10;
 let srAllInvoices = [];
 let srSelectedInvoice = null; // { type, id, invoice_number, customer_name, gst_number, phone, address, state, supply_type }
@@ -186,21 +188,24 @@ function resetSalesReturn() {
 // totals footer stay exactly as they were. Previously this pulled every
 // sales_return the account had ever made — all 24 columns — and sliced
 // ten of them out in the browser.
-const SR_HISTORY_FIELDS = 'id,return_number,return_date,customer_name,original_invoice_number,original_invoice_type,total_amount';
+// Exactly the columns the table renders — the GST breakdown included.
+// Every one is read from the stored return; nothing here is recomputed.
+const SR_HISTORY_FIELDS = 'id,return_number,return_date,customer_name,original_invoice_number,' +
+  'original_invoice_type,taxable_amount,cgst,sgst,igst,gst_amount,total_amount';
 
 async function loadSalesReturns(userId, page) {
   srPage = page || 1;
-  const { data, count, sum } = await _supabase
+  const { data, count, sums } = await _supabase
     .from('sales_returns')
     .select(SR_HISTORY_FIELDS)
     .eq('user_id', userId)
     .order('return_date', { ascending: false })
     .limit(SR_PAGE)
     .offset((srPage - 1) * SR_PAGE)
-    .withTotals('total_amount');
+    .withTotals(['taxable_amount', 'cgst', 'sgst', 'igst', 'gst_amount', 'total_amount']);
   srAllData = data || [];
   srTotalCount = count || 0;
-  srTotalAmount = sum || 0;
+  srTotals = { ...srTotals, ...(sums || {}) };
   renderSrTable(srAllData);
 }
 
@@ -215,7 +220,7 @@ function renderSrTable(data) {
   const page  = data;
 
   if (!data.length) {
-    tbody.innerHTML = '<tr><td colspan="7" class="empty-state"><i class="fas fa-rotate-left" style="display:block;font-size:40px;margin-bottom:10px;"></i>No sales returns found</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="12" class="empty-state"><i class="fas fa-rotate-left" style="display:block;font-size:40px;margin-bottom:10px;"></i>No sales returns found</td></tr>';
     if (tfoot) tfoot.innerHTML = '';
     renderSrPagination(0);
     return;
@@ -228,6 +233,15 @@ function renderSrTable(data) {
       <td>${formatDate(r.return_date)}</td>
       <td>${r.customer_name}</td>
       <td>${r.original_invoice_number || '&mdash;'} <span class="badge ${r.original_invoice_type === 'b2b' ? 'badge-blue' : 'badge-green'}" style="font-size:9px;">${r.original_invoice_type.toUpperCase()}</span></td>
+      <!-- Stored values, rendered as-is. formatNum() turns null/undefined
+           into 0.00, so a component that does not apply to this supply
+           type (IGST on an intrastate return, CGST/SGST on interstate)
+           shows 0.00 rather than a blank. -->
+      <td class="text-right">&#8377;${formatNum(r.taxable_amount)}</td>
+      <td class="text-right">&#8377;${formatNum(r.cgst)}</td>
+      <td class="text-right">&#8377;${formatNum(r.sgst)}</td>
+      <td class="text-right">&#8377;${formatNum(r.igst)}</td>
+      <td class="text-right fw-600">&#8377;${formatNum(r.gst_amount)}</td>
       <td class="text-right fw-700">&#8377;${formatNum(r.total_amount)}</td>
       <td>
         <div class="action-btns">
@@ -244,7 +258,15 @@ function renderSrTable(data) {
   // Footer figures cover EVERY return, not the visible page — computed
   // by Postgres and sent as headers, so the numbers shown are unchanged
   // while the payload no longer grows with the history.
-  if (tfoot) tfoot.innerHTML = `<tr><td colspan="5" class="fw-700">TOTALS (${srTotalCount} returns)</td><td class="text-right fw-700">₹${formatNum(srTotalAmount)}</td><td></td></tr>`;
+  if (tfoot) tfoot.innerHTML = `<tr>
+    <td colspan="5" class="fw-700">TOTALS (${srTotalCount} returns)</td>
+    <td class="text-right fw-700">₹${formatNum(srTotals.taxable_amount)}</td>
+    <td class="text-right fw-700">₹${formatNum(srTotals.cgst)}</td>
+    <td class="text-right fw-700">₹${formatNum(srTotals.sgst)}</td>
+    <td class="text-right fw-700">₹${formatNum(srTotals.igst)}</td>
+    <td class="text-right fw-700">₹${formatNum(srTotals.gst_amount)}</td>
+    <td class="text-right fw-700">₹${formatNum(srTotals.total_amount)}</td>
+    <td></td></tr>`;
 
   renderSrPagination(srTotalCount);
 }

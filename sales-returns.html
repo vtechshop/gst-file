@@ -177,11 +177,21 @@
               <thead>
                 <tr>
                   <th>#</th><th>Return No</th><th>Date</th><th>Customer</th>
-                  <th>Original Invoice</th><th>Total</th><th>Actions</th>
+                  <th>Original Invoice</th>
+                  <!-- The GST breakdown, straight from the stored return.
+                       Min-widths stop the amounts wrapping; the wrapper
+                       already scrolls horizontally on narrow screens. -->
+                  <th class="text-right" style="min-width:110px;">Taxable Value</th>
+                  <th class="text-right" style="min-width:95px;">CGST</th>
+                  <th class="text-right" style="min-width:95px;">SGST</th>
+                  <th class="text-right" style="min-width:95px;">IGST</th>
+                  <th class="text-right" style="min-width:105px;">Total GST</th>
+                  <th class="text-right" style="min-width:115px;">Grand Total</th>
+                  <th>Actions</th>
                 </tr>
               </thead>
               <tbody id="srTableBody">
-                <tr><td colspan="7" class="empty-state"><i class="fas fa-spinner fa-spin table-loading-icon"></i>Loading...</td></tr>
+                <tr><td colspan="12" class="empty-state"><i class="fas fa-spinner fa-spin table-loading-icon"></i>Loading...</td></tr>
               </tbody>
               <tfoot id="srTableTotal"></tfoot>
             </table>

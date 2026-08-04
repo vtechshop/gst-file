@@ -523,6 +523,13 @@ table.data-table {
 
 .data-table thead tr { background: var(--primary-dark); color: #fff; }
 .data-table thead th { padding: 11px 14px; text-align: left; font-weight: 600; font-size: 12px; white-space: nowrap; }
+/* The rule above is (0,1,2) and outranks the plain .text-right/.text-center
+   utilities at (0,1,0), so a header marked up as right-aligned was
+   silently rendering left-aligned while its column of figures sat right.
+   Matching that specificity lets the utility classes work on headers, as
+   the markup across every table already assumes they do. */
+.data-table thead th.text-right  { text-align: right; }
+.data-table thead th.text-center { text-align: center; }
 .data-table tbody tr { border-bottom: 1px solid var(--border); transition: background 0.1s; }
 .data-table tbody tr:hover { background: var(--primary-xlight); }
 

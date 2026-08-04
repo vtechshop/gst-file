@@ -96,19 +96,27 @@ function buildLimit(limitParam, offsetParam) {
 // allow-list, exactly like select/order/filters.
 async function attachAggregates(res, req, table, where, params, columns) {
   const wantCount = req.query.count === 'exact';
-  const sumCol = columns.includes(String(req.query.sum)) ? String(req.query.sum) : null;
-  if (!wantCount && !sumCol) return;
+  // `sum` takes one column or several: a table footer usually needs a
+  // total per money column, and doing them in one pass costs the same
+  // as doing one. Unknown names are dropped, same as select/order.
+  const sumCols = String(req.query.sum || '')
+    .split(',').map(s => s.trim()).filter(c => c && columns.includes(c));
+  if (!wantCount && !sumCols.length) return;
 
   const pieces = [];
   if (wantCount) pieces.push('COUNT(*)::bigint AS total_count');
-  if (sumCol) pieces.push(`COALESCE(SUM(${sumCol}),0) AS total_sum`);
+  sumCols.forEach((c, i) => pieces.push(`COALESCE(SUM(${c}),0)::float8 AS sum_${i}`));
   const { rows } = await pool.query(`SELECT ${pieces.join(', ')} FROM ${table} ${where}`, params);
 
   const agg = rows[0] || {};
   if (wantCount) res.set('X-Total-Count', String(agg.total_count ?? 0));
-  if (sumCol) res.set('X-Total-Sum', String(agg.total_sum ?? 0));
+  if (sumCols.length) {
+    const sums = {};
+    sumCols.forEach((c, i) => { sums[c] = agg['sum_' + i] ?? 0; });
+    res.set('X-Total-Sums', JSON.stringify(sums));
+  }
   // Without this the browser cannot read either header cross-origin.
-  res.set('Access-Control-Expose-Headers', 'X-Total-Count, X-Total-Sum');
+  res.set('Access-Control-Expose-Headers', 'X-Total-Count, X-Total-Sums');
 }
 
 // Runs a table's optional `validate(payload)` hook (see TABLES.customers

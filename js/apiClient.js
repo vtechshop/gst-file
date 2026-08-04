@@ -102,10 +102,14 @@ class RestQueryBuilder {
   offset(n) { this._offset = n; return this; }
 
   // Asks the server for figures over the WHOLE filtered set, not just
-  // the page: a row count for the pager and optionally a column total
-  // for a footer. Both arrive as headers, so `count` and `sum` appear on
-  // the result alongside `data`.
-  withTotals(sumColumn) { this._wantCount = true; this._sumColumn = sumColumn || null; return this; }
+  // the page: a row count for the pager and a total for each named money
+  // column, for a footer. Accepts one column or an array. They arrive as
+  // headers, so `count` and `sums` appear on the result beside `data`.
+  withTotals(sumColumns) {
+    this._wantCount = true;
+    this._sumColumns = !sumColumns ? [] : (Array.isArray(sumColumns) ? sumColumns : [sumColumns]);
+    return this;
+  }
 
   _filterQueryString() {
     const params = new URLSearchParams();
@@ -118,7 +122,7 @@ class RestQueryBuilder {
     if (this._limit)  params.set('limit', this._limit);
     if (this._offset) params.set('offset', this._offset);
     if (this._wantCount) params.set('count', 'exact');
-    if (this._sumColumn) params.set('sum', this._sumColumn);
+    if (this._sumColumns && this._sumColumns.length) params.set('sum', this._sumColumns.join(','));
     return params.toString();
   }
 
@@ -143,12 +147,14 @@ class RestQueryBuilder {
 
       // select
       const qs = this._filterQueryString();
-      if (this._wantCount || this._sumColumn) {
+      if (this._wantCount || (this._sumColumns && this._sumColumns.length)) {
         const { body, headers } = await apiFetch('/' + this._table + (qs ? '?' + qs : ''), { withHeaders: true });
+        let sums = {};
+        try { sums = JSON.parse(headers.get('X-Total-Sums') || '{}'); } catch { sums = {}; }
         return {
           data: body,
           count: Number(headers.get('X-Total-Count') || 0),
-          sum: Number(headers.get('X-Total-Sum') || 0),
+          sums,
           error: null
         };
       }
