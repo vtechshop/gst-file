@@ -36,6 +36,7 @@ function renderSrItemsSectionShell(containerId) {
       <table class="data-table" id="srItemsTable">
         <thead>
           <tr>
+            <th class="text-center" style="min-width:64px;">Return</th>
             <th class="min-w-280">Product</th>
             <th style="min-width:90px;">HSN</th>
             <th style="min-width:70px;">Unit</th>
@@ -97,6 +98,12 @@ function loadOriginalInvoiceItems(invoiceItems, alreadyReturnedByProduct) {
       rate: +it.rate || 0,
       discount_percentage: +it.discount_percentage || 0,
       gst_percentage: +it.gst_percentage || 0,
+      // Nothing is returned until the user says so. Previously every row
+      // sat there with an editable Return Qty box and no indication of
+      // which products were actually part of the return; the checkbox
+      // makes that choice explicit, and `selected` is what decides
+      // whether a row counts towards the totals or the save.
+      selected: false,
       return_qty: 0,
       taxable_value: 0, gst_amount: 0, igst: 0, cgst: 0, sgst: 0, total_amount: 0
     };
@@ -115,6 +122,11 @@ function prefillSrReturnQuantities(savedItems) {
     if (row) {
       row.max_qty = round2(row.max_qty + (+saved.quantity || 0));
       row.return_qty = Math.min(row.max_qty, +saved.quantity || 0);
+      // Editing an existing return: a line that was returned is already
+      // part of this return, so it loads ticked. Without this the whole
+      // table would reopen unchecked and the user would appear to have
+      // lost their return.
+      row.selected = row.return_qty > 0;
     }
   });
   renderSrItemsTable();
@@ -131,29 +143,67 @@ function renderSrItemsTable() {
   const tbody = document.getElementById('srItemsTableBody');
   if (!tbody) return;
   if (!srItems.length) {
-    tbody.innerHTML = '<tr><td colspan="8" class="empty-state">Select an invoice above to load its items.</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="9" class="empty-state">Select an invoice above to load its items.</td></tr>';
     return;
   }
-  tbody.innerHTML = srItems.map(row => `
-    <tr data-row="${row.rowId}">
+  tbody.innerHTML = srItems.map(row => {
+    // Nothing left to return on this line — there is no quantity the
+    // user could legitimately choose, so the row cannot be selected.
+    const exhausted = row.max_qty <= 0;
+    const title = exhausted
+      ? 'Already fully returned on an earlier sales return'
+      : (row.max_qty < row.original_qty ? 'Max returnable: ' + formatNum(row.max_qty) + ' (some already returned)' : '');
+    return `
+    <tr data-row="${row.rowId}" class="${row.selected ? 'sr-row-selected' : ''}">
+      <td class="text-center">
+        <input type="checkbox" class="sr-return-check" ${row.selected ? 'checked' : ''} ${exhausted ? 'disabled' : ''}
+          onchange="onSrRowToggle('${row.rowId}', this.checked)"
+          title="${title}"
+          aria-label="Return ${escItemHtml(row.product_name)}">
+      </td>
       <td><b>${escItemHtml(row.product_name)}</b></td>
       <td>${escItemHtml(row.hsn_code) || '&mdash;'}</td>
       <td>${escItemHtml(row.unit) || '&mdash;'}</td>
       <td class="text-center">${formatNum(row.original_qty)}</td>
       <td class="text-right">&#8377;${formatNum(row.rate)}</td>
       <td>
-        <input type="number" class="form-control text-center" min="0" max="${row.max_qty}" step="0.001" value="${row.return_qty}"
+        <input type="number" class="form-control text-center sr-return-qty" min="0" max="${row.max_qty}" step="0.001"
+          value="${row.return_qty}" ${row.selected ? '' : 'disabled'}
           oninput="onSrReturnQtyChange('${row.rowId}', this.value)"
-          title="${row.max_qty < row.original_qty ? 'Max returnable: ' + formatNum(row.max_qty) + ' (some already returned)' : ''}">
+          aria-label="Return quantity for ${escItemHtml(row.product_name)}"
+          title="${title}">
       </td>
       <td class="text-right fw-600 sr-taxable-cell">&#8377;${formatNum(row.taxable_value)}</td>
       <td class="text-right fw-700 sr-total-cell">&#8377;${formatNum(row.total_amount)}</td>
-    </tr>`).join('');
+    </tr>`;
+  }).join('');
+}
+
+// Ticking a row opens it for return and seeds a sensible quantity;
+// unticking takes it out of the return entirely.
+function onSrRowToggle(rowId, checked) {
+  const row = srItems.find(r => r.rowId === rowId);
+  if (!row) return;
+
+  if (checked && row.max_qty > 0) {
+    row.selected = true;
+    // Default to one unit whether one or many were sold — returning a
+    // single item is much the commonest case, and with only one sold
+    // there is nothing else it could be. Capped for the fractional-unit
+    // case (0.5 kg sold), where 1 would exceed what is returnable.
+    row.return_qty = Math.min(1, row.max_qty);
+  } else {
+    row.selected = false;
+    row.return_qty = 0;
+  }
+  recalcSrRow(row);
+  renderSrItemsTable();
+  computeSrRollups();
 }
 
 function onSrReturnQtyChange(rowId, value) {
   const row = srItems.find(r => r.rowId === rowId);
-  if (!row) return;
+  if (!row || !row.selected) return;   // a disabled input cannot contribute
   let qty = parseFloat(value);
   if (isNaN(qty) || qty < 0) qty = 0;
   if (qty > row.max_qty) qty = row.max_qty;
@@ -162,8 +212,15 @@ function onSrReturnQtyChange(rowId, value) {
   computeSrRollups();
 }
 
+// Full Return ticks every returnable row and fills each to its maximum;
+// Clear All unticks everything and empties the quantities.
 function setAllSrReturnQty(full) {
-  srItems.forEach(row => { row.return_qty = full ? row.max_qty : 0; recalcSrRow(row); });
+  srItems.forEach(row => {
+    const selectable = full && row.max_qty > 0;
+    row.selected = selectable;
+    row.return_qty = selectable ? row.max_qty : 0;
+    recalcSrRow(row);
+  });
   renderSrItemsTable();
   computeSrRollups();
 }
@@ -187,8 +244,15 @@ function updateSrRowComputedCells(row) {
   if (totalCell) totalCell.textContent = '₹' + formatNum(row.total_amount);
 }
 
+// The one definition of "rows in this return": ticked, with a quantity.
+// Totals, validation and the save all read from this, so what the user
+// sees added up is exactly what gets stored.
+function selectedSrRows() {
+  return srItems.filter(r => r.selected && r.return_qty > 0);
+}
+
 function computeSrRollups() {
-  const rows = srItems.filter(r => r.return_qty > 0);
+  const rows = selectedSrRows();
   const taxable = round2(rows.reduce((s, r) => s + r.taxable_value, 0));
   const igst    = round2(rows.reduce((s, r) => s + r.igst, 0));
   const cgst    = round2(rows.reduce((s, r) => s + r.cgst, 0));
@@ -215,13 +279,16 @@ function computeSrRollups() {
 
 function validateSalesReturnItems() {
   if (!srItems.length) { showToast('Select an invoice to load its items first.', 'error'); return false; }
-  const rows = srItems.filter(r => r.return_qty > 0);
-  if (!rows.length) { showToast('Enter a return quantity for at least one product.', 'error'); return false; }
+  if (!selectedSrRows().length) {
+    // Names the checkbox, since that is now the action being asked for.
+    showToast('Tick the Return checkbox on at least one product.', 'error');
+    return false;
+  }
   return true;
 }
 
 function getSrItemsForSave() {
-  return srItems.filter(r => r.return_qty > 0).map(r => ({
+  return selectedSrRows().map(r => ({
     product_id: r.product_id, product_name: r.product_name, hsn_code: r.hsn_code, unit: r.unit,
     quantity: r.return_qty, rate: r.rate, discount_percentage: r.discount_percentage, gst_percentage: r.gst_percentage,
     taxable_value: r.taxable_value, gst_amount: r.gst_amount, igst: r.igst, cgst: r.cgst, sgst: r.sgst,
