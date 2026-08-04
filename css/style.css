@@ -387,8 +387,40 @@ body {
 
 .stat-info { flex: 1; min-width: 0; }
 .stat-label { font-size: 11.5px; color: var(--text-muted); margin-bottom: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.stat-value { font-size: 18px; font-weight: 700; color: var(--text); }
-.stat-sub   { font-size: 11px; color: var(--text-muted); margin-top: 2px; }
+
+/* Statistic amounts.
+   Two mechanisms, doing two different jobs:
+   1. clamp() below sets the baseline and steps the whole set down
+      together as the viewport narrows. It responds to SCREEN size.
+   2. fitStatValues() in js/utils.js then shrinks an individual value
+      only if it still would not fit its own card. It responds to VALUE
+      LENGTH, which CSS cannot see — clamp has no idea whether the box
+      holds ₹8,500.00 or ₹1,23,45,67,890.00.
+   Together: nothing is ever clipped or wrapped, and a value is never
+   made smaller than it needs to be. Applies to every .stat-value on
+   every page; no card is special-cased. */
+.stat-value {
+  font-size: clamp(14px, 0.6vw + 0.72rem, 18px);
+  font-weight: 700;
+  color: var(--text);
+  /* A long amount used to wrap onto a second line, which pushed its
+     card taller than the rest of the row. */
+  white-space: nowrap;
+  /* The box the auto-fit measures against (scrollWidth vs clientWidth).
+     The fit runs before paint, so this never actually clips anything —
+     it is the measuring frame, and a safe backstop if the script has
+     not run yet. */
+  overflow: hidden;
+  text-align: right;
+  /* Pinned to the previous rendered height (18px x 1.5). Fixing the line
+     box means a shrunken font cannot change the card's height, so the
+     grid keeps its existing rhythm. */
+  line-height: 27px;
+  /* Equal-width digits: amounts align down a column and do not jitter
+     as they change. */
+  font-variant-numeric: tabular-nums;
+}
+.stat-sub   { font-size: 11px; color: var(--text-muted); margin-top: 2px; text-align: right; }
 
 /* ---- Charts ---- */
 .chart-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 20px; margin-top: 24px; }
@@ -696,7 +728,11 @@ table.data-table {
 
 @media (max-width: 480px) {
   .stat-grid { grid-template-columns: 1fr 1fr; }
-  .stat-value { font-size: 15px; }
+  /* The hardcoded 15px that used to sit here is gone: .stat-value's
+     clamp() already scales with the viewport, and the auto-fit handles
+     whatever the value's own length demands. A fixed size here could
+     only ever be too big for a long amount or too small for a short
+     one. */
   .btn-group { flex-direction: column; }
 }
 

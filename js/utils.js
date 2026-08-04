@@ -536,3 +536,82 @@ function numberToWordsINR(n) {
 
   return parts.join(' ') + ' Rupees Only';
 }
+
+// ── Statistic card amounts: shrink-to-fit ────────────
+// CSS handles how the amounts respond to SCREEN size (see .stat-value's
+// clamp() in css/style.css). It cannot respond to VALUE LENGTH — a
+// stylesheet has no way to know the box holds ₹1,23,45,67,890.00 rather
+// than ₹8,500.00, and a card wide enough for one is not wide enough for
+// the other.
+//
+// This closes that gap: after the amount is on the page, if it would
+// overflow its card the font is reduced until it fits, and no further.
+// A value that already fits is never touched, so short amounts keep the
+// full size. Generic by design — every .stat-value on every page is
+// handled, nothing is special-cased.
+const STAT_VALUE_MIN_PX = 10;
+
+function fitStatValue(el) {
+  el.style.fontSize = '';                        // back to the CSS baseline
+  // Nothing measurable yet (hidden tab, display:none) — leave it alone
+  // rather than compute a size from a zero-width box.
+  if (!el.clientWidth) return;
+  if (el.scrollWidth <= el.clientWidth) return;  // already fits: don't shrink
+
+  const max = parseFloat(getComputedStyle(el).fontSize) || 18;
+  if (max <= STAT_VALUE_MIN_PX) return;
+
+  // Binary search for the largest size that fits. Eight passes narrow an
+  // 8px range to under 0.05px, which is well past what a screen can
+  // show, and costs a fixed number of reflows rather than one per step.
+  let lo = STAT_VALUE_MIN_PX, hi = max, best = STAT_VALUE_MIN_PX;
+  for (let i = 0; i < 8; i++) {
+    const mid = (lo + hi) / 2;
+    el.style.fontSize = mid + 'px';
+    if (el.scrollWidth <= el.clientWidth) { best = mid; lo = mid; } else { hi = mid; }
+  }
+
+  // Round DOWN. Rounding to the nearest 1/100th could round up past the
+  // size that was measured as fitting, which left the text one pixel
+  // wider than its box — the exact failure this function exists to
+  // prevent.
+  el.style.fontSize = (Math.floor(best * 100) / 100) + 'px';
+
+  // Verify rather than trust: sub-pixel text metrics and the browser's
+  // own rounding can still leave a hair of overhang. Step down until it
+  // genuinely fits, or until the floor says stop.
+  let size = parseFloat(el.style.fontSize);
+  while (size > STAT_VALUE_MIN_PX && el.scrollWidth > el.clientWidth) {
+    size = Math.max(STAT_VALUE_MIN_PX, size - 0.25);
+    el.style.fontSize = size + 'px';
+  }
+}
+
+function fitStatValues(root) {
+  (root || document).querySelectorAll('.stat-value').forEach(fitStatValue);
+}
+
+// Wires itself up: refits when the page loads, when it is resized, and
+// whenever a card's text changes (the amounts arrive from an async
+// fetch, long after DOMContentLoaded). Deliberately observes only the
+// stat values and only childList/characterData — NOT attributes, since
+// the fit sets style.fontSize and watching attributes would make it
+// retrigger itself forever.
+(function autoFitStatValues() {
+  if (typeof document === 'undefined' || typeof MutationObserver === 'undefined') return;
+
+  let pending = null;
+  const schedule = () => {
+    if (pending) cancelAnimationFrame(pending);
+    pending = requestAnimationFrame(() => { pending = null; fitStatValues(); });
+  };
+
+  document.addEventListener('DOMContentLoaded', () => {
+    const values = document.querySelectorAll('.stat-value');
+    if (!values.length) return;                  // not a page with stat cards
+    schedule();
+    window.addEventListener('resize', schedule);
+    const observer = new MutationObserver(schedule);
+    values.forEach(el => observer.observe(el, { childList: true, characterData: true, subtree: true }));
+  });
+})();
