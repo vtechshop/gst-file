@@ -533,6 +533,16 @@ table.data-table {
 .data-table tbody tr { border-bottom: 1px solid var(--border); transition: background 0.1s; }
 .data-table tbody tr:hover { background: var(--primary-xlight); }
 
+/* The row the user just came back from editing. Fades out on its own so
+   it draws the eye without leaving a permanent selection the user then
+   has to dismiss. Background only — no border or padding change, so the
+   row cannot shift as it fades. */
+@keyframes rowJustUpdated {
+  from { background: var(--primary-xlight); }
+  to   { background: transparent; }
+}
+.data-table tbody tr.row-just-updated { animation: rowJustUpdated 2.5s ease-out; }
+
 /* Sales Return: the rows actually being returned.
    With a long invoice the ticked lines need to be findable at a glance,
    since they are the only ones contributing to the totals below. Tinted

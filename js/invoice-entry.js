@@ -716,12 +716,25 @@ async function saveInvoice() {
     clearInvoiceFormFields();
     document.getElementById('invCustName')?.focus();
   } else {
-    // Editing an existing invoice: stay on it rather than jumping to a
-    // blank form — the user likely wants to review what they just saved.
     invoiceEditId = invoiceId;
     invoiceEditType = type;
     document.getElementById('invSaveBtn').innerHTML = '<i class="fas fa-save"></i> Update Invoice';
     document.getElementById('invPageTitle').textContent = 'Edit Invoice';
+
+    // An update succeeded: hand the user back to the list they came
+    // from. Only ever on this branch — a brand-new invoice still clears
+    // the form for the next sale, and a FAILED save returns early well
+    // above this point, so a failure keeps the user here with the error
+    // and their edits intact.
+    //
+    // replace() rather than assign(): the editor is finished with, and
+    // leaving it in history would mean Back reopens a form for an
+    // invoice that has already been saved.
+    setListReturnState(INVOICE_LIST_RETURN_KEY, {
+      flash: 'Invoice updated successfully!',
+      selected: { type, id: invoiceId }
+    });
+    location.replace('invoice-list.html');
   }
 }
 

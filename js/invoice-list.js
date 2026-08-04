@@ -78,6 +78,80 @@ async function initInvoiceList() {
   populateInvoiceListFilters();
   setupInvoiceListSearch();
   await loadInvoiceList(user.id);
+  // After the data and the State filter's options exist — restoring a
+  // filter value before its <option> is rendered would silently select
+  // nothing.
+  restoreInvListState();
+}
+
+// ── Remembering where the user was ───────────────────
+// Captured the instant Edit is clicked, while the list is still on
+// screen and every control still holds what the user chose. Editing an
+// invoice from page 4 of a filtered, searched, re-sorted list used to
+// dump them back at an unfiltered page 1, which on a long list meant
+// hunting for their place again.
+function rememberInvListState(type, id) {
+  setListReturnState(INVOICE_LIST_RETURN_KEY, {
+    page: invListPage,
+    search: document.getElementById('invListSearch')?.value || '',
+    filters: {
+      state: document.getElementById('invListStateFilter')?.value || '',
+      month: document.getElementById('invListMonthFilter')?.value || '',
+      year:  document.getElementById('invListYearFilter')?.value || '',
+      type:  document.getElementById('invListTypeFilter')?.value || ''
+    },
+    sort: document.getElementById('invListSortOrder')?.value || 'desc',
+    // Both, because which element scrolls depends on the viewport: the
+    // window on desktop, the .content pane once the layout stacks.
+    scrollY: window.scrollY || 0,
+    contentScroll: document.querySelector('.content')?.scrollTop || 0,
+    selected: { type, id }
+  });
+}
+
+// Puts the list back exactly as it was, then makes sure the row the user
+// went off to edit is on screen and briefly marked, so the invoice they
+// just changed is the one they are looking at.
+function restoreInvListState() {
+  const state = takeListReturnState(INVOICE_LIST_RETURN_KEY);
+  if (!state) return;
+
+  const set = (elId, v) => { const el = document.getElementById(elId); if (el && v !== undefined) el.value = v; };
+  set('invListSearch', state.search);
+  set('invListStateFilter', state.filters?.state);
+  set('invListMonthFilter', state.filters?.month);
+  set('invListYearFilter', state.filters?.year);
+  set('invListTypeFilter', state.filters?.type);
+  set('invListSortOrder', state.sort);
+  invListSort = state.sort === 'asc' ? 'asc' : 'desc';
+
+  // Re-runs the whole pipeline (filters -> search -> sort) against the
+  // freshly loaded data, so the restored view reflects the edit that was
+  // just saved rather than a stale snapshot.
+  invListAllData = sortInvoicesByNumber(invListAllData);
+  applyInvoiceListFilters();          // resets to page 1...
+  goToInvoiceListPage(state.page);    // ...then back to where they were
+
+  if (state.flash) showToast(state.flash, 'success');
+
+  // Scroll last, once the rows for this page exist.
+  requestAnimationFrame(() => {
+    const row = state.selected?.id
+      ? document.querySelector(`#invListTableBody tr[data-invoice-id="${state.selected.id}"]`)
+      : null;
+    if (row) {
+      row.classList.add('row-just-updated');
+      row.scrollIntoView({ block: 'center' });
+      setTimeout(() => row.classList.remove('row-just-updated'), 2600);
+    } else {
+      // The edited invoice fell outside the restored filter (its number
+      // or customer changed, say) — put the user back where they were
+      // rather than at the top.
+      window.scrollTo(0, state.scrollY || 0);
+      const content = document.querySelector('.content');
+      if (content && state.contentScroll) content.scrollTop = state.contentScroll;
+    }
+  });
 }
 
 async function loadInvoiceList(userId) {
@@ -212,7 +286,7 @@ function renderInvoiceListPage() {
   tbody.innerHTML = page.map((r, i) => {
     const balance = round2(Math.max(0, (r.total_amount || 0) - (r.amount_paid || 0)));
     return `
-    <tr>
+    <tr data-invoice-id="${r.id}" data-invoice-type="${r.type}">
       <td>${start + i + 1}</td>
       <td class="fw-600">${r.invoice_number}</td>
       <td>${formatDate(r.invoice_date)}</td>
@@ -228,7 +302,7 @@ function renderInvoiceListPage() {
       <td>
         <div class="action-btns">
           <button type="button" class="btn btn-secondary btn-sm btn-icon" onclick="viewInvoiceFromList('${r.type}','${r.id}')" title="View"><i class="fas fa-eye"></i></button>
-          <a class="btn btn-secondary btn-sm btn-icon" href="invoice.html?type=${r.type}&id=${r.id}" title="Edit"><i class="fas fa-edit"></i></a>
+          <a class="btn btn-secondary btn-sm btn-icon" href="invoice.html?type=${r.type}&id=${r.id}" title="Edit" onclick="rememberInvListState('${r.type}','${r.id}')"><i class="fas fa-edit"></i></a>
           <button type="button" class="btn btn-secondary btn-sm btn-icon" onclick="duplicateInvoiceFromList('${r.type}','${r.id}')" title="Duplicate"><i class="fas fa-copy"></i></button>
           <button type="button" class="btn btn-danger btn-sm btn-icon" onclick="downloadInvoicePDF('${r.type}','${r.id}')" title="Download PDF"><i class="fas fa-file-pdf"></i></button>
           <button type="button" class="btn btn-secondary btn-sm btn-icon" onclick="printInvoice('${r.type}','${r.id}')" title="Print"><i class="fas fa-print"></i></button>

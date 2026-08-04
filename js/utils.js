@@ -615,3 +615,33 @@ function fitStatValues(root) {
     values.forEach(el => observer.observe(el, { childList: true, characterData: true, subtree: true }));
   });
 })();
+
+// ── Returning to a list after an edit ────────────────
+// Invoice List stashes where the user was (page, search, filters, sort,
+// scroll, the row they clicked) before handing off to the editor, and
+// picks it up again when the editor sends them back. Both pages need
+// the same key, and this file is the only one both of them load.
+//
+// sessionStorage rather than the URL: it is per-tab, dies with the tab,
+// and keeps a long filter set out of a shareable link. Reading it is
+// destructive — see takeListReturnState — so a restore happens exactly
+// once and a later Back or refresh shows the list normally.
+const INVOICE_LIST_RETURN_KEY = 'gst_invoice_list_return';
+
+function setListReturnState(key, patch) {
+  try {
+    const current = JSON.parse(sessionStorage.getItem(key) || '{}');
+    sessionStorage.setItem(key, JSON.stringify({ ...current, ...patch }));
+  } catch { /* private mode / quota — navigation still works, just unrestored */ }
+}
+
+function peekListReturnState(key) {
+  try { return JSON.parse(sessionStorage.getItem(key) || 'null'); } catch { return null; }
+}
+
+// Read-and-clear: one restore per hand-off.
+function takeListReturnState(key) {
+  const state = peekListReturnState(key);
+  try { sessionStorage.removeItem(key); } catch { /* ignore */ }
+  return state;
+}
