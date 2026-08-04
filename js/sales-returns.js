@@ -13,8 +13,10 @@
 
 let srUserId = null;
 let srEditId = null;
-let srAllData = [];
+let srAllData = [];        // the CURRENT page of history rows, not all of them
 let srPage = 1;
+let srTotalCount = 0;      // rows across the whole history, for the pager
+let srTotalAmount = 0;     // SUM(total_amount) across the whole history, for the footer
 const SR_PAGE = 10;
 let srAllInvoices = [];
 let srSelectedInvoice = null; // { type, id, invoice_number, customer_name, gst_number, phone, address, state, supply_type }
@@ -26,12 +28,18 @@ async function initSalesReturns() {
   initNavUser(user);
   setupLogoutBtn();
   setupMobileMenu();
-  await loadUserProfile(user.id);
   initSalesReturnItems();
-  await loadSrInvoicesList(user.id);
   setSrValue('srDate', toISO(new Date()));
   setupSrSearch();
-  await loadSalesReturns(user.id);
+  // These three fetches share nothing — the profile, the invoice picker
+  // and the history table. Awaiting them one after another paid the
+  // round-trip cost three times over, which is invisible on localhost
+  // and dominates the load over a real network.
+  await Promise.all([
+    loadUserProfile(user.id),
+    loadSrInvoicesList(user.id),
+    loadSalesReturns(user.id)
+  ]);
 }
 
 function setSrValue(id, v) { const el = document.getElementById(id); if (el) el.value = v ?? ''; }
@@ -39,9 +47,13 @@ function getSrText(id) { return document.getElementById(id)?.value?.trim() || ''
 
 // ── Invoice selection ────────────────────────────────
 async function loadSrInvoicesList(userId) {
+  // Only the nine fields the picker and the selected-invoice header
+  // actually read. These tables carry ~30 columns each including the
+  // whole transport block, none of which is used here.
+  const INVOICE_FIELDS = 'id,invoice_number,customer_name,gst_number,phone,address,state,supply_type,invoice_date';
   const [{ data: b2b }, { data: b2c }] = await Promise.all([
-    _supabase.from('b2b_invoices').select('*').eq('user_id', userId),
-    _supabase.from('b2c_invoices').select('*').eq('user_id', userId)
+    _supabase.from('b2b_invoices').select(INVOICE_FIELDS).eq('user_id', userId),
+    _supabase.from('b2c_invoices').select(INVOICE_FIELDS).eq('user_id', userId)
   ]);
   const b2bRows = (b2b || []).map(r => ({
     type: 'b2b', id: r.id, invoice_number: r.invoice_number, customer_name: r.customer_name,
@@ -100,21 +112,21 @@ async function selectSrInvoice(match) {
 // Sums quantity already returned per product across every OTHER active
 // sales return against this same invoice (excludeReturnId lets Edit
 // mode not double-count the return being edited against itself).
+// One aggregated request, joined and grouped in Postgres.
+//
+// This used to be two round trips, the second of which fetched EVERY
+// sales_return_item the account had ever created — all columns — and
+// filtered them in JavaScript. Its cost grew with total return history
+// while the answer only ever concerned ONE invoice, so it got slower
+// with every return ever recorded and the work was thrown away.
 async function computeAlreadyReturnedByProduct(invoiceId, invoiceType, excludeReturnId) {
-  const { data: returns } = await _supabase.from('sales_returns').select('*')
-    .eq('user_id', srUserId).eq('original_invoice_id', invoiceId).eq('original_invoice_type', invoiceType);
-  const activeReturnIds = (returns || [])
-    .filter(r => r.id !== excludeReturnId)
-    .map(r => r.id);
-  if (!activeReturnIds.length) return {};
-
-  const { data: allItems } = await _supabase.from('sales_return_items').select('*').eq('user_id', srUserId);
-  const byProduct = {};
-  (allItems || []).forEach(it => {
-    if (!it.product_id || !activeReturnIds.includes(it.return_id)) return;
-    byProduct[it.product_id] = (byProduct[it.product_id] || 0) + (+it.quantity || 0);
-  });
-  return byProduct;
+  const params = new URLSearchParams({ invoice_id: invoiceId, invoice_type: invoiceType });
+  if (excludeReturnId) params.set('exclude_return_id', excludeReturnId);
+  try {
+    return await apiFetch('/sales_returns/returned-by-product?' + params.toString());
+  } catch {
+    return {};   // never block invoice selection on this lookup
+  }
 }
 
 // ── Save ─────────────────────────────────────────────
@@ -169,10 +181,26 @@ function resetSalesReturn() {
 }
 
 // ── History list ──────────────────────────────────────
-async function loadSalesReturns(userId) {
-  const { data } = await _supabase.from('sales_returns').select('*').eq('user_id', userId).order('return_date', { ascending: false });
-  srAllData = (data || []);
-  srPage = 1;
+// The history table is paginated on the SERVER: one page of rows, plus a
+// count and a column total covering every return so the pager and the
+// totals footer stay exactly as they were. Previously this pulled every
+// sales_return the account had ever made — all 24 columns — and sliced
+// ten of them out in the browser.
+const SR_HISTORY_FIELDS = 'id,return_number,return_date,customer_name,original_invoice_number,original_invoice_type,total_amount';
+
+async function loadSalesReturns(userId, page) {
+  srPage = page || 1;
+  const { data, count, sum } = await _supabase
+    .from('sales_returns')
+    .select(SR_HISTORY_FIELDS)
+    .eq('user_id', userId)
+    .order('return_date', { ascending: false })
+    .limit(SR_PAGE)
+    .offset((srPage - 1) * SR_PAGE)
+    .withTotals('total_amount');
+  srAllData = data || [];
+  srTotalCount = count || 0;
+  srTotalAmount = sum || 0;
   renderSrTable(srAllData);
 }
 
@@ -181,8 +209,10 @@ function renderSrTable(data) {
   const tfoot = document.getElementById('srTableTotal');
   if (!tbody) return;
 
+  // `data` IS the current page now — the server did the slicing — so the
+  // row offset comes from the page number rather than from an array cut.
   const start = (srPage - 1) * SR_PAGE;
-  const page  = data.slice(start, start + SR_PAGE);
+  const page  = data;
 
   if (!data.length) {
     tbody.innerHTML = '<tr><td colspan="7" class="empty-state"><i class="fas fa-rotate-left" style="display:block;font-size:40px;margin-bottom:10px;"></i>No sales returns found</td></tr>';
@@ -211,10 +241,12 @@ function renderSrTable(data) {
       </td>
     </tr>`).join('');
 
-  const total = data.reduce((s, r) => s + (+r.total_amount || 0), 0);
-  if (tfoot) tfoot.innerHTML = `<tr><td colspan="5" class="fw-700">TOTALS (${data.length} returns)</td><td class="text-right fw-700">₹${formatNum(total)}</td><td></td></tr>`;
+  // Footer figures cover EVERY return, not the visible page — computed
+  // by Postgres and sent as headers, so the numbers shown are unchanged
+  // while the payload no longer grows with the history.
+  if (tfoot) tfoot.innerHTML = `<tr><td colspan="5" class="fw-700">TOTALS (${srTotalCount} returns)</td><td class="text-right fw-700">₹${formatNum(srTotalAmount)}</td><td></td></tr>`;
 
-  renderSrPagination(data.length);
+  renderSrPagination(srTotalCount);
 }
 
 function renderSrPagination(total) {
@@ -222,12 +254,22 @@ function renderSrPagination(total) {
   if (!c) return;
   const pages = Math.ceil(total / SR_PAGE);
   if (pages <= 1) { c.innerHTML = ''; return; }
-  let html = `<button class="page-btn" onclick="srPage=${srPage-1};renderSrTable(srAllData)" ${srPage===1?'disabled':''}>&#8249;</button>`;
+  // Each page is fetched, not sliced — srAllData only ever holds the
+  // page on screen, so re-rendering it under a new page number would
+  // just redraw the same ten rows.
+  let html = `<button class="page-btn" onclick="goToSrPage(${srPage-1})" ${srPage===1?'disabled':''}>&#8249;</button>`;
   for (let i = 1; i <= pages; i++) {
-    html += `<button class="page-btn ${i===srPage?'active':''}" onclick="srPage=${i};renderSrTable(srAllData)">${i}</button>`;
+    html += `<button class="page-btn ${i===srPage?'active':''}" onclick="goToSrPage(${i})">${i}</button>`;
   }
-  html += `<button class="page-btn" onclick="srPage=${srPage+1};renderSrTable(srAllData)" ${srPage===pages?'disabled':''}>&#8250;</button>`;
+  html += `<button class="page-btn" onclick="goToSrPage(${srPage+1})" ${srPage===pages?'disabled':''}>&#8250;</button>`;
   c.innerHTML = html;
+}
+
+async function goToSrPage(page) {
+  const pages = Math.max(1, Math.ceil(srTotalCount / SR_PAGE));
+  const next = Math.min(Math.max(1, Number(page) || 1), pages);
+  if (next === srPage) return;
+  await loadSalesReturns(srUserId, next);
 }
 
 async function editSalesReturn(id) {

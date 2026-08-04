@@ -41,7 +41,10 @@ async function apiFetch(path, options = {}) {
   let body = null;
   try { body = await res.json(); } catch { /* e.g. 204/empty body */ }
   if (!res.ok) throw { ...((body && body.error) || { message: 'Request failed (' + res.status + ')' }), status: res.status };
-  return body;
+  // Paginated reads need the row count / column total the server sends
+  // as headers alongside the page of rows; every other caller keeps
+  // receiving just the parsed body.
+  return options.withHeaders ? { body, headers: res.headers } : body;
 }
 
 class RestQueryBuilder {
@@ -92,6 +95,18 @@ class RestQueryBuilder {
   order(f, opts) { this._orderField = f; this._orderAsc = opts?.ascending !== false; return this; }
   single()       { this._isSingle = true; return this; }
 
+  // Server-side pagination. Without these a list page has to fetch every
+  // row it owns and slice in the browser, which grows without bound as
+  // the account does.
+  limit(n)  { this._limit = n; return this; }
+  offset(n) { this._offset = n; return this; }
+
+  // Asks the server for figures over the WHOLE filtered set, not just
+  // the page: a row count for the pager and optionally a column total
+  // for a footer. Both arrive as headers, so `count` and `sum` appear on
+  // the result alongside `data`.
+  withTotals(sumColumn) { this._wantCount = true; this._sumColumn = sumColumn || null; return this; }
+
   _filterQueryString() {
     const params = new URLSearchParams();
     Object.entries(this._filters).forEach(([f, v]) => params.append('eq_' + f, v));
@@ -100,6 +115,10 @@ class RestQueryBuilder {
     Object.entries(this._inF).forEach(([f, values]) => { if (values && values.length) params.append('in_' + f, values.join(',')); });
     if (this._orderField) params.set('order', this._orderField + '.' + (this._orderAsc ? 'asc' : 'desc'));
     if (this._select) params.set('select', this._select);
+    if (this._limit)  params.set('limit', this._limit);
+    if (this._offset) params.set('offset', this._offset);
+    if (this._wantCount) params.set('count', 'exact');
+    if (this._sumColumn) params.set('sum', this._sumColumn);
     return params.toString();
   }
 
@@ -124,6 +143,15 @@ class RestQueryBuilder {
 
       // select
       const qs = this._filterQueryString();
+      if (this._wantCount || this._sumColumn) {
+        const { body, headers } = await apiFetch('/' + this._table + (qs ? '?' + qs : ''), { withHeaders: true });
+        return {
+          data: body,
+          count: Number(headers.get('X-Total-Count') || 0),
+          sum: Number(headers.get('X-Total-Sum') || 0),
+          error: null
+        };
+      }
       const rows = await apiFetch('/' + this._table + (qs ? '?' + qs : ''));
       if (this._isSingle) {
         const found = rows[0] || null;

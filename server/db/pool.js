@@ -32,4 +32,37 @@ pool.on('error', (err) => {
   console.error('Unexpected error on idle Postgres client', err);
 });
 
+// ── Query timing ─────────────────────────────────────
+// Wraps pool.query so every statement reports how long it took and how
+// many rows it returned. Off by default; set DB_LOG_QUERIES=1 to profile
+// a page, or DB_SLOW_MS=<n> to log only statements slower than n ms.
+//
+// Row count matters as much as duration here: a 40ms query returning
+// 20,000 rows is usually the real problem, because the cost lands on
+// serialisation and on the browser, where no server timing would show
+// it.
+const LOG_ALL = process.env.DB_LOG_QUERIES === '1';
+const SLOW_MS = parseInt(process.env.DB_SLOW_MS) || 0;
+
+if (LOG_ALL || SLOW_MS > 0) {
+  const rawQuery = pool.query.bind(pool);
+  pool.query = async (...args) => {
+    const started = process.hrtime.bigint();
+    try {
+      const res = await rawQuery(...args);
+      const ms = Number(process.hrtime.bigint() - started) / 1e6;
+      if (LOG_ALL || ms >= SLOW_MS) {
+        const sql = String(typeof args[0] === 'string' ? args[0] : args[0]?.text || '')
+          .replace(/\s+/g, ' ').trim().slice(0, 160);
+        console.log(`[sql] ${ms.toFixed(1).padStart(8)}ms  rows=${String(res?.rowCount ?? 0).padStart(6)}  ${sql}`);
+      }
+      return res;
+    } catch (err) {
+      const ms = Number(process.hrtime.bigint() - started) / 1e6;
+      console.log(`[sql] ${ms.toFixed(1).padStart(8)}ms  FAILED  ${err.message}`);
+      throw err;
+    }
+  };
+}
+
 module.exports = pool;

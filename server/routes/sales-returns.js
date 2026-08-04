@@ -96,6 +96,40 @@ async function assertReturnQuantitiesAllowed(client, userId, header, items, edit
   }
 }
 
+// ── Already-returned quantities for one invoice ──────
+// { [product_id]: qty } summed across every OTHER return against this
+// invoice, so Sales Return Entry knows what is still outstanding.
+//
+// Exists because the frontend previously answered this by downloading
+// every sales_return_item in the account and filtering client-side —
+// work proportional to total history for a question about a single
+// invoice. One indexed join, grouped in Postgres, returns a few rows.
+router.get('/returned-by-product', asyncRoute(async (req, res) => {
+  const { invoice_id, invoice_type, exclude_return_id } = req.query;
+  if (!invoice_id || !invoice_type) {
+    const e = new Error('invoice_id and invoice_type are required.'); e.status = 400; e.expose = true; throw e;
+  }
+  badId(invoice_id);
+  if (exclude_return_id) badId(exclude_return_id);
+
+  const { rows } = await pool.query(
+    `SELECT i.product_id, SUM(i.quantity)::float8 AS qty
+       FROM sales_return_items i
+       JOIN sales_returns r ON r.id = i.return_id
+      WHERE r.user_id = $1
+        AND r.original_invoice_id = $2
+        AND r.original_invoice_type = $3
+        AND ($4::uuid IS NULL OR r.id <> $4::uuid)
+        AND i.product_id IS NOT NULL
+      GROUP BY i.product_id`,
+    [req.userId, invoice_id, invoice_type, exclude_return_id || null]
+  );
+
+  const byProduct = {};
+  rows.forEach(r => { byProduct[r.product_id] = r.qty; });
+  res.json(byProduct);
+}));
+
 // ── 1) Save header + line items + stock, one transaction ──
 router.post('/save-with-items', asyncRoute(async (req, res) => {
   const { editId, header, items } = req.body;

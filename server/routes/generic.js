@@ -70,6 +70,47 @@ function buildSelect(selectParam, columns) {
   return requested.length ? requested.join(',') : '*';
 }
 
+// LIMIT/OFFSET so a list page can fetch the rows it displays instead of
+// the whole table. Both are clamped: a caller cannot ask for a million
+// rows, and a nonsense value falls back to no limit rather than erroring.
+const MAX_PAGE_ROWS = 500;
+function buildLimit(limitParam, offsetParam) {
+  const parts = [];
+  const params = [];
+  const limit = parseInt(limitParam, 10);
+  if (Number.isFinite(limit) && limit > 0) {
+    parts.push(`LIMIT ${Math.min(limit, MAX_PAGE_ROWS)}`);
+    const offset = parseInt(offsetParam, 10);
+    if (Number.isFinite(offset) && offset > 0) parts.push(`OFFSET ${offset}`);
+  }
+  return parts.join(' ');
+}
+
+// A paginated table still needs figures for the whole filtered set — a
+// row count for the pager and, for the money tables, a column total for
+// the footer. Computing them in Postgres keeps that O(1) over the wire
+// instead of shipping every row just to add it up in the browser.
+//
+// Returned as headers so the body stays a plain array and every existing
+// caller is unaffected. `sum` is checked against the table's column
+// allow-list, exactly like select/order/filters.
+async function attachAggregates(res, req, table, where, params, columns) {
+  const wantCount = req.query.count === 'exact';
+  const sumCol = columns.includes(String(req.query.sum)) ? String(req.query.sum) : null;
+  if (!wantCount && !sumCol) return;
+
+  const pieces = [];
+  if (wantCount) pieces.push('COUNT(*)::bigint AS total_count');
+  if (sumCol) pieces.push(`COALESCE(SUM(${sumCol}),0) AS total_sum`);
+  const { rows } = await pool.query(`SELECT ${pieces.join(', ')} FROM ${table} ${where}`, params);
+
+  const agg = rows[0] || {};
+  if (wantCount) res.set('X-Total-Count', String(agg.total_count ?? 0));
+  if (sumCol) res.set('X-Total-Sum', String(agg.total_sum ?? 0));
+  // Without this the browser cannot read either header cross-origin.
+  res.set('Access-Control-Expose-Headers', 'X-Total-Count, X-Total-Sum');
+}
+
 // Runs a table's optional `validate(payload)` hook (see TABLES.customers
 // below for the one real user) and throws a 400 with every failure
 // reason joined into one message — same { error: { message } } shape
@@ -95,7 +136,13 @@ function makeCrudRouter(table, { columns, insertable = true, ownerColumn = 'user
     const { where, params } = buildWhere(req.query, ownerColumn, req.userId, columns);
     const orderClause = buildOrder(req.query.order, columns);
     const selectCols = buildSelect(req.query.select, columns);
-    const { rows } = await pool.query(`SELECT ${selectCols} FROM ${table} ${where} ${orderClause}`, params);
+    const limitClause = buildLimit(req.query.limit, req.query.offset);
+    // The page of rows and the aggregates over the whole filtered set are
+    // independent, so they go together rather than one after the other.
+    const [{ rows }] = await Promise.all([
+      pool.query(`SELECT ${selectCols} FROM ${table} ${where} ${orderClause} ${limitClause}`, params),
+      attachAggregates(res, req, table, where, params, columns)
+    ]);
     res.json(rows);
   }));
 
