@@ -415,11 +415,14 @@ document.addEventListener('DOMContentLoaded', initReports);
 <div class="modal-overlay" id="gstr1ValidationModal">
   <div class="modal modal-lg">
     <div class="modal-header">
-      <span class="modal-title"><i class="fas fa-triangle-exclamation" style="color:var(--danger, #d32f2f);"></i> GSTR-1 Export Blocked — Validation Failed</span>
+      <span class="modal-title" id="gstr1ValidationTitle"><i class="fas fa-triangle-exclamation" style="color:var(--danger, #d32f2f);"></i> GSTR-1 Export Blocked — Validation Failed</span>
       <button type="button" class="modal-close" onclick="closeGSTR1ValidationModal()" aria-label="Close"><i class="fas fa-times"></i></button>
     </div>
     <div class="modal-body">
-      <p class="text-muted-sm mb-16">The JSON was <b>not</b> generated. Fix the issue(s) below and try again.</p>
+      <!-- Title and lead are set from js/gstr1-export.js: the same dialog
+           reports a blocked export and, after a successful one, what the
+           generated file does not cover. -->
+      <p class="text-muted-sm mb-16" id="gstr1ValidationLead">The JSON was <b>not</b> generated. Fix the issue(s) below and try again.</p>
       <ul id="gstr1ValidationList" style="margin:0;padding-left:20px;line-height:1.9;"></ul>
     </div>
   </div>

@@ -88,6 +88,163 @@ function gstr1ToUQC(unit) {
   return GSTR1_UQC_MAP[key] || 'OTH-OTHERS';
 }
 
+// ── Payload section registry ────────────────────────────────
+// The single declaration of what a payload from this generator contains.
+// Adding a section means adding one entry here and a builder that fills
+// it — the assembler, the schema validator and the final audit all read
+// this table and need no edit of their own. It replaces a top-level key
+// list that was hardcoded inside the audit, where any new section was
+// rejected as an "unexpected key" by the very check meant to protect the
+// payload.
+//
+// emitWhenEmpty records what this generator does with a section that has
+// nothing in it. Every section is currently emitted regardless — an empty
+// array or an hsn with an empty data[] — which is the behaviour that has
+// always shipped; it is stated here per section so it is a decision in
+// one table rather than an accident of how each builder happens to run.
+// Whether the Portal prefers empty sections omitted is NOT something this
+// codebase can answer, so nothing about the output is changed on a guess:
+// flipping one flag here is the whole change if it is ever confirmed.
+const GSTR1_SECTIONS = [
+  { key: 'gstin',  kind: 'header',  type: 'string' },
+  { key: 'fp',     kind: 'header',  type: 'string' },
+  { key: 'gt',     kind: 'header',  type: 'number' },
+  { key: 'cur_gt', kind: 'header',  type: 'number' },
+  { key: 'b2b',    kind: 'section', type: 'array',  label: 'B2B — registered supplies',            emitWhenEmpty: true },
+  { key: 'b2cl',   kind: 'section', type: 'array',  label: 'B2CL — large inter-state B2C',          emitWhenEmpty: true },
+  { key: 'b2cs',   kind: 'section', type: 'array',  label: 'B2CS — small B2C, state+rate summary',  emitWhenEmpty: true },
+  { key: 'cdnr',   kind: 'section', type: 'array',  label: 'CDNR — notes to registered customers',  emitWhenEmpty: true },
+  { key: 'cdnur',  kind: 'section', type: 'array',  label: 'CDNUR — notes to unregistered',         emitWhenEmpty: true },
+  { key: 'hsn',    kind: 'section', type: 'object', label: 'HSN summary',                           emitWhenEmpty: true,
+    isEmpty: v => !(v && Array.isArray(v.data) && v.data.length) }
+];
+
+// Sections this generator does not produce, and why. Every one is
+// reported at export time so what is absent from the file is stated
+// rather than left for the Portal to discover.
+//
+// These are omissions of DATA, not of schema: the application has no
+// model for any of them, so there is nothing to serialise. None is
+// emitted as an empty stub — a stub asserts "there were none of these
+// this period", which this codebase cannot know. Whether a given filing
+// requires any of them is a question for the Portal, not for this file.
+const GSTR1_UNPRODUCED_SECTIONS = [
+  { key: 'exp',       label: 'Exports',                     reason: 'no export-invoice model exists in this application' },
+  { key: 'at',        label: 'Advances received',           reason: 'no advance-receipt model exists in this application' },
+  { key: 'txpd',      label: 'Advances adjusted',           reason: 'no advance-adjustment model exists in this application' },
+  { key: 'nil',       label: 'Nil-rated / exempt / non-GST', reason: 'invoice lines carry no nil/exempt/non-GST classification' },
+  { key: 'doc_issue', label: 'Documents issued',            reason: 'no document-series register exists in this application' },
+  { key: 'amendments', label: 'Amendments to earlier periods', reason: 'this application does not track amendments to already-filed returns' }
+];
+
+const GSTR1_SECTION_KEYS = GSTR1_SECTIONS.map(s => s.key);
+const gstr1Section = key => GSTR1_SECTIONS.find(s => s.key === key);
+function gstr1SectionIsEmpty(spec, value) {
+  if (spec.isEmpty) return spec.isEmpty(value);
+  return Array.isArray(value) ? value.length === 0 : !value;
+}
+
+// Assembles the payload in registry order from a { key: value } map, so
+// key order in the written file follows the table above rather than the
+// order the builders happen to finish in.
+function assembleGSTR1Payload(parts) {
+  const payload = {};
+  GSTR1_SECTIONS.forEach(spec => {
+    const value = parts[spec.key];
+    if (spec.kind === 'section' && !spec.emitWhenEmpty && gstr1SectionIsEmpty(spec, value)) return;
+    payload[spec.key] = value;
+  });
+  return payload;
+}
+
+// ── Schema validation, run before the file is written ───────
+// Checks the payload against the registry: every declared key present,
+// every value the declared type, nothing present that was never
+// declared. The row-shape checks below assert the contract each builder
+// in this file is written to produce — they catch a builder that has
+// drifted from the shape the rest of the file assumes. They are NOT a
+// transcription of GSTN's published schema, which this codebase does not
+// have; no field is required here that this generator does not already
+// set, and none is invented.
+function gstr1RequireKeys(obj, keys, where, errors) {
+  if (!obj || typeof obj !== 'object') { errors.push(`Schema: ${where} is not an object.`); return false; }
+  const missing = keys.filter(k => obj[k] === undefined || obj[k] === null);
+  if (missing.length) errors.push(`Schema: ${where} is missing ${missing.map(k => `"${k}"`).join(', ')}.`);
+  return !missing.length;
+}
+
+function validateGSTR1Schema(payload, errors) {
+  if (!payload || typeof payload !== 'object') { errors.push('Schema: payload is not an object.'); return; }
+
+  GSTR1_SECTIONS.forEach(spec => {
+    const value = payload[spec.key];
+    const omittedLegitimately = spec.kind === 'section' && !spec.emitWhenEmpty && value === undefined;
+    if (value === undefined) {
+      if (!omittedLegitimately) errors.push(`Schema: mandatory key "${spec.key}"${spec.label ? ` (${spec.label})` : ''} is missing from the payload.`);
+      return;
+    }
+    const actual = Array.isArray(value) ? 'array' : typeof value;
+    if (actual !== spec.type) errors.push(`Schema: "${spec.key}" must be ${spec.type}, got ${actual}.`);
+  });
+
+  // Unknown keys are derived from the registry, never from a second list
+  // that has to be kept in step with it.
+  Object.keys(payload)
+    .filter(k => !GSTR1_SECTION_KEYS.includes(k))
+    .forEach(k => errors.push(`Schema: "${k}" is not a declared section — add it to GSTR1_SECTIONS if it belongs in the payload.`));
+
+  // Row shapes, per the builders in this file.
+  (payload.b2b || []).forEach((g, i) => {
+    if (!gstr1RequireKeys(g, ['ctin', 'inv'], `b2b[${i}]`, errors)) return;
+    if (!Array.isArray(g.inv)) { errors.push(`Schema: b2b[${i}].inv must be an array.`); return; }
+    g.inv.forEach((inv, j) => {
+      if (!gstr1RequireKeys(inv, ['inum', 'idt', 'val', 'pos', 'rchrg', 'inv_typ', 'itms'], `b2b[${i}].inv[${j}]`, errors)) return;
+      gstr1ValidateItms(inv.itms, `b2b[${i}].inv[${j}].itms`, ['txval', 'rt', 'iamt', 'camt', 'samt', 'csamt'], errors);
+    });
+  });
+  (payload.b2cl || []).forEach((g, i) => {
+    if (!gstr1RequireKeys(g, ['pos', 'inv'], `b2cl[${i}]`, errors)) return;
+    if (!Array.isArray(g.inv)) { errors.push(`Schema: b2cl[${i}].inv must be an array.`); return; }
+    g.inv.forEach((inv, j) => {
+      if (!gstr1RequireKeys(inv, ['inum', 'idt', 'val', 'itms'], `b2cl[${i}].inv[${j}]`, errors)) return;
+      gstr1ValidateItms(inv.itms, `b2cl[${i}].inv[${j}].itms`, ['txval', 'rt', 'iamt', 'csamt'], errors);
+    });
+  });
+  (payload.b2cs || []).forEach((r, i) =>
+    gstr1RequireKeys(r, ['sply_ty', 'pos', 'typ', 'rt', 'txval', 'iamt', 'camt', 'samt', 'csamt'], `b2cs[${i}]`, errors));
+  (payload.cdnr || []).forEach((g, i) => {
+    if (!gstr1RequireKeys(g, ['ctin', 'nt'], `cdnr[${i}]`, errors)) return;
+    if (!Array.isArray(g.nt)) { errors.push(`Schema: cdnr[${i}].nt must be an array.`); return; }
+    g.nt.forEach((n, j) => {
+      if (!gstr1RequireKeys(n, ['ntty', 'nt_num', 'nt_dt', 'pos', 'rchrg', 'val', 'itms'], `cdnr[${i}].nt[${j}]`, errors)) return;
+      gstr1ValidateItms(n.itms, `cdnr[${i}].nt[${j}].itms`, ['txval', 'rt', 'iamt', 'camt', 'samt', 'csamt'], errors);
+    });
+  });
+  (payload.cdnur || []).forEach((n, i) => {
+    if (!gstr1RequireKeys(n, ['typ', 'ntty', 'nt_num', 'nt_dt', 'pos', 'val', 'itms'], `cdnur[${i}]`, errors)) return;
+    gstr1ValidateItms(n.itms, `cdnur[${i}].itms`, ['txval', 'rt', 'iamt', 'csamt'], errors);
+  });
+  if (payload.hsn && Array.isArray(payload.hsn.data)) {
+    payload.hsn.data.forEach((r, i) =>
+      gstr1RequireKeys(r, ['num', 'hsn_sc', 'desc', 'uqc', 'qty', 'txval', 'rt', 'iamt', 'camt', 'samt', 'csamt'], `hsn.data[${i}]`, errors));
+  }
+}
+
+function gstr1ValidateItms(itms, where, detKeys, errors) {
+  if (!Array.isArray(itms)) { errors.push(`Schema: ${where} must be an array.`); return; }
+  if (!itms.length) { errors.push(`Schema: ${where} is empty — every invoice/note needs at least one rate line.`); return; }
+  itms.forEach((it, k) => {
+    if (!gstr1RequireKeys(it, ['num', 'itm_det'], `${where}[${k}]`, errors)) return;
+    if (gstr1RequireKeys(it.itm_det, detKeys, `${where}[${k}].itm_det`, errors)) {
+      detKeys.forEach(f => {
+        if (typeof it.itm_det[f] !== 'number' || !isFinite(it.itm_det[f])) {
+          errors.push(`Schema: ${where}[${k}].itm_det.${f} must be a finite number, got ${JSON.stringify(it.itm_det[f])}.`);
+        }
+      });
+    }
+  });
+}
+
 function gstr1InvoiceNumberOk(num) {
   // GSTN's own offline-utility validation: max 16 chars, letters/digits/-//
   return /^[A-Za-z0-9\-\/]{1,16}$/.test(num || '');
@@ -325,7 +482,7 @@ async function buildGSTR1Payload(userId, profile, periodFilter) {
     if (inv.supply_type !== 'interstate' && inv.supply_type !== 'intrastate') { errors.push(`${ctx}: supply_type "${inv.supply_type}" is neither interstate nor intrastate.`); return; }
 
     const pos = gstr1PosRegistered(gstin);
-    if (!GST_VALID_STATE_CODES.has(pos)) { errors.push(`${ctx}: derived POS "${pos}" (from customer GSTIN) is not a recognized state code.`); return; }
+    if (!GSTR1_VALID_POS_CODES.has(pos)) { errors.push(`${ctx}: derived POS "${pos}" (from customer GSTIN) is not a recognized state code.`); return; }
     // POS vs supply_type must agree — if they don't, one of the two is
     // stale/wrong (see the earlier Interstate/Intrastate detection fix
     // for exactly this class of bug on the entry form itself).
@@ -378,7 +535,7 @@ async function buildGSTR1Payload(userId, profile, periodFilter) {
     if (inv.invoice_date > todayISO) { errors.push(`${ctx}: invoice date (${inv.invoice_date}) is in the future.`); return; }
 
     const pos = gstr1PosUnregistered(inv.state, errors, ctx);
-    if (!GST_VALID_STATE_CODES.has(pos) && pos !== '99') { errors.push(`${ctx}: derived POS "${pos}" is not a recognized state code.`); return; }
+    if (!GSTR1_VALID_POS_CODES.has(pos) && pos !== '99') { errors.push(`${ctx}: derived POS "${pos}" is not a recognized state code.`); return; }
 
     const items = gstr1ItemsForInvoice(inv, 'b2c', itemsByInvoice, legacyHsnRows);
     if (!items.length) { errors.push(`${ctx}: has no line items (neither current nor legacy) — cannot compute taxable/tax values.`); return; }
@@ -520,7 +677,10 @@ async function buildGSTR1Payload(userId, profile, periodFilter) {
     cdnur.reduce((s, n) => s + (n.ntty === 'C' ? n.val : -n.val), 0)
   );
 
-  const payload = { gstin: businessGstin, fp, gt, cur_gt: gt, b2b, b2cl, b2cs, cdnr, cdnur, hsn };
+  // Assembled through the registry rather than as an object literal, so
+  // the written key order and the emit-when-empty policy both come from
+  // GSTR1_SECTIONS and cannot drift from what the audit expects.
+  const payload = assembleGSTR1Payload({ gstin: businessGstin, fp, gt, cur_gt: gt, b2b, b2cl, b2cs, cdnr, cdnur, hsn });
   return { payload, errors, context: { periodStart: start, periodEnd: end, salesReturnNettedTaxable } };
 }
 
@@ -539,15 +699,12 @@ function runFinalGSTR1Audit(payload, errors, context) {
   try { reparsed = JSON.parse(JSON.stringify(payload)); }
   catch (e) { errors.push(`JSON serialization failed: ${e.message}`); return; }
 
-  // 2. Mandatory top-level keys / schema shape.
-  const requiredKeys = ['gstin', 'fp', 'gt', 'cur_gt', 'b2b', 'b2cl', 'b2cs', 'cdnr', 'cdnur', 'hsn'];
-  requiredKeys.forEach(k => { if (!(k in reparsed)) errors.push(`Final audit: missing mandatory key "${k}" in the payload.`); });
-  const unknownKeys = Object.keys(reparsed).filter(k => !requiredKeys.includes(k));
-  if (unknownKeys.length) errors.push(`Final audit: unexpected key(s) in the payload: ${unknownKeys.join(', ')}.`);
-  if (!Array.isArray(reparsed.b2b) || !Array.isArray(reparsed.b2cl) || !Array.isArray(reparsed.b2cs) || !Array.isArray(reparsed.cdnr) || !Array.isArray(reparsed.cdnur)) {
-    errors.push('Final audit: b2b/b2cl/b2cs/cdnr/cdnur must all be arrays.');
-  }
-  if (!reparsed.hsn || !Array.isArray(reparsed.hsn.data)) errors.push('Final audit: hsn.data must be an array.');
+  // 2. Schema — presence, types, unknown keys and row shapes, all driven
+  // by GSTR1_SECTIONS. Previously a key list hardcoded here, which meant
+  // any section added to the payload was rejected as "unexpected" by this
+  // very check. Run against the reparsed copy, so what is validated is
+  // exactly what will be written.
+  validateGSTR1Schema(reparsed, errors);
 
   // 3. GSTIN — filer's own GSTIN, re-validated on the built payload.
   const filerCheck = validateGstin(reparsed.gstin);
@@ -575,12 +732,12 @@ function runFinalGSTR1Audit(payload, errors, context) {
   // checked separately in the Grand Total check (#6) instead, which is
   // the number they actually belong to.
   const sumItmTaxable = (invArr) => invArr.reduce((s, g) => s + g.inv.reduce((s2, i) => s2 + i.itms.reduce((s3, it) => s3 + it.itm_det.txval, 0), 0), 0);
-  const b2bTaxable = round2(sumItmTaxable(reparsed.b2b));
-  const b2clTaxable = round2(sumItmTaxable(reparsed.b2cl));
-  const b2csTaxable = round2(reparsed.b2cs.reduce((s, r) => s + r.txval, 0));
+  const b2bTaxable = round2(sumItmTaxable(reparsed.b2b || []));
+  const b2clTaxable = round2(sumItmTaxable(reparsed.b2cl || []));
+  const b2csTaxable = round2((reparsed.b2cs || []).reduce((s, r) => s + r.txval, 0));
   const salesReturnNettedTaxable = round2(context?.salesReturnNettedTaxable || 0);
   const invoiceSideTaxable = round2(b2bTaxable + b2clTaxable + b2csTaxable - salesReturnNettedTaxable);
-  const hsnTaxable = round2(reparsed.hsn.data.reduce((s, r) => s + r.txval, 0));
+  const hsnTaxable = round2(((reparsed.hsn && reparsed.hsn.data) || []).reduce((s, r) => s + r.txval, 0));
   if (Math.abs(invoiceSideTaxable - hsnTaxable) > GSTR1_RECONCILE_TOLERANCE) {
     errors.push(`Final audit — RECONCILIATION FAILED: (B2B + B2CL + B2CS − Sales Return adjustments) = ₹${invoiceSideTaxable} does not equal HSN section taxable total (₹${hsnTaxable}). Difference: ₹${round2(invoiceSideTaxable - hsnTaxable)}.`);
   }
@@ -589,17 +746,17 @@ function runFinalGSTR1Audit(payload, errors, context) {
   // its own itms' taxable + tax (this is what actually needs to
   // reconcile for notes, since HSN structurally can't).
   const noteValOk = (n) => Math.abs(n.val - round2(n.itms.reduce((s, it) => s + it.itm_det.txval + (it.itm_det.iamt || 0) + (it.itm_det.camt || 0) + (it.itm_det.samt || 0), 0))) <= GSTR1_RECONCILE_TOLERANCE;
-  reparsed.cdnr.forEach(g => g.nt.forEach(n => { if (!noteValOk(n)) errors.push(`Final audit: CDNR note ${n.nt_num} val (₹${n.val}) does not match its own item total.`); }));
-  reparsed.cdnur.forEach(n => { if (!noteValOk(n)) errors.push(`Final audit: CDNUR note ${n.nt_num} val (₹${n.val}) does not match its own item total.`); });
+  (reparsed.cdnr || []).forEach(g => g.nt.forEach(n => { if (!noteValOk(n)) errors.push(`Final audit: CDNR note ${n.nt_num} val (₹${n.val}) does not match its own item total.`); }));
+  (reparsed.cdnur || []).forEach(n => { if (!noteValOk(n)) errors.push(`Final audit: CDNUR note ${n.nt_num} val (₹${n.val}) does not match its own item total.`); });
 
   // 6. Grand total — gt/cur_gt must equal the sum of every section's own
   // invoice-level value (independently re-derived here, not just trusted
   // from whatever buildGSTR1Payload() computed).
   const sumVal = (invArr) => invArr.reduce((s, g) => s + g.inv.reduce((s2, i) => s2 + i.val, 0), 0);
-  const b2bVal = sumVal(reparsed.b2b), b2clVal = sumVal(reparsed.b2cl);
-  const b2csVal = reparsed.b2cs.reduce((s, r) => s + round2(r.txval + r.iamt + r.camt + r.samt), 0);
-  const cdnrVal = reparsed.cdnr.reduce((s, g) => s + g.nt.reduce((s2, n) => s2 + (n.ntty === 'C' ? n.val : -n.val), 0), 0);
-  const cdnurVal = reparsed.cdnur.reduce((s, n) => s + (n.ntty === 'C' ? n.val : -n.val), 0);
+  const b2bVal = sumVal(reparsed.b2b || []), b2clVal = sumVal(reparsed.b2cl || []);
+  const b2csVal = (reparsed.b2cs || []).reduce((s, r) => s + round2(r.txval + r.iamt + r.camt + r.samt), 0);
+  const cdnrVal = (reparsed.cdnr || []).reduce((s, g) => s + g.nt.reduce((s2, n) => s2 + (n.ntty === 'C' ? n.val : -n.val), 0), 0);
+  const cdnurVal = (reparsed.cdnur || []).reduce((s, n) => s + (n.ntty === 'C' ? n.val : -n.val), 0);
   const recomputedGt = round2(b2bVal + b2clVal + b2csVal - cdnrVal - cdnurVal);
   if (Math.abs(recomputedGt - reparsed.gt) > GSTR1_RECONCILE_TOLERANCE) {
     errors.push(`Final audit — GRAND TOTAL MISMATCH: payload.gt (₹${reparsed.gt}) does not equal the independently recomputed grand total (₹${recomputedGt}).`);
@@ -607,20 +764,20 @@ function runFinalGSTR1Audit(payload, errors, context) {
   if (reparsed.gt !== reparsed.cur_gt) errors.push(`Final audit: gt (₹${reparsed.gt}) and cur_gt (₹${reparsed.cur_gt}) must be equal for a first-time filing.`);
 
   // 7. GSTIN validation across every section.
-  reparsed.b2b.forEach(g => { if (!validateGstin(g.ctin).valid) errors.push(`Final audit: B2B section ctin "${g.ctin}" is invalid.`); });
-  reparsed.cdnr.forEach(g => { if (!validateGstin(g.ctin).valid) errors.push(`Final audit: CDNR section ctin "${g.ctin}" is invalid.`); });
+  (reparsed.b2b || []).forEach(g => { if (!validateGstin(g.ctin).valid) errors.push(`Final audit: B2B section ctin "${g.ctin}" is invalid.`); });
+  (reparsed.cdnr || []).forEach(g => { if (!validateGstin(g.ctin).valid) errors.push(`Final audit: CDNR section ctin "${g.ctin}" is invalid.`); });
 
   // 8. POS validation across every section.
-  const checkPos = (pos, where) => { if (!GST_VALID_STATE_CODES.has(pos) && pos !== '99') errors.push(`Final audit: invalid POS "${pos}" in ${where}.`); };
-  reparsed.b2b.forEach(g => g.inv.forEach(i => checkPos(i.pos, `B2B invoice ${i.inum}`)));
-  reparsed.b2cl.forEach(g => checkPos(g.pos, `B2CL group`));
-  reparsed.b2cs.forEach(r => checkPos(r.pos, `B2CS bucket (rate ${r.rt}%)`));
+  const checkPos = (pos, where) => { if (!GSTR1_VALID_POS_CODES.has(pos) && pos !== '99') errors.push(`Final audit: invalid POS "${pos}" in ${where}.`); };
+  (reparsed.b2b || []).forEach(g => g.inv.forEach(i => checkPos(i.pos, `B2B invoice ${i.inum}`)));
+  (reparsed.b2cl || []).forEach(g => checkPos(g.pos, `B2CL group`));
+  (reparsed.b2cs || []).forEach(r => checkPos(r.pos, `B2CS bucket (rate ${r.rt}%)`));
 
   // 9. HSN validation — format, and no duplicate hsn+rate rows (the
   // bucket map construction already prevents this internally, but the
   // final audit re-checks the actual array that will be written).
   const hsnSeen = new Set();
-  reparsed.hsn.data.forEach(row => {
+  (((reparsed.hsn && reparsed.hsn.data)) || []).forEach(row => {
     if (!gstr1HsnFormatOk(row.hsn_sc)) errors.push(`Final audit: HSN row "${row.hsn_sc}" is not a valid 4/6/8-digit code.`);
     const key = row.hsn_sc + '|' + row.rt;
     if (hsnSeen.has(key)) errors.push(`Final audit: duplicate HSN row for code ${row.hsn_sc} at rate ${row.rt}%.`);
@@ -630,13 +787,60 @@ function runFinalGSTR1Audit(payload, errors, context) {
   });
 }
 
+// ── What the file does not contain ──────────────────────────
+// Reported on every export, whether or not it succeeds. These do not
+// block the download — they are statements of coverage, so the filer
+// knows what still has to be entered on the Portal instead of finding
+// out when the return is short.
+function gstr1CoverageNotes(payload) {
+  const notes = GSTR1_UNPRODUCED_SECTIONS.map(s =>
+    `Not included — ${s.label}: ${s.reason}. Add it on the Portal after upload if this period needs it.`);
+  GSTR1_SECTIONS.filter(s => s.kind === 'section').forEach(spec => {
+    if (payload[spec.key] !== undefined && gstr1SectionIsEmpty(spec, payload[spec.key])) {
+      notes.push(`Empty — ${spec.label}: no qualifying records this period; the section is still written to the file.`);
+    }
+  });
+  return notes;
+}
+
 // ── UI: validation-failure modal (never a native alert()) ──
-function showGSTR1ValidationErrors(errors) {
+function gstr1SetModal(titleHtml, leadHtml, innerHtml) {
   const modal = document.getElementById('gstr1ValidationModal');
   const list = document.getElementById('gstr1ValidationList');
-  if (!modal || !list) { showToast(`GSTR-1 export blocked — ${errors.length} validation error(s). See console.`, 'error'); console.error('GSTR-1 validation errors:', errors); return; }
-  list.innerHTML = errors.map(e => `<li>${escItemHtml(e)}</li>`).join('');
+  if (!modal || !list) return false;
+  const title = document.getElementById('gstr1ValidationTitle');
+  const lead = document.getElementById('gstr1ValidationLead');
+  if (title) title.innerHTML = titleHtml;
+  if (lead) lead.innerHTML = leadHtml;
+  list.innerHTML = innerHtml;
   modal.classList.add('open');
+  return true;
+}
+
+function showGSTR1ValidationErrors(errors, notes = []) {
+  const errorItems = errors.map(e => `<li>${escItemHtml(e)}</li>`).join('');
+  const noteItems = notes.length
+    ? `<li style="list-style:none;margin-top:14px;padding-top:12px;border-top:1px solid var(--border);">
+         <b>Sections this export does not produce</b>
+         <ul style="margin-top:8px;">${notes.map(n => `<li>${escItemHtml(n)}</li>`).join('')}</ul>
+       </li>`
+    : '';
+  const shown = gstr1SetModal(
+    '<i class="fas fa-triangle-exclamation" style="color:var(--danger, #d32f2f);"></i> GSTR-1 Export Blocked — Validation Failed',
+    'The JSON was <b>not</b> generated. Fix the issue(s) below and try again.',
+    errorItems + noteItems);
+  if (!shown) { showToast(`GSTR-1 export blocked — ${errors.length} validation error(s). See console.`, 'error'); console.error('GSTR-1 validation errors:', errors); }
+}
+
+// Shown after a successful export: what the filer still has to handle on
+// the Portal. A return that is short a section is the filer's problem to
+// fix, so it is stated here rather than only in the console.
+function showGSTR1CoverageSummary(notes) {
+  if (!notes.length) return;
+  gstr1SetModal(
+    '<i class="fas fa-circle-info" style="color:var(--primary);"></i> GSTR-1 Exported — What This File Covers',
+    'The JSON was generated and downloaded. It does <b>not</b> contain the sections below, because this application holds no data for them.',
+    notes.map(n => `<li>${escItemHtml(n)}</li>`).join(''));
 }
 function closeGSTR1ValidationModal() {
   document.getElementById('gstr1ValidationModal')?.classList.remove('open');
@@ -655,10 +859,22 @@ async function exportGSTR1JSON() {
   showToast('Validating GSTR-1 data…', 'success');
   const { payload, errors, context } = await buildGSTR1Payload(user.id, profile, periodFilter);
 
+  // Before anything else: the state table must still cover every state the
+  // app can store. A gap here means POS silently becomes 99, so it blocks
+  // the export rather than producing a return with a bad place of supply.
+  gstr1AssertStateTableComplete(errors);
+
+  // Schema first, then the reconciliation audit — a payload with a missing
+  // or mistyped section produces clearer errors from the schema pass than
+  // from arithmetic that trips over it.
+  if (!errors.length && payload) validateGSTR1Schema(payload, errors);
   if (!errors.length) runFinalGSTR1Audit(payload, errors, context);
 
+  const notes = payload ? gstr1CoverageNotes(payload) : [];
+  notes.forEach(n => console.info('[GSTR-1 coverage]', n));
+
   if (errors.length) {
-    showGSTR1ValidationErrors(errors);
+    showGSTR1ValidationErrors(errors, notes);
     return; // never write the file
   }
 
@@ -672,6 +888,7 @@ async function exportGSTR1JSON() {
   document.body.removeChild(a);
   URL.revokeObjectURL(url);
   showToast('GSTR-1 JSON validated and exported — ready to upload to the GST Portal.', 'success');
+  showGSTR1CoverageSummary(notes);
 }
 
 function formatDateDDMMYYYY(d) {
@@ -681,17 +898,75 @@ function formatDateDDMMYYYY(d) {
   return d;
 }
 
+// ── State code table ────────────────────────────────────────
+// Keyed by the EXACT strings in INDIAN_STATES (js/utils.js) — the list
+// every state dropdown in this app is built from, and therefore the only
+// set of values that can actually reach here from stored invoice data.
+//
+// The previous table was keyed by hand-typed names that had drifted out
+// of step with that list, and two of them no longer matched anything the
+// app can store:
+//
+//   "Andaman and Nicobar Islands"              -> no key -> 99
+//   "Dadra and Nagar Haveli and Daman and Diu" -> no key -> 99
+//
+// A 99 here is not a harmless default: gstr1PosUnregistered() treats it
+// as "unrecognised state" and blocks the whole export, so a single B2C
+// invoice to either of those two UTs made a GSTR-1 file impossible to
+// produce at all. gstr1AssertStateTableComplete() below now fails the
+// export loudly if this table and INDIAN_STATES ever drift again.
+const GSTR1_STATE_CODES = {
+  'Andhra Pradesh':'37','Arunachal Pradesh':'12','Assam':'18','Bihar':'10',
+  'Chhattisgarh':'22','Goa':'30','Gujarat':'24','Haryana':'06',
+  'Himachal Pradesh':'02','Jharkhand':'20','Karnataka':'29','Kerala':'32',
+  'Madhya Pradesh':'23','Maharashtra':'27','Manipur':'14','Meghalaya':'17',
+  'Mizoram':'15','Nagaland':'13','Odisha':'21','Punjab':'03','Rajasthan':'08',
+  'Sikkim':'11','Tamil Nadu':'33','Telangana':'36','Tripura':'16',
+  'Uttar Pradesh':'09','Uttarakhand':'05','West Bengal':'19',
+  'Andaman and Nicobar Islands':'35','Chandigarh':'04',
+  'Dadra and Nagar Haveli and Daman and Diu':'26','Delhi':'07',
+  'Jammu and Kashmir':'01','Ladakh':'38','Lakshadweep':'31','Puducherry':'34'
+};
+
+// Values stored by older versions of this app, before INDIAN_STATES was
+// updated. They are not offered anywhere in the UI any more, but rows
+// carrying them still exist in the database and must still resolve.
+// Dadra and Nagar Haveli and Daman and Diu are one UT in INDIAN_STATES,
+// so both legacy names resolve to that single entry's code — code 25 has
+// no entry in INDIAN_STATES to belong to and is therefore never emitted.
+const GSTR1_LEGACY_STATE_ALIASES = {
+  'andaman and nicobar': 'Andaman and Nicobar Islands',
+  'dadra and nagar haveli': 'Dadra and Nagar Haveli and Daman and Diu',
+  'daman and diu': 'Dadra and Nagar Haveli and Daman and Diu'
+};
+
+// The POS codes this generator can legitimately emit: exactly the codes
+// reachable from the table above, derived rather than listed a second
+// time. utils.js's GST_VALID_STATE_CODES is deliberately left alone — it
+// backs validateGstin() for data entry app-wide, and is a wider set that
+// still accepts historical prefixes; narrowing it is a data-entry change,
+// not a generator change.
+const GSTR1_VALID_POS_CODES = new Set(Object.values(GSTR1_STATE_CODES));
+
+// Every state the app can store must be mappable. Run as part of export
+// validation, so drift surfaces as a blocked export with a precise
+// message instead of a silent 99 on someone's return.
+function gstr1AssertStateTableComplete(errors) {
+  if (typeof INDIAN_STATES === 'undefined') return;
+  const missing = INDIAN_STATES.filter(s => !GSTR1_STATE_CODES[s]);
+  if (missing.length) {
+    errors.push(`GSTR-1 generator: no GST state code is defined for ${missing.map(s => `"${s}"`).join(', ')} — GSTR1_STATE_CODES in js/gstr1-export.js has drifted from INDIAN_STATES in js/utils.js and must be updated before any return can be generated.`);
+  }
+}
+
 function getStateCode(stateName) {
-  const map = {
-    'andhra pradesh':'37','arunachal pradesh':'12','assam':'18','bihar':'10',
-    'chhattisgarh':'22','goa':'30','gujarat':'24','haryana':'06','himachal pradesh':'02',
-    'jharkhand':'20','karnataka':'29','kerala':'32','madhya pradesh':'23','maharashtra':'27',
-    'manipur':'14','meghalaya':'17','mizoram':'15','nagaland':'13','odisha':'21',
-    'punjab':'03','rajasthan':'08','sikkim':'11','tamil nadu':'33','telangana':'36',
-    'tripura':'16','uttar pradesh':'09','uttarakhand':'05','west bengal':'19',
-    'andaman and nicobar':'35','chandigarh':'04','dadra and nagar haveli':'26',
-    'daman and diu':'25','delhi':'07','jammu and kashmir':'01','ladakh':'38',
-    'lakshadweep':'31','puducherry':'34'
-  };
-  return map[(stateName || '').toLowerCase()] || '99';
+  const raw = (stateName || '').trim();
+  if (!raw) return '99';
+  if (GSTR1_STATE_CODES[raw]) return GSTR1_STATE_CODES[raw];
+  // Case-insensitive match against the canonical list, then legacy names.
+  const lower = raw.toLowerCase();
+  const canonical = Object.keys(GSTR1_STATE_CODES).find(k => k.toLowerCase() === lower);
+  if (canonical) return GSTR1_STATE_CODES[canonical];
+  const alias = GSTR1_LEGACY_STATE_ALIASES[lower];
+  return alias ? GSTR1_STATE_CODES[alias] : '99';
 }
