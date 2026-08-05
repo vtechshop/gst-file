@@ -555,6 +555,20 @@ function gstr1CompareInvoiceNumbers(a, b) {
   return 0;
 }
 
+// An invoice's val in a Utility-written return is the taxable value plus
+// tax rounded to the nearest rupee — every one of the 49 invoices in the
+// reference file is a whole number, including the ones whose components
+// do not add up to one (txval+tax 9945.04 -> val 9945, 7286.5 -> 7287,
+// 530.49 -> 530). The line-level txval and tax figures keep their paise;
+// only this invoice-level total rounds.
+//
+// This does not change any invoice: total_amount in the database, the
+// printed invoice and every calculation are untouched. It changes how the
+// total is written into the return, which is what the reference proves.
+function gstr1InvoiceVal(total) {
+  return Math.round(total);
+}
+
 function gstr1InvoiceNumberOk(num) {
   // GSTN's own offline-utility validation: max 16 chars, letters/digits/-//
   return /^[A-Za-z0-9\-\/]{1,16}$/.test(num || '');
@@ -835,13 +849,22 @@ async function buildGSTR1Payload(userId, profile, periodFilter) {
     }
 
     const invEntry = {
-      inum: inv.invoice_number, idt, val: recomputed.total, pos, rchrg: 'N', inv_typ: 'R',
+      inum: inv.invoice_number, idt, val: gstr1InvoiceVal(recomputed.total), pos, rchrg: 'N', inv_typ: 'R',
       itms: recomputed.byRate.map((b, i) => ({ num: i + 1, itm_det: { txval: b.taxable, rt: b.rate, iamt: b.igst, camt: b.cgst, samt: b.sgst, csamt: 0 } }))
     };
     if (!b2bGroups.has(gstin)) b2bGroups.set(gstin, []);
     b2bGroups.get(gstin).push(invEntry);
   });
-  const b2b = [...b2bGroups.entries()].map(([ctin, inv]) => ({ ctin, inv }));
+  // Ordering below follows the reference file, which is ordered
+  // throughout: b2b runs in invoice-number order, b2cs by place of
+  // supply, and each HSN array by HSN code. JSON arrays are ordered, so
+  // unlike object keys this is a real difference rather than a cosmetic
+  // one. (In the reference, invoice-number order and invoice-date order
+  // coincide, so which of the two is the Utility's actual key is
+  // UNVERIFIED; numbering is the more stable of the two.)
+  const b2b = [...b2bGroups.entries()]
+    .map(([ctin, inv]) => ({ ctin, inv: [...inv].sort((x, y) => gstr1CompareInvoiceNumbers(x.inum, y.inum)) }))
+    .sort((a, b) => gstr1CompareInvoiceNumbers(a.inv[0].inum, b.inv[0].inum));
 
   // ── B2C — split into B2CL (unregistered, inter-state, above
   // threshold — reported per-invoice) vs B2CS (everything else in the
@@ -883,7 +906,7 @@ async function buildGSTR1Payload(userId, profile, periodFilter) {
     const isLarge = inv.supply_type === 'interstate' && recomputed.total > GSTR1_B2CL_THRESHOLD;
     if (isLarge) {
       const invEntry = {
-        inum: inv.invoice_number || `B2C-${inv.id.slice(0, 8)}`, idt, val: recomputed.total,
+        inum: inv.invoice_number || `B2C-${inv.id.slice(0, 8)}`, idt, val: gstr1InvoiceVal(recomputed.total),
         itms: recomputed.byRate.map((b, i) => ({ num: i + 1, itm_det: { txval: b.taxable, rt: b.rate, iamt: b.igst, csamt: 0 } }))
       };
       if (!b2clGroups.has(pos)) b2clGroups.set(pos, []);
@@ -898,8 +921,10 @@ async function buildGSTR1Payload(userId, profile, periodFilter) {
       });
     }
   });
-  const b2cl = [...b2clGroups.entries()].map(([pos, inv]) => ({ pos, inv }));
-  const b2cs = [...b2csBuckets.values()];
+  const b2cl = [...b2clGroups.entries()]
+    .map(([pos, inv]) => ({ pos, inv: [...inv].sort((x, y) => gstr1CompareInvoiceNumbers(x.inum, y.inum)) }))
+    .sort((a, b) => a.pos.localeCompare(b.pos));
+  const b2cs = [...b2csBuckets.values()].sort((a, b) => a.pos.localeCompare(b.pos) || a.rt - b.rt);
 
   // ── Sales Returns — net the returned quantity/value OUT of the HSN
   // summary for the period (a physical return genuinely reduces net
@@ -990,10 +1015,15 @@ async function buildGSTR1Payload(userId, profile, periodFilter) {
   // Each bucket map is keyed "hsn_sc|rate", so a row's rate comes back
   // out of its key rather than being stored twice. num restarts at 1 in
   // each array, as it does in a Utility-written return.
-  const hsnRows = channel => [...hsnBuckets[channel].entries()].map(([key, b], i) => ({
-    num: i + 1, hsn_sc: b.hsn_sc, desc: b.desc, uqc: b.uqc, qty: b.qty,
-    txval: b.taxable, rt: +key.split('|')[1], iamt: b.igst, camt: b.cgst, samt: b.sgst, csamt: 0
-  }));
+  // Sorted by HSN code, then rate; num is assigned after sorting so it
+  // runs 1..n down the array as it does in the reference.
+  const hsnRows = channel => [...hsnBuckets[channel].entries()]
+    .map(([key, b]) => ({ ...b, rt: +key.split('|')[1] }))
+    .sort((a, b) => a.hsn_sc.localeCompare(b.hsn_sc) || a.rt - b.rt)
+    .map((b, i) => ({
+      num: i + 1, hsn_sc: b.hsn_sc, desc: b.desc, uqc: b.uqc, qty: b.qty,
+      txval: b.taxable, rt: b.rt, iamt: b.igst, camt: b.cgst, samt: b.sgst, csamt: 0
+    }));
   const hsnB2B = hsnRows('b2b'), hsnB2C = hsnRows('b2c');
   // Only non-empty arrays are written, the same rule the top-level
   // sections follow.
@@ -1184,7 +1214,11 @@ function gstr1SortKeysDeep(value) {
 function gstr1SerializePayload(payload) {
   const ordered = {};
   Object.keys(payload).forEach(k => { ordered[k] = gstr1SortKeysDeep(payload[k]); });
-  return JSON.stringify(ordered);
+  // The reference escapes every forward slash ("00158\/26-27"). It is an
+  // optional escape that any JSON parser reads back identically, so this
+  // changes no value — it makes the two files byte-comparable, which is
+  // worth having when the next difference has to be found by eye.
+  return JSON.stringify(ordered).replace(/\//g, '\\/');
 }
 
 // ── What the file does not contain ──────────────────────────
