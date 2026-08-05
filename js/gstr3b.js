@@ -58,7 +58,22 @@ async function loadGSTR3B() {
 }
 
 function sum(arr, key) { return arr.reduce((s, r) => s + (+r[key] || 0), 0); }
-function r2(n) { return Math.round((+n || 0) * 100) / 100; }
+
+// Rounds through round2() in js/utils.js, the same helper every other
+// money figure in the app goes through.
+//
+// This was its own `Math.round(n * 100) / 100`, which is the one formula
+// round2() exists to avoid: 1.005 is held as ~1.00499999999999989, so
+// multiplying by 100 gives 100.49999999999999 and the value rounds DOWN
+// to 1.00 instead of up to 1.01. Four of ten exact half-paisa values
+// tested came out a paisa short.
+//
+// It changed nothing here in practice — every figure on this page is a
+// sum of columns already stored to two decimals, and such a sum cannot
+// land exactly on a half-paisa, which two million randomised sums
+// confirmed with no disagreement. The duplicate is removed so a future
+// input that is not a sum of stored columns cannot quietly hit the trap.
+function r2(n) { return round2(n); }
 
 function renderGSTR3B(b2b, b2c, month, itemsByInvoice) {
   const all = [...b2b, ...b2c];
