@@ -15,19 +15,81 @@ async function initReports() {
   setupLogoutBtn();
   loadUserProfile(currentUser.id);
   setupMobileMenu();
-  populateMonthFilter();
+  await populateMonthFilter(currentUser.id);
   await loadReports('current');
 }
 
-function populateMonthFilter() {
+// Month names written out rather than taken from toLocaleString, so the
+// label reads "July 2026" on every machine. A locale that formats months
+// differently would otherwise change what this dropdown says.
+const REPORT_MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June',
+  'July', 'August', 'September', 'October', 'November', 'December'];
+
+// "2026-07" -> "July 2026". Pure string work: a Date built from a
+// date-only string parses as UTC and reads back a day earlier west of
+// UTC, which is the same trap that had GSTR-1 filing the wrong month.
+function reportMonthLabel(ym) {
+  const [y, m] = ym.split('-');
+  return `${REPORT_MONTH_NAMES[+m - 1]} ${y}`;
+}
+
+// Every month the user actually has something recorded in, newest first.
+//
+// This used to be a fixed 24-month window counted back from today, so the
+// list was mostly months with nothing in them while anything older than
+// two years was unreachable. Now it comes from the stored dates.
+//
+// Sales invoices are what a GSTR-1 filing is made of, but this page also
+// reports purchases, expenses, sales returns and credit/debit notes — a
+// month holding only those has to stay selectable or that data becomes
+// unviewable. Only the date column is read from each table.
+async function collectReportMonths(userId) {
+  const sources = [
+    ['b2b_invoices', 'invoice_date'], ['b2c_invoices', 'invoice_date'],
+    ['purchases', 'purchase_date'], ['expenses', 'expense_date'],
+    ['sales_returns', 'return_date'], ['cdn_notes', 'note_date']
+  ];
+  const results = await Promise.all(sources.map(([table, col]) =>
+    _supabase.from(table).select(col).eq('user_id', userId)));
+
+  const months = new Set();
+  results.forEach((res, i) => {
+    const col = sources[i][1];
+    (res.data || []).forEach(row => {
+      const d = String(row[col] || '');
+      if (/^\d{4}-(0[1-9]|1[0-2])/.test(d)) months.add(d.slice(0, 7));
+    });
+  });
+  // Lexicographic sort is chronological for YYYY-MM; reversed for newest
+  // first, which is the month someone is most likely to be filing.
+  return [...months].sort().reverse();
+}
+
+async function populateMonthFilter(userId) {
   const sel = document.getElementById('reportMonth');
   if (!sel) return;
-  sel.innerHTML = '<option value="current">Current Month</option><option value="fy">Financial Year</option>'
+
+  let months = [];
+  try { months = await collectReportMonths(userId); }
+  catch (e) { console.error('Could not read the months you have data for:', e); }
+
+  // Current Month drives the dashboard view and stays first. The named
+  // months follow, because those are the ones a return is filed for —
+  // GSTR-1 export accepts nothing else (see gstr1FilingPeriod in
+  // js/gstr1-export.js). The multi-month ranges sit at the end.
+  const monthOptions = months.length
+    ? `<optgroup label="Filing months">${months
+        .map(m => `<option value="${m}">${reportMonthLabel(m)}</option>`).join('')}</optgroup>`
+    : '';
+
+  sel.innerHTML =
+    '<option value="current">Current Month</option>'
+    + monthOptions
+    + '<optgroup label="Ranges (not valid for a GSTR-1 filing)">'
+    + '<option value="fy">Financial Year</option>'
     + '<option value="q1">Q1 (Apr-Jun)</option><option value="q2">Q2 (Jul-Sep)</option>'
-    + '<option value="q3">Q3 (Oct-Dec)</option><option value="q4">Q4 (Jan-Mar)</option>';
-  monthYearOptions().forEach(o => {
-    sel.innerHTML += `<option value="${o.value}">${o.label}</option>`;
-  });
+    + '<option value="q3">Q3 (Oct-Dec)</option><option value="q4">Q4 (Jan-Mar)</option>'
+    + '</optgroup>';
 }
 
 async function loadReports(filter) {
