@@ -517,8 +517,7 @@ async function savePurchQuickAddProduct() {
 function recalcPurchItemRow(rowId) {
   const row = purchItems.find(r => r.rowId === rowId);
   if (!row) return;
-  const gross = (row.quantity || 0) * (row.rate || 0);
-  row.taxable_value = round2(gross * (1 - (row.discount_percentage || 0) / 100));
+  row.taxable_value = lineTaxableValue(row.quantity, row.rate, row.discount_percentage);
   const calc = calcGST(row.taxable_value, row.gst_percentage || 0, getPurchSupplyType());
   row.gst_amount = calc.gstAmount;
   row.igst = calc.igst; row.cgst = calc.cgst; row.sgst = calc.sgst;
@@ -530,8 +529,7 @@ function recalcPurchItemRow(rowId) {
 function recalcPurchItemRowLive(rowId) {
   const row = purchItems.find(r => r.rowId === rowId);
   if (!row) return;
-  const gross = (row.quantity || 0) * (row.rate || 0);
-  row.taxable_value = round2(gross * (1 - (row.discount_percentage || 0) / 100));
+  row.taxable_value = lineTaxableValue(row.quantity, row.rate, row.discount_percentage);
   const calc = calcGST(row.taxable_value, row.gst_percentage || 0, getPurchSupplyType());
   row.gst_amount = calc.gstAmount;
   row.igst = calc.igst; row.cgst = calc.cgst; row.sgst = calc.sgst;
@@ -551,8 +549,7 @@ function updatePurchRowComputedCells(row) {
 
 function recalcAllPurchRows() {
   purchItems.forEach(row => {
-    const gross = (row.quantity || 0) * (row.rate || 0);
-    row.taxable_value = round2(gross * (1 - (row.discount_percentage || 0) / 100));
+    row.taxable_value = lineTaxableValue(row.quantity, row.rate, row.discount_percentage);
     const calc = calcGST(row.taxable_value, row.gst_percentage || 0, getPurchSupplyType());
     row.gst_amount = calc.gstAmount;
     row.igst = calc.igst; row.cgst = calc.cgst; row.sgst = calc.sgst;

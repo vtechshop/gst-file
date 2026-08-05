@@ -67,6 +67,24 @@ function applyInvoiceNumberFormat(format, seq) {
   return fmt + '-' + n;
 }
 
+// One line's taxable value: quantity × rate, less its discount, rounded
+// to paise. The single definition of that arithmetic.
+//
+// It was written out at eight places — three paths each in
+// js/invoice-items.js and js/purchase-items.js, one in
+// js/sales-return-items.js, and one in js/gstr1-export.js where the
+// export re-derives it to check a stored value has not drifted. Editing
+// any one of them alone would have made invoices and their own GSTR-1
+// validation disagree about the same line.
+//
+// The multiplication happens before rounding, exactly as every copy did:
+// rounding the gross first would change the result on lines where a
+// discount lands on a half-paisa.
+function lineTaxableValue(qty, rate, discountPct) {
+  const gross = (+qty || 0) * (+rate || 0);
+  return round2(gross * (1 - (+discountPct || 0) / 100));
+}
+
 function calcGST(taxableAmount, gstPct, supplyType) {
   const gstAmt = (taxableAmount * gstPct) / 100;
   let igst = 0, cgst = 0, sgst = 0;

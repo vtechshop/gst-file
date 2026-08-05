@@ -295,8 +295,7 @@ function setAllSrReturnQty(full) {
 }
 
 function recalcSrRow(row) {
-  const gross = row.return_qty * row.rate;
-  row.taxable_value = round2(gross * (1 - (row.discount_percentage || 0) / 100));
+  row.taxable_value = lineTaxableValue(row.return_qty, row.rate, row.discount_percentage);
   const calc = calcGST(row.taxable_value, row.gst_percentage || 0, getSrSupplyType());
   row.gst_amount = calc.gstAmount;
   row.igst = calc.igst; row.cgst = calc.cgst; row.sgst = calc.sgst;

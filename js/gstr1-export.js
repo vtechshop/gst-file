@@ -711,7 +711,7 @@ function gstr1DateOk(ddmmyyyy) {
 // there is nothing to cross-check there.
 function gstr1CheckItemTaxable(item, errCtx, errors, who = {}) {
   if (item.rate === undefined || item.discount_percentage === undefined) return; // legacy pseudo-item, nothing to cross-check
-  const expected = round2((+item.quantity || 0) * (+item.rate || 0) * (1 - (+item.discount_percentage || 0) / 100));
+  const expected = lineTaxableValue(item.quantity, item.rate, item.discount_percentage);
   const actual = round2(+item.taxable_value || 0);
   if (Math.abs(expected - actual) > GSTR1_RECONCILE_TOLERANCE) {
     errors.push(gstr1Err({
