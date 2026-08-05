@@ -101,17 +101,44 @@ async function populateMonthFilter(userId) {
     + '<option value="q3">Q3 (Oct-Dec)</option><option value="q4">Q4 (Jan-Mar)</option>'
     + '</optgroup>';
 
-  // Open on the most recent month that has data rather than on Current
-  // Month. Current Month cannot produce a GSTR-1 — it names no month —
-  // so leaving it selected meant the first press of Generate Return was
-  // always refused, whatever the user had in front of them. Opening on a
-  // real month makes the page show data on arrival and the export work
-  // without having to discover the dropdown first.
-  //
-  // Current Month stays in the list for looking at the month in progress.
-  const opening = months[0] || 'current';
+  const opening = defaultFilingMonth(months) || 'current';
   sel.value = opening;
   return opening;
+}
+
+// The month before the one we are in, as "YYYY-MM".
+//
+// Built from local date components, never by parsing a date string: a
+// date-only string parses as UTC and reads back a day earlier west of
+// UTC, which at a month boundary would name the wrong month entirely.
+// `today` is a parameter so the boundaries can be tested at any date
+// rather than only on the day the tests happen to run.
+function latestClosedMonth(today = new Date()) {
+  let y = today.getFullYear(), m = today.getMonth();   // getMonth() is 0-based
+  if (m === 0) { y -= 1; m = 11; } else { m -= 1; }
+  return `${y}-${String(m + 1).padStart(2, '0')}`;
+}
+
+// Which month the Reports page should open on.
+//
+// A GSTR-1 is filed for a month that has ended, so the default is the
+// latest closed month — never the one in progress, whose invoices are
+// still being written. In August that is July; in January it is the
+// previous December.
+//
+// If that month has nothing in it the nearest earlier month that does is
+// used instead, so the page still opens on something worth looking at.
+// `months` arrives newest-first, so the first entry at or before the
+// closed month is that nearest one. YYYY-MM strings compare
+// chronologically, so this is a string comparison and not a date one.
+//
+// Returns null when every month with data is the current open month or
+// later — there is then no closed month to file, and the caller falls
+// back to Current Month so the page still shows something. The export
+// refuses that selection on its own and says which months exist.
+function defaultFilingMonth(months, today = new Date()) {
+  const closed = latestClosedMonth(today);
+  return (months || []).find(m => m <= closed) || null;
 }
 
 async function loadReports(filter) {
