@@ -6,3 +6,11 @@ server/.env
 # Node
 server/node_modules/
 npm-debug.log*
+
+# Generated GST returns and anything used to compare them — real filings
+# carry a real GSTIN and real customer data, and a sample one is noise in
+# the history either way. Produced locally, compared locally, kept local.
+# tools/gstr1-diff.mjs is the reusable part and IS tracked.
+tmp-gstr1/
+GSTR1_*.json
+*.gstr1.json
