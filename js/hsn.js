@@ -173,13 +173,16 @@ function computeHsnAnalytics(data, hsnCode) {
 
   const invoiceIds = new Set();
   const products = {};
-  const totals = { quantity: 0, taxable_value: 0, total_gst: 0, total_invoice_value: 0 };
+  const totals = { quantity: 0, taxable_value: 0, igst: 0, cgst: 0, sgst: 0, total_invoice_value: 0 };
 
   rows.forEach(r => {
     if (r.invoiceIds) r.invoiceIds.forEach(id => invoiceIds.add(id));   // historical rows have none
     totals.quantity += +r.quantity || 0;
     totals.taxable_value = round2(totals.taxable_value + (+r.taxable_value || 0));
-    totals.total_gst = round2(totals.total_gst + (+r.total_gst || 0));
+    const gst = splitHsnRowGst(r);
+    totals.igst = round2(totals.igst + gst.igst);
+    totals.cgst = round2(totals.cgst + gst.cgst);
+    totals.sgst = round2(totals.sgst + gst.sgst);
     totals.total_invoice_value = round2(totals.total_invoice_value + (+r.total_invoice_value || 0));
 
     // Computed rows carry per-product totals. Historical rows predate that
@@ -206,10 +209,42 @@ function computeHsnAnalytics(data, hsnCode) {
     invoiceCount: invoiceIds.size,
     quantity: round2(totals.quantity),
     taxable_value: totals.taxable_value,
-    total_gst: totals.total_gst,
+    igst: totals.igst,
+    cgst: totals.cgst,
+    sgst: totals.sgst,
+    // Derived from the three components rather than accumulated separately,
+    // so the breakup on screen always adds up to the total beneath it.
+    total_gst: round2(totals.igst + totals.cgst + totals.sgst),
     total_invoice_value: totals.total_invoice_value,
     products: productList
   };
+}
+
+// Splits one summary row's GST into IGST / CGST / SGST.
+//
+// The per-line igst, cgst and sgst saved with the invoice are used as they
+// stand — an interstate invoice carries IGST only and an intrastate one
+// CGST + SGST, so a mixed HSN aggregates correctly without anything here
+// having to assume a supply type.
+//
+// The reconciliation below exists for the historical rows saved before this
+// page became a live report: some kept only a total. Where the components
+// don't add up to the row's own GST amount, the difference is attributed by
+// that row's supply type, so nothing is silently lost from the breakup and
+// interstate sales never surface as CGST/SGST.
+function splitHsnRowGst(r) {
+  let igst = +r.igst || 0, cgst = +r.cgst || 0, sgst = +r.sgst || 0;
+  const residual = round2((+r.total_gst || 0) - round2(igst + cgst + sgst));
+  if (Math.abs(residual) >= 0.01) {
+    if ((r.supply_type || 'intrastate') === 'interstate') {
+      igst = round2(igst + residual);
+    } else {
+      const half = round2(residual / 2);
+      cgst = round2(cgst + half);
+      sgst = round2(sgst + round2(residual - half));
+    }
+  }
+  return { igst, cgst, sgst };
 }
 
 function hsnAnalyticsHtml(a) {
@@ -221,7 +256,10 @@ function hsnAnalyticsHtml(a) {
       ${label('Invoice Count', a.invoiceCount)}
       ${label('Quantity Sold', formatNum(a.quantity))}
       ${label('Taxable Value', '₹' + formatNum(a.taxable_value))}
-      ${label('GST Amount', '₹' + formatNum(a.total_gst))}
+      ${label('IGST', '₹' + formatNum(a.igst))}
+      ${label('CGST', '₹' + formatNum(a.cgst))}
+      ${label('SGST', '₹' + formatNum(a.sgst))}
+      <div class="calc-row calc-subtotal"><span class="label">Total GST</span><span class="value">₹${formatNum(a.total_gst)}</span></div>
       <div class="calc-row total"><span class="label">Total Sales</span><span class="value">₹${formatNum(a.total_invoice_value)}</span></div>
     </div>
     <div class="section-title mb-14 mt-20">Products under this HSN</div>

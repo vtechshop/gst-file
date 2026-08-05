@@ -473,6 +473,11 @@ body {
 .calc-row.total { border-top: 2px solid var(--primary); margin-top: 4px; }
 .calc-row.total .label,
 .calc-row.total .value { font-size: 15px; font-weight: 700; color: var(--primary-dark); }
+/* Closes a group of component rows (e.g. IGST/CGST/SGST -> Total GST) with a
+   solid rule, kept lighter than .total so the final line still reads first. */
+.calc-row.calc-subtotal { border-top: 1px solid var(--primary); }
+.calc-row.calc-subtotal .label,
+.calc-row.calc-subtotal .value { font-weight: 700; }
 
 /* ---- Buttons ---- */
 .btn {
