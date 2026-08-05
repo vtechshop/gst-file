@@ -586,16 +586,52 @@ function gstr1InvoiceVal(total) {
 // ends up stamped August.
 const GSTR1_MONTH_SELECTION = /^(\d{4})-(0[1-9]|1[0-2])$/;
 
+// Reports what the period control actually held at the moment it was
+// read. Off unless asked for: set localStorage gst_trace_period = '1' (or
+// window.GSTR1_TRACE_PERIOD = true) in the console and export again.
+function gstr1TracePeriod(where, el, value) {
+  let on = false;
+  try { on = (typeof window !== 'undefined' && window.GSTR1_TRACE_PERIOD)
+    || localStorage.getItem('gst_trace_period') === '1'; } catch (e) { /* storage blocked */ }
+  if (!on) return;
+  const opts = el ? [...el.options].map((o, i) =>
+    `${i === el.selectedIndex ? '>' : ' '} ${JSON.stringify(o.value)} = ${JSON.stringify(o.text)}`) : [];
+  console.info(
+    `[GSTR-1 period trace] ${where}\n` +
+    `  element #reportMonth found : ${!!el}\n` +
+    `  selected dropdown value    : ${JSON.stringify(value)}\n` +
+    `  selected dropdown text     : ${JSON.stringify(el?.options?.[el.selectedIndex]?.text ?? null)}\n` +
+    `  selectedIndex              : ${el ? el.selectedIndex : 'n/a'}\n` +
+    `  options present            : ${opts.length}\n` +
+    (opts.length ? opts.join('\n') + '\n' : ''));
+}
+
+// The months the dropdown is offering, so a rejection can say what the
+// user could have picked instead of only what they did.
+function gstr1AvailableMonths() {
+  const el = typeof document !== 'undefined' ? document.getElementById('reportMonth') : null;
+  if (!el) return [];
+  return [...el.options].filter(o => GSTR1_MONTH_SELECTION.test(o.value)).map(o => o.text);
+}
+
 function gstr1FilingPeriod(selection) {
   const raw = String(selection == null ? '' : selection).trim();
   const m = GSTR1_MONTH_SELECTION.exec(raw);
   if (m) return { fp: m[2] + m[1] };          // "2026-07" -> "072026"
+
+  // Naming the months on offer turns "pick a month" into something the
+  // user can act on without going to look, and makes the empty case —
+  // no month has any data — visible instead of silent.
+  const months = gstr1AvailableMonths();
+  const fix = months.length
+    ? `Choose one of these from the period dropdown, then generate the return again: ${months.join(', ')}.`
+    : 'The period dropdown is not offering any month, which means no invoice, purchase, expense, return or note is stored in any month yet. Save an invoice for the month you are filing, then try again.';
   return { error: gstr1Err({
     field: 'Return Period',
     current: raw || '(nothing selected)',
-    expected: 'a specific month, e.g. "July 2026"',
+    expected: months.length ? `one of: ${months.join(', ')}` : 'a specific month, e.g. "July 2026"',
     message: 'GSTR-1 is filed for one named month, and the period selected on the Reports page does not name one.',
-    fix: 'Pick the month you are filing for from the period dropdown — not "Current Month", a quarter, or a financial year — then generate the return again.'
+    fix
   }) };
 }
 
@@ -722,6 +758,8 @@ async function buildGSTR1Payload(userId, profile, periodFilter) {
   // does not name a month there is no return to build, so nothing is
   // fetched and nothing is assembled.
   const period = gstr1FilingPeriod(periodFilter);
+  gstr1TracePeriod(`buildGSTR1Payload received ${JSON.stringify(periodFilter)} -> fp ${JSON.stringify(period.fp ?? null)}`,
+    typeof document !== 'undefined' ? document.getElementById('reportMonth') : null, periodFilter);
   if (period.error) { errors.push(period.error); return { errors }; }
   const fp = period.fp;
 
@@ -1342,7 +1380,14 @@ async function exportGSTR1JSON() {
   // Whatever the period dropdown actually holds — no fallback. A default
   // of 'current' here would put the system month on the file when nothing
   // had been selected, which is the failure this is guarding against.
-  const periodFilter = document.getElementById('reportMonth')?.value ?? '';
+  const periodEl = document.getElementById('reportMonth');
+  const periodFilter = periodEl?.value ?? '';
+
+  // Traceable on demand. A period that arrives wrong has to be diagnosed
+  // from the machine it happened on, and "it says current" is not enough
+  // to tell whether the dropdown held that, whether the element was found
+  // at all, or whether something reset it between the click and here.
+  gstr1TracePeriod('exportGSTR1JSON', periodEl, periodFilter);
 
   showToast('Validating GSTR-1 data…', 'success');
   const { payload, errors, context } = await buildGSTR1Payload(user.id, profile, periodFilter);
