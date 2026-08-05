@@ -858,6 +858,102 @@ function gstr1PosUnregistered(customerState, errors, context) {
   return code;
 }
 
+// ── Product master audit, run before anything is assembled ──────────
+//
+// The per-line checks further down catch the same faults, but they stop
+// at the first bad line of an invoice and report it as one invoice's
+// problem. A bad product is not one invoice's problem — it is wrong on
+// every invoice that ever used it, and fixing it once fixes all of them.
+// This pass groups by product, names every invoice affected, and reports
+// every fault on every product before a single row is built.
+//
+// What can be checked here, and what cannot:
+//   - that an HSN is present and is a 4/6/8 digit code: yes
+//   - that the code is the RIGHT one for the goods: no. That is a tax
+//     classification, there is no official HSN list in this codebase, and
+//     the Portal is the only authority (it answers RET191349).
+async function gstr1FetchProductsForLines(userId, items) {
+  const ids = [...new Set(items.map(i => i.product_id).filter(Boolean))];
+  if (!ids.length) return {};
+  const chunks = [];
+  for (let i = 0; i < ids.length; i += GSTR1_ID_CHUNK_SIZE) chunks.push(ids.slice(i, i + GSTR1_ID_CHUNK_SIZE));
+  const res = await Promise.all(chunks.map(c =>
+    _supabase.from('products').select('*').eq('user_id', userId).in('id', c)));
+  const byId = {};
+  res.flatMap(r => r.data || []).forEach(p => { byId[p.id] = p; });
+  return byId;
+}
+
+function gstr1AuditProducts(lines, productsById, errors) {
+  // Grouped by the product the line came from, falling back to its name
+  // for a line typed in freehand or whose product has since been deleted.
+  const groups = new Map();
+  lines.forEach(l => {
+    const key = l.product_id || ('name:' + (l.item.product_name || '').trim().toLowerCase());
+    if (!groups.has(key)) groups.set(key, { name: l.item.product_name, invoices: new Set(), item: l.item, product: productsById[l.product_id] || null });
+    groups.get(key).invoices.add(l.invoiceNumber);
+  });
+
+  groups.forEach(g => {
+    const invoices = [...g.invoices].sort(gstr1CompareInvoiceNumbers);
+    const where = invoices.length === 1 ? `invoice ${invoices[0]}`
+      : `${invoices.length} invoices: ${invoices.slice(0, 6).join(', ')}${invoices.length > 6 ? `, +${invoices.length - 6} more` : ''}`;
+    const hsn = String(g.item.hsn_code || '').trim();
+    const unit = String(g.item.unit || '').trim();
+    const rate = g.item.gst_percentage;
+    const fault = (field, current, expected, fix, message) => errors.push(gstr1Err({
+      invoice: invoices.join(', '), product: g.name, field, current, expected, fix,
+      message: message || `${g.name} — used on ${where}.`
+    }));
+
+    // 1 + 2. HSN present, and a shape a return can carry.
+    if (!hsn) {
+      fault('HSN Code', '(not set)', 'a 4, 6 or 8 digit HSN code',
+        'Open the product and set its HSN code, then re-save the invoices that use it.');
+    } else if (!gstr1HsnFormatOk(hsn)) {
+      fault('HSN Code', hsn, 'a 4, 6 or 8 digit code, digits only',
+        'Correct the HSN code on the product, then re-save the invoices that use it.');
+    }
+
+    const isService = gstr1IsServiceHsn(hsn);
+
+    // 3 + 4. Unit present, and one that maps to a UQC.
+    // 7 + 8. NA belongs to services only — the Portal refused it on goods
+    // with RET191353, and the official return uses it on a service line.
+    if (!isService) {
+      if (!unit) {
+        fault('Unit', '(not set)', `one of ${Object.keys(GSTR1_UQC_MAP).join(', ')}`,
+          'Open the product and set its Unit, then re-save the invoices that use it.',
+          `${g.name} is a physical good (HSN ${hsn || 'not set'}) with no unit, so the return would report it as NA — used on ${where}.`);
+      } else if (!GSTR1_UQC_MAP[unit.toUpperCase()]) {
+        fault('Unit', unit, `one of ${Object.keys(GSTR1_UQC_MAP).join(', ')}`,
+          'Change the product\'s Unit to one of those, then re-save the invoices that use it.');
+      }
+    }
+
+    // 5. A rate has to be a real number. Zero is legitimate — an exempt or
+    // nil-rated supply is reported at 0% — so only a missing or nonsense
+    // rate is a fault.
+    if (rate === null || rate === undefined || !isFinite(+rate) || +rate < 0) {
+      fault('GST Rate', rate === null || rate === undefined ? '(not set)' : String(rate),
+        'a GST percentage of zero or more',
+        'Set the GST % on the product, then re-save the invoices that use it.');
+    }
+
+    // 6. The product's own Goods/Service flag against what its HSN says.
+    // Chapter 99 is services; anything else is goods. They disagreeing is
+    // how a service ends up demanding a unit, or a good ends up as NA.
+    if (g.product && g.product.type) {
+      const saysService = g.product.type === 'service';
+      if (hsn && saysService !== isService) {
+        fault('Product Type', `${g.product.type}, but HSN ${hsn} is ${isService ? 'a service code' : 'a goods code'}`,
+          isService ? 'type "service" for an HSN in chapter 99' : 'type "goods" for an HSN outside chapter 99',
+          'Correct either the product type or its HSN code so the two agree, then re-save the invoices that use it.');
+      }
+    }
+  });
+}
+
 // ── Build the full payload. Every validation failure is appended to
 // `errors` with enough context (invoice number, table, row) to act on —
 // the payload is still fully built even when invalid so the caller can
@@ -974,6 +1070,26 @@ async function buildGSTR1Payload(userId, profile, periodFilter) {
   });
   const srItemsByReturn = {};
   srItemsAll.forEach(r => { (srItemsByReturn[r.return_id] = srItemsByReturn[r.return_id] || []).push(r); });
+
+  // ── Product master audit ──
+  // Runs before anything is assembled: a product that cannot be reported
+  // is worth knowing about in full, across every invoice that uses it,
+  // rather than one invoice at a time as the rows are built.
+  const invoiceNumberById = {};
+  b2bData.forEach(i => { invoiceNumberById['b2b:' + i.id] = i.invoice_number; });
+  b2cData.forEach(i => { invoiceNumberById['b2c:' + i.id] = i.invoice_number || `B2C-${String(i.id).slice(0, 8)}`; });
+
+  const auditLines = allItems.map(it => ({
+    item: it,
+    product_id: it.product_id,
+    invoiceNumber: invoiceNumberById[it.invoice_type + ':' + it.invoice_id]
+  })).filter(l => l.invoiceNumber !== undefined);   // items of invoices outside this period
+
+  const productsById = await gstr1FetchProductsForLines(userId, allItems);
+  const productErrorsBefore = errors.length;
+  gstr1AuditProducts(auditLines, productsById, errors);
+  // Nothing is generated while a product cannot be reported correctly.
+  if (errors.length > productErrorsBefore) return { errors };
 
   // Duplicate invoice number check — b2b_invoices/b2c_invoices share one
   // numbering sequence app-wide, so any collision across the combined
