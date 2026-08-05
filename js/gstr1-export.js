@@ -586,6 +586,16 @@ function gstr1InvoiceVal(total) {
 // ends up stamped August.
 const GSTR1_MONTH_SELECTION = /^(\d{4})-(0[1-9]|1[0-2])$/;
 
+// "2026-07" -> "July 2026", for messages. Built from string parts, never
+// through a Date: a date-only string parses as UTC and reads back a day
+// earlier west of UTC.
+const GSTR1_MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June',
+  'July', 'August', 'September', 'October', 'November', 'December'];
+function gstr1MonthLabel(ym) {
+  const m = GSTR1_MONTH_SELECTION.exec(String(ym || ''));
+  return m ? `${GSTR1_MONTH_NAMES[+m[2] - 1]} ${m[1]}` : String(ym || '');
+}
+
 // Reports what the period control actually held at the moment it was
 // read. Off unless asked for: set localStorage gst_trace_period = '1' (or
 // window.GSTR1_TRACE_PERIOD = true) in the console and export again.
@@ -622,6 +632,33 @@ function gstr1AvailableMonths() {
   const el = typeof document !== 'undefined' ? document.getElementById('reportMonth') : null;
   if (!el) return [];
   return [...el.options].filter(o => GSTR1_MONTH_SELECTION.test(o.value)).map(o => o.text);
+}
+
+// The month the invoices themselves belong to.
+//
+// A return may only cover one month, so a set of invoices spanning two is
+// refused rather than stamped with whichever month happened to be picked.
+// An empty set returns no month at all: there is nothing to derive from,
+// and a month with no invoices is still a month that can be filed as a
+// nil return, so the caller falls back to the selected period there.
+function gstr1DeriveFilingMonth(invoices) {
+  const months = new Set();
+  (invoices || []).forEach(inv => {
+    const d = String(inv.invoice_date || '');
+    if (/^\d{4}-(0[1-9]|1[0-2])/.test(d)) months.add(d.slice(0, 7));
+  });
+
+  if (months.size > 1) {
+    const spread = [...months].sort();
+    return { error: gstr1Err({
+      field: 'Return Period',
+      current: spread.map(gstr1MonthLabel).join(', '),
+      expected: 'invoices from a single month',
+      message: 'GSTR-1 export can contain only one filing month.',
+      fix: `The invoices selected span ${spread.length} months. Choose one month from the period dropdown and generate the return again.`
+    }) };
+  }
+  return { month: months.size === 1 ? [...months][0] : null };
 }
 
 function gstr1FilingPeriod(selection) {
@@ -771,7 +808,9 @@ async function buildGSTR1Payload(userId, profile, periodFilter) {
   gstr1TracePeriod(`buildGSTR1Payload received ${JSON.stringify(periodFilter)} -> fp ${JSON.stringify(period.fp ?? null)}`,
     typeof document !== 'undefined' ? document.getElementById('reportMonth') : null, periodFilter);
   if (period.error) { errors.push(period.error); return { errors }; }
-  const fp = period.fp;
+  // Only a candidate at this point. The invoices decide — see the
+  // derivation right after they are fetched.
+  let fp = period.fp;
 
   // The invoices to include come from the same selection, so the window
   // queried and the period stamped on the file cannot disagree.
@@ -809,6 +848,38 @@ async function buildGSTR1Payload(userId, profile, periodFilter) {
   const b2bData = b2bRes.data || [], b2cData = b2cRes.data || [];
   const cdnNotes = cdnRes.data || [];
   const salesReturns = srRes.data || [];
+
+  // ── The filing period, decided by the invoices actually going into the
+  // file ──────────────────────────────────────────────────────────────
+  // The selection above chose which invoices to fetch; these invoices now
+  // choose the period stamped on them. A return whose fp disagrees with
+  // its own contents is rejected by the Portal as a period mismatch, and
+  // no UI value — a dropdown, a default, the clock — outranks the dates
+  // on the documents being filed.
+  const derivedMonth = gstr1DeriveFilingMonth([...b2bData, ...b2cData]);
+  if (derivedMonth.error) { errors.push(derivedMonth.error); return { errors }; }
+
+  if (derivedMonth.month) {
+    const derived = derivedMonth.month;
+    const derivedFp = gstr1FilingPeriod(derived).fp;
+    // A disagreement here means the invoices fetched are not the ones the
+    // selected window asked for, which is a fault in the query rather than
+    // in the user's choice. The invoices win, and it is reported.
+    if (derivedFp !== fp) {
+      errors.push(gstr1Err({
+        field: 'Return Period',
+        current: `${fp} (from the selected period)`,
+        expected: `${derivedFp} (from the invoices being exported)`,
+        message: 'The period selected and the invoices fetched for it do not agree.',
+        fix: 'Reload the Reports page and select the month again. If it persists, report it — the two should never differ.'
+      }));
+    }
+    fp = derivedFp;
+  }
+  // No invoices at all leaves fp as the selected month, so a nil return
+  // for a month with nothing in it can still be filed. There is no
+  // invoice date to derive from, and refusing would make an empty month
+  // impossible to file rather than merely empty.
   const srItemsAll = srItemsRes.data || [];
 
   // Round 2: invoice_items and the legacy HSN tables have no date column
