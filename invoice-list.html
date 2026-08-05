@@ -197,6 +197,9 @@ document.addEventListener('DOMContentLoaded', () => {
           <input type="text" id="mpNote" class="form-control">
         </div>
       </div>
+      <!-- Shown only when a save fails; the modal stays open so the entry
+           can be corrected and retried. -->
+      <div id="mpError" class="form-error mb-16" role="alert"></div>
       <div class="btn-group mb-20">
         <button type="button" class="btn btn-primary" onclick="submitReceivePayment()"><i class="fas fa-check"></i> Receive Payment</button>
       </div>

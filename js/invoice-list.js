@@ -25,6 +25,11 @@ let invListView = [];
 // invoice is the one people look for.
 let invListSort = 'desc';
 
+// How long a just-changed row stays marked. Long enough to catch the eye
+// on a full page of rows, short enough not to linger. Matches the
+// rowJustUpdated animation in css/style.css.
+const ROW_HIGHLIGHT_MS = 3000;
+
 // Invoice numbers must order numerically, not as text — plain string
 // comparison puts "142" after "1419" and, once a prefix is involved,
 // scatters a sequence entirely. This splits each number into digit and
@@ -90,8 +95,9 @@ async function initInvoiceList() {
 // invoice from page 4 of a filtered, searched, re-sorted list used to
 // dump them back at an unfiltered page 1, which on a long list meant
 // hunting for their place again.
-function rememberInvListState(type, id) {
+function rememberInvListState(type, id, extra) {
   setListReturnState(INVOICE_LIST_RETURN_KEY, {
+    ...extra,
     page: invListPage,
     search: document.getElementById('invListSearch')?.value || '',
     filters: {
@@ -142,7 +148,7 @@ function restoreInvListState() {
     if (row) {
       row.classList.add('row-just-updated');
       row.scrollIntoView({ block: 'center' });
-      setTimeout(() => row.classList.remove('row-just-updated'), 2600);
+      setTimeout(() => row.classList.remove('row-just-updated'), ROW_HIGHLIGHT_MS);
     } else {
       // The edited invoice fell outside the restored filter (its number
       // or customer changed, say) — put the user back where they were
@@ -154,7 +160,10 @@ function restoreInvListState() {
   });
 }
 
-async function loadInvoiceList(userId) {
+// Reads both invoice tables and returns them as one list of view rows.
+// Split out from loadInvoiceList() so the data can be re-read without
+// also resetting the view — see refreshInvoiceListInPlace().
+async function fetchInvoiceListRows(userId) {
   const [{ data: b2b }, { data: b2c }] = await Promise.all([
     _supabase.from('b2b_invoices').select('*').eq('user_id', userId),
     _supabase.from('b2c_invoices').select('*').eq('user_id', userId)
@@ -176,14 +185,58 @@ async function loadInvoiceList(userId) {
     payment_status: r.payment_status || 'unpaid', amount_paid: +r.amount_paid || 0
   }));
 
+  return [...b2bRows, ...b2cRows];
+}
+
+async function loadInvoiceList(userId) {
   // Ordered by invoice number the moment it is loaded, so filtering and
   // pagination both operate on an already-sorted list.
-  invListAllData = sortInvoicesByNumber([...b2bRows, ...b2cRows]);
+  invListAllData = sortInvoicesByNumber(await fetchInvoiceListRows(userId));
   invListPage = 1;
   // Populated here rather than in populateInvoiceListFilters(): the option
   // list is derived from the loaded records, which don't exist until now.
   populateInvoiceListStateFilter();
   renderInvoiceListTable(invListAllData);
+}
+
+// Re-reads the invoices and redraws where the user already is.
+//
+// THIS IS THE ONLY WAY THE LIST SHOULD BE REFRESHED after an action that
+// changes invoice data while staying on this page. loadInvoiceList() is for
+// the initial load alone: it hands renderInvoiceListTable() the whole
+// unfiltered master list and resets to page 1, so using it as a refresh
+// dropped the user from page 4 of a filtered, searched list back to an
+// unfiltered page 1 with their place lost. This re-runs the same pipeline
+// the view was built from (filters -> search -> sort) against the fresh
+// data, then returns to the page they were on, leaving every control
+// untouched. Pass the affected invoice's id to mark it briefly; omit it
+// when the row is gone, as after a delete.
+async function refreshInvoiceListInPlace(userId, highlightId) {
+  const page = invListPage;
+  // Both, because which element scrolls depends on the viewport.
+  const scrollY = window.scrollY || 0;
+  const content = document.querySelector('.content');
+  const contentScroll = content?.scrollTop || 0;
+
+  invListAllData = sortInvoicesByNumber(await fetchInvoiceListRows(userId));
+  populateInvoiceListStateFilter();    // rebuilt from the data, selection kept
+  applyInvoiceListFilters();           // resets to page 1...
+  // ...then back to where they were. Clamped to the last page that still
+  // has rows, so deleting the only invoice on the last page steps back a
+  // page instead of showing an empty one.
+  goToInvoiceListPage(page);
+
+  requestAnimationFrame(() => {
+    window.scrollTo(0, scrollY);
+    if (content) content.scrollTop = contentScroll;
+    const row = highlightId
+      ? document.querySelector(`#invListTableBody tr[data-invoice-id="${highlightId}"]`)
+      : null;
+    if (row) {
+      row.classList.add('row-just-updated');
+      setTimeout(() => row.classList.remove('row-just-updated'), ROW_HIGHLIGHT_MS);
+    }
+  });
 }
 
 // Rebuilt from whatever is in memory, preserving the current selection so
@@ -338,9 +391,16 @@ function closeViewInvoiceModal() {
 
 // ── Duplicate (stashes the source invoice for invoice.html?duplicate=1
 // to prefill — nothing is written to the DB until Save is clicked there) ──
+//
+// The editor step stays: a copy needs its date and quantities checked
+// before it becomes a real invoice. What the user does NOT lose is their
+// place — the list is remembered here, exactly as it is for Edit, and
+// saving the copy brings them back to this page with the new invoice
+// marked in whatever sort order is active (see saveInvoice()).
 async function duplicateInvoiceFromList(type, id) {
   const inv = await fetchInvoiceRecord(type, id);
   if (!inv) return;
+  rememberInvListState(type, id, { returnAfterCreate: true });
   sessionStorage.setItem('invoice_duplicate_draft', JSON.stringify({
     type, customer_name: inv.customer_name, gst_number: inv.gstin, phone: inv.phone, address: inv.address, state: inv.state,
     supply_type: inv.supply_type,
@@ -365,6 +425,7 @@ async function openMarkPaymentModal(type, id) {
   setInvListValue('mpDate', toISO(new Date()));
   setInvListValue('mpReference', '');
   setInvListValue('mpNote', '');
+  setPaymentModalError('');
   document.getElementById('markPaymentModal')?.classList.add('open');
   await refreshPaymentModal();
 }
@@ -416,15 +477,31 @@ async function submitReceivePayment() {
   const referenceNumber = document.getElementById('mpReference')?.value;
   const note = document.getElementById('mpNote')?.value;
 
-  const result = await recordPayment(mpTarget.type, mpTarget.id, user.id, { amount, method, date, referenceNumber, note });
-  if (!result.ok) { showToast(result.reason || 'Could not record payment.', 'error'); return; }
+  // Held before the modal closes below, which clears mpTarget.
+  const target = mpTarget;
+
+  const result = await recordPayment(target.type, target.id, user.id, { amount, method, date, referenceNumber, note });
+  // A failure leaves the modal exactly as it is — the amount the user typed
+  // is still there to correct and retry — with the reason shown against the
+  // button rather than only in a toast that fades.
+  if (!result.ok) { setPaymentModalError(result.reason || 'Could not record payment.'); return; }
 
   showToast('Payment recorded.', 'success');
-  setInvListValue('mpAmount', '');
-  setInvListValue('mpReference', '');
-  setInvListValue('mpNote', '');
-  await loadInvoiceList(user.id);
-  await refreshPaymentModal();
+  closeMarkPaymentModal();
+  // Paid, Balance and Status come back from the invoice rows themselves,
+  // re-read here; nothing about the amounts is recalculated on this page.
+  await refreshInvoiceListInPlace(user.id, target.id);
+}
+
+// The inline error line inside the payment modal. Cleared whenever the
+// modal opens and whenever a save succeeds.
+function setPaymentModalError(message) {
+  const el = document.getElementById('mpError');
+  if (el) {
+    el.textContent = message || '';
+    el.classList.toggle('show', !!message);   // .form-error is hidden until 'show'
+  }
+  if (message) showToast(message, 'error');
 }
 
 async function removePayment(paymentId) {
@@ -434,9 +511,12 @@ async function removePayment(paymentId) {
   const ok = await showConfirm('Remove this payment record? The invoice balance will be recalculated.');
   if (!ok) return;
   const result = await deletePayment(paymentId, mpTarget.type, mpTarget.id, user.id);
-  if (!result.ok) { showToast(result.reason || 'Could not remove payment.', 'error'); return; }
+  if (!result.ok) { setPaymentModalError(result.reason || 'Could not remove payment.'); return; }
   showToast('Payment removed.', 'success');
-  await loadInvoiceList(user.id);
+  setPaymentModalError('');
+  // Same in-place refresh, but the modal stays open: removing a payment is
+  // an action taken inside the history list the user is still looking at.
+  await refreshInvoiceListInPlace(user.id, mpTarget.id);
   await refreshPaymentModal();
 }
 
@@ -450,7 +530,9 @@ async function deleteInvoiceFromList(type, id) {
   showToast('Invoice permanently deleted.', 'success');
   if (typeof refreshStorageStatus === 'function') refreshStorageStatus();
   const user = await getCurrentUser();
-  if (user) await loadInvoiceList(user.id);
+  // No id to highlight — the row it would have marked is the one just
+  // removed. Everything else about the view is kept, footer totals included.
+  if (user) await refreshInvoiceListInPlace(user.id);
 }
 
 // Built from real DOM nodes with real listeners.

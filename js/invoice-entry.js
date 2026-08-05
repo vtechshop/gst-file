@@ -39,6 +39,14 @@ async function initInvoiceEntry() {
   } else if (params.get('duplicate') === '1') {
     await loadInvoiceDuplicateDraft();
   } else {
+    // A genuinely fresh invoice, not a duplicate: if the user reached
+    // Duplicate and then came here instead of saving the copy, that
+    // pending "go back to the list afterwards" no longer applies. Where
+    // they were in the list is still remembered, so returning to it still
+    // lands in the right place.
+    if (peekListReturnState(INVOICE_LIST_RETURN_KEY)?.returnAfterCreate) {
+      setListReturnState(INVOICE_LIST_RETURN_KEY, { returnAfterCreate: false });
+    }
     setInvValue('invCustName', 'Walk-in Customer');
     generateInvoiceNo(user.id);
     setupDraftAutosave(INVOICE_FORM_KEY, INVOICE_DRAFT_FIELDS);
@@ -709,6 +717,20 @@ async function saveInvoice() {
   showInvoiceSavedPanel(type, invoiceId, custName);
 
   if (wasNewInvoice) {
+    // A duplicate started life as an Invoice List action, so it ends there
+    // too: the list remembered where the user was before sending them here,
+    // and now that the copy exists they go back to that exact page with it
+    // marked. Every OTHER new invoice keeps the old behaviour below.
+    const pending = peekListReturnState(INVOICE_LIST_RETURN_KEY);
+    if (pending?.returnAfterCreate) {
+      setListReturnState(INVOICE_LIST_RETURN_KEY, {
+        flash: 'Invoice saved successfully!',
+        returnAfterCreate: false,
+        selected: { type, id: invoiceId }     // the copy, not the original
+      });
+      location.replace('invoice-list.html');
+      return;
+    }
     // Workflow speed: don't make the user click "New Invoice" for every
     // sale — the form is instantly ready for the next one, with the
     // just-saved invoice's Print/WhatsApp/Email actions still available

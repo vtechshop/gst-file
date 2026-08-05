@@ -546,7 +546,8 @@ table.data-table {
   from { background: var(--primary-xlight); }
   to   { background: transparent; }
 }
-.data-table tbody tr.row-just-updated { animation: rowJustUpdated 2.5s ease-out; }
+/* Kept in step with ROW_HIGHLIGHT_MS in js/invoice-list.js. */
+.data-table tbody tr.row-just-updated { animation: rowJustUpdated 3s ease-out; }
 
 /* Sales Return: the rows actually being returned.
    With a long invoice the ticked lines need to be findable at a glance,
