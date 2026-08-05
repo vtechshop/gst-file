@@ -15,8 +15,10 @@ async function initReports() {
   setupLogoutBtn();
   loadUserProfile(currentUser.id);
   setupMobileMenu();
-  await populateMonthFilter(currentUser.id);
-  await loadReports('current');
+  // populateMonthFilter decides which period the page opens on and returns
+  // it, so the dropdown and the data on screen cannot disagree.
+  const openingPeriod = await populateMonthFilter(currentUser.id);
+  await loadReports(openingPeriod);
 }
 
 // Month names written out rather than taken from toLocaleString, so the
@@ -65,13 +67,21 @@ async function collectReportMonths(userId) {
   return [...months].sort().reverse();
 }
 
+// The months this page found, published for anything that needs to say
+// what the user could have picked. GSTR-1's validator reads it, so its
+// message stays truthful even if the dropdown failed to render — reading
+// the dropdown to describe the dropdown tells you nothing when the
+// dropdown is the thing that went wrong.
+let reportAvailableMonths = [];
+
 async function populateMonthFilter(userId) {
   const sel = document.getElementById('reportMonth');
-  if (!sel) return;
+  if (!sel) return 'current';
 
   let months = [];
   try { months = await collectReportMonths(userId); }
   catch (e) { console.error('Could not read the months you have data for:', e); }
+  reportAvailableMonths = months.map(m => ({ value: m, label: reportMonthLabel(m) }));
 
   // Current Month drives the dashboard view and stays first. The named
   // months follow, because those are the ones a return is filed for —
@@ -90,6 +100,18 @@ async function populateMonthFilter(userId) {
     + '<option value="q1">Q1 (Apr-Jun)</option><option value="q2">Q2 (Jul-Sep)</option>'
     + '<option value="q3">Q3 (Oct-Dec)</option><option value="q4">Q4 (Jan-Mar)</option>'
     + '</optgroup>';
+
+  // Open on the most recent month that has data rather than on Current
+  // Month. Current Month cannot produce a GSTR-1 — it names no month —
+  // so leaving it selected meant the first press of Generate Return was
+  // always refused, whatever the user had in front of them. Opening on a
+  // real month makes the page show data on arrival and the export work
+  // without having to discover the dropdown first.
+  //
+  // Current Month stays in the list for looking at the month in progress.
+  const opening = months[0] || 'current';
+  sel.value = opening;
+  return opening;
 }
 
 async function loadReports(filter) {

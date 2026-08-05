@@ -606,9 +606,19 @@ function gstr1TracePeriod(where, el, value) {
     (opts.length ? opts.join('\n') + '\n' : ''));
 }
 
-// The months the dropdown is offering, so a rejection can say what the
-// user could have picked instead of only what they did.
+// The months that could be filed, so a rejection can say what the user
+// could have picked instead of only what they did.
+//
+// Read from the list the Reports page discovered in the stored data
+// (reportAvailableMonths in js/reports.js) rather than from the dropdown.
+// Reading the dropdown to describe the dropdown is circular: if it ever
+// failed to render, the message would report no months available while
+// the data plainly had some. The dropdown is only a fallback, for a page
+// that has the control but not the reports script.
 function gstr1AvailableMonths() {
+  if (typeof reportAvailableMonths !== 'undefined' && Array.isArray(reportAvailableMonths) && reportAvailableMonths.length) {
+    return reportAvailableMonths.map(m => m.label);
+  }
   const el = typeof document !== 'undefined' ? document.getElementById('reportMonth') : null;
   if (!el) return [];
   return [...el.options].filter(o => GSTR1_MONTH_SELECTION.test(o.value)).map(o => o.text);
