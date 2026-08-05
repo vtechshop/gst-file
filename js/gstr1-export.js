@@ -84,14 +84,30 @@ const GSTR1_UQC_MAP = {
   // measure, and the reference file uses "NA" for exactly that case.
 };
 
-// Fallback when a product's unit is blank or outside the map. "NA" is the
-// value the official file uses on its unit-less service line — taken from
-// there rather than chosen, so no UQC is invented.
-const GSTR1_UQC_FALLBACK = 'NA';
+// "NA" is what the official Utility writes on a SERVICE line — its
+// reference return carries uqc "NA" against HSN 998719 with qty 0. It is
+// not a general fallback: the Portal rejected our return with
+// "The UQC entered is not valid" (RET191353) on four goods lines that
+// carried it, because a physical good has a unit of measure and NA says
+// it has none.
+const GSTR1_UQC_SERVICE = 'NA';
 
-function gstr1ToUQC(unit) {
+// Services live in HSN chapter 99. That is where the reference file's own
+// NA line sits (998719), which is the only evidence available here for
+// when NA is accepted.
+function gstr1IsServiceHsn(hsnCode) {
+  return /^99/.test(String(hsnCode || '').trim());
+}
+
+// The UQC for a line, or null when it cannot be determined. Null is not a
+// value to export — the caller refuses the export and names the product,
+// because inventing a unit for someone else's goods is a guess about
+// what they sold, and the Portal will reject the wrong one anyway.
+function gstr1ToUQC(unit, hsnCode) {
   const key = (unit || '').trim().toUpperCase();
-  return GSTR1_UQC_MAP[key] || GSTR1_UQC_FALLBACK;
+  if (GSTR1_UQC_MAP[key]) return GSTR1_UQC_MAP[key];
+  if (gstr1IsServiceHsn(hsnCode)) return GSTR1_UQC_SERVICE;
+  return null;
 }
 
 // ── Root metadata written by the official Offline Utility ───
@@ -312,7 +328,7 @@ function gstr1ErrorText(e) {
 // disagree about what is emittable. Whether GSTN's master list matches
 // this set is NOT something this codebase can settle — the check here is
 // that nothing outside our own map ever reaches the file.
-const GSTR1_EMITTABLE_UQC = new Set([...Object.values(GSTR1_UQC_MAP), GSTR1_UQC_FALLBACK]);
+const GSTR1_EMITTABLE_UQC = new Set([...Object.values(GSTR1_UQC_MAP), GSTR1_UQC_SERVICE]);
 
 // The values this generator itself produces for these fields. Asserted so
 // a future edit cannot introduce a third value silently; they are our
@@ -522,6 +538,13 @@ function validateGSTR1Strict(payload, errors) {
       errors.push(gstr1Err({ product: r.desc, field: `${where}.uqc`, current: r.uqc,
         expected: `one of ${[...GSTR1_EMITTABLE_UQC].join(', ')}`,
         fix: 'Set the product\'s unit to one this app maps to a UQC.' }));
+    } else if (r.uqc === GSTR1_UQC_SERVICE && !gstr1IsServiceHsn(r.hsn_sc)) {
+      // Exactly what the Portal refused: RET191353, "The UQC entered is
+      // not valid", on goods lines carrying NA.
+      errors.push(gstr1Err({ product: r.desc, field: `${where}.uqc`, current: 'NA',
+        expected: `a real unit for HSN ${r.hsn_sc} — NA is only for services (HSN 99xx)`,
+        message: 'A physical good is being reported with no unit of measure.',
+        fix: 'Set the product\'s Unit and re-save the invoices that use it.' }));
     }
     // Zero is legitimate: a Utility-written return carries qty 0 on a
     // service line (uqc "NA"), which has no unit of measure to count.
@@ -980,7 +1003,7 @@ async function buildGSTR1Payload(userId, profile, periodFilter) {
     // rows (that would itself be a duplicate-HSN-row rejection) or be
     // silently summed together (a combined "8 units" of 5kg + 3pcs is
     // meaningless). Flagged for a human to resolve rather than guessed.
-    if (b.uqc !== GSTR1_UQC_FALLBACK && uqc !== GSTR1_UQC_FALLBACK && b.uqc !== uqc) {
+    if (b.uqc !== GSTR1_UQC_SERVICE && uqc !== GSTR1_UQC_SERVICE && b.uqc !== uqc) {
       errors.push(gstr1Err({ field: 'Unit (UQC)', current: `${b.uqc} and ${uqc} on HSN ${hsnCode} at ${r.rate}%`, expected: 'one unit per HSN code and rate', message: `${errCtx}: this HSN and rate is sold in two different units.`, fix: 'Make the unit consistent for this HSN and rate, or give the products distinct HSN codes.' }));
       return;
     }
@@ -989,7 +1012,7 @@ async function buildGSTR1Payload(userId, profile, periodFilter) {
     b.cgst = round2(b.cgst + r.cgst); b.sgst = round2(b.sgst + r.sgst);
     // A later row can supply a UQC where an earlier one (e.g. a legacy
     // row with no unit at all) couldn't.
-    if (b.uqc === GSTR1_UQC_FALLBACK && uqc !== GSTR1_UQC_FALLBACK) b.uqc = uqc;
+    if (b.uqc === GSTR1_UQC_SERVICE && uqc !== GSTR1_UQC_SERVICE) b.uqc = uqc;
   }
 
   // ── B2B ──
@@ -1025,7 +1048,18 @@ async function buildGSTR1Payload(userId, profile, periodFilter) {
       const preErrCount = errors.length;
       gstr1CheckItemTaxable(it, itemCtx, errors, { invoice: inv.invoice_number, customer: inv.customer_name });
       if (errors.length > preErrCount) itemsOk = false;
-      const uqc = gstr1ToUQC(it.unit);
+      const uqc = gstr1ToUQC(it.unit, it.hsn_code);
+      if (uqc === null) {
+        errors.push(gstr1Err({
+          invoice: inv.invoice_number, customer: inv.customer_name, product: it.product_name,
+          field: 'Unit', current: it.unit ? `"${it.unit}"` : '(not set)',
+          expected: `one of ${Object.keys(GSTR1_UQC_MAP).join(', ')}`,
+          message: `HSN ${it.hsn_code} is a physical good and has no unit of measure on it, so no UQC can be stated for it.`,
+          fix: 'Open the product and set its Unit, then re-save the invoices that use it. The Portal rejects a goods line with no unit (RET191353).'
+        }));
+        itemsOk = false;
+        return;
+      }
       addToHsn('b2b', it.hsn_code, it.product_name, uqc, +it.quantity || 0, gstr1RecomputeItem(it, inv.supply_type), itemCtx);
     });
     if (!itemsOk) return;
@@ -1080,7 +1114,18 @@ async function buildGSTR1Payload(userId, profile, periodFilter) {
       const preErrCount = errors.length;
       gstr1CheckItemTaxable(it, itemCtx, errors, { invoice: inv.invoice_number, customer: inv.customer_name });
       if (errors.length > preErrCount) itemsOk = false;
-      const uqc = gstr1ToUQC(it.unit);
+      const uqc = gstr1ToUQC(it.unit, it.hsn_code);
+      if (uqc === null) {
+        errors.push(gstr1Err({
+          invoice: inv.invoice_number, customer: inv.customer_name, product: it.product_name,
+          field: 'Unit', current: it.unit ? `"${it.unit}"` : '(not set)',
+          expected: `one of ${Object.keys(GSTR1_UQC_MAP).join(', ')}`,
+          message: `HSN ${it.hsn_code} is a physical good and has no unit of measure on it, so no UQC can be stated for it.`,
+          fix: 'Open the product and set its Unit, then re-save the invoices that use it. The Portal rejects a goods line with no unit (RET191353).'
+        }));
+        itemsOk = false;
+        return;
+      }
       addToHsn('b2c', it.hsn_code, it.product_name, uqc, +it.quantity || 0, gstr1RecomputeItem(it, inv.supply_type), itemCtx);
     });
     if (!itemsOk) return;
