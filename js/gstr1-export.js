@@ -569,6 +569,36 @@ function gstr1InvoiceVal(total) {
   return Math.round(total);
 }
 
+// ── Filing period ───────────────────────────────────────────
+// fp is MMYYYY and comes from the month the user selected, by string
+// rearrangement, with no Date object and no reference to the clock.
+//
+// It used to be derived as new Date(startOfSelectedMonth).getMonth(). A
+// date-only string parses as UTC while getMonth() reads local time, so on
+// any machine behind UTC that returns the PREVIOUS month — selecting July
+// would have filed 062026. It is right in IST only by accident of the
+// offset, which is not something a filing should depend on.
+//
+// A relative selection is refused rather than resolved. "Current Month",
+// a quarter and a financial year are all reasonable things to look at on
+// the Reports page, but none of them names the month being filed, and
+// resolving "current" against the clock is exactly how a return for July
+// ends up stamped August.
+const GSTR1_MONTH_SELECTION = /^(\d{4})-(0[1-9]|1[0-2])$/;
+
+function gstr1FilingPeriod(selection) {
+  const raw = String(selection == null ? '' : selection).trim();
+  const m = GSTR1_MONTH_SELECTION.exec(raw);
+  if (m) return { fp: m[2] + m[1] };          // "2026-07" -> "072026"
+  return { error: gstr1Err({
+    field: 'Return Period',
+    current: raw || '(nothing selected)',
+    expected: 'a specific month, e.g. "July 2026"',
+    message: 'GSTR-1 is filed for one named month, and the period selected on the Reports page does not name one.',
+    fix: 'Pick the month you are filing for from the period dropdown — not "Current Month", a quarter, or a financial year — then generate the return again.'
+  }) };
+}
+
 function gstr1InvoiceNumberOk(num) {
   // GSTN's own offline-utility validation: max 16 chars, letters/digits/-//
   return /^[A-Za-z0-9\-\/]{1,16}$/.test(num || '');
@@ -687,19 +717,17 @@ function gstr1PosUnregistered(customerState, errors, context) {
 // show every problem at once instead of stopping at the first one. ──
 async function buildGSTR1Payload(userId, profile, periodFilter) {
   const errors = [];
-  const { start, end } = getReportDateRange(periodFilter);
 
-  // A GSTR-1 JSON is inherently a single filing PERIOD (one `fp`) — a
-  // "Financial Year"/"Quarter" report selection spans several months and
-  // has no single valid `fp` to put in the file. Reject those up front
-  // rather than silently picking one month's worth of the label.
-  const isSingleMonth = /^\d{4}-\d{2}$/.test(periodFilter) || periodFilter === 'current';
-  if (!isSingleMonth) {
-    errors.push(gstr1Err({ field: 'Report Period', current: periodFilter, expected: 'a single calendar month', message: 'GSTR-1 is filed one month at a time and the selected period spans several.', fix: 'Pick a specific month (or "Current Month") on the Reports page.' }));
-    return { errors };
-  }
-  const startDate = new Date(start);
-  const fp = String(startDate.getMonth() + 1).padStart(2, '0') + startDate.getFullYear();
+  // The filing period is settled first, from the selection alone. If it
+  // does not name a month there is no return to build, so nothing is
+  // fetched and nothing is assembled.
+  const period = gstr1FilingPeriod(periodFilter);
+  if (period.error) { errors.push(period.error); return { errors }; }
+  const fp = period.fp;
+
+  // The invoices to include come from the same selection, so the window
+  // queried and the period stamped on the file cannot disagree.
+  const { start, end } = getReportDateRange(periodFilter);
 
   const businessGstin = (profile?.gstin || '').toUpperCase();
   const businessState = profile?.state || '';
@@ -1311,7 +1339,10 @@ async function exportGSTR1JSON() {
   const user = await getCurrentUser();
   if (!user) return;
   const profile = (typeof getCachedProfile === 'function') ? getCachedProfile() : null;
-  const periodFilter = document.getElementById('reportMonth')?.value || 'current';
+  // Whatever the period dropdown actually holds — no fallback. A default
+  // of 'current' here would put the system month on the file when nothing
+  // had been selected, which is the failure this is guarding against.
+  const periodFilter = document.getElementById('reportMonth')?.value ?? '';
 
   showToast('Validating GSTR-1 data…', 'success');
   const { payload, errors, context } = await buildGSTR1Payload(user.id, profile, periodFilter);
