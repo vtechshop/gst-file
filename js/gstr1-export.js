@@ -742,6 +742,47 @@ function gstr1RecomputeItem(item, supplyType) {
 // (multiple products at different rates), which the old generator
 // collapsed into one itms[0] using whatever rate happened to sit on the
 // header row.
+// ── Does a stored invoice total agree with its own line items? ──────
+// This app rounds an invoice to the whole rupee. computeInvoiceRollups()
+// in js/invoice-items.js — and the same three lines in purchase-items.js
+// and sales-return-items.js — build the total as:
+//
+//   rawTotal   = taxable + gst
+//   grandTotal = Math.round(rawTotal)      <- stored as total_amount
+//   roundOff   = grandTotal - rawTotal     <- shown, never stored
+//
+// Round Off is derived, not a column: there is no round_off anywhere in
+// the schema. So a legitimate invoice can differ from taxable + gst by up
+// to half a rupee, and comparing the two directly rejected every invoice
+// that rounded by more than the 0.05 tolerance — ₹46,610 + ₹8,389.80
+// rounds to ₹55,000 and was refused over the resulting ₹0.20.
+//
+// Both shapes are accepted: a total stored rounded (every invoice this
+// app writes today) and a total stored unrounded (anything older, or
+// imported, that kept the exact sum). Anything else is a real mismatch.
+function gstr1TotalMatches(storedTotal, rawTotal) {
+  const stored = round2(+storedTotal || 0);
+  const raw = round2(rawTotal);
+  return Math.abs(stored - raw) <= GSTR1_RECONCILE_TOLERANCE
+      || Math.abs(stored - Math.round(raw)) <= GSTR1_RECONCILE_TOLERANCE;
+}
+
+// The four figures that explain a mismatch, so the message is the audit
+// rather than a prompt to go and do one.
+function gstr1TotalMismatch(inv, rawTotal) {
+  const stored = round2(+inv.total_amount || 0);
+  const raw = round2(rawTotal);
+  const roundOff = round2(Math.round(raw) - raw);
+  return gstr1Err({
+    invoice: inv.invoice_number, customer: inv.customer_name,
+    field: 'Invoice Total',
+    current: `stored ₹${stored}`,
+    expected: `₹${Math.round(raw)} — line items give ₹${raw}, round off ${roundOff >= 0 ? '+' : ''}₹${roundOff}`,
+    message: `Stored total ₹${stored} differs from the line items by ₹${round2(stored - raw)}, which is more than a rounding adjustment can explain.`,
+    fix: 'Open the invoice and save it again to rebuild its total from the lines.'
+  });
+}
+
 function gstr1RecomputeInvoice(items, supplyType) {
   let taxable = 0, igst = 0, cgst = 0, sgst = 0;
   const byRate = new Map();
@@ -990,8 +1031,8 @@ async function buildGSTR1Payload(userId, profile, periodFilter) {
     if (!itemsOk) return;
 
     const recomputed = gstr1RecomputeInvoice(items, inv.supply_type);
-    if (Math.abs(recomputed.total - round2(+inv.total_amount)) > GSTR1_RECONCILE_TOLERANCE) {
-      errors.push(gstr1Err({ invoice: inv.invoice_number, customer: inv.customer_name, field: 'Invoice Total', current: `₹${round2(+inv.total_amount)}`, expected: `₹${recomputed.total} (recomputed from the line items)`, fix: 'Open the invoice and save it again to refresh its stored total.' }));
+    if (!gstr1TotalMatches(inv.total_amount, recomputed.total)) {
+      errors.push(gstr1TotalMismatch(inv, recomputed.total));
       return;
     }
 
@@ -1045,8 +1086,8 @@ async function buildGSTR1Payload(userId, profile, periodFilter) {
     if (!itemsOk) return;
 
     const recomputed = gstr1RecomputeInvoice(items, inv.supply_type);
-    if (Math.abs(recomputed.total - round2(+inv.total_amount)) > GSTR1_RECONCILE_TOLERANCE) {
-      errors.push(gstr1Err({ invoice: inv.invoice_number, customer: inv.customer_name, field: 'Invoice Total', current: `₹${round2(+inv.total_amount)}`, expected: `₹${recomputed.total} (recomputed from the line items)`, fix: 'Open the invoice and save it again to refresh its stored total.' }));
+    if (!gstr1TotalMatches(inv.total_amount, recomputed.total)) {
+      errors.push(gstr1TotalMismatch(inv, recomputed.total));
       return;
     }
 
