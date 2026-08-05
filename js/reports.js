@@ -16,10 +16,23 @@ async function initReports() {
   loadUserProfile(currentUser.id);
   setupMobileMenu();
   // populateMonthFilter decides which period the page opens on and returns
-  // it, so the dropdown and the data on screen cannot disagree.
-  const openingPeriod = await populateMonthFilter(currentUser.id);
+  // it, so the dropdown and the data on screen cannot disagree. The
+  // promise is kept so anything reading the selector can wait for it —
+  // see reportPeriodsReady below.
+  reportPeriodsReady = populateMonthFilter(currentUser.id);
+  const openingPeriod = await reportPeriodsReady;
   await loadReports(openingPeriod);
 }
+
+// Resolves once the period dropdown holds its options.
+//
+// The control ships empty in reports.html and is filled from the database
+// after the page loads. Anything that reads it before then sees a select
+// with no options at all — selectedIndex -1, value "" — which the export
+// reported as "(nothing selected)" while the user, looking a moment
+// later, saw July 2026 sitting in the same control. On a cold backend
+// that window is seconds long, not milliseconds.
+let reportPeriodsReady = null;
 
 // Month names written out rather than taken from toLocaleString, so the
 // label reads "July 2026" on every machine. A locale that formats months
@@ -74,9 +87,26 @@ async function collectReportMonths(userId) {
 // dropdown is the thing that went wrong.
 let reportAvailableMonths = [];
 
+// The options that need no data to draw. Rendered before anything is
+// awaited so the control is never empty, and reused for the final render
+// so the two cannot drift.
+function reportStaticPeriodOptions() {
+  return '<option value="current">Current Month</option>'
+    + '<optgroup label="Ranges (not valid for a GSTR-1 filing)">'
+    + '<option value="fy">Financial Year</option>'
+    + '<option value="q1">Q1 (Apr-Jun)</option><option value="q2">Q2 (Jul-Sep)</option>'
+    + '<option value="q3">Q3 (Oct-Dec)</option><option value="q4">Q4 (Jan-Mar)</option>'
+    + '</optgroup>';
+}
+
 async function populateMonthFilter(userId) {
   const sel = document.getElementById('reportMonth');
   if (!sel) return 'current';
+
+  // Draw first, fetch second. A select with no options reports its value
+  // as "" and its selectedIndex as -1, which is indistinguishable from a
+  // deliberate empty choice to anything reading it.
+  sel.innerHTML = reportStaticPeriodOptions();
 
   let months = [];
   try { months = await collectReportMonths(userId); }
@@ -92,14 +122,9 @@ async function populateMonthFilter(userId) {
         .map(m => `<option value="${m}">${reportMonthLabel(m)}</option>`).join('')}</optgroup>`
     : '';
 
-  sel.innerHTML =
-    '<option value="current">Current Month</option>'
-    + monthOptions
-    + '<optgroup label="Ranges (not valid for a GSTR-1 filing)">'
-    + '<option value="fy">Financial Year</option>'
-    + '<option value="q1">Q1 (Apr-Jun)</option><option value="q2">Q2 (Jul-Sep)</option>'
-    + '<option value="q3">Q3 (Oct-Dec)</option><option value="q4">Q4 (Jan-Mar)</option>'
-    + '</optgroup>';
+  // Redrawn now that the months are known, from the same static options.
+  sel.innerHTML = reportStaticPeriodOptions()
+    .replace('</option><optgroup', '</option>' + monthOptions + '<optgroup');
 
   const opening = defaultFilingMonth(months) || 'current';
   sel.value = opening;

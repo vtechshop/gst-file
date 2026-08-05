@@ -619,6 +619,37 @@ function gstr1MonthLabel(ym) {
   return m ? `${GSTR1_MONTH_NAMES[+m[2] - 1]} ${m[1]}` : String(ym || '');
 }
 
+// Waits for the period dropdown to hold its options before anything reads
+// it.
+//
+// The control ships empty in reports.html and is filled from the database
+// after the page loads. A select with no options reports value "" and
+// selectedIndex -1, which is indistinguishable from a deliberate empty
+// choice — the export used to say "(nothing selected)" while the user was
+// looking at July 2026 in that very control a moment later.
+//
+// Two waits, because the gap has two parts. reportPeriodsReady is the
+// promise js/reports.js publishes while it fetches the months, but it is
+// only assigned after initReports has awaited requireAuth() — a network
+// call, during which the page is painted and the button is clickable. So
+// an empty control is also waited on directly, bounded, for the stretch
+// before that promise exists.
+const GSTR1_PERIOD_WAIT_MS = 15000;
+
+async function gstr1AwaitPeriodOptions() {
+  const el = () => document.getElementById('reportMonth');
+  const empty = () => { const e = el(); return e && e.options.length === 0; };
+  if (!empty() && (typeof reportPeriodsReady === 'undefined' || !reportPeriodsReady)) return;
+
+  showToast('Reading your filing periods…', 'success');
+  const deadline = Date.now() + GSTR1_PERIOD_WAIT_MS;
+  while (empty() && Date.now() < deadline) await new Promise(r => setTimeout(r, 50));
+  if (typeof reportPeriodsReady !== 'undefined' && reportPeriodsReady) {
+    try { await reportPeriodsReady; }
+    catch (e) { /* populateMonthFilter reports its own failure */ }
+  }
+}
+
 // Reports what the period control actually held at the moment it was
 // read. Off unless asked for: set localStorage gst_trace_period = '1' (or
 // window.GSTR1_TRACE_PERIOD = true) in the console and export again.
@@ -1660,6 +1691,14 @@ async function exportGSTR1JSON() {
   const user = await getCurrentUser();
   if (!user) return;
   const profile = (typeof getCachedProfile === 'function') ? getCachedProfile() : null;
+  // The period dropdown is filled from the database after the page loads.
+  // A click landing in that window used to read a select with no options
+  // — value "", selectedIndex -1 — and report "(nothing selected)" while
+  // the user was looking at July 2026 in the very same control a moment
+  // later. Waiting costs nothing once it is ready, and makes an early
+  // click do what was meant instead of failing.
+  await gstr1AwaitPeriodOptions();
+
   // Whatever the period dropdown actually holds — no fallback. A default
   // of 'current' here would put the system month on the file when nothing
   // had been selected, which is the failure this is guarding against.
