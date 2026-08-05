@@ -245,6 +245,248 @@ function gstr1ValidateItms(itms, where, detKeys, errors) {
   });
 }
 
+// ── Validation error record ─────────────────────────────────
+// A validation failure is only useful if the person reading it can act on
+// it, which means naming the document, the line, the field, what is there
+// now, what belongs there, and what to do. Errors used to be one prose
+// sentence each; the same information is now carried in fields so the
+// report can lay it out and so tests can assert on a field rather than on
+// a sentence.
+//
+// Plain strings are still accepted anywhere an error is collected — the
+// schema checks raise those, since they describe a JSON path rather than
+// a document — and are normalised on the way out.
+function gstr1Err({ invoice, customer, product, field, current, expected, fix, message }) {
+  return { invoice, customer, product, field, current, expected, fix, message, __gstr1Err: true };
+}
+
+// One-line rendering, for the console and for anything that wants text.
+function gstr1ErrorText(e) {
+  if (typeof e === 'string') return e;
+  if (!e || !e.__gstr1Err) return String(e);
+  const where = [e.invoice && `Invoice ${e.invoice}`, e.customer && `customer ${e.customer}`, e.product && `item "${e.product}"`]
+    .filter(Boolean).join(', ');
+  const what = e.message || `${e.field}: ${JSON.stringify(e.current)} — expected ${e.expected}`;
+  return [where, what, e.fix && `Fix: ${e.fix}`].filter(Boolean).join(' — ');
+}
+
+// ── Lookup tables the generator validates its own output against ──
+// Every UQC this generator can emit. Derived from GSTR1_UQC_MAP rather
+// than written out again, so the emitter and the validator cannot
+// disagree about what is emittable. Whether GSTN's master list matches
+// this set is NOT something this codebase can settle — the check here is
+// that nothing outside our own map ever reaches the file.
+const GSTR1_EMITTABLE_UQC = new Set([...Object.values(GSTR1_UQC_MAP), 'OTH-OTHERS']);
+
+// The values this generator itself produces for these fields. Asserted so
+// a future edit cannot introduce a third value silently; they are our
+// emitted vocabulary, not a transcription of GSTN's.
+const GSTR1_EMITTED_INV_TYP = new Set(['R']);          // buildGSTR1Payload sets 'R' on every B2B invoice
+const GSTR1_EMITTED_RCHRG = new Set(['N']);            // ... and 'N' for reverse charge
+const GSTR1_EMITTED_NTTY = new Set(['C', 'D']);        // credit / debit note
+const GSTR1_EMITTED_SPLY_TY = new Set(['INTER', 'INTRA']);
+const GSTR1_EMITTED_B2CS_TYP = new Set(['OE']);
+const GSTR1_EMITTED_CDNUR_TYP = new Set(['B2CL']);
+
+// ── Strict pre-export validation ────────────────────────────
+// Runs over the assembled payload and refuses anything that cannot be a
+// correct return. It checks values this generator is responsible for
+// producing — nothing here asserts a rule that could not be derived from
+// this codebase, and no field is required that the generator does not
+// already set.
+function gstr1CheckMoney(value, field, where, errors, { allowNegative = false } = {}) {
+  if (typeof value !== 'number' || !isFinite(value)) {
+    errors.push(gstr1Err({ field: `${where}.${field}`, current: value, expected: 'a finite number',
+      fix: 'This is produced by the generator, not entered by hand — report it if you see it.' }));
+    return false;
+  }
+  if (!allowNegative && value < 0) {
+    errors.push(gstr1Err({ field: `${where}.${field}`, current: value, expected: 'zero or more',
+      fix: 'A negative amount in a return usually means a credit note was recorded as an invoice.' }));
+    return false;
+  }
+  if (round2(value) !== value) {
+    errors.push(gstr1Err({ field: `${where}.${field}`, current: value, expected: 'at most 2 decimal places',
+      fix: 'Rounding is applied by the generator — report it if you see it.' }));
+    return false;
+  }
+  return true;
+}
+
+// The tax split must agree with the supply type: an intra-state supply
+// carries CGST+SGST and no IGST, an inter-state supply the reverse. This
+// is the shape calcGST() produces (js/utils.js), so a payload that breaks
+// it means something downstream has rewritten the figures.
+function gstr1CheckTaxSplit(det, splyTy, where, errors) {
+  const inter = splyTy === 'INTER';
+  if (inter && (det.camt || det.samt)) {
+    errors.push(gstr1Err({ field: `${where}`, current: `CGST ${det.camt}, SGST ${det.samt}`,
+      expected: 'CGST and SGST both zero on an inter-state supply',
+      fix: 'Check the invoice\'s Interstate/Intrastate setting against the place of supply.' }));
+  }
+  if (!inter && det.iamt) {
+    errors.push(gstr1Err({ field: `${where}`, current: `IGST ${det.iamt}`,
+      expected: 'IGST zero on an intra-state supply',
+      fix: 'Check the invoice\'s Interstate/Intrastate setting against the place of supply.' }));
+  }
+}
+
+function validateGSTR1Strict(payload, errors) {
+  if (!payload) return;
+
+  // Filer identity and period.
+  const filer = validateGstin(payload.gstin);
+  if (!filer.valid) {
+    errors.push(gstr1Err({ field: 'gstin', current: payload.gstin, expected: 'a valid 15-character GSTIN',
+      message: `Filer GSTIN is invalid (${filer.reason}).`, fix: 'Correct it in Business Profile.' }));
+  }
+  if (!/^(0[1-9]|1[0-2])\d{4}$/.test(payload.fp || '')) {
+    errors.push(gstr1Err({ field: 'fp', current: payload.fp, expected: 'MMYYYY, e.g. 072026',
+      fix: 'Select a single calendar month on the Reports page.' }));
+  }
+  ['gt', 'cur_gt'].forEach(f => gstr1CheckMoney(payload[f], f, 'payload', errors));
+
+  const checkItms = (itms, where, splyTy, invoice, customer) => {
+    (itms || []).forEach((it, k) => {
+      const d = it.itm_det || {};
+      const at = `${where}.itms[${k}].itm_det`;
+      ['txval', 'iamt', 'camt', 'samt', 'csamt'].forEach(f => {
+        if (d[f] !== undefined) gstr1CheckMoney(d[f], f, at, errors);
+      });
+      if (typeof d.rt !== 'number' || !isFinite(d.rt) || d.rt < 0) {
+        errors.push(gstr1Err({ invoice, customer, field: `${at}.rt`, current: d.rt,
+          expected: 'a GST rate of zero or more', fix: 'Set a GST % on the product or the invoice line.' }));
+      }
+      if (splyTy) gstr1CheckTaxSplit(d, splyTy, at, errors);
+    });
+  };
+
+  (payload.b2b || []).forEach((g, i) => {
+    if (!validateGstin(g.ctin).valid) {
+      errors.push(gstr1Err({ customer: g.ctin, field: `b2b[${i}].ctin`, current: g.ctin,
+        expected: 'a valid 15-character GSTIN', fix: 'Correct the customer\'s GST Number on the invoice.' }));
+    }
+    (g.inv || []).forEach((inv, j) => {
+      const where = `b2b[${i}].inv[${j}]`;
+      if (!gstr1InvoiceNumberOk(inv.inum)) {
+        errors.push(gstr1Err({ invoice: inv.inum, customer: g.ctin, field: `${where}.inum`, current: inv.inum,
+          expected: 'up to 16 characters, letters/digits/hyphen/slash only',
+          fix: 'Renumber the invoice on the Invoice List.' }));
+      }
+      if (!gstr1DateOk(inv.idt)) {
+        errors.push(gstr1Err({ invoice: inv.inum, customer: g.ctin, field: `${where}.idt`, current: inv.idt,
+          expected: 'DD-MM-YYYY', fix: 'Re-save the invoice with a valid date.' }));
+      }
+      if (!GSTR1_VALID_POS_CODES.has(inv.pos)) {
+        errors.push(gstr1Err({ invoice: inv.inum, customer: g.ctin, field: `${where}.pos`, current: inv.pos,
+          expected: 'a state code derived from the customer GSTIN',
+          fix: 'Correct the customer\'s GST Number — the first two digits are the place of supply.' }));
+      }
+      if (!GSTR1_EMITTED_INV_TYP.has(inv.inv_typ)) {
+        errors.push(gstr1Err({ invoice: inv.inum, field: `${where}.inv_typ`, current: inv.inv_typ,
+          expected: [...GSTR1_EMITTED_INV_TYP].join(' or '), fix: 'Generator-set value — report it if you see it.' }));
+      }
+      if (!GSTR1_EMITTED_RCHRG.has(inv.rchrg)) {
+        errors.push(gstr1Err({ invoice: inv.inum, field: `${where}.rchrg`, current: inv.rchrg,
+          expected: [...GSTR1_EMITTED_RCHRG].join(' or '), fix: 'Generator-set value — report it if you see it.' }));
+      }
+      gstr1CheckMoney(inv.val, 'val', where, errors);
+      checkItms(inv.itms, where, inv.pos === payload.gstin.slice(0, 2) ? 'INTRA' : 'INTER', inv.inum, g.ctin);
+    });
+  });
+
+  (payload.b2cl || []).forEach((g, i) => {
+    if (!GSTR1_VALID_POS_CODES.has(g.pos)) {
+      errors.push(gstr1Err({ field: `b2cl[${i}].pos`, current: g.pos, expected: 'a recognised state code',
+        fix: 'Set the customer\'s State on the invoice.' }));
+    }
+    (g.inv || []).forEach((inv, j) => {
+      const where = `b2cl[${i}].inv[${j}]`;
+      if (!gstr1DateOk(inv.idt)) {
+        errors.push(gstr1Err({ invoice: inv.inum, field: `${where}.idt`, current: inv.idt,
+          expected: 'DD-MM-YYYY', fix: 'Re-save the invoice with a valid date.' }));
+      }
+      gstr1CheckMoney(inv.val, 'val', where, errors);
+      checkItms(inv.itms, where, 'INTER', inv.inum);
+    });
+  });
+
+  (payload.b2cs || []).forEach((r, i) => {
+    const where = `b2cs[${i}]`;
+    if (!GSTR1_EMITTED_SPLY_TY.has(r.sply_ty)) {
+      errors.push(gstr1Err({ field: `${where}.sply_ty`, current: r.sply_ty,
+        expected: [...GSTR1_EMITTED_SPLY_TY].join(' or '), fix: 'Generator-set value — report it if you see it.' }));
+    }
+    if (!GSTR1_EMITTED_B2CS_TYP.has(r.typ)) {
+      errors.push(gstr1Err({ field: `${where}.typ`, current: r.typ,
+        expected: [...GSTR1_EMITTED_B2CS_TYP].join(' or '), fix: 'Generator-set value — report it if you see it.' }));
+    }
+    if (!GSTR1_VALID_POS_CODES.has(r.pos)) {
+      errors.push(gstr1Err({ field: `${where}.pos`, current: r.pos, expected: 'a recognised state code',
+        fix: 'Set the customer\'s State on the invoices in this bucket.' }));
+    }
+    ['txval', 'iamt', 'camt', 'samt', 'csamt'].forEach(f => gstr1CheckMoney(r[f], f, where, errors));
+    gstr1CheckTaxSplit(r, r.sply_ty, where, errors);
+  });
+
+  (payload.cdnr || []).forEach((g, i) => {
+    if (!validateGstin(g.ctin).valid) {
+      errors.push(gstr1Err({ customer: g.ctin, field: `cdnr[${i}].ctin`, current: g.ctin,
+        expected: 'a valid 15-character GSTIN', fix: 'Correct the GST Number on the credit/debit note.' }));
+    }
+    (g.nt || []).forEach((n, j) => {
+      const where = `cdnr[${i}].nt[${j}]`;
+      if (!GSTR1_EMITTED_NTTY.has(n.ntty)) {
+        errors.push(gstr1Err({ invoice: n.nt_num, field: `${where}.ntty`, current: n.ntty,
+          expected: [...GSTR1_EMITTED_NTTY].join(' or '), fix: 'Set the note type to Credit or Debit.' }));
+      }
+      if (!gstr1DateOk(n.nt_dt)) {
+        errors.push(gstr1Err({ invoice: n.nt_num, field: `${where}.nt_dt`, current: n.nt_dt,
+          expected: 'DD-MM-YYYY', fix: 'Re-save the note with a valid date.' }));
+      }
+      gstr1CheckMoney(n.val, 'val', where, errors);
+      checkItms(n.itms, where, n.pos === payload.gstin.slice(0, 2) ? 'INTRA' : 'INTER', n.nt_num, g.ctin);
+    });
+  });
+
+  (payload.cdnur || []).forEach((n, i) => {
+    const where = `cdnur[${i}]`;
+    if (!GSTR1_EMITTED_CDNUR_TYP.has(n.typ)) {
+      errors.push(gstr1Err({ invoice: n.nt_num, field: `${where}.typ`, current: n.typ,
+        expected: [...GSTR1_EMITTED_CDNUR_TYP].join(' or '), fix: 'Generator-set value — report it if you see it.' }));
+    }
+    if (!GSTR1_EMITTED_NTTY.has(n.ntty)) {
+      errors.push(gstr1Err({ invoice: n.nt_num, field: `${where}.ntty`, current: n.ntty,
+        expected: [...GSTR1_EMITTED_NTTY].join(' or '), fix: 'Set the note type to Credit or Debit.' }));
+    }
+    if (!gstr1DateOk(n.nt_dt)) {
+      errors.push(gstr1Err({ invoice: n.nt_num, field: `${where}.nt_dt`, current: n.nt_dt,
+        expected: 'DD-MM-YYYY', fix: 'Re-save the note with a valid date.' }));
+    }
+    gstr1CheckMoney(n.val, 'val', where, errors);
+    checkItms(n.itms, where, 'INTER', n.nt_num);
+  });
+
+  ((payload.hsn && payload.hsn.data) || []).forEach((r, i) => {
+    const where = `hsn.data[${i}]`;
+    if (!gstr1HsnFormatOk(r.hsn_sc)) {
+      errors.push(gstr1Err({ product: r.desc, field: `${where}.hsn_sc`, current: r.hsn_sc,
+        expected: 'a 4, 6 or 8 digit HSN code', fix: 'Set a valid HSN code on the product.' }));
+    }
+    if (!GSTR1_EMITTABLE_UQC.has(r.uqc)) {
+      errors.push(gstr1Err({ product: r.desc, field: `${where}.uqc`, current: r.uqc,
+        expected: `one of ${[...GSTR1_EMITTABLE_UQC].join(', ')}`,
+        fix: 'Set the product\'s unit to one this app maps to a UQC.' }));
+    }
+    if (typeof r.qty !== 'number' || !isFinite(r.qty) || r.qty <= 0) {
+      errors.push(gstr1Err({ product: r.desc, field: `${where}.qty`, current: r.qty,
+        expected: 'a quantity greater than zero',
+        fix: 'A zero or negative quantity here usually means sales returns exceeded sales for this HSN in the period.' }));
+    }
+    ['txval', 'iamt', 'camt', 'samt', 'csamt'].forEach(f => gstr1CheckMoney(r[f], f, where, errors));
+  });
+}
+
 function gstr1InvoiceNumberOk(num) {
   // GSTN's own offline-utility validation: max 16 chars, letters/digits/-//
   return /^[A-Za-z0-9\-\/]{1,16}$/.test(num || '');
@@ -272,12 +514,18 @@ function gstr1DateOk(ddmmyyyy) {
 // pseudo-item (built in gstr1ItemsForInvoice from a b2b_hsn/b2c_hsn row)
 // carries no rate/discount_percentage of its own to recompute from, so
 // there is nothing to cross-check there.
-function gstr1CheckItemTaxable(item, errCtx, errors) {
+function gstr1CheckItemTaxable(item, errCtx, errors, who = {}) {
   if (item.rate === undefined || item.discount_percentage === undefined) return; // legacy pseudo-item, nothing to cross-check
   const expected = round2((+item.quantity || 0) * (+item.rate || 0) * (1 - (+item.discount_percentage || 0) / 100));
   const actual = round2(+item.taxable_value || 0);
   if (Math.abs(expected - actual) > GSTR1_RECONCILE_TOLERANCE) {
-    errors.push(`${errCtx}: stored taxable value (₹${actual}) does not match quantity×rate×(1−discount%) (₹${expected}) — the line item's stored taxable value is stale/corrupted.`);
+    errors.push(gstr1Err({
+      invoice: who.invoice, customer: who.customer, product: item.product_name,
+      field: 'Taxable Value', current: `₹${actual}`,
+      expected: `₹${expected} (quantity × rate × (1 − discount%))`,
+      message: `${errCtx}: the stored taxable value does not match this line's own quantity, rate and discount.`,
+      fix: 'Open the invoice and save it again to recompute the line.'
+    }));
   }
 }
 
@@ -344,9 +592,9 @@ function gstr1PosRegistered(customerGstin) {
 function gstr1PosUnregistered(customerState, errors, context) {
   const code = getStateCode(customerState);
   if (code === '99' && (customerState || '').trim()) {
-    errors.push(`${context}: customer state "${customerState}" is not a recognized Indian state/UT — cannot derive a valid POS (99 is reserved for genuine export/SEZ, not unrecognized data).`);
+    errors.push(gstr1Err({ field: 'Customer State', current: customerState, expected: 'one of the states in the State dropdown', message: `${context}: customer state is not a recognised Indian state/UT, so no place of supply can be derived.`, fix: 'Open the invoice and re-pick the State from the dropdown.' }));
   } else if (code === '99') {
-    errors.push(`${context}: customer state is missing — cannot derive POS.`);
+    errors.push(gstr1Err({ field: 'Customer State', current: '(blank)', expected: 'one of the states in the State dropdown', message: `${context}: customer state is missing, so no place of supply can be derived.`, fix: 'Open the invoice and set the State.' }));
   }
   return code;
 }
@@ -365,7 +613,7 @@ async function buildGSTR1Payload(userId, profile, periodFilter) {
   // rather than silently picking one month's worth of the label.
   const isSingleMonth = /^\d{4}-\d{2}$/.test(periodFilter) || periodFilter === 'current';
   if (!isSingleMonth) {
-    errors.push(`Selected report period ("${periodFilter}") spans more than one calendar month. GSTR-1 is filed per month — select a specific month (or "Current Month") before generating the return.`);
+    errors.push(gstr1Err({ field: 'Report Period', current: periodFilter, expected: 'a single calendar month', message: 'GSTR-1 is filed one month at a time and the selected period spans several.', fix: 'Pick a specific month (or "Current Month") on the Reports page.' }));
     return { errors };
   }
   const startDate = new Date(start);
@@ -375,7 +623,7 @@ async function buildGSTR1Payload(userId, profile, periodFilter) {
   const businessState = profile?.state || '';
   const businessGstinCheck = validateGstin(businessGstin);
   if (!businessGstinCheck.valid) {
-    errors.push(`Business Profile GSTIN "${businessGstin}" is invalid (${businessGstinCheck.reason}). Fix it in Business Profile before generating a return.`);
+    errors.push(gstr1Err({ field: 'Business Profile GSTIN', current: businessGstin, expected: 'a valid 15-character GSTIN', message: `Your own GSTIN is invalid (${businessGstinCheck.reason}).`, fix: 'Correct it in Business Profile, then generate the return again.' }));
   }
   // The business's own GSTIN, once validated, is the single authoritative
   // source for "which state is this registration in" — never the
@@ -441,13 +689,13 @@ async function buildGSTR1Payload(userId, profile, periodFilter) {
   [...b2bData.map(r => ({ ...r, __kind: 'B2B' })), ...b2cData.map(r => ({ ...r, __kind: 'B2C' }))].forEach(inv => {
     const num = (inv.invoice_number || '').toUpperCase();
     if (!num) return;
-    if (seenInvNums.has(num)) errors.push(`Duplicate invoice number "${inv.invoice_number}" (${seenInvNums.get(num)} and ${inv.__kind}) — invoice numbers must be unique.`);
+    if (seenInvNums.has(num)) errors.push(gstr1Err({ invoice: inv.invoice_number, customer: inv.customer_name, field: 'Invoice Number', current: `used twice (${seenInvNums.get(num)} and ${inv.__kind})`, expected: 'a number used by only one invoice', fix: 'Renumber one of the two invoices from the Invoice List.' }));
     else seenInvNums.set(num, inv.__kind);
   });
 
   const hsnBuckets = new Map(); // "hsncode|rate" -> { hsn_sc, desc, uqc, qty, taxable, igst, cgst, sgst }
   function addToHsn(hsnCode, desc, uqc, qty, r, errCtx) {
-    if (!gstr1HsnFormatOk(hsnCode)) { errors.push(`${errCtx}: HSN code "${hsnCode}" is not a valid 4/6/8-digit code.`); return; }
+    if (!gstr1HsnFormatOk(hsnCode)) { errors.push(gstr1Err({ field: 'HSN Code', current: hsnCode, expected: 'a 4, 6 or 8 digit code', message: `${errCtx}: HSN code is not valid.`, fix: 'Set a valid HSN code on the product, then re-save the invoice.' })); return; }
     const key = hsnCode + '|' + r.rate;
     if (!hsnBuckets.has(key)) hsnBuckets.set(key, { hsn_sc: hsnCode, desc: desc || '', uqc, qty: 0, taxable: 0, igst: 0, cgst: 0, sgst: 0 });
     const b = hsnBuckets.get(key);
@@ -457,7 +705,7 @@ async function buildGSTR1Payload(userId, profile, periodFilter) {
     // silently summed together (a combined "8 units" of 5kg + 3pcs is
     // meaningless). Flagged for a human to resolve rather than guessed.
     if (b.uqc !== 'OTH-OTHERS' && uqc !== 'OTH-OTHERS' && b.uqc !== uqc) {
-      errors.push(`${errCtx}: HSN ${hsnCode} at ${r.rate}% has items in two different units (${b.uqc} and ${uqc}) — GSTN allows only one UQC per HSN+rate row. Use distinct HSN codes, or make the unit consistent for this HSN+rate.`);
+      errors.push(gstr1Err({ field: 'Unit (UQC)', current: `${b.uqc} and ${uqc} on HSN ${hsnCode} at ${r.rate}%`, expected: 'one unit per HSN code and rate', message: `${errCtx}: this HSN and rate is sold in two different units.`, fix: 'Make the unit consistent for this HSN and rate, or give the products distinct HSN codes.' }));
       return;
     }
     b.qty = round2(b.qty + (qty || 0));
@@ -474,32 +722,32 @@ async function buildGSTR1Payload(userId, profile, periodFilter) {
     const ctx = `B2B invoice ${inv.invoice_number || inv.id}`;
     const gstin = (inv.gst_number || '').toUpperCase();
     const gCheck = validateGstin(gstin);
-    if (!gCheck.valid) { errors.push(`${ctx}: customer GSTIN "${gstin}" is invalid (${gCheck.reason}).`); return; }
-    if (!gstr1InvoiceNumberOk(inv.invoice_number)) { errors.push(`${ctx}: invoice number is not portal-valid (max 16 chars, letters/digits/-/ only).`); return; }
+    if (!gCheck.valid) { errors.push(gstr1Err({ invoice: inv.invoice_number, customer: inv.customer_name, field: 'Customer GST Number', current: gstin, expected: 'a valid 15-character GSTIN', message: `Customer GSTIN is invalid (${gCheck.reason}).`, fix: 'Open the invoice and correct the customer GST Number.' })); return; }
+    if (!gstr1InvoiceNumberOk(inv.invoice_number)) { errors.push(gstr1Err({ invoice: inv.invoice_number, customer: inv.customer_name, field: 'Invoice Number', current: inv.invoice_number, expected: 'up to 16 characters, letters/digits/hyphen/slash only', fix: 'Renumber this invoice from the Invoice List.' })); return; }
     const idt = formatDateDDMMYYYY(inv.invoice_date);
-    if (!gstr1DateOk(idt)) { errors.push(`${ctx}: invoice date "${inv.invoice_date}" did not convert to a valid DD-MM-YYYY date.`); return; }
-    if (inv.invoice_date > todayISO) { errors.push(`${ctx}: invoice date (${inv.invoice_date}) is in the future.`); return; }
-    if (inv.supply_type !== 'interstate' && inv.supply_type !== 'intrastate') { errors.push(`${ctx}: supply_type "${inv.supply_type}" is neither interstate nor intrastate.`); return; }
+    if (!gstr1DateOk(idt)) { errors.push(gstr1Err({ invoice: inv.invoice_number, customer: inv.customer_name, field: 'Invoice Date', current: inv.invoice_date, expected: 'a real date, written to the file as DD-MM-YYYY', fix: 'Re-save the invoice with a valid date.' })); return; }
+    if (inv.invoice_date > todayISO) { errors.push(gstr1Err({ invoice: inv.invoice_number, customer: inv.customer_name, field: 'Invoice Date', current: inv.invoice_date, expected: `a date on or before today (${todayISO})`, fix: 'Correct the invoice date - a return cannot contain a future-dated invoice.' })); return; }
+    if (inv.supply_type !== 'interstate' && inv.supply_type !== 'intrastate') { errors.push(gstr1Err({ invoice: inv.invoice_number, customer: inv.customer_name, field: 'Supply Type', current: inv.supply_type, expected: 'interstate or intrastate', fix: 'Re-save the invoice; the Interstate/Intrastate toggle sets this.' })); return; }
 
     const pos = gstr1PosRegistered(gstin);
-    if (!GSTR1_VALID_POS_CODES.has(pos)) { errors.push(`${ctx}: derived POS "${pos}" (from customer GSTIN) is not a recognized state code.`); return; }
+    if (!GSTR1_VALID_POS_CODES.has(pos)) { errors.push(gstr1Err({ invoice: inv.invoice_number, customer: inv.customer_name, field: 'Place of Supply', current: pos, expected: 'a recognised state code (the first two digits of the customer GSTIN)', fix: 'Correct the customer GST Number on the invoice.' })); return; }
     // POS vs supply_type must agree — if they don't, one of the two is
     // stale/wrong (see the earlier Interstate/Intrastate detection fix
     // for exactly this class of bug on the entry form itself).
     const expectedSupplyType = pos === businessStateCode ? 'intrastate' : 'interstate';
     if (expectedSupplyType !== inv.supply_type) {
-      errors.push(`${ctx}: supply_type is "${inv.supply_type}" but the customer GSTIN's state code ("${pos}") implies "${expectedSupplyType}" — these must agree.`);
+      errors.push(gstr1Err({ invoice: inv.invoice_number, customer: inv.customer_name, field: 'Supply Type', current: inv.supply_type, expected: `${expectedSupplyType} (customer GSTIN state ${pos} vs your state ${businessStateCode})`, fix: 'Open the invoice and re-pick the customer so Interstate/Intrastate is redetected.' }));
     }
 
     const items = gstr1ItemsForInvoice(inv, 'b2b', itemsByInvoice, legacyHsnRows);
-    if (!items.length) { errors.push(`${ctx}: has no line items (neither current nor legacy) — cannot compute taxable/tax values.`); return; }
+    if (!items.length) { errors.push(gstr1Err({ invoice: inv.invoice_number, customer: inv.customer_name, field: 'Line Items', current: 'none', expected: 'at least one line item', fix: 'Open the invoice and add its products.' })); return; }
     let itemsOk = true;
     items.forEach((it, idx) => {
       const itemCtx = `${ctx}, item ${idx + 1} ("${it.product_name}")`;
-      if (+it.quantity <= 0) { errors.push(`${itemCtx}: quantity must be greater than zero (got ${it.quantity}).`); itemsOk = false; }
-      if (+it.taxable_value < 0) { errors.push(`${itemCtx}: taxable value cannot be negative (got ${it.taxable_value}).`); itemsOk = false; }
+      if (+it.quantity <= 0) { errors.push(gstr1Err({ invoice: inv.invoice_number, customer: inv.customer_name, product: it.product_name, field: 'Quantity', current: it.quantity, expected: 'greater than zero', fix: 'Set a quantity on this line, or remove the line.' })); itemsOk = false; }
+      if (+it.taxable_value < 0) { errors.push(gstr1Err({ invoice: inv.invoice_number, customer: inv.customer_name, product: it.product_name, field: 'Taxable Value', current: it.taxable_value, expected: 'zero or more', fix: 'Correct the rate or discount on this line.' })); itemsOk = false; }
       const preErrCount = errors.length;
-      gstr1CheckItemTaxable(it, itemCtx, errors);
+      gstr1CheckItemTaxable(it, itemCtx, errors, { invoice: inv.invoice_number, customer: inv.customer_name });
       if (errors.length > preErrCount) itemsOk = false;
       const uqc = gstr1ToUQC(it.unit);
       addToHsn(it.hsn_code, it.product_name, uqc, +it.quantity || 0, gstr1RecomputeItem(it, inv.supply_type), itemCtx);
@@ -508,7 +756,7 @@ async function buildGSTR1Payload(userId, profile, periodFilter) {
 
     const recomputed = gstr1RecomputeInvoice(items, inv.supply_type);
     if (Math.abs(recomputed.total - round2(+inv.total_amount)) > GSTR1_RECONCILE_TOLERANCE) {
-      errors.push(`${ctx}: cached total (₹${round2(+inv.total_amount)}) does not match the total recomputed from line items (₹${recomputed.total}) — the invoice's stored totals are stale/corrupted.`);
+      errors.push(gstr1Err({ invoice: inv.invoice_number, customer: inv.customer_name, field: 'Invoice Total', current: `₹${round2(+inv.total_amount)}`, expected: `₹${recomputed.total} (recomputed from the line items)`, fix: 'Open the invoice and save it again to refresh its stored total.' }));
       return;
     }
 
@@ -529,23 +777,23 @@ async function buildGSTR1Payload(userId, profile, periodFilter) {
   const b2csBuckets = new Map(); // "state|rate|supplyType" -> aggregate
   b2cData.forEach(inv => {
     const ctx = `B2C invoice ${inv.invoice_number || inv.id}`;
-    if (inv.supply_type !== 'interstate' && inv.supply_type !== 'intrastate') { errors.push(`${ctx}: supply_type "${inv.supply_type}" is neither interstate nor intrastate.`); return; }
+    if (inv.supply_type !== 'interstate' && inv.supply_type !== 'intrastate') { errors.push(gstr1Err({ invoice: inv.invoice_number, customer: inv.customer_name, field: 'Supply Type', current: inv.supply_type, expected: 'interstate or intrastate', fix: 'Re-save the invoice; the Interstate/Intrastate toggle sets this.' })); return; }
     const idt = formatDateDDMMYYYY(inv.invoice_date);
-    if (!gstr1DateOk(idt)) { errors.push(`${ctx}: invoice date "${inv.invoice_date}" did not convert to a valid DD-MM-YYYY date.`); return; }
-    if (inv.invoice_date > todayISO) { errors.push(`${ctx}: invoice date (${inv.invoice_date}) is in the future.`); return; }
+    if (!gstr1DateOk(idt)) { errors.push(gstr1Err({ invoice: inv.invoice_number, customer: inv.customer_name, field: 'Invoice Date', current: inv.invoice_date, expected: 'a real date, written to the file as DD-MM-YYYY', fix: 'Re-save the invoice with a valid date.' })); return; }
+    if (inv.invoice_date > todayISO) { errors.push(gstr1Err({ invoice: inv.invoice_number, customer: inv.customer_name, field: 'Invoice Date', current: inv.invoice_date, expected: `a date on or before today (${todayISO})`, fix: 'Correct the invoice date - a return cannot contain a future-dated invoice.' })); return; }
 
     const pos = gstr1PosUnregistered(inv.state, errors, ctx);
-    if (!GSTR1_VALID_POS_CODES.has(pos) && pos !== '99') { errors.push(`${ctx}: derived POS "${pos}" is not a recognized state code.`); return; }
+    if (!GSTR1_VALID_POS_CODES.has(pos) && pos !== '99') { errors.push(gstr1Err({ invoice: inv.invoice_number, customer: inv.customer_name, field: 'Place of Supply', current: pos, expected: 'a recognised state code', fix: 'Set the customer State on the invoice.' })); return; }
 
     const items = gstr1ItemsForInvoice(inv, 'b2c', itemsByInvoice, legacyHsnRows);
-    if (!items.length) { errors.push(`${ctx}: has no line items (neither current nor legacy) — cannot compute taxable/tax values.`); return; }
+    if (!items.length) { errors.push(gstr1Err({ invoice: inv.invoice_number, customer: inv.customer_name, field: 'Line Items', current: 'none', expected: 'at least one line item', fix: 'Open the invoice and add its products.' })); return; }
     let itemsOk = true;
     items.forEach((it, idx) => {
       const itemCtx = `${ctx}, item ${idx + 1} ("${it.product_name}")`;
-      if (+it.quantity <= 0) { errors.push(`${itemCtx}: quantity must be greater than zero (got ${it.quantity}).`); itemsOk = false; }
-      if (+it.taxable_value < 0) { errors.push(`${itemCtx}: taxable value cannot be negative (got ${it.taxable_value}).`); itemsOk = false; }
+      if (+it.quantity <= 0) { errors.push(gstr1Err({ invoice: inv.invoice_number, customer: inv.customer_name, product: it.product_name, field: 'Quantity', current: it.quantity, expected: 'greater than zero', fix: 'Set a quantity on this line, or remove the line.' })); itemsOk = false; }
+      if (+it.taxable_value < 0) { errors.push(gstr1Err({ invoice: inv.invoice_number, customer: inv.customer_name, product: it.product_name, field: 'Taxable Value', current: it.taxable_value, expected: 'zero or more', fix: 'Correct the rate or discount on this line.' })); itemsOk = false; }
       const preErrCount = errors.length;
-      gstr1CheckItemTaxable(it, itemCtx, errors);
+      gstr1CheckItemTaxable(it, itemCtx, errors, { invoice: inv.invoice_number, customer: inv.customer_name });
       if (errors.length > preErrCount) itemsOk = false;
       const uqc = gstr1ToUQC(it.unit);
       addToHsn(it.hsn_code, it.product_name, uqc, +it.quantity || 0, gstr1RecomputeItem(it, inv.supply_type), itemCtx);
@@ -554,7 +802,7 @@ async function buildGSTR1Payload(userId, profile, periodFilter) {
 
     const recomputed = gstr1RecomputeInvoice(items, inv.supply_type);
     if (Math.abs(recomputed.total - round2(+inv.total_amount)) > GSTR1_RECONCILE_TOLERANCE) {
-      errors.push(`${ctx}: cached total (₹${round2(+inv.total_amount)}) does not match the total recomputed from line items (₹${recomputed.total}) — the invoice's stored totals are stale/corrupted.`);
+      errors.push(gstr1Err({ invoice: inv.invoice_number, customer: inv.customer_name, field: 'Invoice Total', current: `₹${round2(+inv.total_amount)}`, expected: `₹${recomputed.total} (recomputed from the line items)`, fix: 'Open the invoice and save it again to refresh its stored total.' }));
       return;
     }
 
@@ -596,12 +844,12 @@ async function buildGSTR1Payload(userId, profile, periodFilter) {
   let salesReturnNettedTaxable = 0;
   salesReturns.forEach(ret => {
     const retCtx = `Sales Return ${ret.return_number || ret.id}`;
-    if (ret.return_date > todayISO) { errors.push(`${retCtx}: return date (${ret.return_date}) is in the future.`); return; }
+    if (ret.return_date > todayISO) { errors.push(gstr1Err({ invoice: ret.return_number, field: 'Return Date', current: ret.return_date, expected: `a date on or before today (${todayISO})`, fix: 'Correct the return date.' })); return; }
     const items = srItemsByReturn[ret.id] || [];
     items.forEach((it, idx) => {
       const ctx = `${retCtx}, item ${idx + 1} ("${it.product_name}")`;
-      if (+it.quantity <= 0) { errors.push(`${ctx}: return quantity must be greater than zero.`); return; }
-      if (!gstr1HsnFormatOk(it.hsn_code)) { errors.push(`${ctx}: HSN code "${it.hsn_code}" is not a valid 4/6/8-digit code.`); return; }
+      if (+it.quantity <= 0) { errors.push(gstr1Err({ invoice: ret.return_number, product: it.product_name, field: 'Return Quantity', current: it.quantity, expected: 'greater than zero', fix: 'Correct the quantity on the sales return.' })); return; }
+      if (!gstr1HsnFormatOk(it.hsn_code)) { errors.push(gstr1Err({ invoice: ret.return_number, product: it.product_name, field: 'HSN Code', current: it.hsn_code, expected: 'a 4, 6 or 8 digit code', fix: 'Set a valid HSN code on the product.' })); return; }
       const r = gstr1RecomputeItem(it, ret.supply_type);
       const key = it.hsn_code + '|' + r.rate;
       const bucket = hsnBuckets.get(key);
@@ -631,13 +879,13 @@ async function buildGSTR1Payload(userId, profile, periodFilter) {
   const cdnur = [];
   cdnNotes.forEach(note => {
     const ctx = `${note.note_type === 'credit' ? 'Credit' : 'Debit'} Note ${note.note_number || note.id}`;
-    if (!['credit', 'debit'].includes(note.note_type)) { errors.push(`${ctx}: note_type "${note.note_type}" must be credit or debit.`); return; }
-    if (note.supply_type !== 'interstate' && note.supply_type !== 'intrastate') { errors.push(`${ctx}: supply_type "${note.supply_type}" is neither interstate nor intrastate.`); return; }
+    if (!['credit', 'debit'].includes(note.note_type)) { errors.push(gstr1Err({ invoice: note.note_number, customer: note.customer_name, field: 'Note Type', current: note.note_type, expected: 'credit or debit', fix: 'Re-save the note and pick its type.' })); return; }
+    if (note.supply_type !== 'interstate' && note.supply_type !== 'intrastate') { errors.push(gstr1Err({ invoice: note.note_number, customer: note.customer_name, field: 'Supply Type', current: note.supply_type, expected: 'interstate or intrastate', fix: 'Re-save the note; the Interstate/Intrastate toggle sets this.' })); return; }
     const ntty = note.note_type === 'credit' ? 'C' : 'D';
     const ntDt = formatDateDDMMYYYY(note.note_date);
-    if (!gstr1DateOk(ntDt)) { errors.push(`${ctx}: note date "${note.note_date}" did not convert to a valid DD-MM-YYYY date.`); return; }
-    if (note.note_date > todayISO) { errors.push(`${ctx}: note date (${note.note_date}) is in the future.`); return; }
-    if (+note.taxable_amount <= 0) { errors.push(`${ctx}: taxable amount must be greater than zero (got ${note.taxable_amount}).`); return; }
+    if (!gstr1DateOk(ntDt)) { errors.push(gstr1Err({ invoice: note.note_number, customer: note.customer_name, field: 'Note Date', current: note.note_date, expected: 'a real date, written to the file as DD-MM-YYYY', fix: 'Re-save the note with a valid date.' })); return; }
+    if (note.note_date > todayISO) { errors.push(gstr1Err({ invoice: note.note_number, customer: note.customer_name, field: 'Note Date', current: note.note_date, expected: `a date on or before today (${todayISO})`, fix: 'Correct the note date.' })); return; }
+    if (+note.taxable_amount <= 0) { errors.push(gstr1Err({ invoice: note.note_number, customer: note.customer_name, field: 'Taxable Amount', current: note.taxable_amount, expected: 'greater than zero', fix: 'Set the note taxable amount.' })); return; }
 
     const taxable = round2(+note.taxable_amount);
     const calc = calcGST(taxable, +note.gst_percentage || 0, note.supply_type);
@@ -646,7 +894,7 @@ async function buildGSTR1Payload(userId, profile, periodFilter) {
 
     if (gstin) {
       const gCheck = validateGstin(gstin);
-      if (!gCheck.valid) { errors.push(`${ctx}: customer GSTIN "${gstin}" is invalid (${gCheck.reason}).`); return; }
+      if (!gCheck.valid) { errors.push(gstr1Err({ invoice: note.note_number, customer: note.customer_name, field: 'Customer GST Number', current: gstin, expected: 'a valid 15-character GSTIN', message: `Customer GSTIN on this note is invalid (${gCheck.reason}).`, fix: 'Correct the GST Number on the note.' })); return; }
       const pos = gstr1PosRegistered(gstin);
       const entry = { ntty, nt_num: note.note_number, nt_dt: ntDt, pos, rchrg: 'N', val, itms: [{ num: 1, itm_det: { txval: taxable, rt: +note.gst_percentage || 0, iamt: calc.igst, camt: calc.cgst, samt: calc.sgst, csamt: 0 } }] };
       if (!cdnrGroups.has(gstin)) cdnrGroups.set(gstin, []);
@@ -817,8 +1065,27 @@ function gstr1SetModal(titleHtml, leadHtml, innerHtml) {
   return true;
 }
 
+// One error, laid out so the person reading it can act without going
+// looking: which document, which line, which field, what is there, what
+// belongs there, and what to do about it.
+function gstr1ErrorHtml(e) {
+  if (typeof e === 'string' || !e || !e.__gstr1Err) return `<li>${escItemHtml(gstr1ErrorText(e))}</li>`;
+  const row = (k, v) => v === undefined || v === null || v === ''
+    ? '' : `<div><span class="text-muted-sm" style="display:inline-block;min-width:118px;">${k}</span>${escItemHtml(String(v))}</div>`;
+  return `<li style="margin-bottom:14px;">
+    ${e.message ? `<div class="fw-600 mb-6">${escItemHtml(e.message)}</div>` : ''}
+    ${row('Invoice', e.invoice)}
+    ${row('Customer', e.customer)}
+    ${row('Product', e.product)}
+    ${row('Field', e.field)}
+    ${row('Current value', e.current)}
+    ${row('Expected', e.expected)}
+    ${e.fix ? `<div class="mt-6"><b>How to fix:</b> ${escItemHtml(e.fix)}</div>` : ''}
+  </li>`;
+}
+
 function showGSTR1ValidationErrors(errors, notes = []) {
-  const errorItems = errors.map(e => `<li>${escItemHtml(e)}</li>`).join('');
+  const errorItems = errors.map(gstr1ErrorHtml).join('');
   const noteItems = notes.length
     ? `<li style="list-style:none;margin-top:14px;padding-top:12px;border-top:1px solid var(--border);">
          <b>Sections this export does not produce</b>
@@ -829,7 +1096,11 @@ function showGSTR1ValidationErrors(errors, notes = []) {
     '<i class="fas fa-triangle-exclamation" style="color:var(--danger, #d32f2f);"></i> GSTR-1 Export Blocked — Validation Failed',
     'The JSON was <b>not</b> generated. Fix the issue(s) below and try again.',
     errorItems + noteItems);
-  if (!shown) { showToast(`GSTR-1 export blocked — ${errors.length} validation error(s). See console.`, 'error'); console.error('GSTR-1 validation errors:', errors); }
+  if (!shown) {
+    showToast(`GSTR-1 export blocked — ${errors.length} validation error(s). See console.`, 'error');
+    // Rendered as text: a structured record logs as [object Object] otherwise.
+    console.error('GSTR-1 validation errors:', errors.map(gstr1ErrorText));
+  }
 }
 
 // Shown after a successful export: what the filer still has to handle on
@@ -867,7 +1138,13 @@ async function exportGSTR1JSON() {
   // Schema first, then the reconciliation audit — a payload with a missing
   // or mistyped section produces clearer errors from the schema pass than
   // from arithmetic that trips over it.
+  // Three gates, cheapest and most structural first, so the message the
+  // user sees is the one closest to the actual cause:
+  //   schema  — is the payload the right shape at all
+  //   strict  — is every value one this generator may legitimately emit
+  //   audit   — do the totals reconcile against each other
   if (!errors.length && payload) validateGSTR1Schema(payload, errors);
+  if (!errors.length && payload) validateGSTR1Strict(payload, errors);
   if (!errors.length) runFinalGSTR1Audit(payload, errors, context);
 
   const notes = payload ? gstr1CoverageNotes(payload) : [];
