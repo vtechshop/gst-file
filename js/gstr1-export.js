@@ -67,26 +67,39 @@ const GSTR1_RECONCILE_TOLERANCE = 0.05;
 // without falling back to one request per invoice (real N+1).
 const GSTR1_ID_CHUNK_SIZE = 300;
 
-// UQC (Unit Quantity Code) — the GST Portal's official master list uses
-// compound codes like "PCS-PIECES", never the bare unit text this app
-// stores on invoice_items.unit (see COMMON_UNITS in js/utils.js).
-// Reconstructed from the documented UQC master list — verify against the
-// live GST Portal/offline-tool dropdown before relying on it for a real
-// filing. Deliberately not guessed further than this: any unit this map
-// doesn't recognize falls back to "OTH-OTHERS" (itself a real, always-
-// valid UQC entry), never a fabricated specific code.
+// UQC (Unit Quantity Code) — maps the bare unit text this app stores on
+// invoice_items.unit (see COMMON_UNITS in js/utils.js) to the code a
+// return carries.
+//
+// Bare codes, not the compound "NOS-NUMBERS" form this used to emit. A
+// GSTR-1 written by the official Offline Utility carries "NOS" and "NA"
+// (see the reference file: hsn_b2b rows use "NOS", the service row with
+// qty 0 uses "NA"), so the compound form was wrong in every row we ever
+// produced.
 const GSTR1_UQC_MAP = {
-  'PCS': 'PCS-PIECES', 'NOS': 'NOS-NUMBERS', 'KG': 'KGS-KILOGRAMS',
-  'LTR': 'LTR-LITRES', 'MTR': 'MTR-METERS', 'BOX': 'BOX-BOX',
-  'SET': 'SET-SETS', 'PAIR': 'PRS-PAIRS', 'DOZ': 'DOZ-DOZENS',
-  'BAG': 'BAG-BAGS', 'BTL': 'BTL-BOTTLES'
-  // 'HRS' (hours) has no intent as a UQC — services don't carry a real
-  // unit-of-measure quantity, deliberately left unmapped -> OTH-OTHERS.
+  'PCS': 'PCS', 'NOS': 'NOS', 'KG': 'KGS', 'LTR': 'LTR', 'MTR': 'MTR',
+  'BOX': 'BOX', 'SET': 'SET', 'PAIR': 'PRS', 'DOZ': 'DOZ',
+  'BAG': 'BAG', 'BTL': 'BTL'
+  // 'HRS' (hours) is deliberately unmapped: a service carries no unit of
+  // measure, and the reference file uses "NA" for exactly that case.
 };
+
+// Fallback when a product's unit is blank or outside the map. "NA" is the
+// value the official file uses on its unit-less service line — taken from
+// there rather than chosen, so no UQC is invented.
+const GSTR1_UQC_FALLBACK = 'NA';
+
 function gstr1ToUQC(unit) {
   const key = (unit || '').trim().toUpperCase();
-  return GSTR1_UQC_MAP[key] || 'OTH-OTHERS';
+  return GSTR1_UQC_MAP[key] || GSTR1_UQC_FALLBACK;
 }
+
+// ── Root metadata written by the official Offline Utility ───
+// Copied verbatim from a Utility-generated return; neither value is
+// derived or guessed. "hash" really is the literal string "hash" in that
+// file. One constant each, so a future Utility revision is one edit.
+const GSTR1_VERSION = 'GST3.1.7';
+const GSTR1_HASH = 'hash';
 
 // ── Payload section registry ────────────────────────────────
 // The single declaration of what a payload from this generator contains.
@@ -98,25 +111,29 @@ function gstr1ToUQC(unit) {
 // payload.
 //
 // emitWhenEmpty records what this generator does with a section that has
-// nothing in it. Every section is currently emitted regardless — an empty
-// array or an hsn with an empty data[] — which is the behaviour that has
-// always shipped; it is stated here per section so it is a decision in
-// one table rather than an accident of how each builder happens to run.
-// Whether the Portal prefers empty sections omitted is NOT something this
-// codebase can answer, so nothing about the output is changed on a guess:
-// flipping one flag here is the whole change if it is ever confirmed.
+// nothing in it. All of them are now FALSE: a return written by the
+// official Offline Utility contains only the sections that have data —
+// its b2cl, cdnr and cdnur keys are absent, not empty arrays. We used to
+// write "b2cl":[] and the like on every export.
+//
+// Key order below is the order the Utility writes: identity, then
+// metadata, then sections.
 const GSTR1_SECTIONS = [
-  { key: 'gstin',  kind: 'header',  type: 'string' },
-  { key: 'fp',     kind: 'header',  type: 'string' },
-  { key: 'gt',     kind: 'header',  type: 'number' },
-  { key: 'cur_gt', kind: 'header',  type: 'number' },
-  { key: 'b2b',    kind: 'section', type: 'array',  label: 'B2B — registered supplies',            emitWhenEmpty: true },
-  { key: 'b2cl',   kind: 'section', type: 'array',  label: 'B2CL — large inter-state B2C',          emitWhenEmpty: true },
-  { key: 'b2cs',   kind: 'section', type: 'array',  label: 'B2CS — small B2C, state+rate summary',  emitWhenEmpty: true },
-  { key: 'cdnr',   kind: 'section', type: 'array',  label: 'CDNR — notes to registered customers',  emitWhenEmpty: true },
-  { key: 'cdnur',  kind: 'section', type: 'array',  label: 'CDNUR — notes to unregistered',         emitWhenEmpty: true },
-  { key: 'hsn',    kind: 'section', type: 'object', label: 'HSN summary',                           emitWhenEmpty: true,
-    isEmpty: v => !(v && Array.isArray(v.data) && v.data.length) }
+  { key: 'gstin',   kind: 'header',  type: 'string' },
+  { key: 'fp',      kind: 'header',  type: 'string' },
+  { key: 'version', kind: 'header',  type: 'string' },
+  { key: 'hash',    kind: 'header',  type: 'string' },
+  { key: 'b2b',     kind: 'section', type: 'array',  label: 'B2B — registered supplies',            emitWhenEmpty: false },
+  { key: 'b2cl',    kind: 'section', type: 'array',  label: 'B2CL — large inter-state B2C',          emitWhenEmpty: false },
+  { key: 'b2cs',    kind: 'section', type: 'array',  label: 'B2CS — small B2C, state+rate summary',  emitWhenEmpty: false },
+  { key: 'cdnr',    kind: 'section', type: 'array',  label: 'CDNR — notes to registered customers',  emitWhenEmpty: false },
+  { key: 'cdnur',   kind: 'section', type: 'array',  label: 'CDNUR — notes to unregistered',         emitWhenEmpty: false },
+  // Split by supply channel, exactly as the Utility writes it. This was a
+  // single combined data[] array under a key the schema has no place for.
+  { key: 'hsn',     kind: 'section', type: 'object', label: 'HSN summary',                           emitWhenEmpty: false,
+    isEmpty: v => !(v && ((v.hsn_b2b && v.hsn_b2b.length) || (v.hsn_b2c && v.hsn_b2c.length))) },
+  { key: 'doc_issue', kind: 'section', type: 'object', label: 'Documents issued',                    emitWhenEmpty: false,
+    isEmpty: v => !(v && Array.isArray(v.doc_det) && v.doc_det.length) }
 ];
 
 // Sections this generator does not produce, and why. Every one is
@@ -133,7 +150,6 @@ const GSTR1_UNPRODUCED_SECTIONS = [
   { key: 'at',        label: 'Advances received',           reason: 'no advance-receipt model exists in this application' },
   { key: 'txpd',      label: 'Advances adjusted',           reason: 'no advance-adjustment model exists in this application' },
   { key: 'nil',       label: 'Nil-rated / exempt / non-GST', reason: 'invoice lines carry no nil/exempt/non-GST classification' },
-  { key: 'doc_issue', label: 'Documents issued',            reason: 'no document-series register exists in this application' },
   { key: 'amendments', label: 'Amendments to earlier periods', reason: 'this application does not track amendments to already-filed returns' }
 ];
 
@@ -194,7 +210,8 @@ function validateGSTR1Schema(payload, errors) {
     .forEach(k => errors.push(`Schema: "${k}" is not a declared section — add it to GSTR1_SECTIONS if it belongs in the payload.`));
 
   // Row shapes, per the builders in this file.
-  (payload.b2b || []).forEach((g, i) => {
+  const asRows = v => Array.isArray(v) ? v : [];
+  asRows(payload.b2b).forEach((g, i) => {
     if (!gstr1RequireKeys(g, ['ctin', 'inv'], `b2b[${i}]`, errors)) return;
     if (!Array.isArray(g.inv)) { errors.push(`Schema: b2b[${i}].inv must be an array.`); return; }
     g.inv.forEach((inv, j) => {
@@ -202,7 +219,7 @@ function validateGSTR1Schema(payload, errors) {
       gstr1ValidateItms(inv.itms, `b2b[${i}].inv[${j}].itms`, ['txval', 'rt', 'iamt', 'camt', 'samt', 'csamt'], errors);
     });
   });
-  (payload.b2cl || []).forEach((g, i) => {
+  asRows(payload.b2cl).forEach((g, i) => {
     if (!gstr1RequireKeys(g, ['pos', 'inv'], `b2cl[${i}]`, errors)) return;
     if (!Array.isArray(g.inv)) { errors.push(`Schema: b2cl[${i}].inv must be an array.`); return; }
     g.inv.forEach((inv, j) => {
@@ -210,9 +227,9 @@ function validateGSTR1Schema(payload, errors) {
       gstr1ValidateItms(inv.itms, `b2cl[${i}].inv[${j}].itms`, ['txval', 'rt', 'iamt', 'csamt'], errors);
     });
   });
-  (payload.b2cs || []).forEach((r, i) =>
+  asRows(payload.b2cs).forEach((r, i) =>
     gstr1RequireKeys(r, ['sply_ty', 'pos', 'typ', 'rt', 'txval', 'iamt', 'camt', 'samt', 'csamt'], `b2cs[${i}]`, errors));
-  (payload.cdnr || []).forEach((g, i) => {
+  asRows(payload.cdnr).forEach((g, i) => {
     if (!gstr1RequireKeys(g, ['ctin', 'nt'], `cdnr[${i}]`, errors)) return;
     if (!Array.isArray(g.nt)) { errors.push(`Schema: cdnr[${i}].nt must be an array.`); return; }
     g.nt.forEach((n, j) => {
@@ -220,13 +237,32 @@ function validateGSTR1Schema(payload, errors) {
       gstr1ValidateItms(n.itms, `cdnr[${i}].nt[${j}].itms`, ['txval', 'rt', 'iamt', 'camt', 'samt', 'csamt'], errors);
     });
   });
-  (payload.cdnur || []).forEach((n, i) => {
+  asRows(payload.cdnur).forEach((n, i) => {
     if (!gstr1RequireKeys(n, ['typ', 'ntty', 'nt_num', 'nt_dt', 'pos', 'val', 'itms'], `cdnur[${i}]`, errors)) return;
     gstr1ValidateItms(n.itms, `cdnur[${i}].itms`, ['txval', 'rt', 'iamt', 'csamt'], errors);
   });
-  if (payload.hsn && Array.isArray(payload.hsn.data)) {
-    payload.hsn.data.forEach((r, i) =>
-      gstr1RequireKeys(r, ['num', 'hsn_sc', 'desc', 'uqc', 'qty', 'txval', 'rt', 'iamt', 'camt', 'samt', 'csamt'], `hsn.data[${i}]`, errors));
+  if (payload.hsn) {
+    const known = ['hsn_b2b', 'hsn_b2c'];
+    Object.keys(payload.hsn).filter(k => !known.includes(k)).forEach(k =>
+      errors.push(`Schema: hsn.${k} is not a recognised HSN array — the summary is split into hsn_b2b and hsn_b2c.`));
+    known.forEach(k => {
+      if (payload.hsn[k] === undefined) return;
+      if (!Array.isArray(payload.hsn[k])) { errors.push(`Schema: hsn.${k} must be an array.`); return; }
+      payload.hsn[k].forEach((r, i) =>
+        gstr1RequireKeys(r, ['num', 'hsn_sc', 'desc', 'uqc', 'qty', 'txval', 'rt', 'iamt', 'camt', 'samt', 'csamt'], `hsn.${k}[${i}]`, errors));
+    });
+  }
+  if (payload.doc_issue) {
+    if (!Array.isArray(payload.doc_issue.doc_det)) {
+      errors.push('Schema: doc_issue.doc_det must be an array.');
+    } else {
+      payload.doc_issue.doc_det.forEach((d, i) => {
+        if (!gstr1RequireKeys(d, ['doc_num', 'doc_typ', 'docs'], `doc_issue.doc_det[${i}]`, errors)) return;
+        if (!Array.isArray(d.docs)) { errors.push(`Schema: doc_issue.doc_det[${i}].docs must be an array.`); return; }
+        d.docs.forEach((x, j) =>
+          gstr1RequireKeys(x, ['num', 'from', 'to', 'totnum', 'cancel', 'net_issue'], `doc_issue.doc_det[${i}].docs[${j}]`, errors));
+      });
+    }
   }
 }
 
@@ -276,7 +312,7 @@ function gstr1ErrorText(e) {
 // disagree about what is emittable. Whether GSTN's master list matches
 // this set is NOT something this codebase can settle — the check here is
 // that nothing outside our own map ever reaches the file.
-const GSTR1_EMITTABLE_UQC = new Set([...Object.values(GSTR1_UQC_MAP), 'OTH-OTHERS']);
+const GSTR1_EMITTABLE_UQC = new Set([...Object.values(GSTR1_UQC_MAP), GSTR1_UQC_FALLBACK]);
 
 // The values this generator itself produces for these fields. Asserted so
 // a future edit cannot introduce a third value silently; they are our
@@ -344,7 +380,14 @@ function validateGSTR1Strict(payload, errors) {
     errors.push(gstr1Err({ field: 'fp', current: payload.fp, expected: 'MMYYYY, e.g. 072026',
       fix: 'Select a single calendar month on the Reports page.' }));
   }
-  ['gt', 'cur_gt'].forEach(f => gstr1CheckMoney(payload[f], f, 'payload', errors));
+  if (payload.version !== GSTR1_VERSION) {
+    errors.push(gstr1Err({ field: 'version', current: payload.version, expected: GSTR1_VERSION,
+      fix: 'Generator-set value — report it if you see it.' }));
+  }
+  if (payload.hash !== GSTR1_HASH) {
+    errors.push(gstr1Err({ field: 'hash', current: payload.hash, expected: GSTR1_HASH,
+      fix: 'Generator-set value — report it if you see it.' }));
+  }
 
   const checkItms = (itms, where, splyTy, invoice, customer) => {
     (itms || []).forEach((it, k) => {
@@ -467,8 +510,10 @@ function validateGSTR1Strict(payload, errors) {
     checkItms(n.itms, where, 'INTER', n.nt_num);
   });
 
-  ((payload.hsn && payload.hsn.data) || []).forEach((r, i) => {
-    const where = `hsn.data[${i}]`;
+  const hsnRowsToCheck = [];
+  ['hsn_b2b', 'hsn_b2c'].forEach(k => ((payload.hsn && payload.hsn[k]) || [])
+    .forEach((r, i) => hsnRowsToCheck.push([r, `hsn.${k}[${i}]`])));
+  hsnRowsToCheck.forEach(([r, where]) => {
     if (!gstr1HsnFormatOk(r.hsn_sc)) {
       errors.push(gstr1Err({ product: r.desc, field: `${where}.hsn_sc`, current: r.hsn_sc,
         expected: 'a 4, 6 or 8 digit HSN code', fix: 'Set a valid HSN code on the product.' }));
@@ -478,13 +523,36 @@ function validateGSTR1Strict(payload, errors) {
         expected: `one of ${[...GSTR1_EMITTABLE_UQC].join(', ')}`,
         fix: 'Set the product\'s unit to one this app maps to a UQC.' }));
     }
-    if (typeof r.qty !== 'number' || !isFinite(r.qty) || r.qty <= 0) {
+    // Zero is legitimate: a Utility-written return carries qty 0 on a
+    // service line (uqc "NA"), which has no unit of measure to count.
+    // Negative is not.
+    if (typeof r.qty !== 'number' || !isFinite(r.qty) || r.qty < 0) {
       errors.push(gstr1Err({ product: r.desc, field: `${where}.qty`, current: r.qty,
-        expected: 'a quantity greater than zero',
-        fix: 'A zero or negative quantity here usually means sales returns exceeded sales for this HSN in the period.' }));
+        expected: 'a quantity of zero or more',
+        fix: 'A negative quantity here means sales returns exceeded sales for this HSN in the period.' }));
     }
     ['txval', 'iamt', 'camt', 'samt', 'csamt'].forEach(f => gstr1CheckMoney(r[f], f, where, errors));
   });
+}
+
+// Orders invoice numbers the way a numbering series runs rather than the
+// way text sorts, so "00193/26-27" follows "00158/26-27" and does not sit
+// before "0021/26-27". Digit runs compare as numbers, everything else as
+// text. js/invoice-list.js has an equivalent for sorting the on-screen
+// list; this file is loaded on reports.html, which does not include that
+// script, and a filing must not depend on which page happens to be open.
+function gstr1CompareInvoiceNumbers(a, b) {
+  const chunks = v => String(v ?? '').match(/\d+|\D+/g) || [];
+  const A = chunks(a), B = chunks(b);
+  for (let i = 0; i < Math.max(A.length, B.length); i++) {
+    const x = A[i], y = B[i];
+    if (x === undefined) return -1;
+    if (y === undefined) return 1;
+    const bothNumeric = /^\d/.test(x) && /^\d/.test(y);
+    const d = bothNumeric ? Number(x) - Number(y) : x.localeCompare(y);
+    if (d) return d;
+  }
+  return 0;
 }
 
 function gstr1InvoiceNumberOk(num) {
@@ -693,18 +761,24 @@ async function buildGSTR1Payload(userId, profile, periodFilter) {
     else seenInvNums.set(num, inv.__kind);
   });
 
-  const hsnBuckets = new Map(); // "hsncode|rate" -> { hsn_sc, desc, uqc, qty, taxable, igst, cgst, sgst }
-  function addToHsn(hsnCode, desc, uqc, qty, r, errCtx) {
+  // The HSN summary is reported per supply channel: hsn_b2b and hsn_b2c
+  // are separate arrays in a Utility-written return, so the buckets are
+  // kept apart from the moment a line is counted rather than being split
+  // afterwards (a line already knows which invoice it came from; the
+  // combined totals do not).
+  const hsnBuckets = { b2b: new Map(), b2c: new Map() }; // "hsncode|rate" -> row
+  function addToHsn(channel, hsnCode, desc, uqc, qty, r, errCtx) {
     if (!gstr1HsnFormatOk(hsnCode)) { errors.push(gstr1Err({ field: 'HSN Code', current: hsnCode, expected: 'a 4, 6 or 8 digit code', message: `${errCtx}: HSN code is not valid.`, fix: 'Set a valid HSN code on the product, then re-save the invoice.' })); return; }
+    const buckets = hsnBuckets[channel];
     const key = hsnCode + '|' + r.rate;
-    if (!hsnBuckets.has(key)) hsnBuckets.set(key, { hsn_sc: hsnCode, desc: desc || '', uqc, qty: 0, taxable: 0, igst: 0, cgst: 0, sgst: 0 });
-    const b = hsnBuckets.get(key);
+    if (!buckets.has(key)) buckets.set(key, { hsn_sc: hsnCode, desc: desc || '', uqc, qty: 0, taxable: 0, igst: 0, cgst: 0, sgst: 0 });
+    const b = buckets.get(key);
     // GSTN's schema allows exactly one row per HSN+rate — different
     // units genuinely selling under the same HSN+rate can't become two
     // rows (that would itself be a duplicate-HSN-row rejection) or be
     // silently summed together (a combined "8 units" of 5kg + 3pcs is
     // meaningless). Flagged for a human to resolve rather than guessed.
-    if (b.uqc !== 'OTH-OTHERS' && uqc !== 'OTH-OTHERS' && b.uqc !== uqc) {
+    if (b.uqc !== GSTR1_UQC_FALLBACK && uqc !== GSTR1_UQC_FALLBACK && b.uqc !== uqc) {
       errors.push(gstr1Err({ field: 'Unit (UQC)', current: `${b.uqc} and ${uqc} on HSN ${hsnCode} at ${r.rate}%`, expected: 'one unit per HSN code and rate', message: `${errCtx}: this HSN and rate is sold in two different units.`, fix: 'Make the unit consistent for this HSN and rate, or give the products distinct HSN codes.' }));
       return;
     }
@@ -713,7 +787,7 @@ async function buildGSTR1Payload(userId, profile, periodFilter) {
     b.cgst = round2(b.cgst + r.cgst); b.sgst = round2(b.sgst + r.sgst);
     // A later row can supply a UQC where an earlier one (e.g. a legacy
     // row with no unit at all) couldn't.
-    if (b.uqc === 'OTH-OTHERS' && uqc !== 'OTH-OTHERS') b.uqc = uqc;
+    if (b.uqc === GSTR1_UQC_FALLBACK && uqc !== GSTR1_UQC_FALLBACK) b.uqc = uqc;
   }
 
   // ── B2B ──
@@ -750,7 +824,7 @@ async function buildGSTR1Payload(userId, profile, periodFilter) {
       gstr1CheckItemTaxable(it, itemCtx, errors, { invoice: inv.invoice_number, customer: inv.customer_name });
       if (errors.length > preErrCount) itemsOk = false;
       const uqc = gstr1ToUQC(it.unit);
-      addToHsn(it.hsn_code, it.product_name, uqc, +it.quantity || 0, gstr1RecomputeItem(it, inv.supply_type), itemCtx);
+      addToHsn('b2b', it.hsn_code, it.product_name, uqc, +it.quantity || 0, gstr1RecomputeItem(it, inv.supply_type), itemCtx);
     });
     if (!itemsOk) return;
 
@@ -796,7 +870,7 @@ async function buildGSTR1Payload(userId, profile, periodFilter) {
       gstr1CheckItemTaxable(it, itemCtx, errors, { invoice: inv.invoice_number, customer: inv.customer_name });
       if (errors.length > preErrCount) itemsOk = false;
       const uqc = gstr1ToUQC(it.unit);
-      addToHsn(it.hsn_code, it.product_name, uqc, +it.quantity || 0, gstr1RecomputeItem(it, inv.supply_type), itemCtx);
+      addToHsn('b2c', it.hsn_code, it.product_name, uqc, +it.quantity || 0, gstr1RecomputeItem(it, inv.supply_type), itemCtx);
     });
     if (!itemsOk) return;
 
@@ -852,7 +926,10 @@ async function buildGSTR1Payload(userId, profile, periodFilter) {
       if (!gstr1HsnFormatOk(it.hsn_code)) { errors.push(gstr1Err({ invoice: ret.return_number, product: it.product_name, field: 'HSN Code', current: it.hsn_code, expected: 'a 4, 6 or 8 digit code', fix: 'Set a valid HSN code on the product.' })); return; }
       const r = gstr1RecomputeItem(it, ret.supply_type);
       const key = it.hsn_code + '|' + r.rate;
-      const bucket = hsnBuckets.get(key);
+      // Net against the channel the original sale went out on; a B2B
+      // return cannot reduce the B2C summary.
+      const channel = ret.original_invoice_type === 'b2c' ? 'b2c' : 'b2b';
+      const bucket = hsnBuckets[channel].get(key);
       if (!bucket) return; // return references an HSN/rate with no matching outward supply this period — nothing to net against, not an error on its own
       const newTaxable = round2(bucket.taxable - r.taxable);
       if (newTaxable < 0) {
@@ -910,14 +987,49 @@ async function buildGSTR1Payload(userId, profile, periodFilter) {
   });
   const cdnr = [...cdnrGroups.entries()].map(([ctin, nt]) => ({ ctin, nt }));
 
-  // hsnBuckets is keyed "hsn_sc|rate", so each bucket maps to exactly
-  // one rate — pulled straight from the key rather than stored twice.
-  const hsn = { data: [...hsnBuckets.entries()].map(([key, b], i) => ({
+  // Each bucket map is keyed "hsn_sc|rate", so a row's rate comes back
+  // out of its key rather than being stored twice. num restarts at 1 in
+  // each array, as it does in a Utility-written return.
+  const hsnRows = channel => [...hsnBuckets[channel].entries()].map(([key, b], i) => ({
     num: i + 1, hsn_sc: b.hsn_sc, desc: b.desc, uqc: b.uqc, qty: b.qty,
     txval: b.taxable, rt: +key.split('|')[1], iamt: b.igst, camt: b.cgst, samt: b.sgst, csamt: 0
-  })) };
+  }));
+  const hsnB2B = hsnRows('b2b'), hsnB2C = hsnRows('b2c');
+  // Only non-empty arrays are written, the same rule the top-level
+  // sections follow.
+  const hsn = {};
+  if (hsnB2B.length) hsn.hsn_b2b = hsnB2B;
+  if (hsnB2C.length) hsn.hsn_b2c = hsnB2C;
 
-  const gt = round2(
+  // Documents issued (the Utility's doc_issue). Derived entirely from the
+  // invoices already in this return: the numbering runs from the lowest
+  // invoice number in the period to the highest, and totnum is how many
+  // there are. cancel is 0 because this application has no concept of a
+  // cancelled invoice — there is nothing to count, not a figure guessed.
+  // doc_num 1 / "Invoices for outward supply" are the values the Utility
+  // writes for this document type; the voucher types it also supports are
+  // not emitted, because no such document exists in this app.
+  const issuedNumbers = [...b2bData, ...b2cData]
+    .map(r => r.invoice_number).filter(Boolean)
+    .sort(gstr1CompareInvoiceNumbers);
+  const doc_issue = issuedNumbers.length ? { doc_det: [{
+    doc_num: 1,
+    doc_typ: 'Invoices for outward supply',
+    docs: [{
+      num: 1,
+      from: issuedNumbers[0],
+      to: issuedNumbers[issuedNumbers.length - 1],
+      totnum: issuedNumbers.length,
+      cancel: 0,
+      net_issue: issuedNumbers.length
+    }]
+  }] } : {};
+
+  // Still computed, no longer emitted: a Utility-written return has no gt
+  // or cur_gt, and the value we produced was the period's invoice total,
+  // not the taxpayer's gross annual turnover, which is what gt means. The
+  // final audit still reconciles every section against it.
+  const grandTotal = round2(
     b2b.reduce((s, g) => s + g.inv.reduce((s2, i) => s2 + i.val, 0), 0) +
     b2cl.reduce((s, g) => s + g.inv.reduce((s2, i) => s2 + i.val, 0), 0) +
     b2cs.reduce((s, r) => s + round2(r.txval + r.iamt + r.camt + r.samt), 0) -
@@ -928,8 +1040,11 @@ async function buildGSTR1Payload(userId, profile, periodFilter) {
   // Assembled through the registry rather than as an object literal, so
   // the written key order and the emit-when-empty policy both come from
   // GSTR1_SECTIONS and cannot drift from what the audit expects.
-  const payload = assembleGSTR1Payload({ gstin: businessGstin, fp, gt, cur_gt: gt, b2b, b2cl, b2cs, cdnr, cdnur, hsn });
-  return { payload, errors, context: { periodStart: start, periodEnd: end, salesReturnNettedTaxable } };
+  const payload = assembleGSTR1Payload({
+    gstin: businessGstin, fp, version: GSTR1_VERSION, hash: GSTR1_HASH,
+    b2b, b2cl, b2cs, cdnr, cdnur, hsn, doc_issue
+  });
+  return { payload, errors, context: { periodStart: start, periodEnd: end, salesReturnNettedTaxable, grandTotal } };
 }
 
 // ── Final audit — a fully independent second pass over the ALREADY-BUILT
@@ -985,7 +1100,9 @@ function runFinalGSTR1Audit(payload, errors, context) {
   const b2csTaxable = round2((reparsed.b2cs || []).reduce((s, r) => s + r.txval, 0));
   const salesReturnNettedTaxable = round2(context?.salesReturnNettedTaxable || 0);
   const invoiceSideTaxable = round2(b2bTaxable + b2clTaxable + b2csTaxable - salesReturnNettedTaxable);
-  const hsnTaxable = round2(((reparsed.hsn && reparsed.hsn.data) || []).reduce((s, r) => s + r.txval, 0));
+  const hsnTaxable = round2(['hsn_b2b', 'hsn_b2c']
+    .flatMap(k => (reparsed.hsn && reparsed.hsn[k]) || [])
+    .reduce((s, r) => s + r.txval, 0));
   if (Math.abs(invoiceSideTaxable - hsnTaxable) > GSTR1_RECONCILE_TOLERANCE) {
     errors.push(`Final audit — RECONCILIATION FAILED: (B2B + B2CL + B2CS − Sales Return adjustments) = ₹${invoiceSideTaxable} does not equal HSN section taxable total (₹${hsnTaxable}). Difference: ₹${round2(invoiceSideTaxable - hsnTaxable)}.`);
   }
@@ -997,19 +1114,23 @@ function runFinalGSTR1Audit(payload, errors, context) {
   (reparsed.cdnr || []).forEach(g => g.nt.forEach(n => { if (!noteValOk(n)) errors.push(`Final audit: CDNR note ${n.nt_num} val (₹${n.val}) does not match its own item total.`); }));
   (reparsed.cdnur || []).forEach(n => { if (!noteValOk(n)) errors.push(`Final audit: CDNUR note ${n.nt_num} val (₹${n.val}) does not match its own item total.`); });
 
-  // 6. Grand total — gt/cur_gt must equal the sum of every section's own
-  // invoice-level value (independently re-derived here, not just trusted
-  // from whatever buildGSTR1Payload() computed).
+  // 6. Grand total — every section's own invoice-level value, re-derived
+  // here from the payload and compared against the figure the builder
+  // arrived at independently.
   const sumVal = (invArr) => invArr.reduce((s, g) => s + g.inv.reduce((s2, i) => s2 + i.val, 0), 0);
   const b2bVal = sumVal(reparsed.b2b || []), b2clVal = sumVal(reparsed.b2cl || []);
   const b2csVal = (reparsed.b2cs || []).reduce((s, r) => s + round2(r.txval + r.iamt + r.camt + r.samt), 0);
   const cdnrVal = (reparsed.cdnr || []).reduce((s, g) => s + g.nt.reduce((s2, n) => s2 + (n.ntty === 'C' ? n.val : -n.val), 0), 0);
   const cdnurVal = (reparsed.cdnur || []).reduce((s, n) => s + (n.ntty === 'C' ? n.val : -n.val), 0);
   const recomputedGt = round2(b2bVal + b2clVal + b2csVal - cdnrVal - cdnurVal);
-  if (Math.abs(recomputedGt - reparsed.gt) > GSTR1_RECONCILE_TOLERANCE) {
-    errors.push(`Final audit — GRAND TOTAL MISMATCH: payload.gt (₹${reparsed.gt}) does not equal the independently recomputed grand total (₹${recomputedGt}).`);
+  // gt is not written to the file any more, so this reconciles the
+  // sections against the figure buildGSTR1Payload() computed while it was
+  // assembling them. A disagreement still means the two halves of the
+  // generator disagree about the same return.
+  const statedGt = round2(context?.grandTotal || 0);
+  if (Math.abs(recomputedGt - statedGt) > GSTR1_RECONCILE_TOLERANCE) {
+    errors.push(`Final audit — GRAND TOTAL MISMATCH: the sections total ₹${recomputedGt} but the generator computed ₹${statedGt} while building them.`);
   }
-  if (reparsed.gt !== reparsed.cur_gt) errors.push(`Final audit: gt (₹${reparsed.gt}) and cur_gt (₹${reparsed.cur_gt}) must be equal for a first-time filing.`);
 
   // 7. GSTIN validation across every section.
   (reparsed.b2b || []).forEach(g => { if (!validateGstin(g.ctin).valid) errors.push(`Final audit: B2B section ctin "${g.ctin}" is invalid.`); });
@@ -1023,16 +1144,47 @@ function runFinalGSTR1Audit(payload, errors, context) {
 
   // 9. HSN validation — format, and no duplicate hsn+rate rows (the
   // bucket map construction already prevents this internally, but the
-  // final audit re-checks the actual array that will be written).
+  // final audit re-checks the actual arrays that will be written).
+  //
+  // Uniqueness is per array, not across both: the same HSN at the same
+  // rate legitimately appears once in hsn_b2b and once in hsn_b2c when a
+  // product is sold to registered and unregistered customers alike.
+  ['hsn_b2b', 'hsn_b2c'].forEach(k => {
   const hsnSeen = new Set();
-  (((reparsed.hsn && reparsed.hsn.data)) || []).forEach(row => {
+  ((reparsed.hsn && reparsed.hsn[k]) || []).forEach(row => {
     if (!gstr1HsnFormatOk(row.hsn_sc)) errors.push(`Final audit: HSN row "${row.hsn_sc}" is not a valid 4/6/8-digit code.`);
     const key = row.hsn_sc + '|' + row.rt;
-    if (hsnSeen.has(key)) errors.push(`Final audit: duplicate HSN row for code ${row.hsn_sc} at rate ${row.rt}%.`);
+    if (hsnSeen.has(key)) errors.push(`Final audit: duplicate HSN row for code ${row.hsn_sc} at rate ${row.rt}% in ${k}.`);
     hsnSeen.add(key);
-    if (row.qty <= 0) errors.push(`Final audit: HSN row ${row.hsn_sc} has non-positive quantity (${row.qty}).`);
+    if (row.qty < 0) errors.push(`Final audit: HSN row ${row.hsn_sc} has negative quantity (${row.qty}).`);
     if (row.txval < 0) errors.push(`Final audit: HSN row ${row.hsn_sc} has negative taxable value (${row.txval}).`);
   });
+  });
+}
+
+// ── Serialisation ───────────────────────────────────────────
+// Written the way the Offline Utility writes it: one line, no padding,
+// and nested object keys in alphabetical order. Neither matters to a JSON
+// parser — objects are unordered and whitespace is insignificant — but
+// matching removes a whole class of "why does mine look different"
+// question when the two files are put side by side, and costs nothing.
+//
+// The root keeps the order GSTR1_SECTIONS declares (gstin, fp, version,
+// hash, then sections), which is the order the Utility uses there.
+function gstr1SortKeysDeep(value) {
+  if (Array.isArray(value)) return value.map(gstr1SortKeysDeep);
+  if (value && typeof value === 'object') {
+    const out = {};
+    Object.keys(value).sort().forEach(k => { out[k] = gstr1SortKeysDeep(value[k]); });
+    return out;
+  }
+  return value;
+}
+
+function gstr1SerializePayload(payload) {
+  const ordered = {};
+  Object.keys(payload).forEach(k => { ordered[k] = gstr1SortKeysDeep(payload[k]); });
+  return JSON.stringify(ordered);
 }
 
 // ── What the file does not contain ──────────────────────────
@@ -1155,7 +1307,7 @@ async function exportGSTR1JSON() {
     return; // never write the file
   }
 
-  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+  const blob = new Blob([gstr1SerializePayload(payload)], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
