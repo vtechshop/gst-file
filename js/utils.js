@@ -87,6 +87,61 @@ const INVOICE_SOURCE_LABELS = {
   online:  'Online / Website'
 };
 
+// ── Per-series number formats ───────────────────────────────
+// Each book is written its own way as well as counted its own way: the
+// shop issuing 171, 172, 173 while the website issues W-00001, W-00002
+// and a marketplace issues A-00001.
+//
+// "online" is spelled out below rather than derived because no rule
+// could get there: the W is for Website. Every other series falls back
+// to its own first letter — amazon -> A-#####, flipkart -> F-#####,
+// pos -> P-##### — which is a starting point, not a decision. Settings
+// can change any of them, and whatever is stored always wins.
+//
+// The twin of this lives in server/utils/invoiceNumberFormat.js, which
+// hands out the number that actually gets saved. This copy only draws
+// the preview, and a preview that disagreed with what gets saved would
+// be worse than no preview — so the two are tested against each other.
+const INVOICE_SERIES_DEFAULT_FORMATS = { online: 'W-#####' };
+
+function defaultInvoiceSeriesFormat(series) {
+  const s = String(series || '').trim().toLowerCase();
+  if (INVOICE_SERIES_DEFAULT_FORMATS[s]) return INVOICE_SERIES_DEFAULT_FORMATS[s];
+  const initial = (s.match(/[a-z0-9]/) || [''])[0].toUpperCase();
+  return initial ? `${initial}-#####` : 'INV-###';
+}
+
+// The offline series reads invoice_number_format, the column that
+// existed before series did and is already every current business's only
+// format — so a shop that has been issuing 138, 139, 140 keeps issuing
+// 141 rather than being moved onto something new.
+function invoiceSeriesFormat(profile, series) {
+  const s = String(series || '').trim().toLowerCase() || INVOICE_SOURCE_DEFAULT;
+  if (s === INVOICE_SOURCE_DEFAULT) return profile?.invoice_number_format || 'INV-###';
+  const stored = profile?.invoice_series_formats?.[s];
+  return (stored && String(stored).trim()) || defaultInvoiceSeriesFormat(s);
+}
+
+// The counter a series is up to, from the same split: offline on the
+// original column, everything else in the per-series map.
+function invoiceSeriesSequence(profile, series) {
+  const s = String(series || '').trim().toLowerCase() || INVOICE_SOURCE_DEFAULT;
+  const raw = s === INVOICE_SOURCE_DEFAULT
+    ? profile?.invoice_current_sequence
+    : profile?.invoice_series_sequences?.[s];
+  return Math.max(1, parseInt(raw, 10) || 1);
+}
+
+// Every series the business actually numbers invoices in: the ones this
+// app ships with, plus any that has a format or a counter of its own.
+function knownInvoiceSeries(profile) {
+  return [...new Set([
+    ...Object.keys(INVOICE_SOURCE_LABELS),
+    ...Object.keys(profile?.invoice_series_formats || {}),
+    ...Object.keys(profile?.invoice_series_sequences || {})
+  ])].map(s => String(s).trim().toLowerCase()).filter(Boolean).sort();
+}
+
 function invoiceSourceOf(row) {
   return String((row && row.invoice_source) || '').trim().toLowerCase() || INVOICE_SOURCE_DEFAULT;
 }

@@ -325,15 +325,12 @@ function getInvoiceSource() {
 // The two series this app ships with, plus every other one the business
 // already numbers invoices in. Without this a shop running an "amazon"
 // book could see that series on its existing invoices but never pick it
-// for a new one. The extra names come from the per-series counters on
-// the profile, which is already loaded — no extra request.
+// for a new one. The extra names come from the per-series formats and
+// counters on the profile, which is already loaded — no extra request.
 function populateInvoiceSourceOptions() {
   const el = document.getElementById('invSource');
   if (!el) return;
-  const known = [...new Set([
-    ...Object.keys(INVOICE_SOURCE_LABELS),
-    ...Object.keys(getCachedProfile()?.invoice_series_sequences || {})
-  ])].map(s => String(s).trim().toLowerCase()).filter(Boolean).sort();
+  const known = knownInvoiceSeries(getCachedProfile());
   const current = el.value;
   el.innerHTML = known.map(s =>
     `<option value="${escHtmlAttr(s)}">${escItemHtml(invoiceSourceLabel(s))}</option>`).join('');
@@ -371,17 +368,19 @@ async function generateInvoiceNo(userId, force) {
   if (!force && !isAutoInvoiceOn()) return;
   const uid = userId || (await getCurrentUser())?.id;
   const profile = getCachedProfile() || (uid ? await loadUserProfile(uid) : null);
-  const format = profile?.invoice_number_format || 'INV-###';
-  // Each series has its own counter. The offline series keeps using
-  // invoice_current_sequence — the counter that existed before series
-  // did — so a business already on Auto Generate sees the same number it
-  // would have seen before. Other series read their own counter, and a
-  // series that has never issued an invoice starts at 1.
+  // Each series has its own format AND its own counter, so switching the
+  // Invoice Source switches both: Offline previews 171, Online previews
+  // W-00006. The offline series keeps reading the format and counter
+  // that existed before series did, so a business already on Auto
+  // Generate sees the same number it would have seen before. A series
+  // that has never issued an invoice starts at 1 in its own format.
+  //
+  // Both come from js/utils.js, whose twin on the server hands out the
+  // number that actually gets saved — so this preview is the same
+  // arithmetic, not a lookalike.
   const series = getInvoiceSource();
-  const seq = (series === INVOICE_SOURCE_DEFAULT
-    ? profile?.invoice_current_sequence
-    : profile?.invoice_series_sequences?.[series]) || 1;
-  setInvValue('invNum', applyInvoiceNumberFormat(format, seq));
+  setInvValue('invNum', applyInvoiceNumberFormat(
+    invoiceSeriesFormat(profile, series), invoiceSeriesSequence(profile, series)));
 }
 
 // The authoritative generator — called only right before an actual new

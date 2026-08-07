@@ -282,21 +282,23 @@ async function openSettingsModal() {
             <span class="inv-toggle-track"><span class="inv-toggle-thumb"></span></span>
           </label>
         </div>
-        <div class="form-grid cols-2" style="gap:14px;margin-bottom:10px;">
-          <div class="form-group">
-            <label for="setInvFormat">Invoice Number Format</label>
-            <input type="text" id="setInvFormat" class="form-control" value="${e(profile?.invoice_number_format || 'INV-###')}" oninput="updateSettingsInvPreview()">
-          </div>
-          <div class="form-group">
-            <label for="setInvNextSeq">Next Sequence Number</label>
-            <input type="number" id="setInvNextSeq" class="form-control" min="1" step="1" value="${profile?.invoice_current_sequence || 1}" oninput="updateSettingsInvPreview()">
-          </div>
+        <!-- One row per numbering book. Each keeps its own format and its
+             own counter, so the shop can run 171, 172, 173 while the
+             website runs W-00001, W-00002 and a marketplace runs
+             A-00001 — no shared prefix, no shared sequence. -->
+        <p class="fs-11 text-muted-sm mb-10">Each Invoice Source is numbered separately &mdash; its own format, its own running count. Auto Generate uses whichever row matches the Invoice Source chosen on the invoice.</p>
+        <div class="table-wrapper mb-10">
+          <table class="data-table">
+            <thead><tr><th>Invoice Source</th><th>Number Format</th><th>Next Number</th><th>Next invoice will be</th></tr></thead>
+            <tbody id="setSeriesRows">${_seriesFormatRows(profile)}</tbody>
+          </table>
         </div>
-        <p class="fs-11 text-muted-sm mb-10"><b>#</b> marks the running sequence &mdash; <code>###</code> = 001, 002&hellip; &nbsp;<code>####</code> = 0001, 0002&hellip; Everything else in the format is kept exactly as typed. No <b>#</b>? A plain number (<code>1</code>) counts up on its own (1, 2, 3&hellip;); any other text gets the sequence appended (<code>INV</code> &rarr; INV-1, INV-2).</p>
-        <div style="background:var(--bg);border:1px dashed var(--border);border-radius:8px;padding:10px 14px;margin-bottom:14px;">
-          <span class="fs-11 text-muted-sm">Live Preview</span>
-          <div id="setInvPreview" style="font-size:16px;font-weight:700;color:var(--primary);margin-top:2px;">${e(applyInvoiceNumberFormat(profile?.invoice_number_format || 'INV-###', profile?.invoice_current_sequence || 1))}</div>
+        <div class="d-flex gap-8 align-center mb-10 flex-wrap">
+          <input type="text" id="setNewSeriesName" class="form-control w-150" placeholder="amazon" aria-label="New series name">
+          <button type="button" class="btn btn-secondary btn-sm" onclick="addSettingsSeriesRow()"><i class="fas fa-plus"></i> Add Series</button>
+          <span class="fs-11 text-muted-sm">Adds another numbering book &mdash; Amazon, Flipkart, POS, anything. It starts at 1 with its own prefix.</span>
         </div>
+        <p class="fs-11 text-muted-sm mb-10"><b>#</b> marks the running sequence &mdash; <code>###</code> = 001, 002&hellip; &nbsp;<code>#####</code> = 00001, 00002&hellip; Everything else in the format is kept exactly as typed, so <code>W-#####</code> gives W-00001. No <b>#</b>? A plain number (<code>1</code>) counts up on its own (1, 2, 3&hellip;); any other text gets the sequence appended (<code>INV</code> &rarr; INV-1, INV-2).</p>
         <button class="btn btn-primary btn-sm" onclick="submitInvoiceNumberingSettings()"><i class="fas fa-save"></i> Save Numbering Settings</button>
       </div>
 
@@ -462,63 +464,132 @@ function closeSettingsModal() {
 }
 
 // ── Invoice Numbering (Settings) ───────────
-function updateSettingsInvPreview() {
-  const format = document.getElementById('setInvFormat')?.value || '';
-  const trimmed = format.trim();
-  const seqEl = document.getElementById('setInvNextSeq');
-  // A purely numeric format (e.g. "25") IS the sequence to preview —
-  // show exactly what was typed, not whatever's separately sitting in
-  // Next Sequence Number (that field only matters for # / text formats,
-  // or once this numeric format is already saved and its own counter
-  // has moved on — see submitInvoiceNumberingSettings()'s save-time
-  // logic). Mirror it into the Next Sequence field too, live, purely so
-  // the two never visually disagree while typing.
-  let seq;
-  if (/^\d+$/.test(trimmed)) {
-    seq = parseInt(trimmed, 10) || 1;
-    if (seqEl) seqEl.value = seq;
-  } else {
-    seq = parseInt(seqEl?.value, 10) || 1;
+// One editable row per numbering book. The series name is carried in a
+// data attribute rather than baked into an element id, because it is
+// user-typed text and ids built from it would need escaping rules of
+// their own.
+function _seriesFormatRows(profile) {
+  return knownInvoiceSeries(profile).map(s => _seriesFormatRow(profile, s)).join('');
+}
+
+function _seriesFormatRow(profile, series) {
+  const fmt = invoiceSeriesFormat(profile, series);
+  const seq = invoiceSeriesSequence(profile, series);
+  const a = escHtmlAttr(series);
+  return `<tr data-series-row="${a}">
+    <td><span class="badge ${invoiceSourceBadgeClass(series)}">${e(invoiceSourceLabel(series))}</span></td>
+    <td><input type="text" class="form-control set-series-format" data-series="${a}" value="${e(fmt)}" oninput="updateSettingsInvPreview()" aria-label="Number format for ${a}"></td>
+    <td><input type="number" class="form-control set-series-seq" data-series="${a}" min="1" step="1" value="${seq}" oninput="updateSettingsInvPreview()" aria-label="Next number for ${a}"></td>
+    <td class="fw-700 text-primary-dark set-series-preview" data-series="${a}">${e(applyInvoiceNumberFormat(fmt, seq))}</td>
+  </tr>`;
+}
+
+// Adds another book. It exists from the moment it is saved, which is
+// what makes it selectable as an Invoice Source on a new invoice — the
+// dropdown there is built from the series that have a format or a
+// counter of their own.
+function addSettingsSeriesRow() {
+  const input = document.getElementById('setNewSeriesName');
+  const name = String(input?.value || '').trim().toLowerCase();
+  if (!name) { showToast('Type a name for the new series first.', 'error'); return; }
+  const tbody = document.getElementById('setSeriesRows');
+  if (!tbody) return;
+  const existing = tbody.querySelector(`[data-series-row="${CSS.escape(name)}"]`);
+  if (existing) {
+    showToast(`${invoiceSourceLabel(name)} is already listed.`, 'error');
+    existing.querySelector('.set-series-format')?.focus();
+    return;
   }
-  const el = document.getElementById('setInvPreview');
-  if (el) el.textContent = applyInvoiceNumberFormat(format, seq);
+  // No profile entry yet, so invoiceSeriesFormat() supplies the default
+  // for this name — amazon starts at A-00001, flipkart at F-00001.
+  tbody.insertAdjacentHTML('beforeend', _seriesFormatRow(null, name));
+  if (input) input.value = '';
+  tbody.querySelector(`[data-series-row="${CSS.escape(name)}"] .set-series-format`)?.focus();
+}
+
+function updateSettingsInvPreview() {
+  document.querySelectorAll('#setSeriesRows .set-series-format').forEach(fmtEl => {
+    const series = fmtEl.dataset.series;
+    const format = fmtEl.value || '';
+    const trimmed = format.trim();
+    const seqEl = document.querySelector(`#setSeriesRows .set-series-seq[data-series="${CSS.escape(series)}"]`);
+    // A purely numeric format (e.g. "25") IS the sequence to preview —
+    // show exactly what was typed, not whatever's separately sitting in
+    // Next Number (that field only matters for # / text formats, or once
+    // this numeric format is already saved and its own counter has moved
+    // on — see submitInvoiceNumberingSettings()'s save-time logic).
+    // Mirror it into the Next Number field too, live, purely so the two
+    // never visually disagree while typing.
+    let seq;
+    if (/^\d+$/.test(trimmed)) {
+      seq = parseInt(trimmed, 10) || 1;
+      if (seqEl) seqEl.value = seq;
+    } else {
+      seq = parseInt(seqEl?.value, 10) || 1;
+    }
+    const out = document.querySelector(`#setSeriesRows .set-series-preview[data-series="${CSS.escape(series)}"]`);
+    if (out) out.textContent = applyInvoiceNumberFormat(format, seq);
+  });
 }
 
 async function submitInvoiceNumberingSettings() {
   const user = await getCurrentUser();
   if (!user) return;
 
-  // No # required — applyInvoiceNumberFormat() (js/utils.js) handles a
-  // #-free format on its own (bare numeric formats count directly;
-  // any other plain text gets "-N" appended), so it's saved as typed.
-  const format = document.getElementById('setInvFormat')?.value?.trim() || 'INV-###';
-  let seq = Math.max(1, parseInt(document.getElementById('setInvNextSeq')?.value, 10) || 1);
+  const prior = getCachedProfile();
+  const formats = {};      // non-offline series only — see below
+  const sequences = {};
+  let offlineFormat = 'INV-###', offlineSeq = 1;
 
-  // A numeric format IS the starting sequence itself — typing "25" and
-  // saving must actually start generating from 25, not from whatever
-  // Next Sequence Number happened to still show. Only re-seed when the
-  // format actually changed to this number just now: once "25" is
-  // already the saved format and invoices have advanced past it (e.g.
-  // to 28), re-saving the SAME unchanged format must NOT reset the
-  // counter back down — that would reissue numbers already in use.
-  const priorFormat = (getCachedProfile()?.invoice_number_format || '').trim();
-  if (/^\d+$/.test(format) && format !== priorFormat) {
-    seq = Math.max(1, parseInt(format, 10) || 1);
-  }
+  document.querySelectorAll('#setSeriesRows .set-series-format').forEach(fmtEl => {
+    const series = String(fmtEl.dataset.series || '').trim().toLowerCase();
+    if (!series) return;
+    // No # required — applyInvoiceNumberFormat() (js/utils.js) handles a
+    // #-free format on its own (bare numeric formats count directly;
+    // any other plain text gets "-N" appended), so it's saved as typed.
+    const format = fmtEl.value.trim() || invoiceSeriesFormat(null, series);
+    const seqEl = document.querySelector(`#setSeriesRows .set-series-seq[data-series="${CSS.escape(series)}"]`);
+    let seq = Math.max(1, parseInt(seqEl?.value, 10) || 1);
+
+    // A numeric format IS the starting sequence itself — typing "25" and
+    // saving must actually start generating from 25, not from whatever
+    // Next Number happened to still show. Only re-seed when the format
+    // actually changed to this number just now: once "25" is already the
+    // saved format and invoices have advanced past it (e.g. to 28),
+    // re-saving the SAME unchanged format must NOT reset the counter
+    // back down — that would reissue numbers already in use. Judged per
+    // series, against that series' own previous format.
+    const priorFormat = String(invoiceSeriesFormat(prior, series) || '').trim();
+    if (/^\d+$/.test(format) && format !== priorFormat) {
+      seq = Math.max(1, parseInt(format, 10) || 1);
+    }
+
+    // The offline series is stored where it has always been stored, so a
+    // business that never touches this screen keeps issuing exactly what
+    // it issued yesterday.
+    if (series === INVOICE_SOURCE_DEFAULT) { offlineFormat = format; offlineSeq = seq; }
+    else { formats[series] = format; sequences[series] = seq; }
+  });
 
   const autoOn = !!document.getElementById('setAutoInvToggle')?.checked;
 
   const { error } = await saveUserProfile(user.id, {
     invoice_auto_number: autoOn,
-    invoice_number_format: format,
-    invoice_current_sequence: seq
+    invoice_number_format: offlineFormat,
+    invoice_current_sequence: offlineSeq,
+    invoice_series_formats: formats,
+    invoice_series_sequences: sequences
   });
   if (error) return;
 
   // Invoice Entry (js/invoice-entry.js) may or may not be loaded on
   // whichever page this Settings modal was opened from — keep its own
-  // toggle/field in sync immediately if it is, no-op otherwise.
+  // toggle/field in sync immediately if it is, no-op otherwise. The
+  // Source dropdown is rebuilt too: a series added here has to be
+  // pickable on the invoice without a reload, or adding one appears to
+  // have done nothing.
   if (typeof updateAutoToggleUI === 'function') updateAutoToggleUI();
+  if (typeof populateInvoiceSourceOptions === 'function') populateInvoiceSourceOptions();
   if (typeof generateInvoiceNo === 'function') generateInvoiceNo(user.id, true);
 }
 

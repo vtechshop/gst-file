@@ -60,7 +60,11 @@ CREATE TABLE IF NOT EXISTS profiles (
   invoice_number_format TEXT NOT NULL DEFAULT 'INV-###',
   invoice_current_sequence INTEGER NOT NULL DEFAULT 1,
   created_at TIMESTAMPTZ DEFAULT NOW(),
-  invoice_series_sequences JSONB NOT NULL DEFAULT '{}'::jsonb
+  invoice_series_sequences JSONB NOT NULL DEFAULT '{}'::jsonb,
+  -- Format per series: {"online": "W-#####", "amazon": "A-#####"}. The
+  -- offline series is absent by design — invoice_number_format above is
+  -- its format, which is what it already was before series existed.
+  invoice_series_formats JSONB NOT NULL DEFAULT '{}'::jsonb
 );
 
 -- ── B2B Invoices ─────────────────────────────────────
@@ -137,15 +141,17 @@ CREATE TABLE IF NOT EXISTS b2c_invoices (
   invoice_source TEXT NOT NULL DEFAULT 'offline'
 );
 
--- No two invoices (either type shares one numbering sequence) may share
--- a number — enforced today only by an app-level scan; this is a real
--- DB-level backstop. Delete is permanent (no soft-delete/Recycle Bin),
--- so a deleted invoice's number is simply gone and free to reuse —
+-- No two invoices may share a number WITHIN A SERIES — a real DB-level
+-- backstop behind the app-level scan. Scoped to invoice_source because
+-- that is what a numbering book means: a shop at 138 and a website
+-- starting at 1 will both reach 5, and those are two different documents
+-- in two different books. Delete is permanent (no soft-delete/Recycle
+-- Bin), so a deleted invoice's number is simply gone and free to reuse —
 -- nothing partial needed here, a plain unique index is the correct
 -- shape. NULLs (rare/legacy) never conflict with each other under a
 -- unique index.
-CREATE UNIQUE INDEX IF NOT EXISTS idx_b2b_invoices_number_active ON b2b_invoices(user_id, invoice_number);
-CREATE UNIQUE INDEX IF NOT EXISTS idx_b2c_invoices_number_active ON b2c_invoices(user_id, invoice_number);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_b2b_invoices_number_series ON b2b_invoices(user_id, invoice_source, invoice_number);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_b2c_invoices_number_series ON b2c_invoices(user_id, invoice_source, invoice_number);
 
 -- New indexes (invoice_number, customer_name, gst_number, date)
 CREATE INDEX IF NOT EXISTS idx_b2b_invoices_date ON b2b_invoices(user_id, invoice_date);

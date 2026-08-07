@@ -15,7 +15,7 @@ const express = require('express');
 const pool = require('../db/pool');
 const { requireAuth } = require('../middleware/auth');
 const { asyncRoute } = require('../middleware/errorHandler');
-const { applyInvoiceNumberFormat } = require('../utils/invoiceNumberFormat');
+const { applyInvoiceNumberFormat, invoiceSeriesFormat } = require('../utils/invoiceNumberFormat');
 const { TABLES } = require('./generic');
 
 const router = express.Router();
@@ -156,19 +156,23 @@ router.post('/reserve-number', asyncRoute(async (req, res) => {
     // "next" number before either commits (reading before locking would
     // reopen exactly the race this transaction exists to close).
     const { rows: profRows } = await client.query(
-      `SELECT invoice_number_format, invoice_current_sequence, invoice_series_sequences
+      `SELECT invoice_number_format, invoice_current_sequence,
+              invoice_series_sequences, invoice_series_formats
          FROM profiles WHERE id = $1 FOR UPDATE`, [req.userId]
     );
-    const format = profRows[0]?.invoice_number_format || 'INV-###';
 
-    // Each series counts on its own. The shop counter reaching 170 must
-    // not push the website's next number past 5.
+    // Each series counts on its own AND is written its own way. The shop
+    // counter reaching 170 must not push the website's next number past
+    // 5, and the website's numbers are W-00005, not 5.
     //
-    // The offline series keeps using invoice_current_sequence, the
-    // counter that existed before series did, so a business already on
-    // Auto Generate carries on from exactly where it was. Every other
-    // series gets its own counter in invoice_series_sequences.
+    // The offline series keeps using invoice_number_format and
+    // invoice_current_sequence — the format and counter that existed
+    // before series did — so a business already on Auto Generate carries
+    // on issuing exactly what it issued yesterday. Every other series
+    // reads its own entry in invoice_series_formats /
+    // invoice_series_sequences.
     const series = normaliseSource(req.body && req.body.source);
+    const format = invoiceSeriesFormat(profRows[0], series);
     const seriesSeqs = profRows[0]?.invoice_series_sequences || {};
     const storedSeq = series === DEFAULT_INVOICE_SOURCE
       ? profRows[0]?.invoice_current_sequence
@@ -201,7 +205,7 @@ router.post('/reserve-number', asyncRoute(async (req, res) => {
           WHERE id = $3`, [series, seq + 1, req.userId]);
     }
     await client.query('COMMIT');
-    res.json({ invoiceNumber: candidate, source: series });
+    res.json({ invoiceNumber: candidate, source: series, format });
   } catch (err) {
     await client.query('ROLLBACK');
     throw err;
