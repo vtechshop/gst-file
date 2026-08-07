@@ -30,24 +30,11 @@ let invListSort = 'desc';
 // rowJustUpdated animation in css/style.css.
 const ROW_HIGHLIGHT_MS = 3000;
 
-// Invoice numbers must order numerically, not as text — plain string
-// comparison puts "142" after "1419" and, once a prefix is involved,
-// scatters a sequence entirely. This splits each number into digit and
-// non-digit runs and compares run by run, digits as numbers. That gives
-// 138 < 139 < 142 < 149 for bare numbers, and keeps prefixed formats
-// like INV-2026-00124 in sequence too, without assuming either shape.
+// Invoice numbers must order numerically, not as text. The rule lives in
+// js/utils.js, shared with the GSTR-1 exporter and the series migration
+// tool so the list and a filing cannot disagree about the order.
 function compareInvoiceNumbersAsc(a, b) {
-  const chunks = v => String(v ?? '').match(/\d+|\D+/g) || [];
-  const A = chunks(a), B = chunks(b);
-  for (let i = 0; i < Math.max(A.length, B.length); i++) {
-    const x = A[i], y = B[i];
-    if (x === undefined) return -1;      // shorter run sorts first
-    if (y === undefined) return 1;
-    const bothNumeric = /^\d/.test(x) && /^\d/.test(y);
-    const d = bothNumeric ? Number(x) - Number(y) : x.localeCompare(y);
-    if (d) return d;
-  }
-  return 0;
+  return compareInvoiceNumbers(a, b);
 }
 
 // Sorts a COPY, so callers can re-sort the same source list repeatedly
@@ -176,12 +163,20 @@ async function fetchInvoiceListRows(userId) {
     type: 'b2b', id: r.id, invoice_number: r.invoice_number, invoice_date: r.invoice_date,
     customer_name: r.customer_name, gstin: r.gst_number, total_amount: +r.total_amount,
     state: r.state || '',
+    // Which numbering book the invoice belongs to. Not shown as a column;
+    // the Invoice Series Migration tool reads it to say what each
+    // invoice's current source is before moving it.
+    invoice_source: r.invoice_source || 'offline',
     payment_status: r.payment_status || 'unpaid', amount_paid: +r.amount_paid || 0
   }));
   const b2cRows = (b2c || []).map(r => ({
     type: 'b2c', id: r.id, invoice_number: r.invoice_number || ('B2C-' + r.id.slice(0, 8).toUpperCase()), invoice_date: r.invoice_date,
     customer_name: r.customer_name || 'Walk-in Customer (B2C)', gstin: r.gst_number || '', total_amount: +r.total_amount,
     state: r.state || '',
+    // Which numbering book the invoice belongs to. Not shown as a column;
+    // the Invoice Series Migration tool reads it to say what each
+    // invoice's current source is before moving it.
+    invoice_source: r.invoice_source || 'offline',
     payment_status: r.payment_status || 'unpaid', amount_paid: +r.amount_paid || 0
   }));
 

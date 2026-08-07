@@ -136,9 +136,18 @@ function runValidate(validate, body) {
   }
 }
 
-function makeCrudRouter(table, { columns, insertable = true, ownerColumn = 'user_id', validate }) {
+function makeCrudRouter(table, { columns, insertable = true, readOnly = false, ownerColumn = 'user_id', validate }) {
   const router = express.Router();
   router.use(requireAuth);
+
+  // A readOnly table is written only by the endpoint that owns it, in the
+  // same transaction as the change it records. An audit log the browser
+  // can edit or delete is not an audit log, so the generic write paths
+  // are closed rather than merely unused.
+  const refuseWrite = () => {
+    const e = new Error(`${table} is a read-only record and cannot be changed here.`);
+    e.status = 405; e.expose = true; throw e;
+  };
 
   router.get('/', asyncRoute(async (req, res) => {
     const { where, params } = buildWhere(req.query, ownerColumn, req.userId, columns);
@@ -155,6 +164,7 @@ function makeCrudRouter(table, { columns, insertable = true, ownerColumn = 'user
   }));
 
   router.post('/', asyncRoute(async (req, res) => {
+    if (readOnly) refuseWrite();
     if (!insertable) { const e = new Error(`${table} does not accept direct inserts.`); e.status = 405; e.expose = true; throw e; }
     runValidate(validate, req.body);
     // Ownership is always forced from the JWT, never trusted from the
@@ -173,6 +183,7 @@ function makeCrudRouter(table, { columns, insertable = true, ownerColumn = 'user
   }));
 
   router.patch('/', asyncRoute(async (req, res) => {
+    if (readOnly) refuseWrite();
     runValidate(validate, req.body);
     const { where, params } = buildWhere(req.query, ownerColumn, req.userId, columns);
     const patchCols = Object.keys(req.body).filter(c => columns.includes(c) && c !== ownerColumn); // ownership is never reassignable
@@ -184,6 +195,7 @@ function makeCrudRouter(table, { columns, insertable = true, ownerColumn = 'user
   }));
 
   router.delete('/', asyncRoute(async (req, res) => {
+    if (readOnly) refuseWrite();
     const { where, params } = buildWhere(req.query, ownerColumn, req.userId, columns);
     const { rowCount } = await pool.query(`DELETE FROM ${table} ${where}`, params);
     res.json({ deletedCount: rowCount });
@@ -229,6 +241,15 @@ const TABLES = {
   payments: {
     columns: ['id','user_id','invoice_id','invoice_type','amount','method',
       'payment_date','reference_number','note','created_at']
+  },
+  // Read-only in practice: rows are written by POST /invoices/series-migration
+  // inside the same transaction as the change they describe. Exposed here
+  // so the migration tool can show its own history, which is the point of
+  // keeping the log at all.
+  invoice_series_migrations: {
+    readOnly: true,
+    columns: ['id','user_id','range_from','range_to','old_sources','new_source',
+      'invoice_count','invoice_numbers','created_at']
   },
   // Internal transport documents. ewb_* / status are exposed now so a future
   // NIC integration can PATCH them onto the same row without touching this

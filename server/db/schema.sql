@@ -349,6 +349,34 @@ CREATE INDEX IF NOT EXISTS idx_payments_invoice ON payments(invoice_id, invoice_
 -- New index (date)
 CREATE INDEX IF NOT EXISTS idx_payments_date ON payments(user_id, payment_date);
 
+-- ── Invoice Series Migration log ──────────────────────
+--    Every bulk change of invoice_source: when, by whom, over which
+--    range, out of which series and into which.
+--
+--    Moving an invoice between series changes which range it is reported
+--    under in GSTR-1's Documents Issued table. The figures filed do not
+--    change, but the document ranges do, and a filed return has to stay
+--    explainable afterwards.
+CREATE TABLE IF NOT EXISTS invoice_series_migrations (
+  id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
+  user_id UUID REFERENCES users(id) ON DELETE CASCADE NOT NULL,
+  -- As typed, not derived from what was found: "4 to 25 matched nothing"
+  -- is itself worth recording.
+  range_from TEXT NOT NULL,
+  range_to TEXT NOT NULL,
+  -- Count per source ({"offline": 22}). A map, because one range can span
+  -- more than one series and recording only the first would misstate it.
+  old_sources JSONB NOT NULL DEFAULT '{}'::jsonb,
+  new_source TEXT NOT NULL,
+  -- Which documents moved, not just how many — that is what an audit asks.
+  invoice_count INTEGER NOT NULL DEFAULT 0,
+  invoice_numbers JSONB NOT NULL DEFAULT '[]'::jsonb,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_invoice_series_migrations_user
+  ON invoice_series_migrations(user_id, created_at DESC);
+
 -- ── E-Way Bills (internal transport documents) ────────
 --    One record per transport movement, linked to the invoice it ships.
 --    Deliberately its own table rather than more columns on the invoice:

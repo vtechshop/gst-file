@@ -210,6 +210,86 @@ router.post('/reserve-number', asyncRoute(async (req, res) => {
   }
 }));
 
+// ── 2b) Bulk-move a set of invoices into one numbering series ──
+//
+// The one-time tool for a business that was already running two books
+// before the app could record which was which — website orders 4 to 25
+// sitting in the shop series because that is where the migration
+// defaulted every existing invoice. Opening twenty-two invoices to
+// change one field each is not a reasonable way to correct that.
+//
+// The ids are chosen on the client, where the invoice-number ordering
+// lives (js/utils.js's compareInvoiceNumbers, the same comparator the
+// GSTR-1 export uses to decide a series' from/to range) — so the range
+// the operator previewed is exactly the set that moves, with no second
+// implementation of that ordering in SQL to drift from it.
+//
+// invoice_source is the ONLY column written. Nothing here touches an
+// invoice number, date, customer, tax figure or total, and no line item
+// or HSN row is read at all.
+router.post('/series-migration', asyncRoute(async (req, res) => {
+  const { b2b = [], b2c = [], source, rangeFrom = '', rangeTo = '' } = req.body || {};
+  const series = normaliseSource(source);
+  if (!Array.isArray(b2b) || !Array.isArray(b2c)) {
+    const e = new Error('Invoice ids must be arrays.'); e.status = 400; e.expose = true; throw e;
+  }
+  [...b2b, ...b2c].forEach(badId);
+  if (!b2b.length && !b2c.length) {
+    const e = new Error('No invoices were selected to move.'); e.status = 400; e.expose = true; throw e;
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    // Read the current state first, inside the transaction and scoped to
+    // this user, so the log records what actually moved rather than what
+    // the client believed was there. Rows belonging to anyone else simply
+    // do not come back, and are therefore never updated below.
+    const moved = [];
+    const oldSources = {};
+    for (const [table, ids] of [['b2b_invoices', b2b], ['b2c_invoices', b2c]]) {
+      if (!ids.length) continue;
+      const { rows } = await client.query(
+        `SELECT id, invoice_number, invoice_source FROM ${table}
+          WHERE id = ANY($1::uuid[]) AND user_id = $2 AND invoice_source IS DISTINCT FROM $3
+          FOR UPDATE`,
+        [ids, req.userId, series]
+      );
+      rows.forEach(r => {
+        moved.push(r.invoice_number);
+        const from = r.invoice_source || DEFAULT_INVOICE_SOURCE;
+        oldSources[from] = (oldSources[from] || 0) + 1;
+      });
+      if (rows.length) {
+        await client.query(
+          `UPDATE ${table} SET invoice_source = $1 WHERE id = ANY($2::uuid[]) AND user_id = $3`,
+          [series, rows.map(r => r.id), req.userId]
+        );
+      }
+    }
+
+    // Logged even when nothing moved: that a range was examined and found
+    // to need no change is part of the same record.
+    const { rows: logRows } = await client.query(
+      `INSERT INTO invoice_series_migrations
+         (user_id, range_from, range_to, old_sources, new_source, invoice_count, invoice_numbers)
+       VALUES ($1,$2,$3,$4::jsonb,$5,$6,$7::jsonb) RETURNING id, created_at`,
+      [req.userId, String(rangeFrom), String(rangeTo), JSON.stringify(oldSources),
+       series, moved.length, JSON.stringify(moved)]
+    );
+
+    await client.query('COMMIT');
+    res.json({ updated: moved.length, invoiceNumbers: moved, oldSources, newSource: series,
+               migrationId: logRows[0].id, at: logRows[0].created_at });
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+  }
+}));
+
 // ── 3) Permanent delete cascade — invoice_items + HSN + stock reversal,
 // one transaction. The invoice HEADER row's own delete happens
 // separately via the generic router's plain (already permanent)

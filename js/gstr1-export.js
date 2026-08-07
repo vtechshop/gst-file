@@ -584,23 +584,11 @@ function gstr1SeriesLabel(series) {
 }
 
 // Orders invoice numbers the way a numbering series runs rather than the
-// way text sorts, so "00193/26-27" follows "00158/26-27" and does not sit
-// before "0021/26-27". Digit runs compare as numbers, everything else as
-// text. js/invoice-list.js has an equivalent for sorting the on-screen
-// list; this file is loaded on reports.html, which does not include that
-// script, and a filing must not depend on which page happens to be open.
+// way text sorts. The rule itself lives in js/utils.js, which every page
+// that touches invoice numbers loads — the on-screen list, the migration
+// tool and this filing all have to agree on which invoice is first.
 function gstr1CompareInvoiceNumbers(a, b) {
-  const chunks = v => String(v ?? '').match(/\d+|\D+/g) || [];
-  const A = chunks(a), B = chunks(b);
-  for (let i = 0; i < Math.max(A.length, B.length); i++) {
-    const x = A[i], y = B[i];
-    if (x === undefined) return -1;
-    if (y === undefined) return 1;
-    const bothNumeric = /^\d/.test(x) && /^\d/.test(y);
-    const d = bothNumeric ? Number(x) - Number(y) : x.localeCompare(y);
-    if (d) return d;
-  }
-  return 0;
+  return compareInvoiceNumbers(a, b);
 }
 
 // An invoice's val in a Utility-written return is the taxable value plus

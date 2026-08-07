@@ -67,6 +67,33 @@ function applyInvoiceNumberFormat(format, seq) {
   return fmt + '-' + n;
 }
 
+// Orders invoice numbers the way a numbering series runs rather than the
+// way text sorts. Plain string comparison puts "142" after "1419" and,
+// once a prefix is involved, scatters a sequence entirely. Each number is
+// split into digit and non-digit runs and compared run by run, digits as
+// numbers: 138 < 139 < 142 < 149 for bare numbers, "00193/26-27" after
+// "00158/26-27" rather than before "0021/26-27", and prefixed formats
+// like INV-2026-00124 stay in sequence — without assuming either shape.
+//
+// The single definition of that ordering. It existed twice, byte for
+// byte, in js/invoice-list.js and js/gstr1-export.js: one sorting the
+// on-screen list, one deciding the from/to range of a GSTR-1 series.
+// Changing either alone would have let the list and the filing disagree
+// about which invoice is first.
+function compareInvoiceNumbers(a, b) {
+  const chunks = v => String(v ?? '').match(/\d+|\D+/g) || [];
+  const A = chunks(a), B = chunks(b);
+  for (let i = 0; i < Math.max(A.length, B.length); i++) {
+    const x = A[i], y = B[i];
+    if (x === undefined) return -1;      // shorter run sorts first
+    if (y === undefined) return 1;
+    const bothNumeric = /^\d/.test(x) && /^\d/.test(y);
+    const d = bothNumeric ? Number(x) - Number(y) : x.localeCompare(y);
+    if (d) return d;
+  }
+  return 0;
+}
+
 // One line's taxable value: quantity × rate, less its discount, rounded
 // to paise. The single definition of that arithmetic.
 //
