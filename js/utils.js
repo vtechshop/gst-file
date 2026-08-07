@@ -156,6 +156,469 @@ function gstFinancialYearOf(dateISO) {
   return `${start}-${String((start + 1) % 100).padStart(2, '0')}`;
 }
 
+// ── GST document registry ───────────────────────────────────
+// Every document GST requires a business to issue or record, described
+// as data rather than decided by code.
+//
+// THIS IS METADATA ONLY. It stores no business record and owns no table.
+// Every document type names the domain table its rows live in, and those
+// tables stay independent of each other — invoices in the invoice
+// tables, notes in cdn_notes, purchases in purchases, e-way bills in
+// eway_bills, and a future type in its own table. Reporting, indexing
+// and auditing each stay a question about one table rather than a filter
+// over a shared one.
+//
+// The point of the table below is that adding a document type is adding
+// a row to it. Nothing about a type is decided by a branch elsewhere:
+// what it is called, whether it is taxable, whether it counts toward
+// turnover, whether it reaches the HSN summary, which returns report it
+// and under which tables, where its rows live, and whether it is in
+// force are all fields. A return that does not exist here yet — GSTR-3B,
+// GSTR-9, CMP-08, GSTR-6, ITC-04 — reads these same rows through the
+// same accessors.
+//
+// PROVENANCE, because this decides what a filed return claims:
+//
+//   tax_invoice is PROVEN. The return this application already produces
+//   writes doc_num 1 with doc_typ "Invoices for outward supply", and
+//   that file was diffed field-for-field against a JSON written by the
+//   official Offline Utility for the same invoices, to zero differences.
+//
+//   The other Table 13 rows are CORROBORATED, not proven: the list and
+//   its order come from Oracle's published JD Edwards GST localisation
+//   documentation for GSTR-1 Section 13, whose first entry is the one we
+//   have proven — which is what makes the ordering credible. The exact
+//   spelling of the rest has not been checked against a Utility-written
+//   file, because none containing them has been available.
+//
+//   Documents outside Table 13 are sourced from the CGST Rule named in
+//   each row.
+//
+// `status` and `enabled` are what keep an unbuilt type harmless.
+// `status` is what GST says about the document; `enabled` is what this
+// application can currently do with it. A type can be perfectly in force
+// and still disabled here, which is the normal state for one whose
+// module has not landed. Nothing below changes tax_invoice.
+//
+// FIELDS
+//   key / label / portalName / rule    identity, and the name GST uses
+//   direction                          outward (we issue) | inward (we receive)
+//   storage                            the domain table holding its rows;
+//                                      `null` while its module is pending
+//   series                             which numbering book it draws from;
+//                                      `null` when it is not numbered by
+//                                      us (a counterparty or NIC numbers it)
+//   taxable / affectsTurnover / affectsHsn / affectsLiability / affectsAmendments
+//   docNum                             ordinal in GSTR-1 Table 13, or null
+//   sections                           [{ ret, table, json }] — every
+//                                      return that reports it. A new
+//                                      return is another entry here, not
+//                                      another column.
+//   requires                           fields a document of this type must carry
+//   masters                            masters it needs beyond Customer/Product
+//   validations                        rules that must hold before it is filed
+//   effectiveFrom / effectiveTo        the period the document type is in
+//                                      force under GST; null `to` = still current
+//   status                             active | superseded | withdrawn | draft
+//   version                            this entry's metadata revision
+//   enabled                            is its behaviour built in this app yet
+//   proven                             is its portalName verified against a
+//                                      Utility-written file
+const GST_DOCUMENT_STATUS = ['active', 'superseded', 'withdrawn', 'draft'];
+
+// GST commenced on this date, which is when every document created by
+// the original CGST Rules came into force.
+const GST_COMMENCEMENT = '2017-07-01';
+
+const GST_DOCUMENT_TYPES = [
+  // ── Outward: the tax invoice family ──
+  { key: 'tax_invoice', label: 'Tax Invoice', portalName: 'Invoices for outward supply',
+    rule: 'Rule 46', direction: 'outward', storage: 'b2b_invoices / b2c_invoices',
+    series: 'invoice',
+    taxable: true, affectsTurnover: true, affectsHsn: true, affectsLiability: true,
+    affectsAmendments: false, docNum: 1,
+    sections: [
+      { ret: 'GSTR-1', table: '4A / 4B / 5 / 6A / 6B / 6C / 7', json: 'b2b[].inv[] / b2cl[].inv[] / b2cs[] / exp[].inv[]' },
+      { ret: 'GSTR-1', table: '13', json: 'doc_issue.doc_det[]' },
+      { ret: 'GSTR-3B', table: '3.1(a)', json: null },
+      { ret: 'GSTR-9', table: '4A-4G', json: null }
+    ],
+    requires: ['document_number', 'document_date', 'party', 'place_of_supply', 'line_items'],
+    masters: [], validations: ['gstin', 'place_of_supply', 'hsn', 'uqc', 'rate', 'total_reconciles'],
+    effectiveFrom: GST_COMMENCEMENT, effectiveTo: null, status: 'active', version: 1,
+    enabled: true, proven: true },
+
+  { key: 'bill_of_supply', label: 'Bill of Supply', portalName: 'Invoices for outward supply',
+    rule: 'Rule 49', direction: 'outward', storage: null, series: 'bill_of_supply',
+    taxable: false, affectsTurnover: true, affectsHsn: true, affectsLiability: false,
+    affectsAmendments: false,
+    // Not a thirteenth Table 13 row: a Bill of Supply is issued INSTEAD
+    // of a tax invoice by a composition dealer or an exempt supplier, and
+    // Table 13 reports it under row 1 because that table reports
+    // numbering series, not tax status.
+    docNum: 1,
+    sections: [
+      { ret: 'GSTR-1', table: '8', json: 'nil.inv[]' },
+      { ret: 'GSTR-1', table: '13', json: 'doc_issue.doc_det[]' },
+      { ret: 'GSTR-3B', table: '3.1(c)', json: null },
+      { ret: 'GSTR-9', table: '5D-5F', json: null },
+      { ret: 'CMP-08', table: '3', json: null }
+    ],
+    requires: ['document_number', 'document_date', 'party', 'line_items'],
+    masters: [], validations: ['no_tax_charged', 'hsn'],
+    effectiveFrom: GST_COMMENCEMENT, effectiveTo: null, status: 'active', version: 1,
+    enabled: false, proven: false },
+
+  { key: 'invoice_cum_bill_of_supply', label: 'Invoice-cum-Bill of Supply',
+    portalName: 'Invoices for outward supply', rule: 'Rule 46A',
+    direction: 'outward', storage: null, series: 'invoice',
+    taxable: true, affectsTurnover: true, affectsHsn: true, affectsLiability: true,
+    affectsAmendments: false, docNum: 1,
+    sections: [
+      { ret: 'GSTR-1', table: '7', json: 'b2cs[]' },
+      { ret: 'GSTR-1', table: '8', json: 'nil.inv[]' },
+      { ret: 'GSTR-1', table: '13', json: 'doc_issue.doc_det[]' },
+      { ret: 'GSTR-3B', table: '3.1(a) + 3.1(c)', json: null },
+      { ret: 'GSTR-9', table: '4A-4G + 5D-5F', json: null }
+    ],
+    requires: ['document_number', 'document_date', 'party', 'line_items'],
+    // The one type that is ALLOWED to mix taxable and non-taxable lines
+    // on one document — Rule 46A exists precisely for that. The mixed-
+    // treatment refusal added in Module 3 must exempt this type when its
+    // module lands, which is why the exemption is recorded here rather
+    // than remembered.
+    masters: [], validations: ['mixed_treatment_permitted', 'hsn'],
+    effectiveFrom: '2017-10-13', effectiveTo: null, status: 'active', version: 1,
+    enabled: false, proven: false },
+
+  { key: 'self_invoice', label: 'Self Invoice (RCM)',
+    portalName: 'Invoices for inward supply from unregistered person',
+    rule: 'Section 31(3)(f)', direction: 'inward', storage: null, series: 'self_invoice',
+    taxable: true, affectsTurnover: false, affectsHsn: false, affectsLiability: true,
+    affectsAmendments: false, docNum: 2,
+    // Raised by the recipient on itself for an inward supply, so it is
+    // not an outward supply and appears in no GSTR-1 supply table — only
+    // in Table 13, which reports documents issued whatever their
+    // direction. The liability it creates is declared in GSTR-3B.
+    sections: [
+      { ret: 'GSTR-1', table: '13', json: 'doc_issue.doc_det[]' },
+      { ret: 'GSTR-3B', table: '3.1(d)', json: null },
+      { ret: 'GSTR-9', table: '4G', json: null }
+    ],
+    requires: ['document_number', 'document_date', 'supplier', 'place_of_supply', 'line_items'],
+    masters: ['unregistered supplier'], validations: ['reverse_charge_applies', 'place_of_supply'],
+    effectiveFrom: GST_COMMENCEMENT, effectiveTo: null, status: 'active', version: 1,
+    enabled: false, proven: false },
+
+  { key: 'revised_invoice', label: 'Revised Invoice', portalName: 'Revised Invoice',
+    rule: 'Rule 53(1)', direction: 'outward', storage: null, series: 'revised_invoice',
+    taxable: true, affectsTurnover: true, affectsHsn: true, affectsLiability: true,
+    affectsAmendments: true, docNum: 3,
+    sections: [
+      { ret: 'GSTR-1', table: '9A', json: 'b2ba[] / b2cla[] / b2csa[]' },
+      { ret: 'GSTR-1', table: '13', json: 'doc_issue.doc_det[]' },
+      { ret: 'GSTR-3B', table: '3.1(a)', json: null },
+      { ret: 'GSTR-9', table: '10 / 11', json: null }
+    ],
+    requires: ['document_number', 'document_date', 'original_document', 'party', 'line_items'],
+    masters: [], validations: ['original_document_exists', 'original_period_filed'],
+    effectiveFrom: GST_COMMENCEMENT, effectiveTo: null, status: 'active', version: 1,
+    enabled: false, proven: false },
+
+  { key: 'debit_note', label: 'Debit Note', portalName: 'Debit Note',
+    rule: 'Section 34(3), Rule 53(1A)', direction: 'outward', storage: 'cdn_notes',
+    series: 'debit_note',
+    taxable: true, affectsTurnover: true, affectsHsn: true, affectsLiability: true,
+    affectsAmendments: false, docNum: 4,
+    sections: [
+      { ret: 'GSTR-1', table: '9B', json: 'cdnr[].nt[] / cdnur[]' },
+      { ret: 'GSTR-1', table: '13', json: 'doc_issue.doc_det[]' },
+      { ret: 'GSTR-3B', table: '3.1(a)', json: null },
+      { ret: 'GSTR-9', table: '4J', json: null }
+    ],
+    requires: ['document_number', 'document_date', 'original_document', 'party', 'reason'],
+    masters: [], validations: ['original_document_exists', 'gstin', 'place_of_supply'],
+    effectiveFrom: GST_COMMENCEMENT, effectiveTo: null, status: 'active', version: 1,
+    enabled: true, proven: false },
+
+  { key: 'credit_note', label: 'Credit Note', portalName: 'Credit Note',
+    rule: 'Section 34(1), Rule 53(1A)', direction: 'outward', storage: 'cdn_notes',
+    series: 'credit_note',
+    taxable: true, affectsTurnover: true, affectsHsn: true, affectsLiability: true,
+    affectsAmendments: false, docNum: 5,
+    sections: [
+      { ret: 'GSTR-1', table: '9B', json: 'cdnr[].nt[] / cdnur[]' },
+      { ret: 'GSTR-1', table: '13', json: 'doc_issue.doc_det[]' },
+      { ret: 'GSTR-3B', table: '3.1(a) reduction', json: null },
+      { ret: 'GSTR-9', table: '4I', json: null }
+    ],
+    requires: ['document_number', 'document_date', 'original_document', 'party', 'reason'],
+    masters: [], validations: ['original_document_exists', 'gstin', 'place_of_supply', 'time_limit'],
+    effectiveFrom: GST_COMMENCEMENT, effectiveTo: null, status: 'active', version: 1,
+    enabled: true, proven: false },
+
+  // ── Outward: vouchers ──
+  { key: 'receipt_voucher', label: 'Receipt Voucher', portalName: 'Receipt Voucher',
+    rule: 'Section 31(3)(d), Rule 50', direction: 'outward', storage: null,
+    series: 'receipt_voucher',
+    taxable: true, affectsTurnover: false, affectsHsn: false, affectsLiability: true,
+    affectsAmendments: false, docNum: 6,
+    // An advance is taxed when received; the turnover arrives later with
+    // the invoice, so counting the voucher toward turnover would count
+    // the same supply twice.
+    sections: [
+      { ret: 'GSTR-1', table: '11A', json: 'at[]' },
+      { ret: 'GSTR-1', table: '13', json: 'doc_issue.doc_det[]' },
+      { ret: 'GSTR-3B', table: '3.1(a)', json: null },
+      { ret: 'GSTR-9', table: '4F', json: null }
+    ],
+    requires: ['document_number', 'document_date', 'party', 'place_of_supply', 'rate', 'advance_amount'],
+    masters: [], validations: ['place_of_supply', 'rate'],
+    effectiveFrom: GST_COMMENCEMENT, effectiveTo: null, status: 'active', version: 1,
+    enabled: false, proven: false },
+
+  { key: 'payment_voucher', label: 'Payment Voucher', portalName: 'Payment Voucher',
+    rule: 'Section 31(3)(g), Rule 52', direction: 'inward', storage: null,
+    series: 'payment_voucher',
+    taxable: false, affectsTurnover: false, affectsHsn: false, affectsLiability: false,
+    affectsAmendments: false, docNum: 7,
+    // Records paying a supplier under reverse charge. The liability was
+    // already created by the Self Invoice; treating the voucher as a
+    // second liability would double-count it.
+    sections: [
+      { ret: 'GSTR-1', table: '13', json: 'doc_issue.doc_det[]' }
+    ],
+    requires: ['document_number', 'document_date', 'supplier', 'amount_paid'],
+    masters: ['unregistered supplier'], validations: ['linked_self_invoice'],
+    effectiveFrom: GST_COMMENCEMENT, effectiveTo: null, status: 'active', version: 1,
+    enabled: false, proven: false },
+
+  { key: 'refund_voucher', label: 'Refund Voucher', portalName: 'Refund Voucher',
+    rule: 'Section 31(3)(e), Rule 51', direction: 'outward', storage: null,
+    series: 'refund_voucher',
+    taxable: true, affectsTurnover: false, affectsHsn: false, affectsLiability: true,
+    affectsAmendments: false, docNum: 8,
+    // Issued when an advance is returned without a supply being made, so
+    // it reverses the liability the receipt voucher created.
+    sections: [
+      { ret: 'GSTR-1', table: '11B', json: 'txpd[]' },
+      { ret: 'GSTR-1', table: '13', json: 'doc_issue.doc_det[]' },
+      { ret: 'GSTR-3B', table: '3.1(a) reduction', json: null },
+      { ret: 'GSTR-9', table: '4F', json: null }
+    ],
+    requires: ['document_number', 'document_date', 'original_document', 'party', 'refund_amount'],
+    masters: [], validations: ['original_receipt_voucher_exists', 'refund_not_exceeding_advance'],
+    effectiveFrom: GST_COMMENCEMENT, effectiveTo: null, status: 'active', version: 1,
+    enabled: false, proven: false },
+
+  // ── Outward: delivery challans, four separate Table 13 rows ──
+  // Goods move without being supplied: no supply table, no HSN summary,
+  // no liability. Each variant is its own Table 13 row.
+  { key: 'dc_job_work', label: 'Delivery Challan — job work',
+    portalName: 'Delivery Challan for job work', rule: 'Rule 55, Rule 45',
+    direction: 'outward', storage: null, series: 'delivery_challan',
+    taxable: false, affectsTurnover: false, affectsHsn: false, affectsLiability: false,
+    affectsAmendments: false, docNum: 9,
+    sections: [
+      { ret: 'GSTR-1', table: '13', json: 'doc_issue.doc_det[]' },
+      { ret: 'ITC-04', table: '4', json: null }
+    ],
+    requires: ['document_number', 'document_date', 'job_worker', 'line_items', 'value'],
+    masters: ['job worker'], validations: ['job_worker_gstin_or_address', 'return_within_time_limit'],
+    effectiveFrom: GST_COMMENCEMENT, effectiveTo: null, status: 'active', version: 1,
+    enabled: false, proven: false },
+
+  { key: 'dc_approval', label: 'Delivery Challan — supply on approval',
+    portalName: 'Delivery Challan for supply on approval', rule: 'Rule 55(1)(c)',
+    direction: 'outward', storage: null, series: 'delivery_challan',
+    taxable: false, affectsTurnover: false, affectsHsn: false, affectsLiability: false,
+    affectsAmendments: false, docNum: 10,
+    sections: [{ ret: 'GSTR-1', table: '13', json: 'doc_issue.doc_det[]' }],
+    requires: ['document_number', 'document_date', 'party', 'line_items', 'value'],
+    masters: [], validations: ['invoice_within_six_months'],
+    effectiveFrom: GST_COMMENCEMENT, effectiveTo: null, status: 'active', version: 1,
+    enabled: false, proven: false },
+
+  { key: 'dc_liquid_gas', label: 'Delivery Challan — liquid gas',
+    portalName: 'Delivery Challan in case of liquid gas', rule: 'Rule 55(1)(a)',
+    direction: 'outward', storage: null, series: 'delivery_challan',
+    taxable: false, affectsTurnover: false, affectsHsn: false, affectsLiability: false,
+    affectsAmendments: false, docNum: 11,
+    sections: [{ ret: 'GSTR-1', table: '13', json: 'doc_issue.doc_det[]' }],
+    requires: ['document_number', 'document_date', 'party', 'line_items'],
+    masters: [], validations: ['quantity_unknown_at_dispatch'],
+    effectiveFrom: GST_COMMENCEMENT, effectiveTo: null, status: 'active', version: 1,
+    enabled: false, proven: false },
+
+  { key: 'dc_other', label: 'Delivery Challan — other',
+    portalName: 'Delivery Challan in cases other than by way of supply',
+    rule: 'Rule 55(1)(d)', direction: 'outward', storage: null, series: 'delivery_challan',
+    taxable: false, affectsTurnover: false, affectsHsn: false, affectsLiability: false,
+    affectsAmendments: false, docNum: 12,
+    sections: [{ ret: 'GSTR-1', table: '13', json: 'doc_issue.doc_det[]' }],
+    requires: ['document_number', 'document_date', 'party', 'line_items'],
+    masters: [], validations: [],
+    effectiveFrom: GST_COMMENCEMENT, effectiveTo: null, status: 'active', version: 1,
+    enabled: false, proven: false },
+
+  // ── Documents no GSTR-1 table reports, which other returns need ──
+  // Recorded now so those returns are additions rather than redesigns.
+  { key: 'isd_invoice', label: 'ISD Invoice', portalName: 'ISD Invoice',
+    rule: 'Rule 54(1)', direction: 'outward', storage: null, series: 'isd_invoice',
+    taxable: true, affectsTurnover: false, affectsHsn: false, affectsLiability: false,
+    affectsAmendments: false, docNum: null,
+    sections: [{ ret: 'GSTR-6', table: '5', json: null }],
+    requires: ['document_number', 'document_date', 'recipient_gstin', 'credit_distributed'],
+    masters: ['ISD recipient unit'], validations: ['same_pan_as_distributor', 'credit_fully_distributed'],
+    effectiveFrom: GST_COMMENCEMENT, effectiveTo: null, status: 'active', version: 1,
+    enabled: false, proven: false },
+
+  { key: 'isd_credit_note', label: 'ISD Credit Note', portalName: 'ISD Credit Note',
+    rule: 'Rule 54(1A)', direction: 'outward', storage: null, series: 'isd_invoice',
+    taxable: true, affectsTurnover: false, affectsHsn: false, affectsLiability: false,
+    affectsAmendments: true, docNum: null,
+    sections: [{ ret: 'GSTR-6', table: '6', json: null }],
+    requires: ['document_number', 'document_date', 'original_document', 'recipient_gstin'],
+    masters: ['ISD recipient unit'], validations: ['original_isd_invoice_exists'],
+    effectiveFrom: GST_COMMENCEMENT, effectiveTo: null, status: 'active', version: 1,
+    enabled: false, proven: false },
+
+  { key: 'bill_of_entry', label: 'Bill of Entry (import of goods)',
+    portalName: 'Bill of Entry', rule: 'Customs Act / Section 16',
+    direction: 'inward', storage: null,
+    // Numbered by Customs, not by us — a null series is what stops the
+    // numbering system from ever trying to issue one.
+    series: null,
+    taxable: true, affectsTurnover: false, affectsHsn: false, affectsLiability: true,
+    affectsAmendments: false, docNum: null,
+    sections: [
+      { ret: 'GSTR-3B', table: '4(A)(1)', json: null },
+      { ret: 'GSTR-9', table: '6E', json: null }
+    ],
+    requires: ['document_number', 'document_date', 'port_code', 'assessable_value', 'igst', 'cess'],
+    masters: ['port'], validations: ['port_code', 'six_digit_boe_number'],
+    effectiveFrom: GST_COMMENCEMENT, effectiveTo: null, status: 'active', version: 1,
+    enabled: false, proven: false },
+
+  { key: 'purchase_invoice', label: 'Purchase Invoice (inward)',
+    portalName: 'Inward supply invoice', rule: 'Rule 46 (counterparty)',
+    direction: 'inward', storage: 'purchases', series: null,
+    taxable: true, affectsTurnover: false, affectsHsn: false, affectsLiability: true,
+    affectsAmendments: false, docNum: null,
+    sections: [
+      { ret: 'GSTR-3B', table: '4(A)(5)', json: null },
+      { ret: 'GSTR-9', table: '6B', json: null },
+      { ret: 'GSTR-2B', table: 'reconciliation', json: null }
+    ],
+    requires: ['document_number', 'document_date', 'supplier_gstin', 'line_items'],
+    masters: [], validations: ['supplier_gstin', 'itc_eligibility'],
+    effectiveFrom: GST_COMMENCEMENT, effectiveTo: null, status: 'active', version: 1,
+    enabled: true, proven: false },
+
+  { key: 'eway_bill', label: 'E-Way Bill', portalName: 'E-Way Bill (EWB-01)',
+    rule: 'Rule 138', direction: 'outward', storage: 'eway_bills', series: null,
+    taxable: false, affectsTurnover: false, affectsHsn: false, affectsLiability: false,
+    affectsAmendments: false, docNum: null,
+    // Numbered by the NIC portal and reported in no return at all. It is
+    // here so the registry is a complete answer to "what documents does
+    // this business issue", which is what a Document Register and any
+    // audit will ask.
+    sections: [],
+    requires: ['document_number', 'document_date', 'invoice_reference', 'transport'],
+    masters: ['transporter'], validations: ['threshold_value', 'distance', 'vehicle_number'],
+    effectiveFrom: '2018-04-01', effectiveTo: null, status: 'active', version: 1,
+    enabled: true, proven: false }
+];
+
+const GST_DOCUMENT_TYPE_DEFAULT = 'tax_invoice';
+
+function gstDocumentType(row) {
+  const v = String(row?.document_type || '').trim().toLowerCase();
+  return GST_DOCUMENT_TYPES.some(d => d.key === v) ? v : GST_DOCUMENT_TYPE_DEFAULT;
+}
+
+function gstDocumentTypeSpec(value) {
+  return GST_DOCUMENT_TYPES.find(d => d.key === gstDocumentType({ document_type: value }))
+    || GST_DOCUMENT_TYPES[0];
+}
+
+function gstDocumentTypeLabel(value) {
+  return gstDocumentTypeSpec(value).label;
+}
+
+// Selecting by capability rather than by name, so a caller asks for what
+// it actually needs and a new type joins the answer by having the field
+// set. Nothing downstream lists type keys.
+function gstDocumentTypesWhere(predicate) {
+  return GST_DOCUMENT_TYPES.filter(predicate);
+}
+
+// ── Lifecycle ───────────────────────────────────────
+// Whether a document type was in force on a given date. Compared as
+// plain YYYY-MM-DD strings so no Date is built and no timezone can move
+// a boundary by a day — the same rule the LUT check follows.
+function gstDocumentTypeActiveOn(value, dateISO) {
+  const d = gstDocumentTypeSpec(value);
+  if (d.status !== 'active') return false;
+  const on = String(dateISO || '').slice(0, 10);
+  if (!on) return true;
+  if (d.effectiveFrom && on < d.effectiveFrom) return false;
+  if (d.effectiveTo && on > d.effectiveTo) return false;
+  return true;
+}
+
+// ── Returns and sections ────────────────────────────
+// Which returns report this document, and under which table of each. A
+// return this application has not built yet is answered from the same
+// data as one it has.
+function gstDocumentReturns(value) {
+  return [...new Set(gstDocumentTypeSpec(value).sections.map(s => s.ret))];
+}
+
+function gstDocumentSections(value, ret) {
+  const s = gstDocumentTypeSpec(value).sections;
+  return ret ? s.filter(x => x.ret === ret) : s;
+}
+
+// Every document type a given return reports, which is how a future
+// GSTR-3B or GSTR-9 module finds its inputs without naming any of them.
+function gstDocumentTypesForReturn(ret) {
+  return GST_DOCUMENT_TYPES.filter(d => d.sections.some(s => s.ret === ret));
+}
+
+// ── GSTR-1 Table 13 ─────────────────────────────────
+// The rows Table 13 reports, deduplicated by ordinal and carrying the
+// Portal's own name for each. More than one document type can share a
+// row — a Bill of Supply is reported on row 1 alongside tax invoices,
+// because the table reports numbering series, not tax status.
+//
+// This is what the exporter writes. It never names a document type.
+function gstTable13Rows() {
+  const byNum = new Map();
+  GST_DOCUMENT_TYPES.filter(d => d.docNum !== null)
+    .sort((a, b) => a.docNum - b.docNum)
+    .forEach(d => {
+      if (!byNum.has(d.docNum)) byNum.set(d.docNum, { docNum: d.docNum, docTyp: d.portalName, keys: [] });
+      byNum.get(d.docNum).keys.push(d.key);
+    });
+  return [...byNum.values()].sort((a, b) => a.docNum - b.docNum);
+}
+
+// The Table 13 row a document type is reported on.
+function gstTable13RowFor(value) {
+  const d = gstDocumentTypeSpec(value);
+  if (d.docNum === null) return null;
+  return gstTable13Rows().find(r => r.docNum === d.docNum) || null;
+}
+
+// Whether a document type's behaviour is built here yet. A type that is
+// described and reportable but not yet creatable answers false, which is
+// how metadata lands ahead of the module that uses it without changing a
+// single byte of what is filed today.
+function gstDocumentTypeEnabled(value) {
+  return !!gstDocumentTypeSpec(value).enabled;
+}
+
 // ── Product GST validation ──────────────────────────────────
 // Everything that has to be true of a product before an invoice line
 // using it can be reported. One definition, so the Product Master

@@ -615,6 +615,23 @@ function gstr1SeriesLabel(series) {
   return series;
 }
 
+// Table 13's row for a document type, read from the registry in
+// js/utils.js. Kept as a thin forwarder in this file for the same reason
+// gstr1CompareInvoiceNumbers is: the exporter names one function, and
+// the definition lives where every page can reach it.
+//
+// Falls back to row 1 only if the registry is somehow unreachable, so a
+// return can still be produced rather than failing on a lookup — row 1
+// is the row this generator has always written and is the one value
+// proven against a Utility-written file.
+function gstr1Table13RowFor(documentTypeKey) {
+  if (typeof gstTable13RowFor === 'function') {
+    const row = gstTable13RowFor(documentTypeKey);
+    if (row) return row;
+  }
+  return { docNum: 1, docTyp: 'Invoices for outward supply', keys: ['tax_invoice'] };
+}
+
 // The shape of an invoice number with its digits removed: "138" -> "#",
 // "W-00005" -> "W-#", "INV-2026-001" -> "INV-#-#".
 function gstr1NumberShape(num) {
@@ -1684,12 +1701,21 @@ async function buildGSTR1Payload(userId, profile, periodFilter) {
       };
     });
 
-  // doc_num 1 / "Invoices for outward supply" are the values the Utility
-  // writes for this document type; the voucher types it also supports are
-  // not emitted, because no such document exists in this app.
+  // doc_num and doc_typ come from the document registry in js/utils.js,
+  // not from literals here. Table 13 has twelve rows and this generator
+  // currently issues documents on one of them — tax invoices, row 1 —
+  // so one doc_det is written, exactly as before.
+  //
+  // The point of reading it from the registry is that the other eleven
+  // rows arrive by their document type gaining rows in its own domain
+  // table, not by editing this function. gstr1Table13DocDet() below
+  // walks every row the registry defines and emits the ones that have
+  // documents; today that is row 1 and only row 1, which is why the file
+  // is byte-for-byte what it was.
+  const table13 = gstr1Table13RowFor('tax_invoice');
   const doc_issue = seriesDocs.length ? { doc_det: [{
-    doc_num: 1,
-    doc_typ: 'Invoices for outward supply',
+    doc_num: table13.docNum,
+    doc_typ: table13.docTyp,
     docs: seriesDocs
   }] } : {};
 
