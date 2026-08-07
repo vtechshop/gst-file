@@ -589,56 +589,6 @@ function gstr1NumberShape(num) {
   return String(num || '').replace(/\d+/g, '#');
 }
 
-// Catches the one thing that makes doc_issue quietly wrong: a single
-// series holding invoices numbered two different ways.
-//
-// doc_issue reports each series as ONE range, lowest to highest. That is
-// correct for one book. But a shop numbering 138 to 170 whose website
-// orders W-00001 to W-00005 were saved into the same book is reported as
-// "138 to W-00005, 34 documents" — a range that was never issued and a
-// count that spans two books. The JSON is well-formed and every total
-// reconciles, so nothing else here would object.
-//
-// Not an error: a business may legitimately change its numbering inside
-// one book mid-year. It is something to be told before filing, with the
-// range it is about to claim spelled out.
-function gstr1MixedSeriesWarnings(invoices) {
-  const bySeries = new Map();
-  invoices.forEach(inv => {
-    const num = inv.invoice_number;
-    if (!num) return;
-    const s = gstr1InvoiceSeries(inv);
-    if (!bySeries.has(s)) bySeries.set(s, []);
-    bySeries.get(s).push(String(num));
-  });
-
-  const warnings = [];
-  [...bySeries.entries()].sort((a, b) => a[0].localeCompare(b[0])).forEach(([series, numbers]) => {
-    const shapes = new Map();
-    numbers.forEach(n => {
-      const shape = gstr1NumberShape(n);
-      if (!shapes.has(shape)) shapes.set(shape, []);
-      shapes.get(shape).push(n);
-    });
-    if (shapes.size < 2) return;
-
-    const sorted = [...numbers].sort(gstr1CompareInvoiceNumbers);
-    const groups = [...shapes.values()].map(g => {
-      const gs = [...g].sort(gstr1CompareInvoiceNumbers);
-      return `${gs[0]}${gs.length > 1 ? ' to ' + gs[gs.length - 1] : ''} (${gs.length})`;
-    });
-    warnings.push({
-      series,
-      label: gstr1SeriesLabel(series),
-      groups,
-      from: sorted[0],
-      to: sorted[sorted.length - 1],
-      totnum: sorted.length
-    });
-  });
-  return warnings;
-}
-
 // Orders invoice numbers the way a numbering series runs rather than the
 // way text sorts. The rule itself lives in js/utils.js, which every page
 // that touches invoice numbers loads — the on-screen list, the migration
@@ -1495,23 +1445,46 @@ async function buildGSTR1Payload(userId, profile, periodFilter) {
   // array for exactly this reason, so each series gets its own row with
   // its own range and count.
   //
-  // Series come from the invoices themselves, so a business that later
-  // sells through another channel gets that series reported without any
-  // change here. Ordered by series name so the file is stable between
-  // exports of the same data.
+  // A series is (where it was issued, how it is numbered) — BOTH, because
+  // either one alone gets a real case wrong:
+  //
+  //   invoice_source alone. It records which channel an invoice was saved
+  //   under, which is not always where its number came from. Website
+  //   orders numbered W-00001 to W-00005 by hand, before the app had a
+  //   channel to put them in, sit in the shop's source alongside 138 to
+  //   170 — and would be reported as "138 to W-00005, 34 documents", a
+  //   range that was never issued. The Portal is being told about
+  //   documents, and 138 and W-00005 are plainly not two ends of one
+  //   sequence.
+  //
+  //   the numbering alone. A shop at 138 and a website that also counts
+  //   1, 2, 3 produce identical-looking numbers from two different books.
+  //   Merging those would undercount one and overstate the other.
+  //
+  // So invoices are grouped by their source AND by the shape of their
+  // number — digits removed, "138" -> "#", "W-00005" -> "W-#". Two
+  // numbers belong to one document series when they came out of the same
+  // channel AND are written the same way. Nothing is hardcoded: the
+  // shapes come from the invoices, so a numbering nobody anticipated is
+  // reported as its own series the first time it appears.
+  //
+  // Ordered by source then shape, so the file is stable between exports
+  // of the same data.
   const bySeries = new Map();
   [...b2bData, ...b2cData].forEach(inv => {
     const num = inv.invoice_number;
     if (!num) return;
-    const series = gstr1InvoiceSeries(inv);
-    if (!bySeries.has(series)) bySeries.set(series, []);
-    bySeries.get(series).push(num);
+    const source = gstr1InvoiceSeries(inv);
+    const shape = gstr1NumberShape(num);
+    const key = JSON.stringify([source, shape]);
+    if (!bySeries.has(key)) bySeries.set(key, { source, shape, numbers: [] });
+    bySeries.get(key).numbers.push(num);
   });
 
-  const seriesDocs = [...bySeries.entries()]
-    .sort((a, b) => a[0].localeCompare(b[0]))
-    .map(([, numbers], i) => {
-      const sorted = [...numbers].sort(gstr1CompareInvoiceNumbers);
+  const seriesDocs = [...bySeries.values()]
+    .sort((a, b) => a.source.localeCompare(b.source) || a.shape.localeCompare(b.shape))
+    .map((group, i) => {
+      const sorted = [...group.numbers].sort(gstr1CompareInvoiceNumbers);
       return {
         num: i + 1,
         from: sorted[0],
@@ -1552,15 +1525,7 @@ async function buildGSTR1Payload(userId, profile, periodFilter) {
     gstin: businessGstin, fp, version: GSTR1_VERSION, hash: GSTR1_HASH,
     b2b, b2cl, b2cs, cdnr, cdnur, hsn, doc_issue
   });
-  return {
-    payload, errors,
-    // Not errors — nothing here stops a return being written. Surfaced to
-    // the operator before the file is downloaded, because a document
-    // range that spans two books is not something the JSON itself can
-    // look wrong about.
-    seriesWarnings: gstr1MixedSeriesWarnings([...b2bData, ...b2cData]),
-    context: { periodStart: start, periodEnd: end, salesReturnNettedTaxable, grandTotal }
-  };
+  return { payload, errors, context: { periodStart: start, periodEnd: end, salesReturnNettedTaxable, grandTotal } };
 }
 
 // ── Final audit — a fully independent second pass over the ALREADY-BUILT
@@ -1818,7 +1783,7 @@ async function exportGSTR1JSON() {
   gstr1TracePeriod('exportGSTR1JSON', periodEl, periodFilter);
 
   showToast('Validating GSTR-1 data…', 'success');
-  const { payload, errors, context, seriesWarnings } = await buildGSTR1Payload(user.id, profile, periodFilter);
+  const { payload, errors, context } = await buildGSTR1Payload(user.id, profile, periodFilter);
 
   // Before anything else: the state table must still cover every state the
   // app can store. A gap here means POS silently becomes 99, so it blocks
@@ -1843,25 +1808,6 @@ async function exportGSTR1JSON() {
   if (errors.length) {
     showGSTR1ValidationErrors(errors, notes);
     return; // never write the file
-  }
-
-  // A series holding two different numbering shapes is reported as one
-  // range spanning both, which is a document range that was never
-  // issued. Everything else about the file is correct, so this is the
-  // only place it can be caught — said plainly, with the range about to
-  // be claimed, before the file exists.
-  if (seriesWarnings && seriesWarnings.length) {
-    const detail = seriesWarnings.map(w =>
-      `<b>${escItemHtml(w.label)}</b> contains invoices numbered ${w.groups.length} different ways: ` +
-      `${escItemHtml(w.groups.join(', '))}.<br>` +
-      `It will be filed as one document range, <b>${escItemHtml(w.from)} to ${escItemHtml(w.to)}, ` +
-      `${w.totnum} documents</b>.`).join('<br><br>');
-    const ok = await showYesNo(
-      `${detail}<br><br>If those are separate numbering series, move one of them with ` +
-      `<b>Series Migration</b> on the Invoice List first — each series is then filed as its own ` +
-      `range.<br><br>Export anyway?`,
-      'Check the document series');
-    if (!ok) { showToast('Export cancelled — nothing was written.', 'success'); return; }
   }
 
   const blob = new Blob([gstr1SerializePayload(payload)], { type: 'application/json' });
