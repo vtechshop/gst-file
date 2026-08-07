@@ -27,6 +27,9 @@ async function initInvoiceEntry() {
   populateInvoiceStateOptions();
   populateInvoiceSourceOptions();
   populateInvGstCategoryOptions();
+  // The business-wide default recorded in Business Profile.
+  const rcInit = document.getElementById('invReverseCharge');
+  if (rcInit) rcInit.checked = !!getCachedProfile()?.reverse_charge_default;
   updateAutoToggleUI();
   await loadInvoiceCustomersList(user.id);
   await initInvoiceItems(user.id, 'invoice');
@@ -616,6 +619,8 @@ async function loadInvoiceForEdit(type, id) {
   // came off the shop counter, which is the default.
   setInvoiceSourceValue(rec.invoice_source || INVOICE_SOURCE_DEFAULT);
   setInvGstCategory(rec.gst_category);
+  const rcEl = document.getElementById('invReverseCharge');
+  if (rcEl) rcEl.checked = !!rec.reverse_charge;
   setInvoiceTypeToggle(type);
   setPaymentSectionMode(false, rec.payment_status);
 
@@ -664,6 +669,8 @@ async function loadInvoiceDuplicateDraft() {
   // the series, and gets the next number out of that series' book.
   setInvoiceSourceValue(draft.invoice_source || INVOICE_SOURCE_DEFAULT);
   setInvGstCategory(draft.gst_category);
+  const rcDup = document.getElementById('invReverseCharge');
+  if (rcDup) rcDup.checked = !!draft.reverse_charge;
   // The original invoice's own type is authoritative — a B2C source
   // invoice may well have an optional GST Number on it too, so presence
   // of gst_number alone can no longer be used to infer B2B/B2C.
@@ -715,6 +722,7 @@ async function saveInvoice() {
   const supply   = document.getElementById('invSupply')?.value || 'intrastate';
   const source   = getInvoiceSource();
   const gstCategory = getInvGstCategory();
+  const reverseCharge = !!document.getElementById('invReverseCharge')?.checked;
 
   const type = getSelectedInvoiceType();
   const wasNewInvoice = !invoiceEditId;
@@ -784,6 +792,7 @@ async function saveInvoice() {
     invoice_number: invNum, invoice_date: invDate, supply_type: supply,
     invoice_source: source,
     gst_category: gstCategory,
+    reverse_charge: reverseCharge,
     transport_required: transportRequired,
     vehicle_number: transportRequired ? getInvText('invVehicleNo').toUpperCase() : '',
     transporter_name: transportRequired ? getInvText('invTransporter') : '',
@@ -926,6 +935,8 @@ function clearInvoiceFormFields() {
   // counter, not whichever series was just used.
   setInvoiceSourceValue(INVOICE_SOURCE_DEFAULT);
   setInvGstCategory(GST_CUSTOMER_CATEGORY_DEFAULT);
+  const rcReset = document.getElementById('invReverseCharge');
+  if (rcReset) rcReset.checked = !!getCachedProfile()?.reverse_charge_default;
   setInvoiceTypeToggle('b2c');
   updateGstinValidationStatus();
 

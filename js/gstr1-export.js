@@ -144,6 +144,13 @@ const GSTR1_SECTIONS = [
   { key: 'b2cs',    kind: 'section', type: 'array',  label: 'B2CS — small B2C, state+rate summary',  emitWhenEmpty: false },
   { key: 'cdnr',    kind: 'section', type: 'array',  label: 'CDNR — notes to registered customers',  emitWhenEmpty: false },
   { key: 'cdnur',   kind: 'section', type: 'array',  label: 'CDNUR — notes to unregistered',         emitWhenEmpty: false },
+  // Nil-rated, exempt and non-GST supplies. Placed here because that is
+  // where it sits in the return's own order — after the credit/debit
+  // notes and before the HSN summary. emitWhenEmpty is false like every
+  // other section, so a business that classifies nothing gets no nil key
+  // at all and its file is unchanged.
+  { key: 'nil',     kind: 'section', type: 'object', label: 'Nil-rated / exempt / non-GST',          emitWhenEmpty: false,
+    isEmpty: v => !(v && Array.isArray(v.inv) && v.inv.length) },
   // Split by supply channel, exactly as the Utility writes it. This was a
   // single combined data[] array under a key the schema has no place for.
   { key: 'hsn',     kind: 'section', type: 'object', label: 'HSN summary',                           emitWhenEmpty: false,
@@ -165,7 +172,6 @@ const GSTR1_UNPRODUCED_SECTIONS = [
   { key: 'exp',       label: 'Exports',                     reason: 'no export-invoice model exists in this application' },
   { key: 'at',        label: 'Advances received',           reason: 'no advance-receipt model exists in this application' },
   { key: 'txpd',      label: 'Advances adjusted',           reason: 'no advance-adjustment model exists in this application' },
-  { key: 'nil',       label: 'Nil-rated / exempt / non-GST', reason: 'invoice lines carry no nil/exempt/non-GST classification' },
   { key: 'amendments', label: 'Amendments to earlier periods', reason: 'this application does not track amendments to already-filed returns' }
 ];
 
@@ -257,6 +263,20 @@ function validateGSTR1Schema(payload, errors) {
     if (!gstr1RequireKeys(n, ['typ', 'ntty', 'nt_num', 'nt_dt', 'pos', 'val', 'itms'], `cdnur[${i}]`, errors)) return;
     gstr1ValidateItms(n.itms, `cdnur[${i}].itms`, ['txval', 'rt', 'iamt', 'csamt'], errors);
   });
+  if (payload.nil) {
+    if (!Array.isArray(payload.nil.inv)) errors.push('Schema: nil.inv must be an array.');
+    else payload.nil.inv.forEach((r, i) => {
+      if (!gstr1RequireKeys(r, ['sply_ty', 'expt_amt', 'nil_amt', 'ngsup_amt'], `nil.inv[${i}]`, errors)) return;
+      if (!GSTR1_NIL_SPLY_TY.has(r.sply_ty)) {
+        errors.push(`Schema: nil.inv[${i}].sply_ty is "${r.sply_ty}" — expected one of ${[...GSTR1_NIL_SPLY_TY].join(', ')}.`);
+      }
+      ['expt_amt', 'nil_amt', 'ngsup_amt'].forEach(f => {
+        if (typeof r[f] !== 'number' || !Number.isFinite(r[f])) {
+          errors.push(`Schema: nil.inv[${i}].${f} must be a number, got ${JSON.stringify(r[f])}.`);
+        }
+      });
+    });
+  }
   if (payload.hsn) {
     const known = ['hsn_b2b', 'hsn_b2c'];
     Object.keys(payload.hsn).filter(k => !known.includes(k)).forEach(k =>
@@ -339,9 +359,16 @@ const GSTR1_EMITTABLE_UQC = new Set([...Object.values(GSTR1_UQC_MAP), GSTR1_UQC_
 // its own tax. An invoice with no category is 'R', which is every
 // invoice raised before categories existed.
 const GSTR1_EMITTED_INV_TYP = new Set(['R', 'SEWP', 'SEWOP', 'DE']);
-const GSTR1_EMITTED_RCHRG = new Set(['N']);            // ... and 'N' for reverse charge
+// 'Y' when tax on the supply is payable by the recipient. Was the
+// literal 'N' on every invoice this application had ever produced, which
+// meant a reverse-charge supply was filed as an ordinary one.
+const GSTR1_EMITTED_RCHRG = new Set(['N', 'Y']);
 const GSTR1_EMITTED_NTTY = new Set(['C', 'D']);        // credit / debit note
 const GSTR1_EMITTED_SPLY_TY = new Set(['INTER', 'INTRA']);
+// Table 8's own breakdown: inter/intra crossed with B2B/B2C. A different
+// vocabulary from cdnur's INTER/INTRA above, which is why it is its own
+// set rather than a reuse.
+const GSTR1_NIL_SPLY_TY = new Set(['INTRB2B', 'INTRB2C', 'INTRAB2B', 'INTRAB2C']);
 const GSTR1_EMITTED_B2CS_TYP = new Set(['OE']);
 const GSTR1_EMITTED_CDNUR_TYP = new Set(['B2CL']);
 
@@ -1244,6 +1271,50 @@ async function buildGSTR1Payload(userId, profile, periodFilter) {
     if (b.uqc === GSTR1_UQC_SERVICE && uqc !== GSTR1_UQC_SERVICE) b.uqc = uqc;
   }
 
+  // ── Nil-rated / exempt / non-GST (table 8) ──
+  //
+  // These are not taxable supplies and do not belong in 4A, 5 or 7.
+  // Reporting them there as a taxable supply at 0% puts the right money
+  // in the wrong table. They are totalled here by supply channel and
+  // reported in their own section, and the invoices carrying them are
+  // taken out of the taxable tables entirely.
+  //
+  // sply_ty is inter/intra crossed with B2B/B2C, which is how the
+  // section is broken down. UNVERIFIED against an official artefact:
+  // unlike doc_issue, no Utility-written file containing this section
+  // has been available to diff against. It is written to the documented
+  // shape and is omitted entirely when nothing is classified, so a
+  // business not using it is unaffected either way.
+  const nilBuckets = new Map(); // sply_ty -> { expt_amt, nil_amt, ngsup_amt }
+  const nilField = { nil_rated: 'nil_amt', exempt: 'expt_amt', non_gst: 'ngsup_amt' };
+  const addToNil = (isB2B, supplyType, treatment, amount) => {
+    const sply_ty = (supplyType === 'interstate' ? 'INTR' : 'INTRA') + (isB2B ? 'B2B' : 'B2C');
+    if (!nilBuckets.has(sply_ty)) nilBuckets.set(sply_ty, { sply_ty, expt_amt: 0, nil_amt: 0, ngsup_amt: 0 });
+    const b = nilBuckets.get(sply_ty);
+    const f = nilField[treatment];
+    if (f) b[f] = round2(b[f] + (+amount || 0));
+  };
+
+  // How an invoice's lines are classified, as one answer for the whole
+  // document. A document that mixes taxable and non-taxable lines cannot
+  // be split between the taxable tables and table 8 without a rule for
+  // what its `val` should then be, and no such rule has been proven
+  // here — so it is refused rather than guessed at. An invoice whose
+  // lines are all one treatment, which is every invoice this application
+  // has ever produced, is unaffected.
+  const invoiceTreatment = (inv, items, ctx) => {
+    const kinds = [...new Set((items || []).map(gstTreatmentOf))];
+    if (kinds.length <= 1) return kinds[0] || GST_TREATMENT_DEFAULT;
+    errors.push(gstr1Err({
+      invoice: inv.invoice_number, customer: inv.customer_name, field: 'GST Treatment',
+      current: kinds.map(gstTreatmentLabel).join(' and '),
+      expected: 'one treatment for the whole invoice',
+      message: `${ctx} mixes taxable and non-taxable lines on one document.`,
+      fix: 'Raise the taxable lines and the nil-rated / exempt / non-GST lines as separate invoices.'
+    }));
+    return null;
+  };
+
   // ── B2B ──
   const b2bGroups = new Map(); // ctin -> inv[]
   b2bData.forEach(inv => {
@@ -1269,6 +1340,17 @@ async function buildGSTR1Payload(userId, profile, periodFilter) {
 
     const items = gstr1ItemsForInvoice(inv, 'b2b', itemsByInvoice, legacyHsnRows);
     if (!items.length) { errors.push(gstr1Err({ invoice: inv.invoice_number, customer: inv.customer_name, field: 'Line Items', current: 'none', expected: 'at least one line item', fix: 'Open the invoice and add its products.' })); return; }
+
+    // A wholly nil-rated, exempt or non-GST invoice belongs in table 8
+    // and nowhere else — not in 4A, and not in the HSN summary, which
+    // summarises taxable supplies.
+    const treatment = invoiceTreatment(inv, items, ctx);
+    if (treatment === null) return;                       // mixed — already reported
+    if (!gstIsTaxableTreatment(treatment)) {
+      addToNil(true, inv.supply_type, treatment, items.reduce((t, it) => t + (+it.taxable_value || 0), 0));
+      return;
+    }
+
     let itemsOk = true;
     items.forEach((it, idx) => {
       const itemCtx = `${ctx}, item ${idx + 1} ("${it.product_name}")`;
@@ -1333,7 +1415,8 @@ async function buildGSTR1Payload(userId, profile, periodFilter) {
     }
 
     const invEntry = {
-      inum: inv.invoice_number, idt, val: gstr1InvoiceVal(recomputed.total), pos, rchrg: 'N',
+      inum: inv.invoice_number, idt, val: gstr1InvoiceVal(recomputed.total), pos,
+      rchrg: inv.reverse_charge ? 'Y' : 'N',
       inv_typ: gstr1InvTypFor(inv.gst_category, recomputed.igst + recomputed.cgst + recomputed.sgst),
       itms: recomputed.byRate.map((b, i) => ({ num: i + 1, itm_det: { txval: b.taxable, rt: b.rate, iamt: b.igst, camt: b.cgst, samt: b.sgst, csamt: 0 } }))
     };
@@ -1369,6 +1452,14 @@ async function buildGSTR1Payload(userId, profile, periodFilter) {
 
     const items = gstr1ItemsForInvoice(inv, 'b2c', itemsByInvoice, legacyHsnRows);
     if (!items.length) { errors.push(gstr1Err({ invoice: inv.invoice_number, customer: inv.customer_name, field: 'Line Items', current: 'none', expected: 'at least one line item', fix: 'Open the invoice and add its products.' })); return; }
+    // Same rule as B2B: a wholly non-taxable invoice is table 8 only.
+    const treatment = invoiceTreatment(inv, items, ctx);
+    if (treatment === null) return;
+    if (!gstIsTaxableTreatment(treatment)) {
+      addToNil(false, inv.supply_type, treatment, items.reduce((t, it) => t + (+it.taxable_value || 0), 0));
+      return;
+    }
+
     let itemsOk = true;
     items.forEach((it, idx) => {
       const itemCtx = `${ctx}, item ${idx + 1} ("${it.product_name}")`;
@@ -1614,9 +1705,15 @@ async function buildGSTR1Payload(userId, profile, periodFilter) {
   // Assembled through the registry rather than as an object literal, so
   // the written key order and the emit-when-empty policy both come from
   // GSTR1_SECTIONS and cannot drift from what the audit expects.
+  // Ordered by supply channel so the same data always writes the same
+  // file. Only channels that actually carry a non-taxable supply appear.
+  const nil = nilBuckets.size
+    ? { inv: [...nilBuckets.values()].sort((a, b) => a.sply_ty.localeCompare(b.sply_ty)) }
+    : {};
+
   const payload = assembleGSTR1Payload({
     gstin: businessGstin, fp, version: GSTR1_VERSION, hash: GSTR1_HASH,
-    b2b, b2cl, b2cs, cdnr, cdnur, hsn, doc_issue
+    b2b, b2cl, b2cs, cdnr, cdnur, nil, hsn, doc_issue
   });
   return { payload, errors, context: { periodStart: start, periodEnd: end, salesReturnNettedTaxable, grandTotal } };
 }

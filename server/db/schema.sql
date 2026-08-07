@@ -126,7 +126,9 @@ CREATE TABLE IF NOT EXISTS b2b_invoices (
   -- Which GSTR-1 table this supply belongs in. Stored on the document,
   -- not looked up from the customer master at export time: a filed
   -- return must not change because a master was edited afterwards.
-  gst_category TEXT NOT NULL DEFAULT 'regular'
+  gst_category TEXT NOT NULL DEFAULT 'regular',
+  -- Tax payable by the recipient. rchrg 'Y' in the return.
+  reverse_charge BOOLEAN NOT NULL DEFAULT FALSE
 );
 
 -- ── B2C Invoices ─────────────────────────────────────
@@ -167,7 +169,9 @@ CREATE TABLE IF NOT EXISTS b2c_invoices (
   -- Which GSTR-1 table this supply belongs in. Stored on the document,
   -- not looked up from the customer master at export time: a filed
   -- return must not change because a master was edited afterwards.
-  gst_category TEXT NOT NULL DEFAULT 'regular'
+  gst_category TEXT NOT NULL DEFAULT 'regular',
+  -- Tax payable by the recipient. rchrg 'Y' in the return.
+  reverse_charge BOOLEAN NOT NULL DEFAULT FALSE
 );
 
 -- No two invoices may share a number WITHIN A SERIES — a real DB-level
@@ -320,6 +324,13 @@ CREATE TABLE IF NOT EXISTS products (
   external_id TEXT,
   source TEXT NOT NULL DEFAULT 'local' CHECK (source IN ('local','synced')),
   stock DECIMAL(15,3),
+  -- ── GST treatment (Phase 2, Module 3) ──
+  --    taxable | nil_rated | exempt | non_gst. The three non-taxable
+  --    treatments are reported in different columns of GSTR-1 table 8,
+  --    so they are three values rather than one flag.
+  gst_treatment TEXT NOT NULL DEFAULT 'taxable',
+  cess_rate DECIMAL(6,3) NOT NULL DEFAULT 0,
+  reverse_charge BOOLEAN NOT NULL DEFAULT FALSE,
   created_at TIMESTAMPTZ DEFAULT NOW(),
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
@@ -366,6 +377,11 @@ CREATE TABLE IF NOT EXISTS invoice_items (
   cgst DECIMAL(15,2) DEFAULT 0,
   sgst DECIMAL(15,2) DEFAULT 0,
   total_amount DECIMAL(15,2) NOT NULL DEFAULT 0,
+  -- The line carries its own treatment: a product reclassified later
+  -- must not change a return already filed.
+  gst_treatment TEXT NOT NULL DEFAULT 'taxable',
+  cess_rate DECIMAL(6,3) NOT NULL DEFAULT 0,
+  cess_amount DECIMAL(15,2) NOT NULL DEFAULT 0,
   sort_order INTEGER NOT NULL DEFAULT 0,
   created_at TIMESTAMPTZ DEFAULT NOW(),
   updated_at TIMESTAMPTZ DEFAULT NOW()
@@ -537,6 +553,11 @@ CREATE TABLE IF NOT EXISTS purchase_items (
   cgst DECIMAL(15,2) DEFAULT 0,
   sgst DECIMAL(15,2) DEFAULT 0,
   total_amount DECIMAL(15,2) NOT NULL DEFAULT 0,
+  -- The line carries its own treatment: a product reclassified later
+  -- must not change a return already filed.
+  gst_treatment TEXT NOT NULL DEFAULT 'taxable',
+  cess_rate DECIMAL(6,3) NOT NULL DEFAULT 0,
+  cess_amount DECIMAL(15,2) NOT NULL DEFAULT 0,
   sort_order INTEGER NOT NULL DEFAULT 0,
   created_at TIMESTAMPTZ DEFAULT NOW(),
   updated_at TIMESTAMPTZ DEFAULT NOW()
@@ -591,6 +612,11 @@ CREATE TABLE IF NOT EXISTS purchase_return_items (
   cgst DECIMAL(15,2) DEFAULT 0,
   sgst DECIMAL(15,2) DEFAULT 0,
   total_amount DECIMAL(15,2) NOT NULL DEFAULT 0,
+  -- The line carries its own treatment: a product reclassified later
+  -- must not change a return already filed.
+  gst_treatment TEXT NOT NULL DEFAULT 'taxable',
+  cess_rate DECIMAL(6,3) NOT NULL DEFAULT 0,
+  cess_amount DECIMAL(15,2) NOT NULL DEFAULT 0,
   sort_order INTEGER NOT NULL DEFAULT 0,
   created_at TIMESTAMPTZ DEFAULT NOW(),
   updated_at TIMESTAMPTZ DEFAULT NOW()
@@ -681,6 +707,11 @@ CREATE TABLE IF NOT EXISTS sales_return_items (
   cgst DECIMAL(15,2) DEFAULT 0,
   sgst DECIMAL(15,2) DEFAULT 0,
   total_amount DECIMAL(15,2) NOT NULL DEFAULT 0,
+  -- The line carries its own treatment: a product reclassified later
+  -- must not change a return already filed.
+  gst_treatment TEXT NOT NULL DEFAULT 'taxable',
+  cess_rate DECIMAL(6,3) NOT NULL DEFAULT 0,
+  cess_amount DECIMAL(15,2) NOT NULL DEFAULT 0,
   sort_order INTEGER NOT NULL DEFAULT 0,
   created_at TIMESTAMPTZ DEFAULT NOW(),
   updated_at TIMESTAMPTZ DEFAULT NOW()

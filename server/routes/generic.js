@@ -236,7 +236,10 @@ const TABLES = {
   products: {
     columns: ['id','user_id','name','hsn_code','type','gst_percentage','default_rate',
       'unit','description','sku','category','warranty','image_url','external_id',
-      'source','stock','created_at','updated_at'],
+      'source','stock',
+      // GST treatment (Phase 2, Module 3)
+      'gst_treatment','cess_rate','reverse_charge',
+      'created_at','updated_at'],
     // Requires a valid HSN on hand-created products only (source 'local').
     // Product Sync writes source 'synced' and is deliberately unaffected —
     // see validateProductPayload() for why.
@@ -273,7 +276,7 @@ const TABLES = {
       'total_amount','supply_type','igst','cgst','sgst','transport_required',
       'vehicle_number','transporter_name','transport_mode','transport_distance_km',
       'lr_number','lr_date','transporter_gstin','vehicle_type','dispatch_from','dispatch_to',
-      'payment_status','amount_paid','invoice_source','gst_category',
+      'payment_status','amount_paid','invoice_source','gst_category','reverse_charge',
       'created_at','updated_at']
   },
   b2c_invoices: {
@@ -282,7 +285,7 @@ const TABLES = {
       'supply_type','igst','cgst','sgst','invoice_date','transport_required',
       'vehicle_number','transporter_name','transport_mode','transport_distance_km',
       'lr_number','lr_date','transporter_gstin','vehicle_type','dispatch_from','dispatch_to',
-      'payment_status','amount_paid','invoice_source','gst_category',
+      'payment_status','amount_paid','invoice_source','gst_category','reverse_charge',
       'created_at','updated_at']
   },
   b2b_hsn: {
@@ -305,8 +308,10 @@ const TABLES = {
   invoice_items: {
     columns: ['id','user_id','invoice_id','invoice_type','product_id','product_name',
       'hsn_code','unit','quantity','rate','discount_percentage','gst_percentage',
-      'taxable_value','gst_amount','igst','cgst','sgst','total_amount','sort_order',
-      'created_at','updated_at']
+      'taxable_value','gst_amount','igst','cgst','sgst','total_amount',
+      // GST treatment (Phase 2, Module 3)
+      'gst_treatment','cess_rate','cess_amount',
+      'sort_order','created_at','updated_at']
   },
   vendors: {
     columns: ['id','user_id','name','gstin','phone','email','address','state',

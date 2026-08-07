@@ -4,28 +4,28 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>New Invoice - GST Management System</title>
-  <link rel="stylesheet" href="css/style.css?v=12">
+  <link rel="stylesheet" href="css/style.css?v=13">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.31/jspdf.plugin.autotable.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/qrcode@1.4.4/build/qrcode.min.js"></script>
-  <script src="js/apiClient.js?v=12"></script>
-  <script src="js/backup.js?v=12"></script>
-  <script src="js/config.js?v=12"></script>
-  <script src="js/product-sync.js?v=12"></script>
-  <script src="js/auth.js?v=12"></script>
-  <script src="js/utils.js?v=12"></script>
-  <script src="js/search.js?v=12"></script>
-  <script src="js/profile.js?v=12"></script>
-  <script src="js/products.js?v=12"></script>
-  <script src="js/drafts.js?v=12"></script>
-  <script src="js/invoice-items.js?v=12"></script>
-  <script src="js/invoice-pdf.js?v=12"></script>
-  <script src="js/payments.js?v=12"></script>
-  <script src="js/invoice-entry.js?v=12"></script>
+  <script src="js/apiClient.js?v=13"></script>
+  <script src="js/backup.js?v=13"></script>
+  <script src="js/config.js?v=13"></script>
+  <script src="js/product-sync.js?v=13"></script>
+  <script src="js/auth.js?v=13"></script>
+  <script src="js/utils.js?v=13"></script>
+  <script src="js/search.js?v=13"></script>
+  <script src="js/profile.js?v=13"></script>
+  <script src="js/products.js?v=13"></script>
+  <script src="js/drafts.js?v=13"></script>
+  <script src="js/invoice-items.js?v=13"></script>
+  <script src="js/invoice-pdf.js?v=13"></script>
+  <script src="js/payments.js?v=13"></script>
+  <script src="js/invoice-entry.js?v=13"></script>
   <!-- Invoice scanner. Uploads to /api/invoice-scan, which calls Gemini
        with a server-held key; no OCR library is loaded in the browser. -->
-  <script src="js/invoice-scan.js?v=12"></script>
+  <script src="js/invoice-scan.js?v=13"></script>
 </head>
 <body>
 <div class="app-layout">
@@ -209,6 +209,10 @@
                    the customer when one is picked, and stored on the
                    invoice so a filed return cannot change later because
                    the customer master was edited. -->
+              <label class="d-flex align-center gap-8" style="cursor:pointer;margin-bottom:6px;">
+                <input type="checkbox" id="invReverseCharge">
+                <span class="fs-12">Reverse Charge &mdash; tax payable by the recipient</span>
+              </label>
               <label for="invGstCategory">GST Category</label>
               <select id="invGstCategory" class="form-control" onchange="onInvGstCategoryChange()"></select>
               <span class="fs-11 text-muted-sm" id="invGstCategoryNote"></span>

@@ -156,6 +156,48 @@ function gstFinancialYearOf(dateISO) {
   return `${start}-${String((start + 1) % 100).padStart(2, '0')}`;
 }
 
+// ── GST treatment of a supply ───────────────────────────────
+// Whether a supply is taxable at all, and if not, in which of three
+// distinct ways. GSTR-1 table 8 keeps them in separate columns, so they
+// are three values rather than one "not taxable" flag:
+//
+//   nil_rated  taxable in principle but at a 0% rate
+//   exempt     exempt by notification, or wholly exempt
+//   non_gst    outside GST altogether — alcohol for human consumption,
+//              petroleum products not yet brought under GST
+//
+// 'taxable' is the default and is what every product and every invoice
+// line created before this existed is.
+const GST_TREATMENTS = [
+  { value: 'taxable',   label: 'Taxable',    field: null,          note: 'Reported in 4A / 5 / 7 with tax' },
+  { value: 'nil_rated', label: 'Nil Rated',  field: 'nil_amt',     note: 'Reported in table 8, not as a taxable supply' },
+  { value: 'exempt',    label: 'Exempt',     field: 'expt_amt',    note: 'Reported in table 8, not as a taxable supply' },
+  { value: 'non_gst',   label: 'Non-GST',    field: 'ngsup_amt',   note: 'Outside GST — reported in table 8' }
+];
+
+const GST_TREATMENT_DEFAULT = 'taxable';
+
+function gstTreatmentOf(row) {
+  const v = String(row?.gst_treatment || '').trim().toLowerCase();
+  return GST_TREATMENTS.some(t => t.value === v) ? v : GST_TREATMENT_DEFAULT;
+}
+
+function gstTreatmentLabel(value) {
+  const t = GST_TREATMENTS.find(x => x.value === gstTreatmentOf({ gst_treatment: value }));
+  return t ? t.label : value;
+}
+
+function gstTreatmentSpec(value) {
+  return GST_TREATMENTS.find(x => x.value === gstTreatmentOf({ gst_treatment: value })) || GST_TREATMENTS[0];
+}
+
+// Nil-rated, exempt and non-GST supplies do not belong in the taxable
+// tables at all — reporting them there as a 0% taxable supply puts the
+// right money in the wrong table.
+function gstIsTaxableTreatment(value) {
+  return gstTreatmentOf({ gst_treatment: value }) === GST_TREATMENT_DEFAULT;
+}
+
 // ── Customer GST category ───────────────────────────────────
 // What kind of recipient a supply is made to. This is the single thing
 // that decides which GSTR-1 table an invoice lands in, so it is defined

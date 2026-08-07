@@ -78,6 +78,7 @@ function renderItemsSectionShell(containerId) {
             <th>Product <span class="text-required">*</span></th>
             <th>HSN</th>
             <th>Unit</th>
+            <th>GST Treatment</th>
             <th class="text-center">Qty</th>
             <th class="text-right">Rate (&#8377;)</th>
             <th class="text-center">Discount %</th>
@@ -136,6 +137,9 @@ function blankRow() {
   return {
     rowId: 'row' + itemsRowSeq, product_id: null, product_name: '', hsn_code: '', unit: '',
     quantity: 1, rate: 0, discount_percentage: 0, gst_percentage: 0,
+    // Nil-rated / exempt / non-GST lines are reported in GSTR-1 table 8,
+    // not as taxable supplies. 'taxable' is every line raised before this.
+    gst_treatment: 'taxable',
     taxable_value: 0, gst_amount: 0, igst: 0, cgst: 0, sgst: 0, total_amount: 0, locked: false
   };
 }
@@ -169,6 +173,9 @@ function loadItemsIntoTable(rows) {
       discount_percentage: +r.discount_percentage || 0, gst_percentage: +r.gst_percentage || 0,
       taxable_value: +r.taxable_value || 0, gst_amount: +r.gst_amount || 0, igst: +r.igst || 0,
       cgst: +r.cgst || 0, sgst: +r.sgst || 0, total_amount: +r.total_amount || 0,
+      // A line saved before treatments existed is taxable, which is what
+      // it was reported as.
+      gst_treatment: gstTreatmentOf(r),
       locked: !!(r.product_id || (r.hsn_code && findProductByName(itemsProductsList, r.product_name)))
     };
   });
@@ -220,6 +227,8 @@ function renderItemsTable() {
         </div>
       </td>
       <td><select class="form-control" onchange="onItemFieldChange('${row.rowId}','unit',this.value)">${unitSelectOptions(row.unit)}</select></td>
+      <td><select class="form-control" title="Nil-rated, exempt and non-GST supplies are reported in GSTR-1 table 8, not as taxable supplies"
+            onchange="onItemTreatmentChange('${row.rowId}', this.value)">${treatmentSelectOptions(row.gst_treatment)}</select></td>
       <td>
         <div data-field-wrap="qty">
           <input type="number" class="form-control text-center" min="0.001" step="0.001" value="${row.quantity}"
@@ -906,7 +915,8 @@ async function saveInvoiceWithItems(type, headerBase, editId, userId) {
     .map(r => ({
       product_id: r.product_id, product_name: r.product_name, hsn_code: r.hsn_code, unit: r.unit,
       quantity: r.quantity, rate: r.rate, discount_percentage: r.discount_percentage, gst_percentage: r.gst_percentage,
-      taxable_value: r.taxable_value, gst_amount: r.gst_amount, igst: r.igst, cgst: r.cgst, sgst: r.sgst,
+      taxable_value: r.taxable_value, gst_amount: r.gst_amount,
+      gst_treatment: r.gst_treatment || 'taxable', igst: r.igst, cgst: r.cgst, sgst: r.sgst,
       total_amount: r.total_amount
     }));
 
@@ -931,4 +941,28 @@ async function cascadeInvoiceItemsDelete(type, invoiceId) {
   } catch (error) {
     showToast('Error: ' + (error.message || 'cascade delete failed'), 'error');
   }
+}
+
+// ── GST treatment of a line (Phase 2, Module 3) ──────
+// Nil-rated, exempt and non-GST supplies belong in GSTR-1 table 8, not
+// in the taxable tables. The vocabulary is the one in js/utils.js, so
+// the line, the product master and the exporter agree.
+function treatmentSelectOptions(current) {
+  const v = gstTreatmentOf({ gst_treatment: current });
+  return GST_TREATMENTS.map(t =>
+    `<option value="${escHtmlAttr(t.value)}"${t.value === v ? ' selected' : ''}>${escItemHtml(t.label)}</option>`).join('');
+}
+
+// A supply that is not taxable cannot carry a tax rate — leaving 18% on
+// a line marked exempt would put tax in table 8, where there is nowhere
+// to report it. The rate is forced to zero and the line recomputed.
+function onItemTreatmentChange(rowId, value) {
+  const row = currentItems.find(r => r.rowId === rowId);
+  if (!row) return;
+  row.gst_treatment = gstTreatmentOf({ gst_treatment: value });
+  if (!gstIsTaxableTreatment(row.gst_treatment)) row.gst_percentage = 0;
+  recalcItemRow(rowId);
+  renderItemsTable();
+  computeInvoiceRollups();
+  persistItemsDraft();
 }
