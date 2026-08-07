@@ -59,7 +59,8 @@ CREATE TABLE IF NOT EXISTS profiles (
   invoice_auto_number BOOLEAN NOT NULL DEFAULT FALSE,
   invoice_number_format TEXT NOT NULL DEFAULT 'INV-###',
   invoice_current_sequence INTEGER NOT NULL DEFAULT 1,
-  created_at TIMESTAMPTZ DEFAULT NOW()
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  invoice_series_sequences JSONB NOT NULL DEFAULT '{}'::jsonb
 );
 
 -- ── B2B Invoices ─────────────────────────────────────
@@ -95,7 +96,8 @@ CREATE TABLE IF NOT EXISTS b2b_invoices (
   payment_status TEXT NOT NULL DEFAULT 'unpaid' CHECK (payment_status IN ('unpaid','partial','paid')),
   amount_paid DECIMAL(15,2) NOT NULL DEFAULT 0,
   created_at TIMESTAMPTZ DEFAULT NOW(),
-  updated_at TIMESTAMPTZ DEFAULT NOW()
+  updated_at TIMESTAMPTZ DEFAULT NOW(),
+  invoice_source TEXT NOT NULL DEFAULT 'offline'
 );
 
 -- ── B2C Invoices ─────────────────────────────────────
@@ -131,7 +133,8 @@ CREATE TABLE IF NOT EXISTS b2c_invoices (
   payment_status TEXT NOT NULL DEFAULT 'unpaid' CHECK (payment_status IN ('unpaid','partial','paid')),
   amount_paid DECIMAL(15,2) NOT NULL DEFAULT 0,
   created_at TIMESTAMPTZ DEFAULT NOW(),
-  updated_at TIMESTAMPTZ DEFAULT NOW()
+  updated_at TIMESTAMPTZ DEFAULT NOW(),
+  invoice_source TEXT NOT NULL DEFAULT 'offline'
 );
 
 -- No two invoices (either type shares one numbering sequence) may share

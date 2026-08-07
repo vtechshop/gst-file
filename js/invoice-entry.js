@@ -15,7 +15,7 @@ let invoiceEditId = null;
 let invoiceEditType = null;
 let invoiceCustomersList = [];
 const INVOICE_FORM_KEY = 'invoice_invoice';
-const INVOICE_DRAFT_FIELDS = ['invGstin','invCustName','invPhone','invAddress','invState','invNum','invDate','invSupply'];
+const INVOICE_DRAFT_FIELDS = ['invGstin','invCustName','invPhone','invAddress','invState','invNum','invDate','invSupply','invSource'];
 
 async function initInvoiceEntry() {
   const user = await requireAuth();
@@ -311,6 +311,37 @@ async function onAutoToggleChange() {
   if (on && user) generateInvoiceNo(user.id, true);
 }
 
+// ── Invoice series ──────────────────────────────────
+// Which numbering book this invoice comes out of. A blank or missing
+// value is the shop series — that is what every invoice saved before
+// this field existed was.
+const DEFAULT_INVOICE_SOURCE = 'offline';
+function getInvoiceSource() {
+  const v = (document.getElementById('invSource')?.value || '').trim().toLowerCase();
+  return v || DEFAULT_INVOICE_SOURCE;
+}
+
+// Selecting a value the dropdown does not list would silently blank the
+// select, and the invoice would be saved back into a series it never
+// belonged to. So an unlisted series is added rather than dropped — the
+// stored value wins over the fixed list of options.
+function setInvoiceSourceValue(series) {
+  const el = document.getElementById('invSource');
+  if (!el) return;
+  const want = String(series || '').trim().toLowerCase() || DEFAULT_INVOICE_SOURCE;
+  if (![...el.options].some(o => o.value === want)) {
+    el.add(new Option(want, want));
+  }
+  el.value = want;
+}
+
+// Changing the series changes which counter the next number comes from,
+// so the preview is redrawn. Editing an existing invoice keeps its
+// number — generateInvoiceNo() returns early there.
+function onInvoiceSourceChange() {
+  getCurrentUser().then(u => generateInvoiceNo(u?.id));
+}
+
 // Preview-only: shows what the NEXT number would be, using the
 // persisted sequence counter and format, without consuming/advancing
 // the counter — that only happens once an invoice is actually saved,
@@ -322,7 +353,15 @@ async function generateInvoiceNo(userId, force) {
   const uid = userId || (await getCurrentUser())?.id;
   const profile = getCachedProfile() || (uid ? await loadUserProfile(uid) : null);
   const format = profile?.invoice_number_format || 'INV-###';
-  const seq = profile?.invoice_current_sequence || 1;
+  // Each series has its own counter. The offline series keeps using
+  // invoice_current_sequence — the counter that existed before series
+  // did — so a business already on Auto Generate sees the same number it
+  // would have seen before. Other series read their own counter, and a
+  // series that has never issued an invoice starts at 1.
+  const series = getInvoiceSource();
+  const seq = (series === DEFAULT_INVOICE_SOURCE
+    ? profile?.invoice_current_sequence
+    : profile?.invoice_series_sequences?.[series]) || 1;
   setInvValue('invNum', applyInvoiceNumberFormat(format, seq));
 }
 
@@ -335,9 +374,15 @@ async function generateInvoiceNo(userId, force) {
 // the same number, unlike the old client-side read-then-write version).
 // Returns null (after showing an error toast) if the reservation call
 // itself fails, e.g. the backend being unreachable.
-async function reserveNextInvoiceNumber(userId) {
+// The series is sent, because the number reserved must come from that
+// series' counter and must only avoid numbers already taken in that same
+// series — the shop's 138 does not block the website from issuing 138.
+async function reserveNextInvoiceNumber(userId, source) {
   try {
-    const { invoiceNumber } = await apiFetch('/invoices/reserve-number', { method: 'POST' });
+    const { invoiceNumber } = await apiFetch('/invoices/reserve-number', {
+      method: 'POST',
+      body: JSON.stringify({ source: source || DEFAULT_INVOICE_SOURCE })
+    });
     return invoiceNumber;
   } catch (error) {
     showToast('Could not reserve an invoice number: ' + (error.message || 'unknown error'), 'error');
@@ -493,6 +538,9 @@ async function loadInvoiceForEdit(type, id) {
   setInvValue('invNum', rec.invoice_number || '');
   setInvValue('invDate', rec.invoice_date || '');
   setInvValue('invSupply', rec.supply_type || 'intrastate');
+  // An invoice saved before series existed has no source stored — it
+  // came off the shop counter, which is the default.
+  setInvoiceSourceValue(rec.invoice_source || DEFAULT_INVOICE_SOURCE);
   setInvoiceTypeToggle(type);
   setPaymentSectionMode(false, rec.payment_status);
 
@@ -537,6 +585,9 @@ async function loadInvoiceDuplicateDraft() {
   setInvValue('invNum', ''); // must be unique — left blank for auto-generate or manual entry
   setInvValue('invDate', toISO(new Date()));
   setInvValue('invSupply', draft.supply_type || 'intrastate');
+  // A duplicate of a website order is another website order — it keeps
+  // the series, and gets the next number out of that series' book.
+  setInvoiceSourceValue(draft.invoice_source || DEFAULT_INVOICE_SOURCE);
   // The original invoice's own type is authoritative — a B2C source
   // invoice may well have an optional GST Number on it too, so presence
   // of gst_number alone can no longer be used to infer B2B/B2C.
@@ -586,6 +637,7 @@ async function saveInvoice() {
   let   invNum   = getInvText('invNum');
   const invDate  = getInvText('invDate');
   const supply   = document.getElementById('invSupply')?.value || 'intrastate';
+  const source   = getInvoiceSource();
 
   const type = getSelectedInvoiceType();
   const wasNewInvoice = !invoiceEditId;
@@ -626,7 +678,7 @@ async function saveInvoice() {
   // applies to editing/duplicating-in-place an existing invoice (that
   // always keeps its own number); only a genuinely new invoice.
   if (autoMode && wasNewInvoice) {
-    invNum = await reserveNextInvoiceNumber(user.id);
+    invNum = await reserveNextInvoiceNumber(user.id, source);
     if (!invNum) return; // reserveNextInvoiceNumber() already showed an error toast
     setInvValue('invNum', invNum);
   }
@@ -634,9 +686,12 @@ async function saveInvoice() {
   const isTypeChange = invoiceEditId && invoiceEditType && invoiceEditType !== type;
 
   if (!invoiceEditId || isTypeChange) {
+    // Only within the same series. Two series may legitimately both hold
+    // a 5 — they are different documents in different books, and GSTR-1
+    // reports them as such.
     const [dupB2B, dupB2C] = await Promise.all([
-      _supabase.from('b2b_invoices').select('id').eq('user_id', user.id).eq('invoice_number', invNum).single(),
-      _supabase.from('b2c_invoices').select('id').eq('user_id', user.id).eq('invoice_number', invNum).single()
+      _supabase.from('b2b_invoices').select('id').eq('user_id', user.id).eq('invoice_number', invNum).eq('invoice_source', source).single(),
+      _supabase.from('b2c_invoices').select('id').eq('user_id', user.id).eq('invoice_number', invNum).eq('invoice_source', source).single()
     ]);
     const dupId = dupB2B.data?.id || dupB2C.data?.id;
     // On a type change, the invoice being edited still has this exact
@@ -650,6 +705,7 @@ async function saveInvoice() {
     user_id: user.id,
     customer_name: custName, phone, address, state,
     invoice_number: invNum, invoice_date: invDate, supply_type: supply,
+    invoice_source: source,
     transport_required: transportRequired,
     vehicle_number: transportRequired ? getInvText('invVehicleNo').toUpperCase() : '',
     transporter_name: transportRequired ? getInvText('invTransporter') : '',
@@ -787,6 +843,10 @@ function clearInvoiceFormFields() {
   setInvValue('invState', '');
   setInvValue('invDate', toISO(new Date()));
   setInvValue('invSupply', 'intrastate');
+  // Back to the default series, same as every other field here returns
+  // to its default. generateInvoiceNo() below then previews the offline
+  // counter, not whichever series was just used.
+  setInvoiceSourceValue(DEFAULT_INVOICE_SOURCE);
   setInvoiceTypeToggle('b2c');
   updateGstinValidationStatus();
 

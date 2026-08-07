@@ -558,6 +558,31 @@ function validateGSTR1Strict(payload, errors) {
   });
 }
 
+// ── Invoice series ──────────────────────────────────────────
+// Which numbering book an invoice came from. A business can run several
+// at once: the shop counter issuing 138, 139, 140 while the website
+// issues 4, 5, 6. Both are outward supplies and belong in the same
+// return, but each keeps its own numbering.
+//
+// An invoice with no source is part of the shop series — every invoice
+// saved before series existed is one, which is what it was.
+//
+// Never restricted to a known list: a business that starts selling
+// through another channel gets that series reported without a change
+// here.
+const GSTR1_DEFAULT_SERIES = 'offline';
+function gstr1InvoiceSeries(inv) {
+  const s = String((inv && inv.invoice_source) || '').trim().toLowerCase();
+  return s || GSTR1_DEFAULT_SERIES;
+}
+
+// For messages only — the JSON carries no series name.
+function gstr1SeriesLabel(series) {
+  if (series === 'offline') return 'Offline / Shop';
+  if (series === 'online') return 'Online / Website';
+  return series;
+}
+
 // Orders invoice numbers the way a numbering series runs rather than the
 // way text sorts, so "00193/26-27" follows "00158/26-27" and does not sit
 // before "0021/26-27". Digit runs compare as numbers, everything else as
@@ -1122,15 +1147,19 @@ async function buildGSTR1Payload(userId, profile, periodFilter) {
   // Nothing is generated while a product cannot be reported correctly.
   if (errors.length > productErrorsBefore) return { errors };
 
-  // Duplicate invoice number check — b2b_invoices/b2c_invoices share one
-  // numbering sequence app-wide, so any collision across the combined
-  // period set is real data corruption, not a false positive.
+  // Duplicate invoice number check, per series.
+  //
+  // b2b_invoices and b2c_invoices share a numbering book WITHIN a series,
+  // so a number appearing twice in one series is real data corruption.
+  // Across series it is not: a shop counter and a website each keep their
+  // own book, and both may legitimately hold a 5.
   const seenInvNums = new Map();
   [...b2bData.map(r => ({ ...r, __kind: 'B2B' })), ...b2cData.map(r => ({ ...r, __kind: 'B2C' }))].forEach(inv => {
     const num = (inv.invoice_number || '').toUpperCase();
     if (!num) return;
-    if (seenInvNums.has(num)) errors.push(gstr1Err({ invoice: inv.invoice_number, customer: inv.customer_name, field: 'Invoice Number', current: `used twice (${seenInvNums.get(num)} and ${inv.__kind})`, expected: 'a number used by only one invoice', fix: 'Renumber one of the two invoices from the Invoice List.' }));
-    else seenInvNums.set(num, inv.__kind);
+    const key = JSON.stringify([gstr1InvoiceSeries(inv), num]);
+    if (seenInvNums.has(key)) errors.push(gstr1Err({ invoice: inv.invoice_number, customer: inv.customer_name, field: 'Invoice Number', current: `used twice in the ${gstr1SeriesLabel(gstr1InvoiceSeries(inv))} series (${seenInvNums.get(key)} and ${inv.__kind})`, expected: 'a number used by only one invoice in its own series', fix: 'Renumber one of the two invoices from the Invoice List.' }));
+    else seenInvNums.set(key, inv.__kind);
   });
 
   // The HSN summary is reported per supply channel: hsn_b2b and hsn_b2c
@@ -1412,27 +1441,52 @@ async function buildGSTR1Payload(userId, profile, periodFilter) {
   if (hsnB2C.length) hsn.hsn_b2c = hsnB2C;
 
   // Documents issued (the Utility's doc_issue). Derived entirely from the
-  // invoices already in this return: the numbering runs from the lowest
-  // invoice number in the period to the highest, and totnum is how many
-  // there are. cancel is 0 because this application has no concept of a
-  // cancelled invoice — there is nothing to count, not a figure guessed.
+  // invoices already in this return, one entry per numbering series: each
+  // series runs from its own lowest invoice number to its own highest,
+  // and totnum is how many it issued.
+  //
+  // A shop counter issuing 138 to 170 and a website issuing 4 to 5 are two
+  // books, not one. Reported together they would read as 4 to 170 — a
+  // claim to have issued 167 documents when 35 were issued. docs[] is an
+  // array for exactly this reason, so each series gets its own row with
+  // its own range and count.
+  //
+  // Series come from the invoices themselves, so a business that later
+  // sells through another channel gets that series reported without any
+  // change here. Ordered by series name so the file is stable between
+  // exports of the same data.
+  const bySeries = new Map();
+  [...b2bData, ...b2cData].forEach(inv => {
+    const num = inv.invoice_number;
+    if (!num) return;
+    const series = gstr1InvoiceSeries(inv);
+    if (!bySeries.has(series)) bySeries.set(series, []);
+    bySeries.get(series).push(num);
+  });
+
+  const seriesDocs = [...bySeries.entries()]
+    .sort((a, b) => a[0].localeCompare(b[0]))
+    .map(([, numbers], i) => {
+      const sorted = [...numbers].sort(gstr1CompareInvoiceNumbers);
+      return {
+        num: i + 1,
+        from: sorted[0],
+        to: sorted[sorted.length - 1],
+        totnum: sorted.length,
+        // 0 because this application has no concept of a cancelled
+        // invoice — nothing to count, rather than a figure guessed.
+        cancel: 0,
+        net_issue: sorted.length
+      };
+    });
+
   // doc_num 1 / "Invoices for outward supply" are the values the Utility
   // writes for this document type; the voucher types it also supports are
   // not emitted, because no such document exists in this app.
-  const issuedNumbers = [...b2bData, ...b2cData]
-    .map(r => r.invoice_number).filter(Boolean)
-    .sort(gstr1CompareInvoiceNumbers);
-  const doc_issue = issuedNumbers.length ? { doc_det: [{
+  const doc_issue = seriesDocs.length ? { doc_det: [{
     doc_num: 1,
     doc_typ: 'Invoices for outward supply',
-    docs: [{
-      num: 1,
-      from: issuedNumbers[0],
-      to: issuedNumbers[issuedNumbers.length - 1],
-      totnum: issuedNumbers.length,
-      cancel: 0,
-      net_issue: issuedNumbers.length
-    }]
+    docs: seriesDocs
   }] } : {};
 
   // Still computed, no longer emitted: a Utility-written return has no gt

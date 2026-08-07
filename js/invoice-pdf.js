@@ -57,6 +57,10 @@ async function fetchInvoiceRecord(type, id) {
     gst_amount: +data.gst_amount,
     total_amount: +data.total_amount,
     supply_type: data.supply_type,
+    // Which numbering book the invoice came out of. Not printed on the
+    // document — it is here because Duplicate builds its draft from this
+    // record, and a copy of a website order has to stay a website order.
+    invoice_source: data.invoice_source || 'offline',
     igst: +data.igst, cgst: +data.cgst, sgst: +data.sgst,
     round_off: round2(+data.total_amount - +data.taxable_amount - +data.gst_amount),
     transport_required: !!data.transport_required,

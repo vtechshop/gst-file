@@ -4,28 +4,28 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>New Invoice - GST Management System</title>
-  <link rel="stylesheet" href="css/style.css?v=3">
+  <link rel="stylesheet" href="css/style.css?v=4">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.31/jspdf.plugin.autotable.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/qrcode@1.4.4/build/qrcode.min.js"></script>
-  <script src="js/apiClient.js?v=3"></script>
-  <script src="js/backup.js?v=3"></script>
-  <script src="js/config.js?v=3"></script>
-  <script src="js/product-sync.js?v=3"></script>
-  <script src="js/auth.js?v=3"></script>
-  <script src="js/utils.js?v=3"></script>
-  <script src="js/search.js?v=3"></script>
-  <script src="js/profile.js?v=3"></script>
-  <script src="js/products.js?v=3"></script>
-  <script src="js/drafts.js?v=3"></script>
-  <script src="js/invoice-items.js?v=3"></script>
-  <script src="js/invoice-pdf.js?v=3"></script>
-  <script src="js/payments.js?v=3"></script>
-  <script src="js/invoice-entry.js?v=3"></script>
+  <script src="js/apiClient.js?v=4"></script>
+  <script src="js/backup.js?v=4"></script>
+  <script src="js/config.js?v=4"></script>
+  <script src="js/product-sync.js?v=4"></script>
+  <script src="js/auth.js?v=4"></script>
+  <script src="js/utils.js?v=4"></script>
+  <script src="js/search.js?v=4"></script>
+  <script src="js/profile.js?v=4"></script>
+  <script src="js/products.js?v=4"></script>
+  <script src="js/drafts.js?v=4"></script>
+  <script src="js/invoice-items.js?v=4"></script>
+  <script src="js/invoice-pdf.js?v=4"></script>
+  <script src="js/payments.js?v=4"></script>
+  <script src="js/invoice-entry.js?v=4"></script>
   <!-- Invoice scanner. Uploads to /api/invoice-scan, which calls Gemini
        with a server-held key; no OCR library is loaded in the browser. -->
-  <script src="js/invoice-scan.js?v=3"></script>
+  <script src="js/invoice-scan.js?v=4"></script>
 </head>
 <body>
 <div class="app-layout">
@@ -189,6 +189,16 @@
                 <input type="text" id="invNum" class="form-control">
                 <button type="button" class="btn btn-secondary btn-sm text-nowrap" onclick="getCurrentUser().then(u=>generateInvoiceNo(u?.id,true))" title="Generate Now"><i class="fas fa-magic"></i></button>
               </div>
+            </div>
+            <div class="form-group">
+              <!-- Which numbering book this invoice comes out of. Each
+                   series counts on its own, so the shop reaching 170 does
+                   not push the website's next number past 5. -->
+              <label for="invSource">Invoice Source</label>
+              <select id="invSource" class="form-control" onchange="onInvoiceSourceChange()">
+                <option value="offline">Offline / Shop</option>
+                <option value="online">Online / Website</option>
+              </select>
             </div>
             <div class="form-group">
               <label for="invDate">Invoice Date <span class="text-required">*</span></label>

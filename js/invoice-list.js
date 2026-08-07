@@ -404,6 +404,9 @@ async function duplicateInvoiceFromList(type, id) {
   sessionStorage.setItem('invoice_duplicate_draft', JSON.stringify({
     type, customer_name: inv.customer_name, gst_number: inv.gstin, phone: inv.phone, address: inv.address, state: inv.state,
     supply_type: inv.supply_type,
+    // A copy of a website order is another website order. Without this
+    // the copy would quietly land in the shop's numbering book.
+    invoice_source: inv.invoice_source,
     transport_required: inv.transport_required, vehicle_number: inv.vehicle_number, transporter_name: inv.transporter_name,
     transport_mode: inv.transport_mode, transport_distance_km: inv.transport_distance_km, lr_number: inv.lr_number, lr_date: inv.lr_date,
     transporter_gstin: inv.transporter_gstin, vehicle_type: inv.vehicle_type, dispatch_from: inv.dispatch_from, dispatch_to: inv.dispatch_to,

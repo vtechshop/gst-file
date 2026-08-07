@@ -22,6 +22,19 @@ const router = express.Router();
 router.use(requireAuth);
 
 function invoiceTable(type) { return type === 'b2b' ? 'b2b_invoices' : 'b2c_invoices'; }
+
+// Which numbering series an invoice belongs to. Anything unrecognised —
+// including every invoice saved before series existed — is the shop
+// series, which is what those invoices were.
+//
+// Not restricted to a fixed list: a business that starts selling through
+// another channel gets that series numbered and reported without a code
+// change.
+const DEFAULT_INVOICE_SOURCE = 'offline';
+function normaliseSource(value) {
+  const v = String(value == null ? '' : value).trim().toLowerCase();
+  return v || DEFAULT_INVOICE_SOURCE;
+}
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 function badId(id) {
   if (!UUID_RE.test(id)) { const e = new Error('Invalid invoice id.'); e.status = 400; e.expose = true; throw e; }
@@ -56,6 +69,13 @@ router.post('/:type/save-with-items', asyncRoute(async (req, res) => {
     const e = new Error('Add at least one product with a quantity and rate.'); e.status = 400; e.expose = true; throw e;
   }
   if (editId) badId(editId);
+
+  // Whatever the client sends, the stored series is lower-cased and
+  // never blank, so 'Online', 'online' and ' Online ' are one series and
+  // an omitted source is the shop series.
+  if (Object.prototype.hasOwnProperty.call(header, 'invoice_source')) {
+    header.invoice_source = normaliseSource(header.invoice_source);
+  }
 
   const headerCols = TABLES[table].columns.filter(c => c !== 'id' && c !== 'user_id' && header && Object.prototype.hasOwnProperty.call(header, c));
   const itemCols = TABLES.invoice_items.columns.filter(c => !['id','user_id','invoice_id','invoice_type','sort_order','created_at','updated_at'].includes(c));
@@ -136,14 +156,30 @@ router.post('/reserve-number', asyncRoute(async (req, res) => {
     // "next" number before either commits (reading before locking would
     // reopen exactly the race this transaction exists to close).
     const { rows: profRows } = await client.query(
-      'SELECT invoice_number_format, invoice_current_sequence FROM profiles WHERE id = $1 FOR UPDATE', [req.userId]
+      `SELECT invoice_number_format, invoice_current_sequence, invoice_series_sequences
+         FROM profiles WHERE id = $1 FOR UPDATE`, [req.userId]
     );
     const format = profRows[0]?.invoice_number_format || 'INV-###';
-    let seq = Math.max(1, parseInt(profRows[0]?.invoice_current_sequence, 10) || 1);
 
+    // Each series counts on its own. The shop counter reaching 170 must
+    // not push the website's next number past 5.
+    //
+    // The offline series keeps using invoice_current_sequence, the
+    // counter that existed before series did, so a business already on
+    // Auto Generate carries on from exactly where it was. Every other
+    // series gets its own counter in invoice_series_sequences.
+    const series = normaliseSource(req.body && req.body.source);
+    const seriesSeqs = profRows[0]?.invoice_series_sequences || {};
+    const storedSeq = series === DEFAULT_INVOICE_SOURCE
+      ? profRows[0]?.invoice_current_sequence
+      : seriesSeqs[series];
+    let seq = Math.max(1, parseInt(storedSeq, 10) || 1);
+
+    // Only this series' numbers are "taken". Two series may legitimately
+    // both hold a 5 — they are different documents in different books.
     const [{ rows: b2bRows }, { rows: b2cRows }] = await Promise.all([
-      client.query('SELECT invoice_number FROM b2b_invoices WHERE user_id = $1', [req.userId]),
-      client.query('SELECT invoice_number FROM b2c_invoices WHERE user_id = $1', [req.userId])
+      client.query('SELECT invoice_number FROM b2b_invoices WHERE user_id = $1 AND invoice_source = $2', [req.userId, series]),
+      client.query('SELECT invoice_number FROM b2c_invoices WHERE user_id = $1 AND invoice_source = $2', [req.userId, series])
     ]);
     const taken = new Set([...b2bRows, ...b2cRows].map(r => (r.invoice_number || '').toUpperCase()));
 
@@ -156,9 +192,16 @@ router.post('/reserve-number', asyncRoute(async (req, res) => {
     }
     if (guard >= 100000) candidate = candidate + '-' + Date.now(); // pathological format (no #) — guarantee uniqueness anyway
 
-    await client.query('UPDATE profiles SET invoice_current_sequence = $1 WHERE id = $2', [seq + 1, req.userId]);
+    if (series === DEFAULT_INVOICE_SOURCE) {
+      await client.query('UPDATE profiles SET invoice_current_sequence = $1 WHERE id = $2', [seq + 1, req.userId]);
+    } else {
+      await client.query(
+        `UPDATE profiles
+            SET invoice_series_sequences = COALESCE(invoice_series_sequences, '{}'::jsonb) || jsonb_build_object($1::text, $2::int)
+          WHERE id = $3`, [series, seq + 1, req.userId]);
+    }
     await client.query('COMMIT');
-    res.json({ invoiceNumber: candidate });
+    res.json({ invoiceNumber: candidate, source: series });
   } catch (err) {
     await client.query('ROLLBACK');
     throw err;

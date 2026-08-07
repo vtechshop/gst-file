@@ -200,7 +200,8 @@ const TABLES = {
       'bank_name','bank_account_no','bank_ifsc','bank_branch','upi_id',
       'logo_base64','seal_base64','signature_base64','qr_base64','header_color',
       'footer_text','terms_conditions','pan','website',
-      'invoice_auto_number','invoice_number_format','invoice_current_sequence','created_at']
+      'invoice_auto_number','invoice_number_format','invoice_current_sequence',
+      'invoice_series_sequences','created_at']
   },
   customers: {
     columns: ['id','user_id','name','gstin','phone','email','address','state',
@@ -244,7 +245,7 @@ const TABLES = {
       'total_amount','supply_type','igst','cgst','sgst','transport_required',
       'vehicle_number','transporter_name','transport_mode','transport_distance_km',
       'lr_number','lr_date','transporter_gstin','vehicle_type','dispatch_from','dispatch_to',
-      'payment_status','amount_paid',
+      'payment_status','amount_paid','invoice_source',
       'created_at','updated_at']
   },
   b2c_invoices: {
@@ -253,7 +254,7 @@ const TABLES = {
       'supply_type','igst','cgst','sgst','invoice_date','transport_required',
       'vehicle_number','transporter_name','transport_mode','transport_distance_km',
       'lr_number','lr_date','transporter_gstin','vehicle_type','dispatch_from','dispatch_to',
-      'payment_status','amount_paid',
+      'payment_status','amount_paid','invoice_source',
       'created_at','updated_at']
   },
   b2b_hsn: {
