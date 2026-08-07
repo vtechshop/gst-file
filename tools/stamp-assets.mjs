@@ -23,7 +23,7 @@
 // Deliberately NOT a date. A date invites hand-editing to "today" and
 // says nothing about whether the assets actually changed; an integer that
 // only ever goes up cannot be mistaken for anything else.
-const ASSET_VERSION = '10';
+const ASSET_VERSION = '11';
 
 import fs from 'node:fs';
 import path from 'node:path';

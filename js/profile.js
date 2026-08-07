@@ -76,6 +76,9 @@ async function openProfileModal(isRequired = false) {
     profile = await loadUserProfile(user.id);
   }
   buildProfileModal(profile, isRequired);
+  // Both notes describe values that are already on screen, so they are
+  // drawn once the fields exist rather than only when something changes.
+  onProfRegTypeChange();
 }
 
 function buildProfileModal(profile, isRequired) {
@@ -134,6 +137,93 @@ function buildProfileModal(profile, isRequired) {
             <input type="text" id="profWebsite" class="form-control" value="${e(profile?.website)}">
           </div>
         </div>
+
+        <!-- GST registration. Everything here is optional and everything
+             defaults to what the business already is, so a profile that
+             ignores this section behaves exactly as it did before. -->
+        <div class="section-title mb-14 mt-20">GST Registration</div>
+        <div class="form-grid cols-2" style="gap:14px;">
+          <div class="form-group">
+            <label for="profRegType">Registration Type</label>
+            <select id="profRegType" class="form-control" onchange="onProfRegTypeChange()">
+              ${GST_REGISTRATION_TYPES.map(t => `<option value="${t.value}"${gstRegistrationType(profile) === t.value ? ' selected' : ''}>${t.label}</option>`).join('')}
+            </select>
+            <span class="fs-11 text-muted-sm" id="profRegTypeNote"></span>
+          </div>
+          <div class="form-group">
+            <label for="profConstitution">Constitution of Business</label>
+            <select id="profConstitution" class="form-control">
+              <option value="">Not set</option>
+              ${GST_BUSINESS_CONSTITUTIONS.map(c => `<option value="${escHtmlAttr(c)}"${profile?.business_constitution === c ? ' selected' : ''}>${c}</option>`).join('')}
+              ${profile?.business_constitution && !GST_BUSINESS_CONSTITUTIONS.includes(profile.business_constitution)
+                ? `<option value="${escHtmlAttr(profile.business_constitution)}" selected>${e(profile.business_constitution)}</option>` : ''}
+            </select>
+          </div>
+          <div class="form-group">
+            <label for="profLegalName">Legal Name <span class="fs-11 text-muted-sm">(as on PAN)</span></label>
+            <input type="text" id="profLegalName" class="form-control" value="${e(profile?.legal_name)}" placeholder="${e(profile?.business_name)}">
+          </div>
+          <div class="form-group">
+            <label for="profTradeName">Trade Name</label>
+            <input type="text" id="profTradeName" class="form-control" value="${e(profile?.trade_name)}" placeholder="${e(profile?.business_name)}">
+          </div>
+          <div class="form-group">
+            <label for="profDefaultPos">Default Place of Supply</label>
+            <select id="profDefaultPos" class="form-control">
+              <option value="">Same as my state</option>
+              ${INDIAN_STATES.map(s => `<option value="${escHtmlAttr(s)}"${profile?.default_pos === s ? ' selected' : ''}>${s}</option>`).join('')}
+            </select>
+          </div>
+          <div class="form-group">
+            <label for="profFinancialYear">Financial Year</label>
+            <input type="text" id="profFinancialYear" class="form-control" maxlength="7"
+                   value="${e(profile?.financial_year || defaultFinancialYear())}" placeholder="2026-27">
+          </div>
+        </div>
+
+        <!-- Exports. An LUT is what lets a business export without paying
+             IGST, and which applies decides how an export invoice is
+             reported. Recorded once here rather than asked at export. -->
+        <div class="section-title mb-14 mt-20">Exports <span class="fs-11 text-muted-sm">(only if you export)</span></div>
+        <div class="form-grid cols-3" style="gap:14px;">
+          <div class="form-group">
+            <label for="profLutNumber">LUT / Bond Number</label>
+            <input type="text" id="profLutNumber" class="form-control" value="${e(profile?.lut_number)}" oninput="updateProfLutNote()">
+          </div>
+          <div class="form-group">
+            <label for="profLutExpiry">LUT Valid Until</label>
+            <input type="date" id="profLutExpiry" class="form-control" value="${e((profile?.lut_expiry || '').toString().slice(0, 10))}" onchange="updateProfLutNote()">
+          </div>
+          <div class="form-group">
+            <label for="profIec">IEC Number</label>
+            <input type="text" id="profIec" class="form-control uppercase" maxlength="10" value="${e(profile?.iec_number)}">
+          </div>
+        </div>
+        <p class="fs-11 text-muted-sm mb-10" id="profLutNote"></p>
+
+        <div class="section-title mb-14 mt-20">Defaults</div>
+        <div class="form-grid cols-3" style="gap:14px;">
+          <div class="form-group">
+            <label class="d-flex align-center gap-8" style="cursor:pointer;">
+              <input type="checkbox" id="profReverseChargeDefault" ${profile?.reverse_charge_default ? 'checked' : ''}>
+              <span>New invoices are reverse charge</span>
+            </label>
+          </div>
+          <div class="form-group">
+            <label class="d-flex align-center gap-8" style="cursor:pointer;">
+              <input type="checkbox" id="profEinvoiceApplicable" ${profile?.einvoice_applicable ? 'checked' : ''}>
+              <span>e-Invoicing applies to me</span>
+            </label>
+          </div>
+          <div class="form-group">
+            <label class="d-flex align-center gap-8" style="cursor:pointer;">
+              <input type="checkbox" id="profEwaybillApplicable" ${profile?.ewaybill_applicable ? 'checked' : ''}>
+              <span>e-Way Bills apply to me</span>
+            </label>
+          </div>
+        </div>
+        <p class="fs-11 text-muted-sm">Both are stated by you rather than worked out from turnover &mdash; the thresholds are changed by notification, and a figure built into the software would quietly go out of date.</p>
+
         <p class="text-muted-sm mt-16"><i class="fas fa-info-circle"></i> Logo, seal, signature, bank/UPI details and invoice footer text are set once under <b>Settings &rarr; Company Branding</b> and apply to every invoice automatically.</p>
       </div>
       <div class="modal-footer">
@@ -654,18 +744,77 @@ async function submitProfile() {
   const user = await getCurrentUser();
   if (!user) return;
 
+  const val = (id, up) => {
+    const v = document.getElementById(id)?.value?.trim() || '';
+    return up ? v.toUpperCase() : v;
+  };
+  const checked = id => !!document.getElementById(id)?.checked;
+
   const { error } = await saveUserProfile(user.id, {
     business_name: bizName,
     gstin,
-    phone:   document.getElementById('profPhone')?.value?.trim() || '',
-    address: document.getElementById('profAddress')?.value?.trim() || '',
+    phone:   val('profPhone'),
+    address: val('profAddress'),
     state:   document.getElementById('profState')?.value || '',
-    email:   document.getElementById('profEmail')?.value?.trim() || '',
-    pan:     document.getElementById('profPAN')?.value?.trim().toUpperCase() || '',
-    website: document.getElementById('profWebsite')?.value?.trim() || ''
+    email:   val('profEmail'),
+    pan:     val('profPAN', true),
+    website: val('profWebsite'),
+
+    // GST registration. Every one of these is optional; a profile that
+    // leaves the whole section alone saves the same values it always did
+    // plus defaults that mean "unchanged".
+    registration_type:      document.getElementById('profRegType')?.value || GST_REGISTRATION_DEFAULT,
+    business_constitution:  document.getElementById('profConstitution')?.value || '',
+    legal_name:             val('profLegalName'),
+    trade_name:             val('profTradeName'),
+    default_pos:            document.getElementById('profDefaultPos')?.value || '',
+    financial_year:         val('profFinancialYear'),
+    lut_number:             val('profLutNumber'),
+    // A date input left blank yields '', which Postgres rejects for a
+    // DATE column — null is the absence of a date, '' is not a date.
+    lut_expiry:             val('profLutExpiry') || null,
+    iec_number:             val('profIec', true),
+    reverse_charge_default: checked('profReverseChargeDefault'),
+    einvoice_applicable:    checked('profEinvoiceApplicable'),
+    ewaybill_applicable:    checked('profEwaybillApplicable')
   });
 
   if (!error) closeProfileModal();
+}
+
+// Says what the chosen registration actually files, because the choice
+// has consequences the label alone does not carry: a composition dealer
+// files CMP-08 and GSTR-4 and does not file GSTR-1 at all, and an ISD,
+// deductor or collector each file something else again. Better said here
+// than discovered at export time.
+function onProfRegTypeChange() {
+  const note = document.getElementById('profRegTypeNote');
+  if (!note) return;
+  const value = document.getElementById('profRegType')?.value || GST_REGISTRATION_DEFAULT;
+  const spec = GST_REGISTRATION_TYPES.find(t => t.value === value);
+  const filesGstr1 = gstFilesGstr1({ registration_type: value });
+  note.innerHTML = `Files ${escItemHtml(spec?.files || '')}` +
+    (filesGstr1 ? '' : ' &mdash; <b>not GSTR-1</b>, so the GSTR-1 export does not apply to this registration.');
+  note.style.color = filesGstr1 ? '' : 'var(--danger)';
+  updateProfLutNote();
+}
+
+// Whether the recorded LUT is actually in force today, in the same words
+// the export will use when it decides between exporting with payment of
+// IGST and without.
+function updateProfLutNote() {
+  const note = document.getElementById('profLutNote');
+  if (!note) return;
+  const lut = gstLutStatus({
+    lut_number: document.getElementById('profLutNumber')?.value,
+    lut_expiry: document.getElementById('profLutExpiry')?.value
+  }, toISO(new Date()));
+  note.innerHTML = lut.number
+    ? (lut.active
+        ? `LUT ${escItemHtml(lut.number)} is in force${lut.expiry ? ` until ${escItemHtml(formatDate(lut.expiry))}` : ''} &mdash; exports can be made without payment of IGST.`
+        : `LUT ${escItemHtml(lut.number)} <b>${escItemHtml(lut.reason)}</b> &mdash; until it is renewed, exports must be made with payment of IGST.`)
+    : 'With no LUT recorded, exports are treated as made with payment of IGST.';
+  note.style.color = lut.number && !lut.active ? 'var(--danger)' : '';
 }
 
 // ── Company Branding (Settings) ────────────

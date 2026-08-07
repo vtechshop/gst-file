@@ -213,7 +213,12 @@ const TABLES = {
       'logo_base64','seal_base64','signature_base64','qr_base64','header_color',
       'footer_text','terms_conditions','pan','website',
       'invoice_auto_number','invoice_number_format','invoice_current_sequence',
-      'invoice_series_sequences','invoice_series_formats','created_at']
+      'invoice_series_sequences','invoice_series_formats',
+      // GST registration details (Phase 2, Module 1)
+      'legal_name','trade_name','business_constitution','registration_type',
+      'lut_number','lut_expiry','iec_number','default_pos','reverse_charge_default',
+      'einvoice_applicable','ewaybill_applicable','financial_year',
+      'created_at']
   },
   customers: {
     columns: ['id','user_id','name','gstin','phone','email','address','state',

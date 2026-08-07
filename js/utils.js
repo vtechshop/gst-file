@@ -67,6 +67,95 @@ function applyInvoiceNumberFormat(format, seq) {
   return fmt + '-' + n;
 }
 
+// ── GST registration ────────────────────────────────────────
+// What kind of registration the business holds. This decides what it may
+// file and what documents it issues, so it is written down once here and
+// read by every module that depends on it rather than being re-guessed.
+//
+// 'regular' is the default and is what every profile created before this
+// existed is: they have been filing GSTR-1, which is a regular
+// registration's return.
+const GST_REGISTRATION_TYPES = [
+  { value: 'regular',       label: 'Regular',                    files: 'GSTR-1 / GSTR-3B' },
+  { value: 'composition',   label: 'Composition',                files: 'CMP-08 / GSTR-4' },
+  { value: 'casual',        label: 'Casual Taxable Person',      files: 'GSTR-1 / GSTR-3B' },
+  { value: 'sez_unit',      label: 'SEZ Unit',                   files: 'GSTR-1 / GSTR-3B' },
+  { value: 'sez_developer', label: 'SEZ Developer',              files: 'GSTR-1 / GSTR-3B' },
+  { value: 'isd',           label: 'Input Service Distributor',  files: 'GSTR-6' },
+  { value: 'tds',           label: 'Tax Deductor',               files: 'GSTR-7' },
+  { value: 'tcs',           label: 'Tax Collector',              files: 'GSTR-8' }
+];
+
+const GST_REGISTRATION_DEFAULT = 'regular';
+
+function gstRegistrationType(profile) {
+  const v = String(profile?.registration_type || '').trim().toLowerCase();
+  return GST_REGISTRATION_TYPES.some(t => t.value === v) ? v : GST_REGISTRATION_DEFAULT;
+}
+
+function gstRegistrationLabel(value) {
+  const t = GST_REGISTRATION_TYPES.find(x => x.value === gstRegistrationType({ registration_type: value }));
+  return t ? t.label : value;
+}
+
+// Which return this registration actually files. A composition dealer
+// does not file GSTR-1 at all — it files CMP-08 quarterly and GSTR-4
+// annually — and an ISD, deductor or collector each file their own
+// return. Saying so is the point of storing the type.
+function gstFilesGstr1(profile) {
+  const t = gstRegistrationType(profile);
+  return t !== 'composition' && t !== 'isd' && t !== 'tds' && t !== 'tcs';
+}
+
+// The constitutions the Portal lists. Free text underneath, so a value
+// that is not on this list is kept rather than discarded.
+const GST_BUSINESS_CONSTITUTIONS = [
+  'Proprietorship', 'Partnership', 'Limited Liability Partnership',
+  'Private Limited Company', 'Public Limited Company',
+  'Hindu Undivided Family', 'Society / Club / Trust / AOP',
+  'Government Department', 'Public Sector Undertaking',
+  'Foreign Company', 'Others'
+];
+
+// A Letter of Undertaking lets a business export without paying IGST.
+// Whether one is in force on a given date decides exp_typ in GSTR-1's
+// 6A — WOPAY with a live LUT, WPAY without. Returns a plain object
+// rather than a boolean so a caller can say WHY, which matters when an
+// LUT has simply expired.
+function gstLutStatus(profile, onDateISO) {
+  const number = String(profile?.lut_number || '').trim();
+  const expiry = String(profile?.lut_expiry || '').slice(0, 10);
+  if (!number) return { active: false, reason: 'no LUT recorded', number: '', expiry: '' };
+  if (!expiry) return { active: true, reason: 'no expiry recorded', number, expiry: '' };
+  // Both are plain YYYY-MM-DD strings; compared as strings so no Date is
+  // constructed and no timezone can shift the day. An LUT is valid
+  // through its expiry date, not up to the day before.
+  const on = String(onDateISO || '').slice(0, 10);
+  if (!on) return { active: true, reason: 'no date to check against', number, expiry };
+  return on <= expiry
+    ? { active: true, reason: 'in force', number, expiry }
+    : { active: false, reason: `expired on ${expiry}`, number, expiry };
+}
+
+// The place of supply to assume when a document does not establish one.
+// Blank falls back to the state of registration, which is what the app
+// already assumed before this field existed.
+function gstDefaultPlaceOfSupply(profile) {
+  return String(profile?.default_pos || '').trim() || String(profile?.state || '').trim();
+}
+
+// The financial year a date falls in, as "2026-27". India's runs April
+// to March. Built from the string, never from a Date, so a date-only
+// value cannot be shifted a day by a timezone.
+function gstFinancialYearOf(dateISO) {
+  const s = String(dateISO || '').slice(0, 10);
+  const m = s.match(/^(\d{4})-(\d{2})/);
+  if (!m) return '';
+  const year = +m[1], month = +m[2];
+  const start = month >= 4 ? year : year - 1;
+  return `${start}-${String((start + 1) % 100).padStart(2, '0')}`;
+}
+
 // ── Invoice series ──────────────────────────────────────────
 // Which numbering book an invoice came out of: the shop counter issuing
 // 138, 139, 140 while the website issues W-00004, W-00005. Both are

@@ -64,7 +64,28 @@ CREATE TABLE IF NOT EXISTS profiles (
   -- Format per series: {"online": "W-#####", "amazon": "A-#####"}. The
   -- offline series is absent by design — invoice_number_format above is
   -- its format, which is what it already was before series existed.
-  invoice_series_formats JSONB NOT NULL DEFAULT '{}'::jsonb
+  invoice_series_formats JSONB NOT NULL DEFAULT '{}'::jsonb,
+
+  -- ── GST registration details (Phase 2, Module 1) ──
+  --    See db/migration_gst_registration.sql for why each of these is
+  --    stored rather than derived. All additive: an existing profile
+  --    with none of them set behaves exactly as it did before.
+  legal_name TEXT,                 -- as on the PAN; business_name is the fallback
+  trade_name TEXT,                 -- as the business is known; likewise
+  business_constitution TEXT,      -- Proprietorship, Partnership, LLP, ...
+  -- regular | composition | casual | sez_unit | sez_developer | isd | tds | tcs
+  -- 'regular' is what every existing profile is: they file GSTR-1.
+  registration_type TEXT NOT NULL DEFAULT 'regular',
+  lut_number TEXT,                 -- export without payment of IGST
+  lut_expiry DATE,
+  iec_number TEXT,                 -- Importer Exporter Code
+  default_pos TEXT,                -- blank = the state of registration
+  reverse_charge_default BOOLEAN NOT NULL DEFAULT FALSE,
+  -- Stated, not inferred from turnover: the thresholds move by
+  -- notification and a hardcoded one silently goes stale.
+  einvoice_applicable BOOLEAN NOT NULL DEFAULT FALSE,
+  ewaybill_applicable BOOLEAN NOT NULL DEFAULT FALSE,
+  financial_year TEXT              -- "2026-27"
 );
 
 -- ── B2B Invoices ─────────────────────────────────────
