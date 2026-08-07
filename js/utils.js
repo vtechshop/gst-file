@@ -67,6 +67,50 @@ function applyInvoiceNumberFormat(format, seq) {
   return fmt + '-' + n;
 }
 
+// ── Invoice series ──────────────────────────────────────────
+// Which numbering book an invoice came out of: the shop counter issuing
+// 138, 139, 140 while the website issues W-00004, W-00005. Both are
+// outward supplies in the same return, each with its own numbering, and
+// GSTR-1 reports each book's document range separately.
+//
+// A blank or missing value is the shop series — that is what every
+// invoice saved before this field existed was, and what the database
+// column defaults to.
+//
+// Kept here rather than in any one page's script because the Invoice
+// List, the invoice form, and the Series Migration tool all have to name
+// the same series the same way. A series with no label of its own shows
+// under its own name, so a channel added later is readable immediately.
+const INVOICE_SOURCE_DEFAULT = 'offline';
+const INVOICE_SOURCE_LABELS = {
+  offline: 'Offline / Shop',
+  online:  'Online / Website'
+};
+
+function invoiceSourceOf(row) {
+  return String((row && row.invoice_source) || '').trim().toLowerCase() || INVOICE_SOURCE_DEFAULT;
+}
+
+function invoiceSourceLabel(source) {
+  const s = String(source || '').trim().toLowerCase() || INVOICE_SOURCE_DEFAULT;
+  return INVOICE_SOURCE_LABELS[s] || s;
+}
+
+// Never green or blue: those already mean B2C and B2B in the Type column
+// beside it. An unnamed series gets its own colour too rather than
+// borrowing the shop's, so it does not read as one.
+function invoiceSourceBadgeClass(source) {
+  const s = String(source || '').trim().toLowerCase() || INVOICE_SOURCE_DEFAULT;
+  if (s === 'offline') return 'badge-grey';
+  if (s === 'online') return 'badge-purple';
+  return 'badge-orange';
+}
+
+function invoiceSourceCellHtml(source) {
+  const s = String(source || '').trim().toLowerCase() || INVOICE_SOURCE_DEFAULT;
+  return `<span class="badge ${invoiceSourceBadgeClass(s)}">${escItemHtml(invoiceSourceLabel(s))}</span>`;
+}
+
 // Orders invoice numbers the way a numbering series runs rather than the
 // way text sorts. Plain string comparison puts "142" after "1419" and,
 // once a prefix is involved, scatters a sequence entirely. Each number is

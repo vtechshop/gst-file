@@ -91,7 +91,8 @@ function rememberInvListState(type, id, extra) {
       state: document.getElementById('invListStateFilter')?.value || '',
       month: document.getElementById('invListMonthFilter')?.value || '',
       year:  document.getElementById('invListYearFilter')?.value || '',
-      type:  document.getElementById('invListTypeFilter')?.value || ''
+      type:  document.getElementById('invListTypeFilter')?.value || '',
+      source: document.getElementById('invListSourceFilter')?.value || ''
     },
     sort: document.getElementById('invListSortOrder')?.value || 'desc',
     // Both, because which element scrolls depends on the viewport: the
@@ -115,6 +116,7 @@ function restoreInvListState() {
   set('invListMonthFilter', state.filters?.month);
   set('invListYearFilter', state.filters?.year);
   set('invListTypeFilter', state.filters?.type);
+  set('invListSourceFilter', state.filters?.source);
   set('invListSortOrder', state.sort);
   invListSort = state.sort === 'asc' ? 'asc' : 'desc';
 
@@ -163,20 +165,20 @@ async function fetchInvoiceListRows(userId) {
     type: 'b2b', id: r.id, invoice_number: r.invoice_number, invoice_date: r.invoice_date,
     customer_name: r.customer_name, gstin: r.gst_number, total_amount: +r.total_amount,
     state: r.state || '',
-    // Which numbering book the invoice belongs to. Not shown as a column;
-    // the Invoice Series Migration tool reads it to say what each
-    // invoice's current source is before moving it.
-    invoice_source: r.invoice_source || 'offline',
+    // Which numbering book the invoice belongs to — the Source column,
+    // the Source filter, and the Series Migration tool's before/after
+    // all read this one field.
+    invoice_source: r.invoice_source || INVOICE_SOURCE_DEFAULT,
     payment_status: r.payment_status || 'unpaid', amount_paid: +r.amount_paid || 0
   }));
   const b2cRows = (b2c || []).map(r => ({
     type: 'b2c', id: r.id, invoice_number: r.invoice_number || ('B2C-' + r.id.slice(0, 8).toUpperCase()), invoice_date: r.invoice_date,
     customer_name: r.customer_name || 'Walk-in Customer (B2C)', gstin: r.gst_number || '', total_amount: +r.total_amount,
     state: r.state || '',
-    // Which numbering book the invoice belongs to. Not shown as a column;
-    // the Invoice Series Migration tool reads it to say what each
-    // invoice's current source is before moving it.
-    invoice_source: r.invoice_source || 'offline',
+    // Which numbering book the invoice belongs to — the Source column,
+    // the Source filter, and the Series Migration tool's before/after
+    // all read this one field.
+    invoice_source: r.invoice_source || INVOICE_SOURCE_DEFAULT,
     payment_status: r.payment_status || 'unpaid', amount_paid: +r.amount_paid || 0
   }));
 
@@ -191,6 +193,7 @@ async function loadInvoiceList(userId) {
   // Populated here rather than in populateInvoiceListFilters(): the option
   // list is derived from the loaded records, which don't exist until now.
   populateInvoiceListStateFilter();
+  populateInvoiceListSourceFilter();
   renderInvoiceListTable(invListAllData);
 }
 
@@ -242,6 +245,21 @@ function populateInvoiceListStateFilter() {
   sel.innerHTML = buildStateFilterOptions(invListAllData, r => r.state, sel.value);
 }
 
+// Built from the series the invoices are actually in, never a fixed list
+// — a business that starts selling through another channel can filter by
+// it the day the first such invoice is saved. The shop series is always
+// offered, so the filter is usable before any other series exists.
+// Rebuilt on every refresh, keeping whatever was selected.
+function populateInvoiceListSourceFilter() {
+  const sel = document.getElementById('invListSourceFilter');
+  if (!sel) return;
+  const inUse = [...new Set([INVOICE_SOURCE_DEFAULT, ...invListAllData.map(invoiceSourceOf)])].sort();
+  const selected = sel.value;
+  sel.innerHTML = '<option value="">All Sources</option>' + inUse.map(s =>
+    `<option value="${escHtmlAttr(s)}"${s === selected ? ' selected' : ''}>${escItemHtml(invoiceSourceLabel(s))}</option>`
+  ).join('');
+}
+
 function populateInvoiceListFilters() {
   const monthSel = document.getElementById('invListMonthFilter');
   const yearSel  = document.getElementById('invListYearFilter');
@@ -267,16 +285,22 @@ function applyInvoiceListFilters() {
   const month = document.getElementById('invListMonthFilter')?.value || '';
   const year  = document.getElementById('invListYearFilter')?.value || '';
   const type  = document.getElementById('invListTypeFilter')?.value || '';
+  const source = document.getElementById('invListSourceFilter')?.value || '';
 
   // Every filter narrows the same list in turn, so they combine rather
-  // than override — State works alongside Search/Month/Year/Type.
+  // than override — State works alongside Search/Month/Year/Type/Source.
   let filtered = invListAllData;
   if (q) {
     filtered = filtered.filter(r =>
       (r.invoice_number || '').toLowerCase().includes(q) ||
       (r.customer_name  || '').toLowerCase().includes(q) ||
-      (r.gstin || '').toLowerCase().includes(q));
+      (r.gstin || '').toLowerCase().includes(q) ||
+      // Both the stored name and the label shown in the column, so
+      // typing "online" and typing "website" both find the same rows.
+      invoiceSourceOf(r).includes(q) ||
+      invoiceSourceLabel(invoiceSourceOf(r)).toLowerCase().includes(q));
   }
+  if (source) filtered = filtered.filter(r => invoiceSourceOf(r) === source);
   if (state) filtered = filtered.filter(r => r.state === state);
   if (month) filtered = filtered.filter(r => r.invoice_date && (new Date(r.invoice_date).getMonth() + 1) === +month);
   if (year)  filtered = filtered.filter(r => r.invoice_date && new Date(r.invoice_date).getFullYear() === +year);
@@ -326,7 +350,7 @@ function renderInvoiceListPage() {
     const message = stateName
       ? 'No invoices found for the selected state.'
       : 'No invoices found. Click New Invoice to create one.';
-    tbody.innerHTML = `<tr><td colspan="11" class="empty-state"><i class="fas fa-file-invoice table-loading-icon"></i>${message}</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="12" class="empty-state"><i class="fas fa-file-invoice table-loading-icon"></i>${message}</td></tr>`;
     if (tfoot) tfoot.innerHTML = '';
     renderInvListPagination();
     return;
@@ -337,6 +361,7 @@ function renderInvoiceListPage() {
     <tr data-invoice-id="${r.id}" data-invoice-type="${r.type}">
       <td>${start + i + 1}</td>
       <td class="fw-600">${r.invoice_number}</td>
+      <td>${invoiceSourceCellHtml(r.invoice_source)}</td>
       <td>${formatDate(r.invoice_date)}</td>
       <td>${r.customer_name}</td>
       <td><span class="badge ${r.type === 'b2b' ? 'badge-blue' : 'badge-green'}">${r.type.toUpperCase()}</span></td>
@@ -365,7 +390,7 @@ function renderInvoiceListPage() {
   const total = data.reduce((s, r) => s + (r.total_amount || 0), 0);
   const totalPaid = data.reduce((s, r) => s + (r.amount_paid || 0), 0);
   const totalBalance = round2(Math.max(0, total - totalPaid));
-  if (tfoot) tfoot.innerHTML = `<tr><td colspan="6" class="fw-700">TOTALS (${data.length} invoices)</td><td class="text-right fw-700">₹${formatNum(total)}</td><td class="text-right fw-700">₹${formatNum(totalPaid)}</td><td class="text-right fw-700">₹${formatNum(totalBalance)}</td><td></td><td></td></tr>`;
+  if (tfoot) tfoot.innerHTML = `<tr><td colspan="7" class="fw-700">TOTALS (${data.length} invoices)</td><td class="text-right fw-700">₹${formatNum(total)}</td><td class="text-right fw-700">₹${formatNum(totalPaid)}</td><td class="text-right fw-700">₹${formatNum(totalBalance)}</td><td></td><td></td></tr>`;
 
   renderInvListPagination();
 }

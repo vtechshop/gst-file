@@ -29,11 +29,6 @@
 // approved is the thing that gets applied.
 let seriesMigrationPreview = null;
 
-const SERIES_MIGRATION_LABELS = { offline: 'Offline / Shop', online: 'Online / Website' };
-function seriesMigrationLabel(series) {
-  return SERIES_MIGRATION_LABELS[series] || series;
-}
-
 function openSeriesMigrationModal() {
   const modal = document.getElementById('seriesMigrationModal');
   if (!modal) return;
@@ -62,14 +57,14 @@ function closeSeriesMigrationModal() {
 function populateSeriesMigrationTargets() {
   const sel = document.getElementById('smSource');
   if (!sel) return;
-  const inUse = new Set(['offline', 'online']);
+  const inUse = new Set(Object.keys(INVOICE_SOURCE_LABELS));
   (invListAllData || []).forEach(r => {
-    const s = String(r.invoice_source || 'offline').trim().toLowerCase();
+    const s = invoiceSourceOf(r);
     if (s) inUse.add(s);
   });
   const current = sel.value;
   sel.innerHTML = [...inUse].sort()
-    .map(s => `<option value="${escHtmlAttr(s)}">${escItemHtml(seriesMigrationLabel(s))}</option>`)
+    .map(s => `<option value="${escHtmlAttr(s)}">${escItemHtml(invoiceSourceLabel(s))}</option>`)
     .join('') + '<option value="__other">Other (type a name)…</option>';
   sel.value = [...inUse].includes(current) ? current : 'online';
   onSeriesMigrationTargetChange();
@@ -135,36 +130,36 @@ function previewSeriesMigration() {
   // An invoice already in the target series is shown, but counted as
   // unchanged — the confirmation must not claim to move something that
   // is already where it belongs.
-  const changing = matches.filter(r => (r.invoice_source || 'offline') !== target);
+  const changing = matches.filter(r => invoiceSourceOf(r) !== target);
   seriesMigrationPreview = { from, to, target, matches, changing };
 
   const rows = matches.map(r => {
-    const cur = r.invoice_source || 'offline';
+    const cur = invoiceSourceOf(r);
     const same = cur === target;
     return `<tr>
       <td>${escItemHtml(r.invoice_number)}</td>
       <td>${r.type === 'b2b' ? 'B2B' : 'B2C'}</td>
       <td>${escItemHtml(formatDate(r.invoice_date))}</td>
-      <td>${escItemHtml(seriesMigrationLabel(cur))}</td>
+      <td>${escItemHtml(invoiceSourceLabel(cur))}</td>
       <td>${same
         ? '<span class="text-muted-sm">unchanged</span>'
-        : escItemHtml(seriesMigrationLabel(target))}</td>
+        : escItemHtml(invoiceSourceLabel(target))}</td>
     </tr>`;
   }).join('');
 
   const byCurrent = {};
   changing.forEach(r => {
-    const cur = r.invoice_source || 'offline';
+    const cur = invoiceSourceOf(r);
     byCurrent[cur] = (byCurrent[cur] || 0) + 1;
   });
   const breakdown = Object.entries(byCurrent)
-    .map(([s, n]) => `${n} from ${seriesMigrationLabel(s)}`).join(', ');
+    .map(([s, n]) => `${n} from ${invoiceSourceLabel(s)}`).join(', ');
 
   result.innerHTML = `
     <div class="calc-box mb-16">
       <div class="calc-row"><span class="label">Invoices found</span><span class="value">${matches.length}</span></div>
       <div class="calc-row"><span class="label">Will be moved</span><span class="value">${changing.length}${breakdown ? ` <span class="fs-11 text-muted-sm">(${escItemHtml(breakdown)})</span>` : ''}</span></div>
-      <div class="calc-row total"><span class="label">New series</span><span class="value">${escItemHtml(seriesMigrationLabel(target))}</span></div>
+      <div class="calc-row total"><span class="label">New series</span><span class="value">${escItemHtml(invoiceSourceLabel(target))}</span></div>
     </div>
     <div class="table-wrapper" style="max-height:38vh;overflow:auto;">
       <table class="data-table">
@@ -175,16 +170,16 @@ function previewSeriesMigration() {
 
   if (changing.length) applyRow.classList.remove('d-none');
   else result.insertAdjacentHTML('beforeend',
-    `<p class="text-muted-sm mt-12">Every invoice in this range is already in the ${escItemHtml(seriesMigrationLabel(target))} series. Nothing to change.</p>`);
+    `<p class="text-muted-sm mt-12">Every invoice in this range is already in the ${escItemHtml(invoiceSourceLabel(target))} series. Nothing to change.</p>`);
 }
 
 async function applySeriesMigration() {
   if (!seriesMigrationPreview?.changing.length) return;
   const { from, to, target, changing } = seriesMigrationPreview;
 
-  const sources = [...new Set(changing.map(r => seriesMigrationLabel(r.invoice_source || 'offline')))];
+  const sources = [...new Set(changing.map(r => invoiceSourceLabel(invoiceSourceOf(r))))];
   const ok = await showYesNo(
-    `You are about to update ${changing.length} invoice${changing.length === 1 ? '' : 's'} from ${escItemHtml(sources.join(' and '))} to ${escItemHtml(seriesMigrationLabel(target))}.<br><br>` +
+    `You are about to update ${changing.length} invoice${changing.length === 1 ? '' : 's'} from ${escItemHtml(sources.join(' and '))} to ${escItemHtml(invoiceSourceLabel(target))}.<br><br>` +
     `This action only changes the Invoice Source and will affect only the GSTR-1 Documents Issued section. ` +
     `Invoice numbers, dates, customers, GST and totals are not touched.<br><br>Continue?`,
     'Invoice Series Migration');
@@ -201,7 +196,7 @@ async function applySeriesMigration() {
         source: target, rangeFrom: from, rangeTo: to
       })
     });
-    showToast(`${res.updated} invoice${res.updated === 1 ? '' : 's'} moved to ${seriesMigrationLabel(target)}.`);
+    showToast(`${res.updated} invoice${res.updated === 1 ? '' : 's'} moved to ${invoiceSourceLabel(target)}.`);
     // The list behind the modal is now out of date in exactly one field.
     // Refreshed in place, so the operator keeps their page and filters.
     const user = await getCurrentUser();
@@ -234,14 +229,14 @@ async function loadSeriesMigrationHistory() {
           <thead><tr><th>When</th><th>Range</th><th>From</th><th>To</th><th>Invoices</th></tr></thead>
           <tbody>${rows.map(r => {
             const old = r.old_sources && typeof r.old_sources === 'object'
-              ? Object.entries(r.old_sources).map(([s, n]) => `${seriesMigrationLabel(s)} (${n})`).join(', ')
+              ? Object.entries(r.old_sources).map(([s, n]) => `${invoiceSourceLabel(s)} (${n})`).join(', ')
               : '';
             const nums = Array.isArray(r.invoice_numbers) ? r.invoice_numbers : [];
             return `<tr>
               <td>${escItemHtml(formatDate(r.created_at))}</td>
               <td>${escItemHtml(r.range_from)} &ndash; ${escItemHtml(r.range_to)}</td>
               <td>${escItemHtml(old || '—')}</td>
-              <td>${escItemHtml(seriesMigrationLabel(r.new_source))}</td>
+              <td>${escItemHtml(invoiceSourceLabel(r.new_source))}</td>
               <td title="${escHtmlAttr(nums.join(', '))}">${r.invoice_count}</td>
             </tr>`;
           }).join('')}</tbody>

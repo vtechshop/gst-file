@@ -25,6 +25,7 @@ async function initInvoiceEntry() {
   setupMobileMenu();
   await loadUserProfile(user.id);
   populateInvoiceStateOptions();
+  populateInvoiceSourceOptions();
   updateAutoToggleUI();
   await loadInvoiceCustomersList(user.id);
   await initInvoiceItems(user.id, 'invoice');
@@ -312,13 +313,31 @@ async function onAutoToggleChange() {
 }
 
 // ── Invoice series ──────────────────────────────────
-// Which numbering book this invoice comes out of. A blank or missing
-// value is the shop series — that is what every invoice saved before
-// this field existed was.
-const DEFAULT_INVOICE_SOURCE = 'offline';
+// Which numbering book this invoice comes out of. The series names and
+// their labels live in js/utils.js, shared with the Invoice List's
+// Source column and the Series Migration tool, so all three name the
+// same series the same way.
 function getInvoiceSource() {
   const v = (document.getElementById('invSource')?.value || '').trim().toLowerCase();
-  return v || DEFAULT_INVOICE_SOURCE;
+  return v || INVOICE_SOURCE_DEFAULT;
+}
+
+// The two series this app ships with, plus every other one the business
+// already numbers invoices in. Without this a shop running an "amazon"
+// book could see that series on its existing invoices but never pick it
+// for a new one. The extra names come from the per-series counters on
+// the profile, which is already loaded — no extra request.
+function populateInvoiceSourceOptions() {
+  const el = document.getElementById('invSource');
+  if (!el) return;
+  const known = [...new Set([
+    ...Object.keys(INVOICE_SOURCE_LABELS),
+    ...Object.keys(getCachedProfile()?.invoice_series_sequences || {})
+  ])].map(s => String(s).trim().toLowerCase()).filter(Boolean).sort();
+  const current = el.value;
+  el.innerHTML = known.map(s =>
+    `<option value="${escHtmlAttr(s)}">${escItemHtml(invoiceSourceLabel(s))}</option>`).join('');
+  el.value = known.includes(current) ? current : INVOICE_SOURCE_DEFAULT;
 }
 
 // Selecting a value the dropdown does not list would silently blank the
@@ -328,7 +347,7 @@ function getInvoiceSource() {
 function setInvoiceSourceValue(series) {
   const el = document.getElementById('invSource');
   if (!el) return;
-  const want = String(series || '').trim().toLowerCase() || DEFAULT_INVOICE_SOURCE;
+  const want = String(series || '').trim().toLowerCase() || INVOICE_SOURCE_DEFAULT;
   if (![...el.options].some(o => o.value === want)) {
     el.add(new Option(want, want));
   }
@@ -359,7 +378,7 @@ async function generateInvoiceNo(userId, force) {
   // would have seen before. Other series read their own counter, and a
   // series that has never issued an invoice starts at 1.
   const series = getInvoiceSource();
-  const seq = (series === DEFAULT_INVOICE_SOURCE
+  const seq = (series === INVOICE_SOURCE_DEFAULT
     ? profile?.invoice_current_sequence
     : profile?.invoice_series_sequences?.[series]) || 1;
   setInvValue('invNum', applyInvoiceNumberFormat(format, seq));
@@ -381,7 +400,7 @@ async function reserveNextInvoiceNumber(userId, source) {
   try {
     const { invoiceNumber } = await apiFetch('/invoices/reserve-number', {
       method: 'POST',
-      body: JSON.stringify({ source: source || DEFAULT_INVOICE_SOURCE })
+      body: JSON.stringify({ source: source || INVOICE_SOURCE_DEFAULT })
     });
     return invoiceNumber;
   } catch (error) {
@@ -540,7 +559,7 @@ async function loadInvoiceForEdit(type, id) {
   setInvValue('invSupply', rec.supply_type || 'intrastate');
   // An invoice saved before series existed has no source stored — it
   // came off the shop counter, which is the default.
-  setInvoiceSourceValue(rec.invoice_source || DEFAULT_INVOICE_SOURCE);
+  setInvoiceSourceValue(rec.invoice_source || INVOICE_SOURCE_DEFAULT);
   setInvoiceTypeToggle(type);
   setPaymentSectionMode(false, rec.payment_status);
 
@@ -587,7 +606,7 @@ async function loadInvoiceDuplicateDraft() {
   setInvValue('invSupply', draft.supply_type || 'intrastate');
   // A duplicate of a website order is another website order — it keeps
   // the series, and gets the next number out of that series' book.
-  setInvoiceSourceValue(draft.invoice_source || DEFAULT_INVOICE_SOURCE);
+  setInvoiceSourceValue(draft.invoice_source || INVOICE_SOURCE_DEFAULT);
   // The original invoice's own type is authoritative — a B2C source
   // invoice may well have an optional GST Number on it too, so presence
   // of gst_number alone can no longer be used to infer B2B/B2C.
@@ -846,7 +865,7 @@ function clearInvoiceFormFields() {
   // Back to the default series, same as every other field here returns
   // to its default. generateInvoiceNo() below then previews the offline
   // counter, not whichever series was just used.
-  setInvoiceSourceValue(DEFAULT_INVOICE_SOURCE);
+  setInvoiceSourceValue(INVOICE_SOURCE_DEFAULT);
   setInvoiceTypeToggle('b2c');
   updateGstinValidationStatus();
 

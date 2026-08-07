@@ -668,6 +668,12 @@ table.data-table {
 .badge-blue   { background: #e3f2fd; color: #1565c0; }
 .badge-orange { background: #fff3e0; color: #e65100; }
 .badge-red    { background: #ffebee; color: #c62828; }
+/* Invoice Source. Deliberately not green or blue: those two already mean
+   B2C and B2B in the column beside it, and a sale is classified twice
+   over — 138 is B2C AND Offline. Two scales that never share a colour
+   keep the pair readable at a glance. */
+.badge-grey   { background: #eceff1; color: #455a64; }
+.badge-purple { background: #f3e5f5; color: #6a1b9a; }
 
 .clickable { cursor: pointer; }
 

@@ -4,25 +4,25 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Invoice List - GST Management System</title>
-  <link rel="stylesheet" href="css/style.css?v=5">
+  <link rel="stylesheet" href="css/style.css?v=6">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.31/jspdf.plugin.autotable.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/qrcode@1.4.4/build/qrcode.min.js"></script>
-  <script src="js/apiClient.js?v=5"></script>
-  <script src="js/backup.js?v=5"></script>
-  <script src="js/config.js?v=5"></script>
-  <script src="js/product-sync.js?v=5"></script>
-  <script src="js/auth.js?v=5"></script>
-  <script src="js/utils.js?v=5"></script>
-  <script src="js/search.js?v=5"></script>
-  <script src="js/profile.js?v=5"></script>
-  <script src="js/products.js?v=5"></script>
-  <script src="js/invoice-items.js?v=5"></script>
-  <script src="js/invoice-pdf.js?v=5"></script>
-  <script src="js/payments.js?v=5"></script>
-  <script src="js/invoice-list.js?v=5"></script>
-  <script src="js/invoice-series-migration.js?v=5"></script>
+  <script src="js/apiClient.js?v=6"></script>
+  <script src="js/backup.js?v=6"></script>
+  <script src="js/config.js?v=6"></script>
+  <script src="js/product-sync.js?v=6"></script>
+  <script src="js/auth.js?v=6"></script>
+  <script src="js/utils.js?v=6"></script>
+  <script src="js/search.js?v=6"></script>
+  <script src="js/profile.js?v=6"></script>
+  <script src="js/products.js?v=6"></script>
+  <script src="js/invoice-items.js?v=6"></script>
+  <script src="js/invoice-pdf.js?v=6"></script>
+  <script src="js/payments.js?v=6"></script>
+  <script src="js/invoice-list.js?v=6"></script>
+  <script src="js/invoice-series-migration.js?v=6"></script>
 </head>
 <body>
 <div class="app-layout">
@@ -103,6 +103,12 @@
               <option value="b2b">B2B</option>
               <option value="b2c">B2C</option>
             </select>
+            <!-- Options are built from the series actually in use — see
+                 populateInvoiceListSourceFilter() — so a channel added
+                 later is filterable the day its first invoice is saved. -->
+            <select id="invListSourceFilter" class="form-control w-150" onchange="applyInvoiceListFilters()" aria-label="Filter by invoice source">
+              <option value="">All Sources</option>
+            </select>
             <!-- Ordering, not filtering: it re-sorts the whole list, so it
                  has its own handler rather than applyInvoiceListFilters(). -->
             <select id="invListSortOrder" class="form-control w-220" onchange="onInvoiceListSortChange()" aria-label="Sort by invoice number">
@@ -119,7 +125,7 @@
             <table class="data-table">
               <thead>
                 <tr>
-                  <th>#</th><th>Invoice No</th><th>Date</th><th>Customer</th><th>Type</th><th>State</th>
+                  <th>#</th><th>Invoice No</th><th>Source</th><th>Date</th><th>Customer</th><th>Type</th><th>State</th>
                   <th>Total</th><th>Paid</th><th>Balance</th><th>Payment</th><th>Actions</th>
                 </tr>
               </thead>
