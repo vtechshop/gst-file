@@ -123,12 +123,12 @@ async function attachAggregates(res, req, table, where, params, columns) {
 // below for the one real user) and throws a 400 with every failure
 // reason joined into one message — same { error: { message } } shape
 // every other rejection in this app already uses, not a new response
-// shape just for this. Applied on both insert and update: the frontend
-// always sends the full field set either way (never a partial patch),
-// so validating the incoming body wholesale is correct for both.
-function runValidate(validate, body) {
+// shape just for this. Applied on both insert and update, with isInsert
+// telling the hook which it is — a create must arrive complete, an
+// update validates only the fields it actually writes.
+function runValidate(validate, body, isInsert) {
   if (!validate) return;
-  const result = validate(body);
+  const result = validate(body, isInsert);
   if (!result.valid) {
     const e = new Error(Object.values(result.errors).join(' '));
     e.status = 400; e.expose = true;
@@ -166,7 +166,7 @@ function makeCrudRouter(table, { columns, insertable = true, readOnly = false, o
   router.post('/', asyncRoute(async (req, res) => {
     if (readOnly) refuseWrite();
     if (!insertable) { const e = new Error(`${table} does not accept direct inserts.`); e.status = 405; e.expose = true; throw e; }
-    runValidate(validate, req.body);
+    runValidate(validate, req.body, true);
     // Ownership is always forced from the JWT, never trusted from the
     // body — this also correctly handles `profiles`, where ownerColumn
     // is `id` itself: whatever `id` the client sent gets overwritten
@@ -184,7 +184,7 @@ function makeCrudRouter(table, { columns, insertable = true, readOnly = false, o
 
   router.patch('/', asyncRoute(async (req, res) => {
     if (readOnly) refuseWrite();
-    runValidate(validate, req.body);
+    runValidate(validate, req.body, false);
     const { where, params } = buildWhere(req.query, ownerColumn, req.userId, columns);
     const patchCols = Object.keys(req.body).filter(c => columns.includes(c) && c !== ownerColumn); // ownership is never reassignable
     if (!patchCols.length) { const e = new Error('No valid fields to update.'); e.status = 400; e.expose = true; throw e; }
@@ -239,6 +239,8 @@ const TABLES = {
       'source','stock',
       // GST treatment (Phase 2, Module 3)
       'gst_treatment','cess_rate','reverse_charge',
+      // Product Master completion (Phase 2, Module 3A)
+      'gst_overrides','supply_bundle','principal_gst_rate',
       'created_at','updated_at'],
     // Requires a valid HSN on hand-created products only (source 'local').
     // Product Sync writes source 'synced' and is deliberately unaffected —

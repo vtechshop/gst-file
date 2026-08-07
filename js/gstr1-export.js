@@ -1009,7 +1009,10 @@ function gstr1AuditProducts(lines, productsById, errors) {
   const groups = new Map();
   lines.forEach(l => {
     const key = l.product_id || ('name:' + (l.item.product_name || '').trim().toLowerCase());
-    if (!groups.has(key)) groups.set(key, { name: l.item.product_name, invoices: new Set(), item: l.item, product: productsById[l.product_id] || null });
+    // Through the effective view, so a unit or HSN corrected in the
+    // Product Master is what the audit checks — not the synced value the
+    // correction exists to replace.
+    if (!groups.has(key)) groups.set(key, { name: l.item.product_name, invoices: new Set(), item: l.item, product: productEffective(productsById[l.product_id]) || null });
     groups.get(key).invoices.add(l.invoiceNumber);
   });
 

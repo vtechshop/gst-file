@@ -4,17 +4,17 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Product Master - GST Management System</title>
-  <link rel="stylesheet" href="css/style.css?v=13">
+  <link rel="stylesheet" href="css/style.css?v=14">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
-  <script src="js/apiClient.js?v=13"></script>
-  <script src="js/backup.js?v=13"></script>
-  <script src="js/config.js?v=13"></script>
-  <script src="js/product-sync.js?v=13"></script>
-  <script src="js/auth.js?v=13"></script>
-  <script src="js/utils.js?v=13"></script>
-  <script src="js/search.js?v=13"></script>
-  <script src="js/profile.js?v=13"></script>
-  <script src="js/products.js?v=13"></script>
+  <script src="js/apiClient.js?v=14"></script>
+  <script src="js/backup.js?v=14"></script>
+  <script src="js/config.js?v=14"></script>
+  <script src="js/product-sync.js?v=14"></script>
+  <script src="js/auth.js?v=14"></script>
+  <script src="js/utils.js?v=14"></script>
+  <script src="js/search.js?v=14"></script>
+  <script src="js/profile.js?v=14"></script>
+  <script src="js/products.js?v=14"></script>
 </head>
 <body>
 <div class="app-layout">
@@ -100,6 +100,17 @@
               <i class="fas fa-search"></i>
               <input type="text" id="prodSearch" class="form-control" aria-label="Search products">
             </div>
+            <select id="prodGstFilter" class="form-control w-220" onchange="applyProdFilters()" aria-label="Filter by GST readiness">
+              <option value="">All products</option>
+              <option value="issues">Not ready to report (GST issues)</option>
+              <option value="nounit">Goods with no unit</option>
+              <option value="nohsn">No HSN / SAC</option>
+              <option value="override">Has GST corrections</option>
+            </select>
+            <button type="button" class="btn btn-primary btn-sm text-nowrap" onclick="openProductModal()"><i class="fas fa-plus"></i> New Product</button>
+            <button type="button" class="btn btn-secondary btn-sm text-nowrap" onclick="openBulkUnitModal()" title="Set the unit on every product currently listed"><i class="fas fa-layer-group"></i> Bulk Set Unit</button>
+            <div style="display:none;">
+            </div>
           </div>
         </div>
         <div class="card-body p-0">
@@ -114,6 +125,7 @@
                   <th>HSN Code</th>
                   <th>Unit</th>
                   <th>GST%</th>
+                  <th>Treatment</th>
                   <th>Selling Price</th>
                   <th>Warranty</th>
                   <th>Source</th>
@@ -121,7 +133,7 @@
                 </tr>
               </thead>
               <tbody id="prodTableBody">
-                <tr><td colspan="11" class="empty-state"><i class="fas fa-spinner fa-spin table-loading-icon"></i>Loading...</td></tr>
+                <tr><td colspan="12" class="empty-state"><i class="fas fa-spinner fa-spin table-loading-icon"></i>Loading...</td></tr>
               </tbody>
             </table>
           </div>
@@ -138,6 +150,136 @@
 <script>
 document.addEventListener('DOMContentLoaded', initProducts);
 </script>
+
+<!-- Product Add / Edit -->
+<!-- Every GST field a product needs before its invoice lines can be
+     reported. For a synced product the GST fields are stored as
+     corrections beside the synced values, so the next sync cannot
+     overwrite them — see products.gst_overrides. -->
+<div class="modal-overlay" id="productModal">
+  <div class="modal modal-lg">
+    <div class="modal-header">
+      <span class="modal-title"><i class="fas fa-box"></i> <span id="prodModalTitle">New Product</span></span>
+      <button type="button" class="modal-close" onclick="closeProductModal()" aria-label="Close"><i class="fas fa-times"></i></button>
+    </div>
+    <div class="modal-body">
+      <div id="prodSyncedNote" class="d-none" style="background:#e3f2fd;border:1px solid #90caf9;border-radius:6px;padding:10px 14px;margin-bottom:16px;font-size:12.5px;color:#0d47a1;">
+        <i class="fas fa-sync"></i> This product is managed on the company website. Name, price, category and stock come from there and are refreshed on every sync.
+        <b>The GST fields below are stored separately and are never overwritten by a sync.</b>
+      </div>
+
+      <div class="form-grid cols-2 mb-16">
+        <div class="form-group" style="grid-column:1/-1;">
+          <label for="prodName">Product / Service Name <span class="text-required">*</span></label>
+          <input type="text" id="prodName" class="form-control" oninput="validateProductForm()">
+          <div class="form-error" id="prodNameError"></div>
+        </div>
+        <div class="form-group">
+          <label for="prodType">Goods or Service</label>
+          <select id="prodType" class="form-control" onchange="onProdTypeChange()">
+            <option value="goods">Goods</option>
+            <option value="service">Service</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label for="prodHsn"><span id="prodHsnLabel">HSN Code</span> <span class="text-required">*</span></label>
+          <input type="text" id="prodHsn" class="form-control" inputmode="numeric" maxlength="8" oninput="validateProductForm()">
+          <div class="form-error" id="prodHsnError"></div>
+        </div>
+        <div class="form-group">
+          <label for="prodUnit">Unit of Measure <span class="text-required" id="prodUnitReq">*</span></label>
+          <select id="prodUnit" class="form-control" onchange="validateProductForm()"></select>
+          <div class="form-error" id="prodUnitError"></div>
+        </div>
+        <div class="form-group">
+          <label for="prodGstRate">GST Rate %</label>
+          <select id="prodGstRate" class="form-control" onchange="validateProductForm()"></select>
+          <div class="form-error" id="prodGstRateError"></div>
+        </div>
+        <div class="form-group">
+          <label for="prodTreatment">GST Treatment</label>
+          <select id="prodTreatment" class="form-control" onchange="onProdTreatmentChange()"></select>
+          <span class="fs-11 text-muted-sm" id="prodTreatmentNote"></span>
+        </div>
+        <div class="form-group">
+          <label for="prodCess">Compensation CESS %</label>
+          <input type="number" id="prodCess" class="form-control" min="0" max="100" step="0.001" value="0" oninput="validateProductForm()">
+          <div class="form-error" id="prodCessError"></div>
+        </div>
+        <div class="form-group">
+          <label for="prodBundle">Supply Type</label>
+          <select id="prodBundle" class="form-control" onchange="onProdBundleChange()"></select>
+          <span class="fs-11 text-muted-sm" id="prodBundleNote"></span>
+        </div>
+        <div class="form-group d-none" id="prodPrincipalGroup">
+          <label for="prodPrincipalRate">Principal Supply Rate %</label>
+          <input type="number" id="prodPrincipalRate" class="form-control" min="0" max="100" step="0.01" oninput="validateProductForm()">
+          <div class="form-error" id="prodPrincipalRateError"></div>
+        </div>
+        <div class="form-group">
+          <label class="d-flex align-center gap-8" style="cursor:pointer;">
+            <input type="checkbox" id="prodReverseCharge">
+            <span>Reverse charge &mdash; tax payable by the recipient</span>
+          </label>
+        </div>
+      </div>
+
+      <div class="section-title mb-14">Catalogue <span class="fs-11 text-muted-sm" id="prodCatalogueNote"></span></div>
+      <div class="form-grid cols-3 mb-16">
+        <div class="form-group">
+          <label for="prodRate">Selling Price</label>
+          <input type="number" id="prodRate" class="form-control" min="0" step="0.01" value="0">
+        </div>
+        <div class="form-group">
+          <label for="prodSku">SKU</label>
+          <input type="text" id="prodSku" class="form-control">
+        </div>
+        <div class="form-group">
+          <label for="prodCategory">Category</label>
+          <input type="text" id="prodCategory" class="form-control">
+        </div>
+        <div class="form-group" style="grid-column:1/-1;">
+          <label for="prodDescription">Default Description</label>
+          <textarea id="prodDescription" class="form-control" rows="2"></textarea>
+        </div>
+      </div>
+
+      <div id="prodOverrideNote" class="fs-11 text-muted-sm mb-10"></div>
+    </div>
+    <div class="modal-footer">
+      <button type="button" class="btn btn-secondary" onclick="closeProductModal()">Cancel</button>
+      <button type="button" class="btn btn-primary" id="prodSaveBtn" onclick="saveProduct()"><i class="fas fa-save"></i> Save Product</button>
+    </div>
+  </div>
+</div>
+
+<!-- Bulk unit -->
+<div class="modal-overlay" id="bulkUnitModal">
+  <div class="modal">
+    <div class="modal-header">
+      <span class="modal-title"><i class="fas fa-layer-group"></i> Set Unit in Bulk</span>
+      <button type="button" class="modal-close" onclick="closeBulkUnitModal()" aria-label="Close"><i class="fas fa-times"></i></button>
+    </div>
+    <div class="modal-body">
+      <p class="text-muted-sm mb-16">Sets the unit of measure on every product currently listed, as a GST correction that a sync will not overwrite. Products that already have a unit are left alone unless you say otherwise.</p>
+      <div class="form-group mb-16">
+        <label for="bulkUnitValue">Unit</label>
+        <select id="bulkUnitValue" class="form-control"></select>
+      </div>
+      <label class="d-flex align-center gap-8 mb-16" style="cursor:pointer;">
+        <input type="checkbox" id="bulkUnitOverwrite">
+        <span>Also replace units that are already set</span>
+      </label>
+      <div class="calc-box mb-16">
+        <div class="calc-row total"><span class="label">Products that will change</span><span class="value" id="bulkUnitCount">0</span></div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button type="button" class="btn btn-secondary" onclick="closeBulkUnitModal()">Cancel</button>
+      <button type="button" class="btn btn-primary" id="bulkUnitBtn" onclick="applyBulkUnit()"><i class="fas fa-check"></i> Apply</button>
+    </div>
+  </div>
+</div>
 
 <!-- Global Search Modal -->
 <div class="modal-overlay" id="globalSearchModal">

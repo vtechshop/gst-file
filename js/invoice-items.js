@@ -573,12 +573,22 @@ async function onItemProductBlur(rowId, name) {
 // non-zero by then. Rate must always come from the newly selected
 // product's own Product Master value, same as HSN/Unit/GST % already do.
 function applyProductToRow(row, product) {
-  row.product_id = product.id;
-  row.product_name = product.name;
-  row.hsn_code = product.hsn_code || '';
-  row.unit = product.unit || '';
-  row.gst_percentage = +product.gst_percentage || 0;
-  row.rate = +product.default_rate || 0;
+  // Read through the effective view: a unit or HSN corrected in the
+  // Product Master lives in gst_overrides, which sync cannot overwrite,
+  // and must be what lands on the invoice line. Reading the raw row here
+  // would put the stale synced value on the invoice and the correction
+  // would never reach a return.
+  const p = productEffective(product);
+  row.product_id = p.id;
+  row.product_name = p.name;
+  row.hsn_code = p.hsn_code || '';
+  row.unit = p.unit || '';
+  row.gst_percentage = +p.gst_percentage || 0;
+  row.rate = +p.default_rate || 0;
+  // The line inherits the product's GST classification, and keeps its
+  // own copy from then on.
+  row.gst_treatment = gstTreatmentOf(p);
+  if (!gstIsTaxableTreatment(row.gst_treatment)) row.gst_percentage = 0;
   row.locked = true;
   renderItemsTable();
 }

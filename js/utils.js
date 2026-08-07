@@ -156,6 +156,147 @@ function gstFinancialYearOf(dateISO) {
   return `${start}-${String((start + 1) % 100).padStart(2, '0')}`;
 }
 
+// ── Product GST validation ──────────────────────────────────
+// Everything that has to be true of a product before an invoice line
+// using it can be reported. One definition, so the Product Master
+// refuses to save what the GSTR-1 export would later refuse to file —
+// rather than the two disagreeing and the problem surfacing at filing
+// time, which is how five products reached the Portal with no unit.
+//
+// Returns { field: message }. Empty means the product is reportable.
+function validateProductGst(product) {
+  const p = productEffective(product) || {};
+  const errors = {};
+  const name = String(p.name || '').trim();
+  const hsn = String(p.hsn_code || '').trim();
+  const unit = String(p.unit || '').trim();
+  const isService = String(p.type || 'goods') === 'service';
+  const treatment = gstTreatmentOf(p);
+  const rate = +p.gst_percentage;
+
+  if (!name) errors.name = 'A product needs a name.';
+
+  // A non-GST supply is outside GST and has no HSN obligation; every
+  // other supply is reported under one.
+  if (treatment !== 'non_gst') {
+    if (!hsn) {
+      errors.hsn_code = isService
+        ? 'A service needs a SAC. Service codes begin with 99.'
+        : 'Goods need an HSN code — the Portal rejects a line without one (RET191349).';
+    } else if (!/^\d{4}$|^\d{6}$|^\d{8}$/.test(hsn)) {
+      errors.hsn_code = `"${hsn}" is not an HSN or SAC — these are 4, 6 or 8 digits.`;
+    } else if (isService && !hsn.startsWith('99')) {
+      errors.hsn_code = `${hsn} is an HSN code, but this is a service. A SAC begins with 99.`;
+    } else if (!isService && hsn.startsWith('99')) {
+      errors.hsn_code = `${hsn} is a SAC, which is for services. Change the type to Service, or use a goods HSN.`;
+    }
+  }
+
+  // The one that has been costing them: the Portal rejects a goods line
+  // with no unit of measure (RET191353). Services carry NA and need none.
+  if (!isService && treatment !== 'non_gst' && !unit) {
+    errors.unit = 'Goods need a unit of measure — the Portal rejects a goods line without one (RET191353).';
+  }
+  // Checked against GST_UQC_MASTER, the Portal's own unit list already
+  // in this file — not a second list that could drift from it.
+  if (unit && !isService && typeof GST_UQC_MASTER !== 'undefined'
+      && !GST_UQC_MASTER.some(u => u.code === unit.toUpperCase())) {
+    errors.unit = `"${unit}" is not a unit quantity code the Portal recognises.`;
+  }
+
+  if (!Number.isFinite(rate) || rate < 0 || rate > 100) {
+    errors.gst_percentage = 'The GST rate must be between 0 and 100.';
+  } else if (!gstIsTaxableTreatment(treatment) && rate > 0) {
+    errors.gst_percentage = `A ${gstTreatmentLabel(treatment).toLowerCase()} supply cannot carry a rate of ${rate}%.`;
+  } else if (gstIsTaxableTreatment(treatment) && typeof GST_RATE_SLABS !== 'undefined'
+             && !GST_RATE_SLABS.includes(rate)) {
+    errors.gst_percentage = `${rate}% is not a GST rate slab (${GST_RATE_SLABS.join(', ')}).`;
+  }
+
+  const cess = +p.cess_rate;
+  if (p.cess_rate !== undefined && p.cess_rate !== null && p.cess_rate !== '' &&
+      (!Number.isFinite(cess) || cess < 0 || cess > 100)) {
+    errors.cess_rate = 'Compensation cess must be between 0 and 100.';
+  }
+
+  // A composite supply takes its principal supply's rate, so that rate
+  // has to be recorded and has to be the one charged.
+  const bundle = gstSupplyBundle(p);
+  if (bundle === 'composite') {
+    const principal = +p.principal_gst_rate;
+    if (!Number.isFinite(principal)) {
+      errors.principal_gst_rate = 'A composite supply takes the principal supply\'s rate — record which rate that is.';
+    } else if (Number.isFinite(rate) && principal !== rate) {
+      errors.principal_gst_rate = `A composite supply is taxed at the principal supply's rate (${principal}%), but this product charges ${rate}%.`;
+    }
+  }
+
+  return errors;
+}
+
+// ── Product GST corrections that survive sync ───────────────
+// The Product Master mirrors the company website, and every sync run
+// rewrites name, hsn_code, unit, gst_percentage and type from the feed.
+// A unit corrected here would therefore last until the next sync, which
+// is why products have stayed without one long enough for the Portal to
+// reject their invoice lines.
+//
+// Corrections live in products.gst_overrides, which sync does not write.
+// Everything that reads a product for GST purposes reads it through
+// productEffective(), so a correction applies everywhere at once and an
+// uncorrected product is byte-for-byte the row sync wrote.
+const PRODUCT_GST_OVERRIDABLE = ['unit', 'hsn_code', 'gst_percentage', 'type'];
+
+function productEffective(product) {
+  if (!product) return product;
+  const ov = product.gst_overrides;
+  if (!ov || typeof ov !== 'object') return product;
+  const out = { ...product };
+  PRODUCT_GST_OVERRIDABLE.forEach(f => {
+    // Presence is the test, not truthiness: '' is a legitimate
+    // correction meaning "this really has no unit".
+    if (Object.prototype.hasOwnProperty.call(ov, f)) out[f] = ov[f];
+  });
+  return out;
+}
+
+// Which fields on this product are a correction rather than the synced
+// value. Shown on screen so it is never a mystery why a product differs
+// from the website.
+function productOverriddenFields(product) {
+  const ov = product?.gst_overrides;
+  if (!ov || typeof ov !== 'object') return [];
+  return PRODUCT_GST_OVERRIDABLE.filter(f => Object.prototype.hasOwnProperty.call(ov, f));
+}
+
+// ── Composite and mixed supply ──────────────────────────────
+// Two ways of bundling supplies, with two different rate rules:
+//
+//   composite  naturally bundled and supplied together in the ordinary
+//              course of business, one of them principal. The bundle
+//              takes the PRINCIPAL supply's rate.
+//   mixed      two or more supplies for a single price, not naturally
+//              bundled. The bundle takes the HIGHEST rate of any
+//              component.
+//
+// Recorded so a bundle's rate can be checked against its rule instead of
+// taken on trust.
+const GST_SUPPLY_BUNDLES = [
+  { value: 'none',      label: 'Single supply',    note: 'An ordinary supply — its own rate applies.' },
+  { value: 'composite', label: 'Composite supply', note: 'Naturally bundled — the rate is the principal supply\'s rate.' },
+  { value: 'mixed',     label: 'Mixed supply',     note: 'Not naturally bundled — the rate is the HIGHEST rate of any component.' }
+];
+
+function gstSupplyBundle(product) {
+  const v = String(product?.supply_bundle || '').trim().toLowerCase();
+  return GST_SUPPLY_BUNDLES.some(b => b.value === v) ? v : 'none';
+}
+
+function gstSupplyBundleLabel(value) {
+  const b = GST_SUPPLY_BUNDLES.find(x => x.value === gstSupplyBundle({ supply_bundle: value }));
+  return b ? b.label : value;
+}
+
 // ── GST treatment of a supply ───────────────────────────────
 // Whether a supply is taxable at all, and if not, in which of three
 // distinct ways. GSTR-1 table 8 keeps them in separate columns, so they

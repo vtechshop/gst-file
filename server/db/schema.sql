@@ -331,6 +331,12 @@ CREATE TABLE IF NOT EXISTS products (
   gst_treatment TEXT NOT NULL DEFAULT 'taxable',
   cess_rate DECIMAL(6,3) NOT NULL DEFAULT 0,
   reverse_charge BOOLEAN NOT NULL DEFAULT FALSE,
+  -- ── Product Master completion (Phase 2, Module 3A) ──
+  --    Corrections to synced GST fields, which sync does not write and
+  --    therefore cannot overwrite. See migration_product_gst_master.sql.
+  gst_overrides JSONB NOT NULL DEFAULT '{}'::jsonb,
+  supply_bundle TEXT NOT NULL DEFAULT 'none',   -- none | composite | mixed
+  principal_gst_rate DECIMAL(5,2),              -- composite supplies only
   created_at TIMESTAMPTZ DEFAULT NOW(),
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );

@@ -86,9 +86,24 @@ const HSN_FORMAT_REGEX = /^(\d{4}|\d{6}|\d{8})$/;
 // that forgets the field would silently bypass the rule. Requiring an
 // explicit 'synced' to opt out means anything else — including undefined —
 // is validated.
-function validateProductPayload(payload) {
+// isInsert distinguishes creating a product from amending one, because
+// the two have different obligations:
+//
+//   creating   the product must arrive complete — an HSN is mandatory,
+//              exactly as before.
+//   amending   a partial update validates what it actually writes. A
+//              PATCH that never mentions hsn_code is not changing it,
+//              and demanding one made it impossible to correct any
+//              other field on a synced product, whose catalogue columns
+//              (hsn_code among them) are owned by the feed and are
+//              deliberately left out of the payload.
+function validateProductPayload(payload, isInsert) {
   const errors = {};
   if ((payload.source || '') === 'synced') return { valid: true, errors };
+
+  if (!isInsert && !Object.prototype.hasOwnProperty.call(payload, 'hsn_code')) {
+    return { valid: true, errors };
+  }
 
   const hsn = (payload.hsn_code || '').trim();
   if (!hsn || !HSN_FORMAT_REGEX.test(hsn)) {
