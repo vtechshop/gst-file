@@ -24,6 +24,7 @@ async function initCustomers() {
   setupLogoutBtn();
   setupMobileMenu();
   populateCustStateOptions();
+  populateCustGstCategoryOptions();
   loadUserProfile(user.id);
   setupCustSearch();
   await loadCustomers(user.id);
@@ -113,7 +114,16 @@ async function saveCustomer() {
   const addr  = document.getElementById('custAddr')?.value?.trim();
   const state = document.getElementById('custState')?.value;
 
-  const payload = { user_id: user.id, name, gstin, phone, email, address: addr, state };
+  const payload = { user_id: user.id, name, gstin, phone, email, address: addr, state,
+    // GST classification (Phase 2, Module 2). Every field optional; a
+    // customer saved without touching them is Registered — Regular,
+    // which is exactly what every existing customer already is.
+    gst_category:     document.getElementById('custGstCategory')?.value || GST_CUSTOMER_CATEGORY_DEFAULT,
+    pan:              document.getElementById('custPan')?.value?.trim().toUpperCase() || '',
+    country:          document.getElementById('custCountry')?.value?.trim() || '',
+    place_of_supply:  document.getElementById('custPos')?.value || '',
+    shipping_state:   document.getElementById('custShipState')?.value || '',
+    shipping_address: document.getElementById('custShipAddr')?.value?.trim() || '' };
 
   let error;
   if (custEditId) {
@@ -134,10 +144,13 @@ async function saveCustomer() {
 }
 
 function resetCustomer() {
-  ['custName','custGSTIN','custPhone','custEmail','custAddr'].forEach(id => {
+  ['custName','custGSTIN','custPhone','custEmail','custAddr',
+   'custPan','custCountry','custShipAddr'].forEach(id => {
     const el = document.getElementById(id); if (el) el.value = '';
   });
   const st = document.getElementById('custState'); if (st) st.value = '';
+  ['custPos','custShipState'].forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
+  setCustGstCategory(GST_CUSTOMER_CATEGORY_DEFAULT);
   custEditId = null;
   const title = document.getElementById('custFormTitle');
   if (title) title.textContent = 'Add Customer';
@@ -209,6 +222,11 @@ function editCustomer(id) {
   document.getElementById('custEmail').value = rec.email || '';
   document.getElementById('custAddr').value  = rec.address || '';
   document.getElementById('custState').value = rec.state || '';
+  setCustGstCategory(rec.gst_category);
+  const set = (id, v) => { const el = document.getElementById(id); if (el) el.value = v || ''; };
+  set('custPan', rec.pan); set('custCountry', rec.country);
+  set('custPos', rec.place_of_supply); set('custShipState', rec.shipping_state);
+  set('custShipAddr', rec.shipping_address);
   document.getElementById('custFormTitle').textContent = 'Edit Customer';
   document.getElementById('custSaveBtn').innerHTML = '<i class="fas fa-save"></i> Update Customer';
   document.getElementById('custName').scrollIntoView({ behavior: 'smooth', block: 'center' });
@@ -249,4 +267,48 @@ function setupCustSearch() {
     custPage = 1;
     renderCustTable(filtered);
   });
+}
+
+// ── GST classification (Phase 2, Module 2) ──────────
+// Which GSTR-1 table a supply to this customer is filed in. Populated
+// from the one definition in js/utils.js so the customer master, the
+// invoice form and the exporter cannot disagree about the categories.
+function populateCustGstCategoryOptions() {
+  const el = document.getElementById('custGstCategory');
+  if (el) {
+    el.innerHTML = GST_CUSTOMER_CATEGORIES.map(c =>
+      `<option value="${escHtmlAttr(c.value)}">${escItemHtml(c.label)}</option>`).join('');
+    el.value = GST_CUSTOMER_CATEGORY_DEFAULT;
+  }
+  // Both state pickers offer the same list the rest of the app uses.
+  ['custPos', 'custShipState'].forEach(id => {
+    const sel = document.getElementById(id);
+    if (!sel) return;
+    const keep = sel.querySelector('option')?.outerHTML || '';
+    sel.innerHTML = keep + INDIAN_STATES.map(st =>
+      `<option value="${escHtmlAttr(st)}">${escItemHtml(st)}</option>`).join('');
+  });
+  onCustGstCategoryChange();
+}
+
+function setCustGstCategory(value) {
+  const el = document.getElementById('custGstCategory');
+  if (el) el.value = gstCustomerCategory({ gst_category: value });
+  onCustGstCategoryChange();
+}
+
+// Says which table this customer's supplies are filed in, and calls out
+// the SEZ rule, which is the one that surprises people: a supply to an
+// SEZ is inter-state even when the SEZ is down the road.
+function onCustGstCategoryChange() {
+  const note = document.getElementById('custGstCategoryNote');
+  if (!note) return;
+  const value = document.getElementById('custGstCategory')?.value || GST_CUSTOMER_CATEGORY_DEFAULT;
+  const spec = gstCustomerCategorySpec(value);
+  let text = `GSTR-1 table ${spec.table}`;
+  if (!spec.registered) text += ' — no GSTIN required';
+  if (gstIsSezCategory(value)) text += ' — supplies are inter-state and carry IGST';
+  note.textContent = text;
+  // Country only means anything for an overseas recipient.
+  document.getElementById('custCountryGroup')?.classList.toggle('d-none', value !== 'export');
 }

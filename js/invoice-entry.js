@@ -15,7 +15,7 @@ let invoiceEditId = null;
 let invoiceEditType = null;
 let invoiceCustomersList = [];
 const INVOICE_FORM_KEY = 'invoice_invoice';
-const INVOICE_DRAFT_FIELDS = ['invGstin','invCustName','invPhone','invAddress','invState','invNum','invDate','invSupply','invSource'];
+const INVOICE_DRAFT_FIELDS = ['invGstin','invCustName','invPhone','invAddress','invState','invNum','invDate','invSupply','invSource','invGstCategory'];
 
 async function initInvoiceEntry() {
   const user = await requireAuth();
@@ -26,6 +26,7 @@ async function initInvoiceEntry() {
   await loadUserProfile(user.id);
   populateInvoiceStateOptions();
   populateInvoiceSourceOptions();
+  populateInvGstCategoryOptions();
   updateAutoToggleUI();
   await loadInvoiceCustomersList(user.id);
   await initInvoiceItems(user.id, 'invoice');
@@ -225,6 +226,7 @@ function onInvoiceGstinBlur(el) {
   const phEl = document.getElementById('invPhone');   if (phEl && !phEl.value && match.phone)   phEl.value = match.phone;
   const adEl = document.getElementById('invAddress'); if (adEl && !adEl.value && match.address) adEl.value = match.address;
   const stEl = document.getElementById('invState');   if (stEl && !stEl.value && match.state)   stEl.value = match.state;
+  applyCustomerGstCategory(match);
   detectSupplyType();
 }
 
@@ -310,6 +312,59 @@ async function onAutoToggleChange() {
   if (user) await saveUserProfile(user.id, { invoice_auto_number: on }, true);
   updateAutoToggleUI();
   if (on && user) generateInvoiceNo(user.id, true);
+}
+
+// ── Customer GST category ───────────────────────────
+// Which GSTR-1 table this supply belongs in. Stored on the invoice, not
+// looked up from the customer master at export time: a return that has
+// been filed must not change because a master record was edited
+// afterwards. An invoice raised in July to a customer who becomes an SEZ
+// unit in September was not an SEZ supply.
+function populateInvGstCategoryOptions() {
+  const el = document.getElementById('invGstCategory');
+  if (!el) return;
+  const current = el.value;
+  el.innerHTML = GST_CUSTOMER_CATEGORIES.map(c =>
+    `<option value="${escHtmlAttr(c.value)}">${escItemHtml(c.label)}</option>`).join('');
+  el.value = GST_CUSTOMER_CATEGORIES.some(c => c.value === current) ? current : GST_CUSTOMER_CATEGORY_DEFAULT;
+  onInvGstCategoryChange();
+}
+
+function getInvGstCategory() {
+  return gstCustomerCategory({ gst_category: document.getElementById('invGstCategory')?.value });
+}
+
+function setInvGstCategory(value) {
+  const el = document.getElementById('invGstCategory');
+  if (!el) return;
+  el.value = gstCustomerCategory({ gst_category: value });
+  onInvGstCategoryChange();
+}
+
+// Says which table the invoice will be filed in, and — for SEZ — that
+// the supply is inter-state whatever the two states are, because that
+// is the part people get wrong.
+function onInvGstCategoryChange() {
+  const note = document.getElementById('invGstCategoryNote');
+  if (!note) return;
+  const value = getInvGstCategory();
+  const spec = gstCustomerCategorySpec(value);
+  let text = `GSTR-1 table ${spec.table}`;
+  if (gstIsSezCategory(value)) {
+    text += ' — an SEZ supply is inter-state and carries IGST, whatever state the SEZ is in';
+  }
+  note.textContent = text;
+  note.style.color = gstIsSezCategory(value) ? 'var(--primary)' : '';
+}
+
+// Carries the category across from a customer the user picked. Never
+// overwrites a category already chosen on this invoice — the same
+// only-fill-what-is-empty rule the other customer fields follow.
+function applyCustomerGstCategory(customer) {
+  if (!customer) return;
+  const el = document.getElementById('invGstCategory');
+  if (!el || el.value !== GST_CUSTOMER_CATEGORY_DEFAULT) return;
+  setInvGstCategory(customer.gst_category);
 }
 
 // ── Invoice series ──────────────────────────────────
@@ -503,6 +558,7 @@ function onInvoiceCustomerInput() {
   const phEl  = document.getElementById('invPhone');   if (phEl  && !phEl.value  && cust.phone)   phEl.value  = cust.phone;
   const adEl  = document.getElementById('invAddress'); if (adEl  && !adEl.value  && cust.address) adEl.value  = cust.address;
   const stEl  = document.getElementById('invState');   if (stEl  && !stEl.value  && cust.state)   stEl.value  = cust.state;
+  applyCustomerGstCategory(cust);
   detectSupplyType();
   updateGstinValidationStatus();
 }
@@ -559,6 +615,7 @@ async function loadInvoiceForEdit(type, id) {
   // An invoice saved before series existed has no source stored — it
   // came off the shop counter, which is the default.
   setInvoiceSourceValue(rec.invoice_source || INVOICE_SOURCE_DEFAULT);
+  setInvGstCategory(rec.gst_category);
   setInvoiceTypeToggle(type);
   setPaymentSectionMode(false, rec.payment_status);
 
@@ -606,6 +663,7 @@ async function loadInvoiceDuplicateDraft() {
   // A duplicate of a website order is another website order — it keeps
   // the series, and gets the next number out of that series' book.
   setInvoiceSourceValue(draft.invoice_source || INVOICE_SOURCE_DEFAULT);
+  setInvGstCategory(draft.gst_category);
   // The original invoice's own type is authoritative — a B2C source
   // invoice may well have an optional GST Number on it too, so presence
   // of gst_number alone can no longer be used to infer B2B/B2C.
@@ -656,6 +714,7 @@ async function saveInvoice() {
   const invDate  = getInvText('invDate');
   const supply   = document.getElementById('invSupply')?.value || 'intrastate';
   const source   = getInvoiceSource();
+  const gstCategory = getInvGstCategory();
 
   const type = getSelectedInvoiceType();
   const wasNewInvoice = !invoiceEditId;
@@ -724,6 +783,7 @@ async function saveInvoice() {
     customer_name: custName, phone, address, state,
     invoice_number: invNum, invoice_date: invDate, supply_type: supply,
     invoice_source: source,
+    gst_category: gstCategory,
     transport_required: transportRequired,
     vehicle_number: transportRequired ? getInvText('invVehicleNo').toUpperCase() : '',
     transporter_name: transportRequired ? getInvText('invTransporter') : '',
@@ -865,6 +925,7 @@ function clearInvoiceFormFields() {
   // to its default. generateInvoiceNo() below then previews the offline
   // counter, not whichever series was just used.
   setInvoiceSourceValue(INVOICE_SOURCE_DEFAULT);
+  setInvGstCategory(GST_CUSTOMER_CATEGORY_DEFAULT);
   setInvoiceTypeToggle('b2c');
   updateGstinValidationStatus();
 

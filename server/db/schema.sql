@@ -122,7 +122,11 @@ CREATE TABLE IF NOT EXISTS b2b_invoices (
   amount_paid DECIMAL(15,2) NOT NULL DEFAULT 0,
   created_at TIMESTAMPTZ DEFAULT NOW(),
   updated_at TIMESTAMPTZ DEFAULT NOW(),
-  invoice_source TEXT NOT NULL DEFAULT 'offline'
+  invoice_source TEXT NOT NULL DEFAULT 'offline',
+  -- Which GSTR-1 table this supply belongs in. Stored on the document,
+  -- not looked up from the customer master at export time: a filed
+  -- return must not change because a master was edited afterwards.
+  gst_category TEXT NOT NULL DEFAULT 'regular'
 );
 
 -- ── B2C Invoices ─────────────────────────────────────
@@ -159,7 +163,11 @@ CREATE TABLE IF NOT EXISTS b2c_invoices (
   amount_paid DECIMAL(15,2) NOT NULL DEFAULT 0,
   created_at TIMESTAMPTZ DEFAULT NOW(),
   updated_at TIMESTAMPTZ DEFAULT NOW(),
-  invoice_source TEXT NOT NULL DEFAULT 'offline'
+  invoice_source TEXT NOT NULL DEFAULT 'offline',
+  -- Which GSTR-1 table this supply belongs in. Stored on the document,
+  -- not looked up from the customer master at export time: a filed
+  -- return must not change because a master was edited afterwards.
+  gst_category TEXT NOT NULL DEFAULT 'regular'
 );
 
 -- No two invoices may share a number WITHIN A SERIES — a real DB-level
@@ -246,7 +254,17 @@ CREATE TABLE IF NOT EXISTS customers (
   address TEXT,
   state TEXT,
   created_at TIMESTAMPTZ DEFAULT NOW(),
-  updated_at TIMESTAMPTZ DEFAULT NOW()
+  updated_at TIMESTAMPTZ DEFAULT NOW(),
+  -- ── Customer GST category (Phase 2, Module 2) ──
+  --    Decides which GSTR-1 table a supply to this recipient appears in.
+  --    'regular' is what every existing customer is: reported in 4A with
+  --    inv_typ 'R'. See db/migration_customer_gst_category.sql.
+  gst_category TEXT NOT NULL DEFAULT 'regular',
+  pan TEXT,
+  country TEXT,                    -- blank = India
+  place_of_supply TEXT,            -- blank = derive as before
+  shipping_address TEXT,           -- bill-to remains address/state above
+  shipping_state TEXT
 );
 
 -- New indexes (customer_name, gst_number)

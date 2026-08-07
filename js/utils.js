@@ -156,6 +156,78 @@ function gstFinancialYearOf(dateISO) {
   return `${start}-${String((start + 1) % 100).padStart(2, '0')}`;
 }
 
+// ── Customer GST category ───────────────────────────────────
+// What kind of recipient a supply is made to. This is the single thing
+// that decides which GSTR-1 table an invoice lands in, so it is defined
+// once here and read by the customer master, the invoice form and the
+// exporter alike.
+//
+// 'regular' is the default and is what every customer and every invoice
+// created before this existed is — they have been reported in table 4A
+// as inv_typ 'R', and they continue to be.
+//
+// `table` below is the GSTR-1 table each category feeds. `registered`
+// says whether a GSTIN is required, which is what separates the B2B
+// tables from the B2C ones.
+const GST_CUSTOMER_CATEGORIES = [
+  { value: 'regular',       label: 'Registered — Regular',        table: '4A', registered: true  },
+  { value: 'composition',   label: 'Registered — Composition',    table: '4A', registered: true  },
+  { value: 'government',    label: 'Government Department / PSU',  table: '4A', registered: true  },
+  { value: 'uin',           label: 'UIN Holder — Embassy / UN',    table: '4A', registered: true  },
+  { value: 'sez_unit',      label: 'SEZ Unit',                     table: '4B', registered: true  },
+  { value: 'sez_developer', label: 'SEZ Developer',                table: '4B', registered: true  },
+  { value: 'deemed_export', label: 'Deemed Export',                table: '6C', registered: true  },
+  { value: 'export',        label: 'Export (overseas)',            table: '6A', registered: false },
+  { value: 'unregistered',  label: 'Unregistered Business',        table: '5 / 7', registered: false },
+  { value: 'consumer',      label: 'Consumer (B2C)',               table: '5 / 7', registered: false }
+];
+
+const GST_CUSTOMER_CATEGORY_DEFAULT = 'regular';
+
+function gstCustomerCategory(row) {
+  const v = String(row?.gst_category || '').trim().toLowerCase();
+  return GST_CUSTOMER_CATEGORIES.some(c => c.value === v) ? v : GST_CUSTOMER_CATEGORY_DEFAULT;
+}
+
+function gstCustomerCategoryLabel(value) {
+  const c = GST_CUSTOMER_CATEGORIES.find(x => x.value === gstCustomerCategory({ gst_category: value }));
+  return c ? c.label : value;
+}
+
+function gstCustomerCategorySpec(value) {
+  return GST_CUSTOMER_CATEGORIES.find(x => x.value === gstCustomerCategory({ gst_category: value }))
+    || GST_CUSTOMER_CATEGORIES[0];
+}
+
+// Supplies to an SEZ are inter-state supplies by law regardless of where
+// the SEZ physically sits — section 7(5)(b) of the IGST Act. A supply to
+// an SEZ unit in the same state as the supplier still attracts IGST, not
+// CGST+SGST. Worth its own function because the ordinary
+// same-state-means-intrastate rule gives the wrong answer here.
+function gstIsSezCategory(value) {
+  const v = gstCustomerCategory({ gst_category: value });
+  return v === 'sez_unit' || v === 'sez_developer';
+}
+
+// The inv_typ a B2B-table invoice carries.
+//
+//   R      regular registered supply
+//   SEWP   SEZ supply made WITH payment of IGST
+//   SEWOP  SEZ supply made WITHOUT payment of IGST (under an LUT)
+//   DE     deemed export
+//
+// For SEZ the choice between SEWP and SEWOP is taken from the invoice's
+// own tax, not from a setting: an invoice that charged IGST was made with
+// payment, one that charged nothing was made without. That cannot
+// disagree with the figures being filed alongside it, which a stored
+// preference could.
+function gstr1InvTypFor(category, taxCharged) {
+  const v = gstCustomerCategory({ gst_category: category });
+  if (v === 'deemed_export') return 'DE';
+  if (gstIsSezCategory(v)) return (+taxCharged || 0) > 0 ? 'SEWP' : 'SEWOP';
+  return 'R';
+}
+
 // ── Invoice series ──────────────────────────────────────────
 // Which numbering book an invoice came out of: the shop counter issuing
 // 138, 139, 140 while the website issues W-00004, W-00005. Both are

@@ -333,7 +333,12 @@ const GSTR1_EMITTABLE_UQC = new Set([...Object.values(GSTR1_UQC_MAP), GSTR1_UQC_
 // The values this generator itself produces for these fields. Asserted so
 // a future edit cannot introduce a third value silently; they are our
 // emitted vocabulary, not a transcription of GSTN's.
-const GSTR1_EMITTED_INV_TYP = new Set(['R']);          // buildGSTR1Payload sets 'R' on every B2B invoice
+// R regular, SEWP SEZ with payment of IGST, SEWOP SEZ without payment,
+// DE deemed export. Which one an invoice carries is decided by
+// gstr1InvTypFor() in js/utils.js from the invoice's own category and
+// its own tax. An invoice with no category is 'R', which is every
+// invoice raised before categories existed.
+const GSTR1_EMITTED_INV_TYP = new Set(['R', 'SEWP', 'SEWOP', 'DE']);
 const GSTR1_EMITTED_RCHRG = new Set(['N']);            // ... and 'N' for reverse charge
 const GSTR1_EMITTED_NTTY = new Set(['C', 'D']);        // credit / debit note
 const GSTR1_EMITTED_SPLY_TY = new Set(['INTER', 'INTRA']);
@@ -1294,8 +1299,42 @@ async function buildGSTR1Payload(userId, profile, periodFilter) {
       return;
     }
 
+    // A supply to an SEZ is an inter-state supply however close the SEZ
+    // is — section 7(5)(b) of the IGST Act. Charging CGST+SGST on it is
+    // the wrong tax, not merely the wrong label, and a 4B row carrying
+    // state tax will not reconcile.
+    if (gstIsSezCategory(inv.gst_category) && (recomputed.cgst > 0 || recomputed.sgst > 0)) {
+      errors.push(gstr1Err({
+        invoice: inv.invoice_number, customer: inv.customer_name, field: 'Tax',
+        current: `CGST ${recomputed.cgst} + SGST ${recomputed.sgst}`,
+        expected: 'IGST, or no tax at all under an LUT',
+        message: 'A supply to an SEZ is an inter-state supply under section 7(5)(b) of the IGST Act, whatever state the SEZ is in.',
+        fix: 'Open the invoice and set Supply Type to Interstate so the tax is charged as IGST.'
+      }));
+      return;
+    }
+
+    // Supplying an SEZ without paying IGST requires an LUT in force on
+    // the date of the invoice. Without one the supply had to be made on
+    // payment of IGST, and filing it as SEWOP claims a relief that was
+    // not available.
+    if (gstIsSezCategory(inv.gst_category) && recomputed.gstAmount === 0) {
+      const lut = gstLutStatus(profile, inv.invoice_date);
+      if (!lut.active) {
+        errors.push(gstr1Err({
+          invoice: inv.invoice_number, customer: inv.customer_name, field: 'LUT',
+          current: lut.number ? `LUT ${lut.number} ${lut.reason}` : 'no LUT recorded',
+          expected: 'an LUT in force on the date of the invoice',
+          message: 'This SEZ supply carries no tax, which is only allowed under a Letter of Undertaking.',
+          fix: 'Record the LUT and its validity in Business Profile, or raise the invoice with IGST.'
+        }));
+        return;
+      }
+    }
+
     const invEntry = {
-      inum: inv.invoice_number, idt, val: gstr1InvoiceVal(recomputed.total), pos, rchrg: 'N', inv_typ: 'R',
+      inum: inv.invoice_number, idt, val: gstr1InvoiceVal(recomputed.total), pos, rchrg: 'N',
+      inv_typ: gstr1InvTypFor(inv.gst_category, recomputed.igst + recomputed.cgst + recomputed.sgst),
       itms: recomputed.byRate.map((b, i) => ({ num: i + 1, itm_det: { txval: b.taxable, rt: b.rate, iamt: b.igst, camt: b.cgst, samt: b.sgst, csamt: 0 } }))
     };
     if (!b2bGroups.has(gstin)) b2bGroups.set(gstin, []);

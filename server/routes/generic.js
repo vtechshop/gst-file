@@ -222,6 +222,8 @@ const TABLES = {
   },
   customers: {
     columns: ['id','user_id','name','gstin','phone','email','address','state',
+      // Customer GST category (Phase 2, Module 2)
+      'gst_category','pan','country','place_of_supply','shipping_address','shipping_state',
       'created_at','updated_at'],
     validate: validateCustomerPayload
   },
@@ -271,7 +273,7 @@ const TABLES = {
       'total_amount','supply_type','igst','cgst','sgst','transport_required',
       'vehicle_number','transporter_name','transport_mode','transport_distance_km',
       'lr_number','lr_date','transporter_gstin','vehicle_type','dispatch_from','dispatch_to',
-      'payment_status','amount_paid','invoice_source',
+      'payment_status','amount_paid','invoice_source','gst_category',
       'created_at','updated_at']
   },
   b2c_invoices: {
@@ -280,7 +282,7 @@ const TABLES = {
       'supply_type','igst','cgst','sgst','invoice_date','transport_required',
       'vehicle_number','transporter_name','transport_mode','transport_distance_km',
       'lr_number','lr_date','transporter_gstin','vehicle_type','dispatch_from','dispatch_to',
-      'payment_status','amount_paid','invoice_source',
+      'payment_status','amount_paid','invoice_source','gst_category',
       'created_at','updated_at']
   },
   b2b_hsn: {

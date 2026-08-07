@@ -4,18 +4,18 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Customer Master - GST Management System</title>
-  <link rel="stylesheet" href="css/style.css?v=11">
+  <link rel="stylesheet" href="css/style.css?v=12">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
-  <script src="js/apiClient.js?v=11"></script>
-  <script src="js/backup.js?v=11"></script>
-  <script src="js/config.js?v=11"></script>
-  <script src="js/product-sync.js?v=11"></script>
-  <script src="js/auth.js?v=11"></script>
-  <script src="js/utils.js?v=11"></script>
-  <script src="js/search.js?v=11"></script>
-  <script src="js/profile.js?v=11"></script>
-  <script src="js/payments.js?v=11"></script>
-  <script src="js/customers.js?v=11"></script>
+  <script src="js/apiClient.js?v=12"></script>
+  <script src="js/backup.js?v=12"></script>
+  <script src="js/config.js?v=12"></script>
+  <script src="js/product-sync.js?v=12"></script>
+  <script src="js/auth.js?v=12"></script>
+  <script src="js/utils.js?v=12"></script>
+  <script src="js/search.js?v=12"></script>
+  <script src="js/profile.js?v=12"></script>
+  <script src="js/payments.js?v=12"></script>
+  <script src="js/customers.js?v=12"></script>
 </head>
 <body>
 <div class="app-layout">
@@ -113,8 +113,47 @@
             </div>
           </div>
           <div class="form-group mb-16">
-            <label for="custAddr">Address</label>
+            <label for="custAddr">Billing Address</label>
             <textarea id="custAddr" class="form-control" rows="2"></textarea>
+          </div>
+
+          <!-- GST classification. Decides which GSTR-1 table a supply to
+               this customer is filed in. Every existing customer is
+               Registered — Regular, which is what they have always been
+               reported as. -->
+          <div class="form-grid cols-3 mb-16">
+            <div class="form-group">
+              <label for="custGstCategory">GST Category</label>
+              <select id="custGstCategory" class="form-control" onchange="onCustGstCategoryChange()"></select>
+              <span class="fs-11 text-muted-sm" id="custGstCategoryNote"></span>
+            </div>
+            <div class="form-group">
+              <label for="custPan">PAN</label>
+              <input type="text" id="custPan" class="form-control uppercase" maxlength="10">
+            </div>
+            <div class="form-group" id="custCountryGroup">
+              <label for="custCountry">Country</label>
+              <input type="text" id="custCountry" class="form-control" placeholder="India">
+            </div>
+          </div>
+          <div class="form-grid cols-3 mb-16">
+            <div class="form-group">
+              <label for="custPos">Place of Supply Override</label>
+              <select id="custPos" class="form-control">
+                <option value="">Derive from GSTIN / State</option>
+              </select>
+              <span class="fs-11 text-muted-sm">Only when the supply is made somewhere other than the billing state.</span>
+            </div>
+            <div class="form-group">
+              <label for="custShipState">Ship-To State</label>
+              <select id="custShipState" class="form-control">
+                <option value="">Same as billing</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label for="custShipAddr">Ship-To Address</label>
+              <textarea id="custShipAddr" class="form-control" rows="1" placeholder="Same as billing"></textarea>
+            </div>
           </div>
           <div class="btn-group">
             <button type="button" class="btn btn-primary" id="custSaveBtn" onclick="saveCustomer()"><i class="fas fa-save"></i> Save Customer</button>
