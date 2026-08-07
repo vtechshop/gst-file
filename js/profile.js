@@ -5,11 +5,22 @@
 let _currentProfile = null;
 
 // ── Load profile from DB ───────────────────
+// A failed read must not erase a profile we already hold. Assigning the
+// result unconditionally meant one unlucky request — a 429, a dropped
+// connection — replaced a good profile with undefined, and everything
+// downstream then behaved as though the business had no GSTIN and no
+// state. The GSTR-1 exporter turned exactly that into an empty gstin and
+// place of supply 99 on a return.
 async function loadUserProfile(userId) {
   const { data } = await _supabase.from('profiles').select('*').eq('id', userId).single();
-  _currentProfile = data;
-  if (data) updateNavFromProfile(data);
-  return data;
+  if (data) {
+    _currentProfile = data;
+    updateNavFromProfile(data);
+  }
+  // What we actually have, which on a failed read is the previous value
+  // rather than nothing. Still null for a user who genuinely has no
+  // profile row yet.
+  return data || _currentProfile;
 }
 
 // ── Save profile (upsert) ──────────────────

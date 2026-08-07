@@ -669,6 +669,43 @@ async function gstr1AwaitPeriodOptions() {
   }
 }
 
+// Reports what the exporter actually read for the business's own
+// identity, every run, before any validation.
+//
+// Not opt-in, unlike the period trace below. When this went wrong the
+// file came out with an empty gstin and place of supply 99 while the
+// Business Profile screen showed the correct GSTIN and Tamil Nadu, and
+// there was no way to tell from the outside which of the two the
+// exporter had seen. One line in the console settles it.
+//
+// stateCode is listed because it is the value people go looking for, and
+// the answer is that no such field exists: the code is derived from the
+// GSTIN's first two digits, falling back to the state name only when the
+// GSTIN is unusable — and getStateCode('') is the sole source of 99.
+function gstr1TraceProfile(profile, businessGstin, businessState, check) {
+  const derivedFrom = check.valid ? 'GSTIN characters 1-2' : `getStateCode(${JSON.stringify(businessState)})`;
+  const code = check.valid ? businessGstin.slice(0, 2) : getStateCode(businessState);
+  const loaded = !!profile;
+  console.info(
+    `[GSTR-1 profile] gstin=${JSON.stringify(businessGstin)} ` +
+    `state=${JSON.stringify(businessState)} stateCode=${JSON.stringify(code)} ` +
+    `(from ${derivedFrom}) profileLoaded=${loaded}` +
+    (loaded ? '' : ' — the profile was never read; an empty state yields 99'));
+  let verbose = false;
+  try { verbose = (typeof window !== 'undefined' && window.GSTR1_TRACE_PROFILE)
+    || localStorage.getItem('gst_trace_profile') === '1'; } catch (e) { /* storage blocked */ }
+  if (!verbose && loaded && check.valid) return;
+  console.info(
+    `[GSTR-1 profile trace]\n` +
+    `  getCachedProfile() returned : ${loaded ? Object.keys(profile).length + ' fields' : String(profile)}\n` +
+    `  businessProfile.gstin       : ${JSON.stringify(profile?.gstin ?? null)}\n` +
+    `  businessProfile.state       : ${JSON.stringify(profile?.state ?? null)}\n` +
+    `  businessProfile.stateCode   : (no such field — derived, see below)\n` +
+    `  myGSTIN     (businessGstin) : ${JSON.stringify(businessGstin)} ` +
+    `${check.valid ? '(valid)' : `(INVALID: ${check.reason})`}\n` +
+    `  myStateCode (businessStateCode) : ${JSON.stringify(code)} from ${derivedFrom}\n`);
+}
+
 // Reports what the period control actually held at the moment it was
 // read. Off unless asked for: set localStorage gst_trace_period = '1' (or
 // window.GSTR1_TRACE_PERIOD = true) in the console and export again.
@@ -1029,8 +1066,25 @@ async function buildGSTR1Payload(userId, profile, periodFilter) {
   const businessGstin = (profile?.gstin || '').toUpperCase();
   const businessState = profile?.state || '';
   const businessGstinCheck = validateGstin(businessGstin);
+
+  // Printed on every run, before any validation, because "your GSTIN is
+  // invalid (empty)" is the same message whether the profile is blank or
+  // simply was not loaded — and those need completely different fixes.
+  // The values below say which it is without anyone having to guess.
+  gstr1TraceProfile(profile, businessGstin, businessState, businessGstinCheck);
+
   if (!businessGstinCheck.valid) {
-    errors.push(gstr1Err({ field: 'Business Profile GSTIN', current: businessGstin, expected: 'a valid 15-character GSTIN', message: `Your own GSTIN is invalid (${businessGstinCheck.reason}).`, fix: 'Correct it in Business Profile, then generate the return again.' }));
+    // A profile that never arrived is not a profile that is wrong. Saying
+    // "correct it in Business Profile" when the field is already correct
+    // sends someone to check something that was never the problem.
+    const notLoaded = !profile || (!profile.gstin && !profile.state);
+    errors.push(notLoaded
+      ? gstr1Err({ field: 'Business Profile', current: 'not loaded', expected: 'your business GSTIN and state',
+          message: 'The Business Profile could not be read, so the return has no GSTIN and no state of registration.',
+          fix: 'Reload the Reports page and export again. If it keeps happening, check that the server is reachable — the profile is stored there, not in the browser.' })
+      : gstr1Err({ field: 'Business Profile GSTIN', current: businessGstin, expected: 'a valid 15-character GSTIN',
+          message: `Your own GSTIN is invalid (${businessGstinCheck.reason}).`,
+          fix: 'Correct it in Business Profile, then generate the return again.' }));
   }
   // The business's own GSTIN, once validated, is the single authoritative
   // source for "which state is this registration in" — never the
@@ -1761,7 +1815,23 @@ function closeGSTR1ValidationModal() {
 async function exportGSTR1JSON() {
   const user = await getCurrentUser();
   if (!user) return;
-  const profile = (typeof getCachedProfile === 'function') ? getCachedProfile() : null;
+
+  // The profile IS the return's identity: its GSTIN is the gstin written
+  // on the file, and the state code every place of supply is compared
+  // against. Reading it from the cache alone was wrong, because nothing
+  // guaranteed the cache was warm — js/reports.js starts the profile
+  // load without awaiting it, so a click landing in that window read
+  // null. Null then became an empty GSTIN and, through getStateCode(''),
+  // state code 99 — on a business registered in Tamil Nadu, with the
+  // correct GSTIN sitting in the database the whole time.
+  //
+  // So it is loaded here if it is not already in hand. Waiting costs one
+  // request that is usually already in flight; guessing costs a wrong
+  // return.
+  let profile = (typeof getCachedProfile === 'function') ? getCachedProfile() : null;
+  if (!profile?.gstin && typeof loadUserProfile === 'function') {
+    profile = await loadUserProfile(user.id) || profile;
+  }
   // The period dropdown is filled from the database after the page loads.
   // A click landing in that window used to read a select with no options
   // — value "", selectedIndex -1 — and report "(nothing selected)" while

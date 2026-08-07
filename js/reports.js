@@ -13,7 +13,11 @@ async function initReports() {
   if (!currentUser) return;
   initNavUser(currentUser);
   setupLogoutBtn();
-  loadUserProfile(currentUser.id);
+  // Awaited. This page exports a GST return, and the return's own GSTIN
+  // and state come from this profile — starting the load and moving on
+  // left a window in which Export read an empty profile and produced a
+  // file with no GSTIN and place of supply 99.
+  await loadUserProfile(currentUser.id);
   setupMobileMenu();
   // populateMonthFilter decides which period the page opens on and returns
   // it, so the dropdown and the data on screen cannot disagree. The
