@@ -208,7 +208,24 @@ function gstFinancialYearOf(dateISO) {
 //   series                             which numbering book it draws from;
 //                                      `null` when it is not numbered by
 //                                      us (a counterparty or NIC numbers it)
-//   taxable / affectsTurnover / affectsHsn / affectsLiability / affectsAmendments
+//   taxable / affectsTurnover / affectsHsn / affectsLiability
+//   affectsAmendments                  this document IS an amendment of
+//                                      another (a revised invoice, an ISD
+//                                      credit note)
+//   supportsCancellation               may be cancelled before use, which
+//                                      is what Table 13's own `cancel`
+//                                      column counts. False for a
+//                                      document somebody else issued.
+//   supportsAmendment                  a later return may amend THIS
+//                                      document — the converse of
+//                                      affectsAmendments above, and a
+//                                      genuinely different question
+//   supportsAutoNumbering              this application can issue its next
+//                                      number from `series`
+//   supportsManualNumbering            its number may be typed or carried
+//                                      in from an import. Always true:
+//                                      every document type can be recorded
+//                                      from one somebody else issued.
 //   docNum                             ordinal in GSTR-1 Table 13, or null
 //   sections                           [{ ret, table, json }] — every
 //                                      return that reports it. A new
@@ -236,7 +253,9 @@ const GST_DOCUMENT_TYPES = [
     rule: 'Rule 46', direction: 'outward', storage: 'b2b_invoices / b2c_invoices',
     series: 'invoice',
     taxable: true, affectsTurnover: true, affectsHsn: true, affectsLiability: true,
-    affectsAmendments: false, docNum: 1,
+    affectsAmendments: false,
+    supportsCancellation: true, supportsAmendment: true,
+    supportsAutoNumbering: true, supportsManualNumbering: true, docNum: 1,
     sections: [
       { ret: 'GSTR-1', table: '4A / 4B / 5 / 6A / 6B / 6C / 7', json: 'b2b[].inv[] / b2cl[].inv[] / b2cs[] / exp[].inv[]' },
       { ret: 'GSTR-1', table: '13', json: 'doc_issue.doc_det[]' },
@@ -252,6 +271,8 @@ const GST_DOCUMENT_TYPES = [
     rule: 'Rule 49', direction: 'outward', storage: null, series: 'bill_of_supply',
     taxable: false, affectsTurnover: true, affectsHsn: true, affectsLiability: false,
     affectsAmendments: false,
+    supportsCancellation: true, supportsAmendment: false,
+    supportsAutoNumbering: true, supportsManualNumbering: true,
     // Not a thirteenth Table 13 row: a Bill of Supply is issued INSTEAD
     // of a tax invoice by a composition dealer or an exempt supplier, and
     // Table 13 reports it under row 1 because that table reports
@@ -273,7 +294,9 @@ const GST_DOCUMENT_TYPES = [
     portalName: 'Invoices for outward supply', rule: 'Rule 46A',
     direction: 'outward', storage: null, series: 'invoice',
     taxable: true, affectsTurnover: true, affectsHsn: true, affectsLiability: true,
-    affectsAmendments: false, docNum: 1,
+    affectsAmendments: false,
+    supportsCancellation: true, supportsAmendment: true,
+    supportsAutoNumbering: true, supportsManualNumbering: true, docNum: 1,
     sections: [
       { ret: 'GSTR-1', table: '7', json: 'b2cs[]' },
       { ret: 'GSTR-1', table: '8', json: 'nil.inv[]' },
@@ -295,7 +318,9 @@ const GST_DOCUMENT_TYPES = [
     portalName: 'Invoices for inward supply from unregistered person',
     rule: 'Section 31(3)(f)', direction: 'inward', storage: null, series: 'self_invoice',
     taxable: true, affectsTurnover: false, affectsHsn: false, affectsLiability: true,
-    affectsAmendments: false, docNum: 2,
+    affectsAmendments: false,
+    supportsCancellation: true, supportsAmendment: false,
+    supportsAutoNumbering: true, supportsManualNumbering: true, docNum: 2,
     // Raised by the recipient on itself for an inward supply, so it is
     // not an outward supply and appears in no GSTR-1 supply table — only
     // in Table 13, which reports documents issued whatever their
@@ -313,7 +338,9 @@ const GST_DOCUMENT_TYPES = [
   { key: 'revised_invoice', label: 'Revised Invoice', portalName: 'Revised Invoice',
     rule: 'Rule 53(1)', direction: 'outward', storage: null, series: 'revised_invoice',
     taxable: true, affectsTurnover: true, affectsHsn: true, affectsLiability: true,
-    affectsAmendments: true, docNum: 3,
+    affectsAmendments: true,
+    supportsCancellation: true, supportsAmendment: false,
+    supportsAutoNumbering: true, supportsManualNumbering: true, docNum: 3,
     sections: [
       { ret: 'GSTR-1', table: '9A', json: 'b2ba[] / b2cla[] / b2csa[]' },
       { ret: 'GSTR-1', table: '13', json: 'doc_issue.doc_det[]' },
@@ -329,7 +356,9 @@ const GST_DOCUMENT_TYPES = [
     rule: 'Section 34(3), Rule 53(1A)', direction: 'outward', storage: 'cdn_notes',
     series: 'debit_note',
     taxable: true, affectsTurnover: true, affectsHsn: true, affectsLiability: true,
-    affectsAmendments: false, docNum: 4,
+    affectsAmendments: false,
+    supportsCancellation: true, supportsAmendment: true,
+    supportsAutoNumbering: true, supportsManualNumbering: true, docNum: 4,
     sections: [
       { ret: 'GSTR-1', table: '9B', json: 'cdnr[].nt[] / cdnur[]' },
       { ret: 'GSTR-1', table: '13', json: 'doc_issue.doc_det[]' },
@@ -345,7 +374,9 @@ const GST_DOCUMENT_TYPES = [
     rule: 'Section 34(1), Rule 53(1A)', direction: 'outward', storage: 'cdn_notes',
     series: 'credit_note',
     taxable: true, affectsTurnover: true, affectsHsn: true, affectsLiability: true,
-    affectsAmendments: false, docNum: 5,
+    affectsAmendments: false,
+    supportsCancellation: true, supportsAmendment: true,
+    supportsAutoNumbering: true, supportsManualNumbering: true, docNum: 5,
     sections: [
       { ret: 'GSTR-1', table: '9B', json: 'cdnr[].nt[] / cdnur[]' },
       { ret: 'GSTR-1', table: '13', json: 'doc_issue.doc_det[]' },
@@ -362,7 +393,9 @@ const GST_DOCUMENT_TYPES = [
     rule: 'Section 31(3)(d), Rule 50', direction: 'outward', storage: null,
     series: 'receipt_voucher',
     taxable: true, affectsTurnover: false, affectsHsn: false, affectsLiability: true,
-    affectsAmendments: false, docNum: 6,
+    affectsAmendments: false,
+    supportsCancellation: true, supportsAmendment: true,
+    supportsAutoNumbering: true, supportsManualNumbering: true, docNum: 6,
     // An advance is taxed when received; the turnover arrives later with
     // the invoice, so counting the voucher toward turnover would count
     // the same supply twice.
@@ -381,7 +414,9 @@ const GST_DOCUMENT_TYPES = [
     rule: 'Section 31(3)(g), Rule 52', direction: 'inward', storage: null,
     series: 'payment_voucher',
     taxable: false, affectsTurnover: false, affectsHsn: false, affectsLiability: false,
-    affectsAmendments: false, docNum: 7,
+    affectsAmendments: false,
+    supportsCancellation: true, supportsAmendment: false,
+    supportsAutoNumbering: true, supportsManualNumbering: true, docNum: 7,
     // Records paying a supplier under reverse charge. The liability was
     // already created by the Self Invoice; treating the voucher as a
     // second liability would double-count it.
@@ -397,7 +432,9 @@ const GST_DOCUMENT_TYPES = [
     rule: 'Section 31(3)(e), Rule 51', direction: 'outward', storage: null,
     series: 'refund_voucher',
     taxable: true, affectsTurnover: false, affectsHsn: false, affectsLiability: true,
-    affectsAmendments: false, docNum: 8,
+    affectsAmendments: false,
+    supportsCancellation: true, supportsAmendment: true,
+    supportsAutoNumbering: true, supportsManualNumbering: true, docNum: 8,
     // Issued when an advance is returned without a supply being made, so
     // it reverses the liability the receipt voucher created.
     sections: [
@@ -418,7 +455,9 @@ const GST_DOCUMENT_TYPES = [
     portalName: 'Delivery Challan for job work', rule: 'Rule 55, Rule 45',
     direction: 'outward', storage: null, series: 'delivery_challan',
     taxable: false, affectsTurnover: false, affectsHsn: false, affectsLiability: false,
-    affectsAmendments: false, docNum: 9,
+    affectsAmendments: false,
+    supportsCancellation: true, supportsAmendment: false,
+    supportsAutoNumbering: true, supportsManualNumbering: true, docNum: 9,
     sections: [
       { ret: 'GSTR-1', table: '13', json: 'doc_issue.doc_det[]' },
       { ret: 'ITC-04', table: '4', json: null }
@@ -432,7 +471,9 @@ const GST_DOCUMENT_TYPES = [
     portalName: 'Delivery Challan for supply on approval', rule: 'Rule 55(1)(c)',
     direction: 'outward', storage: null, series: 'delivery_challan',
     taxable: false, affectsTurnover: false, affectsHsn: false, affectsLiability: false,
-    affectsAmendments: false, docNum: 10,
+    affectsAmendments: false,
+    supportsCancellation: true, supportsAmendment: false,
+    supportsAutoNumbering: true, supportsManualNumbering: true, docNum: 10,
     sections: [{ ret: 'GSTR-1', table: '13', json: 'doc_issue.doc_det[]' }],
     requires: ['document_number', 'document_date', 'party', 'line_items', 'value'],
     masters: [], validations: ['invoice_within_six_months'],
@@ -443,7 +484,9 @@ const GST_DOCUMENT_TYPES = [
     portalName: 'Delivery Challan in case of liquid gas', rule: 'Rule 55(1)(a)',
     direction: 'outward', storage: null, series: 'delivery_challan',
     taxable: false, affectsTurnover: false, affectsHsn: false, affectsLiability: false,
-    affectsAmendments: false, docNum: 11,
+    affectsAmendments: false,
+    supportsCancellation: true, supportsAmendment: false,
+    supportsAutoNumbering: true, supportsManualNumbering: true, docNum: 11,
     sections: [{ ret: 'GSTR-1', table: '13', json: 'doc_issue.doc_det[]' }],
     requires: ['document_number', 'document_date', 'party', 'line_items'],
     masters: [], validations: ['quantity_unknown_at_dispatch'],
@@ -454,7 +497,9 @@ const GST_DOCUMENT_TYPES = [
     portalName: 'Delivery Challan in cases other than by way of supply',
     rule: 'Rule 55(1)(d)', direction: 'outward', storage: null, series: 'delivery_challan',
     taxable: false, affectsTurnover: false, affectsHsn: false, affectsLiability: false,
-    affectsAmendments: false, docNum: 12,
+    affectsAmendments: false,
+    supportsCancellation: true, supportsAmendment: false,
+    supportsAutoNumbering: true, supportsManualNumbering: true, docNum: 12,
     sections: [{ ret: 'GSTR-1', table: '13', json: 'doc_issue.doc_det[]' }],
     requires: ['document_number', 'document_date', 'party', 'line_items'],
     masters: [], validations: [],
@@ -466,7 +511,9 @@ const GST_DOCUMENT_TYPES = [
   { key: 'isd_invoice', label: 'ISD Invoice', portalName: 'ISD Invoice',
     rule: 'Rule 54(1)', direction: 'outward', storage: null, series: 'isd_invoice',
     taxable: true, affectsTurnover: false, affectsHsn: false, affectsLiability: false,
-    affectsAmendments: false, docNum: null,
+    affectsAmendments: false,
+    supportsCancellation: true, supportsAmendment: true,
+    supportsAutoNumbering: true, supportsManualNumbering: true, docNum: null,
     sections: [{ ret: 'GSTR-6', table: '5', json: null }],
     requires: ['document_number', 'document_date', 'recipient_gstin', 'credit_distributed'],
     masters: ['ISD recipient unit'], validations: ['same_pan_as_distributor', 'credit_fully_distributed'],
@@ -476,7 +523,9 @@ const GST_DOCUMENT_TYPES = [
   { key: 'isd_credit_note', label: 'ISD Credit Note', portalName: 'ISD Credit Note',
     rule: 'Rule 54(1A)', direction: 'outward', storage: null, series: 'isd_invoice',
     taxable: true, affectsTurnover: false, affectsHsn: false, affectsLiability: false,
-    affectsAmendments: true, docNum: null,
+    affectsAmendments: true,
+    supportsCancellation: true, supportsAmendment: false,
+    supportsAutoNumbering: true, supportsManualNumbering: true, docNum: null,
     sections: [{ ret: 'GSTR-6', table: '6', json: null }],
     requires: ['document_number', 'document_date', 'original_document', 'recipient_gstin'],
     masters: ['ISD recipient unit'], validations: ['original_isd_invoice_exists'],
@@ -490,7 +539,9 @@ const GST_DOCUMENT_TYPES = [
     // numbering system from ever trying to issue one.
     series: null,
     taxable: true, affectsTurnover: false, affectsHsn: false, affectsLiability: true,
-    affectsAmendments: false, docNum: null,
+    affectsAmendments: false,
+    supportsCancellation: false, supportsAmendment: false,
+    supportsAutoNumbering: false, supportsManualNumbering: true, docNum: null,
     sections: [
       { ret: 'GSTR-3B', table: '4(A)(1)', json: null },
       { ret: 'GSTR-9', table: '6E', json: null }
@@ -504,7 +555,9 @@ const GST_DOCUMENT_TYPES = [
     portalName: 'Inward supply invoice', rule: 'Rule 46 (counterparty)',
     direction: 'inward', storage: 'purchases', series: null,
     taxable: true, affectsTurnover: false, affectsHsn: false, affectsLiability: true,
-    affectsAmendments: false, docNum: null,
+    affectsAmendments: false,
+    supportsCancellation: false, supportsAmendment: false,
+    supportsAutoNumbering: false, supportsManualNumbering: true, docNum: null,
     sections: [
       { ret: 'GSTR-3B', table: '4(A)(5)', json: null },
       { ret: 'GSTR-9', table: '6B', json: null },
@@ -518,7 +571,9 @@ const GST_DOCUMENT_TYPES = [
   { key: 'eway_bill', label: 'E-Way Bill', portalName: 'E-Way Bill (EWB-01)',
     rule: 'Rule 138', direction: 'outward', storage: 'eway_bills', series: null,
     taxable: false, affectsTurnover: false, affectsHsn: false, affectsLiability: false,
-    affectsAmendments: false, docNum: null,
+    affectsAmendments: false,
+    supportsCancellation: true, supportsAmendment: false,
+    supportsAutoNumbering: false, supportsManualNumbering: true, docNum: null,
     // Numbered by the NIC portal and reported in no return at all. It is
     // here so the registry is a complete answer to "what documents does
     // this business issue", which is what a Document Register and any
@@ -609,6 +664,37 @@ function gstTable13RowFor(value) {
   const d = gstDocumentTypeSpec(value);
   if (d.docNum === null) return null;
   return gstTable13Rows().find(r => r.docNum === d.docNum) || null;
+}
+
+// ── Capabilities ────────────────────────────────────
+// Whether a document type can be cancelled, amended, auto-numbered or
+// manually numbered. Asked by capability like everything else here, so a
+// future cancelled-document, amendment, import or manual-numbering
+// feature reads these rather than listing type keys.
+function gstDocumentSupportsCancellation(value) {
+  return !!gstDocumentTypeSpec(value).supportsCancellation;
+}
+
+function gstDocumentSupportsAmendment(value) {
+  return !!gstDocumentTypeSpec(value).supportsAmendment;
+}
+
+function gstDocumentSupportsAutoNumbering(value) {
+  return !!gstDocumentTypeSpec(value).supportsAutoNumbering;
+}
+
+function gstDocumentSupportsManualNumbering(value) {
+  return !!gstDocumentTypeSpec(value).supportsManualNumbering;
+}
+
+// How a document of this type may be numbered, as the set of ways rather
+// than a flag, so a screen can offer exactly what is allowed. Every type
+// supports at least one — a type that supported neither could never be
+// recorded at all.
+function gstDocumentNumberingModes(value) {
+  const d = gstDocumentTypeSpec(value);
+  return [d.supportsAutoNumbering ? 'auto' : null,
+          d.supportsManualNumbering ? 'manual' : null].filter(Boolean);
 }
 
 // Whether a document type's behaviour is built here yet. A type that is
