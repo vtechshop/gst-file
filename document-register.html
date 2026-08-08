@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Customer Ledger - GST Management System</title>
+  <title>Document Register - GST Management System</title>
   <link rel="stylesheet" href="css/style.css?v=18">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
   <script src="js/apiClient.js?v=18"></script>
@@ -14,8 +14,8 @@
   <script src="js/utils.js?v=18"></script>
   <script src="js/search.js?v=18"></script>
   <script src="js/profile.js?v=18"></script>
-  <script src="js/payments.js?v=18"></script>
-  <script src="js/customer-ledger.js?v=18"></script>
+  <script src="js/document-register.js?v=18"></script>
+
 </head>
 <body>
 <div class="app-layout">
@@ -42,7 +42,7 @@
       <a href="hsn.html#b2c" class="menu-item"><i class="fas fa-tags"></i> B2C HSN</a>
       <div class="menu-section">Masters</div>
       <a href="customers.html" class="menu-item"><i class="fas fa-address-book"></i> Customers</a>
-      <a href="customer-ledger.html" class="menu-item active"><i class="fas fa-book"></i> Customer Ledger</a>
+      <a href="customer-ledger.html" class="menu-item"><i class="fas fa-book"></i> Customer Ledger</a>
       <a href="products.html" class="menu-item"><i class="fas fa-box"></i> Products</a>
       <div class="menu-section">Purchases</div>
       <a href="vendors.html" class="menu-item"><i class="fas fa-truck"></i> Vendors</a>
@@ -54,7 +54,7 @@
       <a href="expenses.html" class="menu-item"><i class="fas fa-receipt"></i> Expenses</a>
       <div class="menu-section">Reports</div>
       <a href="reports.html" class="menu-item"><i class="fas fa-chart-bar"></i> Reports &amp; Export</a>
-      <a href="document-register.html" class="menu-item"><i class="fas fa-book-open"></i> Document Register</a>
+      <a href="document-register.html" class="menu-item active"><i class="fas fa-book-open"></i> Document Register</a>
       <a href="gstr3b.html"  class="menu-item"><i class="fas fa-calculator"></i> GSTR-3B Summary</a>
       <div class="menu-section">Settings</div>
       <a href="#" class="menu-item" onclick="openProfileModal();return false;"><i class="fas fa-building"></i> Business Profile</a>
@@ -73,69 +73,95 @@
   <div class="main-content">
     <div class="top-bar">
       <button type="button" class="menu-toggle" id="menuToggle" aria-label="Toggle sidebar menu"><i class="fas fa-bars"></i></button>
-      <span class="page-title"><i class="fas fa-book"></i>Customer Ledger</span>
+      <span class="page-title"><i class="fas fa-book-open"></i>Document Register</span>
       <button type="button" class="btn btn-secondary btn-sm btn-icon ml-auto" onclick="openGlobalSearch()" title="Search everywhere (Ctrl+K)" aria-label="Global search"><i class="fas fa-search"></i></button>
     </div>
 
     <div class="content">
-      <p class="text-muted-sm mb-16"><i class="fas fa-info-circle"></i> Every invoice, per customer, with what's been received against it and what's still outstanding. Record or remove payments from <a href="invoice-list.html">Invoice List</a>.</p>
+      <p class="text-muted-sm mb-16"><i class="fas fa-info-circle"></i>
+        Every GST document this system has issued, in one list. The types come from the
+        document registry rather than a list kept here, so a document type added to the
+        registry appears the day it is built.</p>
 
-      <div class="card">
+      <div class="card mb-20">
         <div class="card-header">
-          <span class="card-title"><i class="fas fa-list"></i> Customer Ledger</span>
-          <div class="d-flex gap-10 flex-wrap">
-            <select id="clCustomerFilter" class="form-control w-220" onchange="applyCustLedgerFilters()" aria-label="Filter by customer">
-              <option value="">All Customers</option>
-            </select>
-            <div class="search-input-wrap w-220">
-              <i class="fas fa-search"></i>
-              <input type="text" id="clSearch" class="form-control" aria-label="Search customer ledger">
+          <span class="card-title"><i class="fas fa-filter"></i> Filters</span>
+          <span class="text-muted fs-12" id="drCount"></span>
+        </div>
+        <div class="card-body">
+          <div class="form-row">
+            <div class="form-group">
+              <label for="drType">Document type</label>
+              <select id="drType" class="form-control" onchange="applyRegisterFilters()"></select>
+            </div>
+            <div class="form-group">
+              <label for="drNumber">Number</label>
+              <input type="text" id="drNumber" class="form-control" oninput="applyRegisterFilters()" placeholder="Contains…">
+            </div>
+            <div class="form-group">
+              <label for="drSeries">Series</label>
+              <input type="text" id="drSeries" class="form-control" oninput="applyRegisterFilters()" placeholder="Contains…">
+            </div>
+            <div class="form-group">
+              <label for="drSource">Source</label>
+              <input type="text" id="drSource" class="form-control" oninput="applyRegisterFilters()" placeholder="shop, website…">
             </div>
           </div>
-        </div>
-        <div class="card-body p-0">
-          <div class="table-wrapper">
-            <table class="data-table">
-              <thead>
-                <tr>
-                  <th>#</th><th>Invoice No</th><th>Date</th><th>Customer</th><th>Type</th>
-                  <th class="text-right">Invoice Total</th><th class="text-right">Received</th><th class="text-right">Balance</th><th>Status</th>
-                </tr>
-              </thead>
-              <tbody id="clTableBody">
-                <tr><td colspan="9" class="empty-state"><i class="fas fa-spinner fa-spin table-loading-icon"></i>Loading...</td></tr>
-              </tbody>
-              <tfoot id="clTableTotal"></tfoot>
-            </table>
+          <div class="form-row">
+            <div class="form-group">
+              <label for="drStatus">Status</label>
+              <select id="drStatus" class="form-control" onchange="applyRegisterFilters()">
+                <option value="">Any status</option>
+                <option value="issued">Issued</option>
+                <option value="cancelled">Cancelled</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label for="drParty">Customer / party</label>
+              <input type="text" id="drParty" class="form-control" oninput="applyRegisterFilters()" placeholder="Contains…">
+            </div>
+            <div class="form-group">
+              <label for="drFrom">From date</label>
+              <input type="date" id="drFrom" class="form-control" onchange="applyRegisterFilters()">
+            </div>
+            <div class="form-group">
+              <label for="drTo">To date</label>
+              <input type="date" id="drTo" class="form-control" onchange="applyRegisterFilters()">
+            </div>
           </div>
-          <div class="table-pagination-row">
-            <div id="clPagination" class="pagination"></div>
+          <div class="d-flex gap-10 mt-8">
+            <button type="button" class="btn btn-secondary btn-sm" onclick="resetRegisterFilters()"><i class="fas fa-rotate-left"></i> Clear filters</button>
+            <button type="button" class="btn btn-secondary btn-sm" onclick="loadDocumentRegister()"><i class="fas fa-arrows-rotate"></i> Refresh</button>
+            <button type="button" class="btn btn-primary btn-sm" onclick="exportRegisterCsv()"><i class="fas fa-file-csv"></i> Export CSV</button>
           </div>
         </div>
       </div>
+
+      <div class="card mb-20">
+        <div class="card-body">
+          <div class="table-responsive">
+            <table class="table">
+              <thead><tr>
+                <th>Number</th><th>Type</th><th>Date</th><th>Series</th><th>Source</th>
+                <th>Status</th><th class="text-center">Cancelled</th><th>Customer</th>
+                <th class="text-right">Total</th>
+              </tr></thead>
+              <tbody id="drBody"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-body" id="drUnbuilt"></div>
+      </div>
+
     </div>
   </div>
 </div>
 
 <script>
-document.addEventListener('DOMContentLoaded', () => {
-  initCustomerLedger();
-});
+document.addEventListener('DOMContentLoaded', () => { initDocumentRegister(); });
 </script>
-
-<!-- Global Search Modal -->
-<div class="modal-overlay" id="globalSearchModal">
-  <div class="modal modal-lg">
-    <div class="modal-header">
-      <span class="modal-title"><i class="fas fa-search"></i> Search Everywhere</span>
-      <button type="button" class="modal-close" onclick="closeGlobalSearch()" aria-label="Close"><i class="fas fa-times"></i></button>
-    </div>
-    <div class="modal-body">
-      <input type="text" id="globalSearchInput" class="form-control mb-16" oninput="onGlobalSearchInput(this.value)" aria-label="Global search input">
-      <div id="globalSearchResults"><p class="text-muted-sm">Type at least 2 characters&hellip;</p></div>
-    </div>
-  </div>
-</div>
-
 </body>
 </html>

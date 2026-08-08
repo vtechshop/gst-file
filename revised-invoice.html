@@ -1,0 +1,236 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Revised Invoices - GST Management System</title>
+  <link rel="stylesheet" href="css/style.css?v=18">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
+  <script src="js/apiClient.js?v=18"></script>
+  <script src="js/backup.js?v=18"></script>
+  <script src="js/config.js?v=18"></script>
+  <script src="js/product-sync.js?v=18"></script>
+  <script src="js/auth.js?v=18"></script>
+  <script src="js/utils.js?v=18"></script>
+  <script src="js/search.js?v=18"></script>
+  <script src="js/profile.js?v=18"></script>
+  <script src="js/revised-invoices.js?v=18"></script>
+
+</head>
+<body>
+<div class="app-layout">
+
+  <aside class="sidebar">
+    <a class="sidebar-brand" href="dashboard.html">
+      <div class="brand-icon"><i class="fas fa-file-invoice-dollar"></i></div>
+      <span>GST Invoice<br>Management</span>
+    </a>
+    <nav class="sidebar-menu">
+      <div class="menu-section">Main</div>
+      <a href="dashboard.html" class="menu-item"><i class="fas fa-tachometer-alt"></i> Dashboard</a>
+      <div class="menu-section">Invoices</div>
+      <a href="invoice.html" class="menu-item"><i class="fas fa-plus-circle"></i> New Invoice</a>
+      <a href="invoice-list.html" class="menu-item"><i class="fas fa-list-alt"></i> Invoice List</a>
+      <a href="cdnotes.html" class="menu-item"><i class="fas fa-file-minus"></i> Credit/Debit Notes</a>
+      <a href="vouchers.html" class="menu-item"><i class="fas fa-receipt"></i> Vouchers</a>
+      <a href="challans.html" class="menu-item"><i class="fas fa-file-signature"></i> Delivery Challans</a>
+      <a href="revised-invoice.html" class="menu-item active"><i class="fas fa-file-pen"></i> Revised Invoices</a>
+      <a href="sales-returns.html" class="menu-item"><i class="fas fa-rotate-left"></i> Sales Returns</a>
+      <a href="eway-bills.html" class="menu-item"><i class="fas fa-truck-fast"></i> E-Way Bills</a>
+      <div class="menu-section">HSN</div>
+      <a href="hsn.html#b2b" class="menu-item"><i class="fas fa-barcode"></i> B2B HSN</a>
+      <a href="hsn.html#b2c" class="menu-item"><i class="fas fa-tags"></i> B2C HSN</a>
+      <div class="menu-section">Masters</div>
+      <a href="customers.html" class="menu-item"><i class="fas fa-address-book"></i> Customers</a>
+      <a href="customer-ledger.html" class="menu-item"><i class="fas fa-book"></i> Customer Ledger</a>
+      <a href="products.html" class="menu-item"><i class="fas fa-box"></i> Products</a>
+      <div class="menu-section">Purchases</div>
+      <a href="vendors.html" class="menu-item"><i class="fas fa-truck"></i> Vendors</a>
+      <a href="vendor-ledger.html" class="menu-item"><i class="fas fa-book"></i> Vendor Ledger</a>
+      <a href="purchases.html" class="menu-item"><i class="fas fa-cart-plus"></i> New Purchase</a>
+      <a href="purchase-list.html" class="menu-item"><i class="fas fa-boxes"></i> Purchase List</a>
+      <a href="purchase-returns.html" class="menu-item"><i class="fas fa-undo"></i> Purchase Returns</a>
+      <div class="menu-section">Expenses</div>
+      <a href="expenses.html" class="menu-item"><i class="fas fa-receipt"></i> Expenses</a>
+      <div class="menu-section">Reports</div>
+      <a href="reports.html" class="menu-item"><i class="fas fa-chart-bar"></i> Reports &amp; Export</a>
+      <a href="document-register.html" class="menu-item"><i class="fas fa-book-open"></i> Document Register</a>
+      <a href="gstr3b.html"  class="menu-item"><i class="fas fa-calculator"></i> GSTR-3B Summary</a>
+      <div class="menu-section">Settings</div>
+      <a href="#" class="menu-item" onclick="openProfileModal();return false;"><i class="fas fa-building"></i> Business Profile</a>
+    </nav>
+    <div class="sidebar-user">
+      <div class="user-avatar"><i class="fas fa-user"></i></div>
+      <div class="user-info" onclick="openSettingsModal()" title="Click to open settings">
+        <div class="user-name" id="navUserName">User</div>
+        <div class="user-role">GST Manager</div>
+      </div>
+      <button type="button" class="btn-logout btn-settings" onclick="openSettingsModal()" title="Settings"><i class="fas fa-cog"></i></button>
+      <button type="button" class="btn-logout" id="logoutBtn" title="Logout"><i class="fas fa-sign-out-alt"></i></button>
+    </div>
+  </aside>
+
+  <div class="main-content">
+    <div class="top-bar">
+      <button type="button" class="menu-toggle" id="menuToggle" aria-label="Toggle sidebar menu"><i class="fas fa-bars"></i></button>
+      <span class="page-title"><i class="fas fa-file-pen"></i>Revised Invoices</span>
+      <button type="button" class="btn btn-secondary btn-sm btn-icon ml-auto" onclick="openGlobalSearch()" title="Search everywhere (Ctrl+K)" aria-label="Global search"><i class="fas fa-search"></i></button>
+    </div>
+
+    <div class="content">
+      <p class="text-muted-sm mb-16"><i class="fas fa-info-circle"></i>
+        Rule 53(1). Invoices raised between your effective date of registration and the day
+        the certificate arrived were issued before you were registered &mdash; a revised invoice
+        replaces each of them, within one month of the certificate. A revised invoice is
+        <b>not a new sale</b> and <b>not a credit note</b>: it does not reduce a supply, it
+        re-issues the tax document for one.</p>
+
+      <div class="card mb-20">
+        <div class="card-header">
+          <span class="card-title"><i class="fas fa-file-pen"></i> New Revised Invoice</span>
+        </div>
+        <div class="card-body">
+          <div class="alert alert-info mb-16" id="riRegistryBox"></div>
+
+          <div class="form-row">
+            <div class="form-group">
+              <label for="riNumber">Revised Invoice Number *</label>
+              <div class="d-flex gap-8">
+                <input type="text" id="riNumber" class="form-control" placeholder="RI-00001">
+                <button type="button" class="btn btn-secondary btn-sm" onclick="riAutoNumber()">
+                  <i class="fas fa-wand-magic-sparkles"></i> Auto
+                </button>
+              </div>
+              <div class="form-error" id="riNumberError"></div>
+            </div>
+            <div class="form-group">
+              <label for="riDate">Revised Invoice Date *</label>
+              <input type="date" id="riDate" class="form-control">
+              <div class="form-error" id="riDateError"></div>
+            </div>
+            <div class="form-group">
+              <label for="riOriginalPeriod">Original return period</label>
+              <input type="text" id="riOriginalPeriod" class="form-control" readonly placeholder="MMYYYY">
+              <small class="text-muted">Taken from the original invoice's date.</small>
+            </div>
+          </div>
+
+          <h4 class="mt-8 mb-8 fs-14"><i class="fas fa-link"></i> The invoice being revised</h4>
+          <div class="form-row">
+            <div class="form-group form-group-wide">
+              <label for="riOriginal">Original invoice</label>
+              <select id="riOriginal" class="form-control" onchange="onRiOriginalChange()"></select>
+              <div class="form-error" id="riOriginalError"></div>
+            </div>
+            <div class="form-group">
+              <label for="riOriginalNumber">Original number *</label>
+              <input type="text" id="riOriginalNumber" class="form-control">
+              <small class="text-muted">Editable &mdash; the original may predate this system.</small>
+            </div>
+            <div class="form-group">
+              <label for="riOriginalDate">Original date *</label>
+              <input type="date" id="riOriginalDate" class="form-control">
+            </div>
+          </div>
+
+          <h4 class="mt-8 mb-8 fs-14"><i class="fas fa-user"></i> Customer &amp; GST</h4>
+          <div class="form-row">
+            <div class="form-group">
+              <label for="riPartyName">Customer *</label>
+              <input type="text" id="riPartyName" class="form-control">
+              <div class="form-error" id="riPartyError"></div>
+            </div>
+            <div class="form-group">
+              <label for="riPartyGstin">Customer GSTIN</label>
+              <input type="text" id="riPartyGstin" class="form-control">
+            </div>
+            <div class="form-group">
+              <label for="riPlaceOfSupply">Place of supply</label>
+              <input type="text" id="riPlaceOfSupply" class="form-control">
+            </div>
+            <div class="form-group">
+              <label for="riSupplyType">Supply type</label>
+              <select id="riSupplyType" class="form-control" onchange="recalcRi()">
+                <option value="intrastate">Intra-state</option>
+                <option value="interstate">Inter-state</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="form-row">
+            <div class="form-group">
+              <label for="riTaxable">Taxable value *</label>
+              <input type="number" step="0.01" id="riTaxable" class="form-control" oninput="recalcRi()">
+              <div class="form-error" id="riTaxableError"></div>
+            </div>
+            <div class="form-group">
+              <label for="riGstPct">GST %</label>
+              <input type="number" step="0.01" id="riGstPct" class="form-control" oninput="recalcRi()">
+            </div>
+            <div class="form-group">
+              <label for="riCess">Cess</label>
+              <input type="number" step="0.01" id="riCess" class="form-control" oninput="recalcRi()">
+            </div>
+            <div class="form-group">
+              <label for="riReason">Reason</label>
+              <input type="text" id="riReason" class="form-control" placeholder="Why it is being revised">
+            </div>
+          </div>
+
+          <div class="alert alert-secondary mb-16">
+            <div class="d-flex gap-20 flex-wrap fs-13">
+              <div>IGST <b id="riIgstOut">0.00</b></div>
+              <div>CGST <b id="riCgstOut">0.00</b></div>
+              <div>SGST <b id="riSgstOut">0.00</b></div>
+              <div>Cess <b id="riCessOut">0.00</b></div>
+              <div>Total <b id="riTotalOut">0.00</b></div>
+            </div>
+          </div>
+
+          <div class="table-responsive">
+            <table class="table table-sm">
+              <thead><tr>
+                <th>Description</th><th>HSN</th><th class="text-right">Qty</th>
+                <th class="text-right">Rate</th><th class="text-right">GST %</th><th class="text-right">Total</th>
+              </tr></thead>
+              <tbody id="riItemsBody"></tbody>
+            </table>
+          </div>
+
+          <div class="form-group mt-12">
+            <label for="riNotes">Notes</label>
+            <input type="text" id="riNotes" class="form-control">
+          </div>
+          <input type="hidden" id="riCustomerId">
+
+          <div class="d-flex gap-10 mt-16">
+            <button type="button" class="btn btn-primary" onclick="saveRevisedInvoice()"><i class="fas fa-save"></i> Save Revised Invoice</button>
+            <button type="button" class="btn btn-secondary" onclick="resetRevisedInvoiceForm()"><i class="fas fa-rotate-left"></i> Reset</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-header"><span class="card-title"><i class="fas fa-list"></i> Revised Invoices</span></div>
+        <div class="card-body">
+          <div class="table-responsive">
+            <table class="table">
+              <thead><tr>
+                <th>Number</th><th>Date</th><th>Revises</th><th>Customer</th>
+                <th class="text-right">Total</th><th>Status</th><th class="text-center w-80">Actions</th>
+              </tr></thead>
+              <tbody id="riListBody"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+</div>
+
+<script>
+document.addEventListener('DOMContentLoaded', () => { initRevisedInvoices(); });
+</script>
+</body>
+</html>

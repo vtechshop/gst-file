@@ -31,21 +31,57 @@ router.use(requireAuth);
 
 // documentType -> { table, series }. `series` mirrors the registry's
 // field of the same name and is the numbering book the type draws from.
+// Where a type has line items, `items` names the child table and `itemsFk`
+// the column pointing back. Documents without items simply omit both.
+//
+// The four delivery challan variants share one TABLE but have four
+// separate numbering books, because they report as four separate Table 13
+// rows and a shared book would interleave their ranges. The uniqueness
+// check below filters on (table, series), so each book counts only its
+// own. `stamp` records the registry key on each row so Table 13 can tell
+// the variants apart without anything having to list them.
+//
+// These `series` values mirror the registry in js/utils.js and must match
+// it — a test asserts they do, so the two cannot drift.
 const DOCUMENT_TABLES = {
   self_invoice:    { table: 'self_invoices',    series: 'self_invoice' },
   receipt_voucher: { table: 'receipt_vouchers', series: 'receipt_voucher' },
   payment_voucher: { table: 'payment_vouchers', series: 'payment_voucher' },
-  refund_voucher:  { table: 'refund_vouchers',  series: 'refund_voucher' }
+  refund_voucher:  { table: 'refund_vouchers',  series: 'refund_voucher' },
+
+  revised_invoice: { table: 'revised_invoices', series: 'revised_invoice',
+                     items: 'revised_invoice_items', itemsFk: 'revised_invoice_id' },
+
+  dc_job_work:     { table: 'delivery_challans', series: 'dc_job_work',
+                     items: 'delivery_challan_items', itemsFk: 'challan_id', stamp: 'dc_job_work' },
+  dc_approval:     { table: 'delivery_challans', series: 'dc_approval',
+                     items: 'delivery_challan_items', itemsFk: 'challan_id', stamp: 'dc_approval' },
+  dc_liquid_gas:   { table: 'delivery_challans', series: 'dc_liquid_gas',
+                     items: 'delivery_challan_items', itemsFk: 'challan_id', stamp: 'dc_liquid_gas' },
+  dc_other:        { table: 'delivery_challans', series: 'dc_other',
+                     items: 'delivery_challan_items', itemsFk: 'challan_id', stamp: 'dc_other' }
 };
 
 // The default numbering format for a document type that has none
 // configured. Same shape rule the invoice series defaults follow: an
 // initial and five digits, correctable in Settings.
+//
+// Keyed by series rather than by type, because the numbering book is what
+// a format belongs to. Today every type has a book to itself; if two were
+// ever pointed at one book they would share one format and one run of
+// numbers, which is the behaviour that keying by series gives for free.
 const DEFAULT_DOCUMENT_FORMATS = {
   self_invoice:    'SI-#####',
   receipt_voucher: 'RV-#####',
   payment_voucher: 'PV-#####',
-  refund_voucher:  'RF-#####'
+  refund_voucher:  'RF-#####',
+  revised_invoice: 'RI-#####',
+  // One per challan book, so each variant's numbers are visibly its own
+  // rather than four prefixes competing for one run of digits.
+  dc_job_work:     'JW-#####',
+  dc_approval:     'AP-#####',
+  dc_liquid_gas:   'LG-#####',
+  dc_other:        'DC-#####'
 };
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -96,8 +132,11 @@ router.post('/reserve-number', asyncRoute(async (req, res) => {
          FROM profiles WHERE id = $1 FOR UPDATE`, [req.userId]);
     const seqs = prof[0]?.document_series_sequences || {};
     const formats = prof[0]?.document_series_formats || {};
+    // Series first: the numbering book decides the format. Where a type's
+    // series and key are the same word — every voucher — this reads
+    // exactly as it did before; where they differ, the book still wins.
     const format = (formats[series] && String(formats[series]).trim())
-      || DEFAULT_DOCUMENT_FORMATS[type] || 'DOC-#####';
+      || DEFAULT_DOCUMENT_FORMATS[series] || DEFAULT_DOCUMENT_FORMATS[type] || 'DOC-#####';
     let seq = Math.max(1, parseInt(seqs[series], 10) || 1);
 
     // Only this book's numbers are taken. A receipt voucher numbered 5
@@ -131,12 +170,24 @@ router.post('/reserve-number', asyncRoute(async (req, res) => {
 // ── 2) Create or update a document, with its audit entry ──
 router.post('/:type/save', asyncRoute(async (req, res) => {
   const type = String(req.params.type).trim().toLowerCase();
-  const { table } = docSpec(type);
-  const { editId, document } = req.body || {};
+  const spec = docSpec(type);
+  const { table } = spec;
+  const { editId, document, items } = req.body || {};
   if (!document || typeof document !== 'object' || Array.isArray(document)) {
     const e = new Error('The document is missing or malformed.'); e.status = 400; e.expose = true; throw e;
   }
   if (editId) badId(editId);
+  if (items != null && !Array.isArray(items)) {
+    const e = new Error('Items must be a list.'); e.status = 400; e.expose = true; throw e;
+  }
+
+  // Which variant this is comes from the URL, never from the body — a
+  // client cannot file a job-work challan under another Table 13 row by
+  // sending a different document_type.
+  if (spec.stamp) document.document_type = spec.stamp;
+  // Likewise the numbering book: a client cannot move a document into
+  // another book by sending a different document_series.
+  if (spec.series) document.document_series = spec.series;
 
   const allowed = TABLES[table].columns.filter(c =>
     c !== 'id' && c !== 'user_id' && c !== 'created_at' && c !== 'updated_at' &&
@@ -168,8 +219,32 @@ router.post('/:type/save', asyncRoute(async (req, res) => {
       row = rows[0];
       await writeAudit(client, req.userId, type, table, row.id, row.document_number, 'created', {});
     }
+
+    // Line items are replaced wholesale rather than merged: a challan's
+    // lines are the challan, and reconciling them one by one would let a
+    // half-applied edit through if anything failed midway. Same
+    // transaction as the document, so either both land or neither does.
+    let savedItems = [];
+    if (spec.items && Array.isArray(items)) {
+      await client.query(`DELETE FROM ${spec.items} WHERE ${spec.itemsFk} = $1 AND user_id = $2`,
+        [row.id, req.userId]);
+      const itemCols = TABLES[spec.items].columns.filter(c =>
+        c !== 'id' && c !== 'user_id' && c !== 'created_at' && c !== 'updated_at' && c !== spec.itemsFk);
+      for (let i = 0; i < items.length; i++) {
+        const it = items[i] || {};
+        const cols = itemCols.filter(c => Object.prototype.hasOwnProperty.call(it, c));
+        if (!cols.length) continue;
+        const all = cols.concat([spec.itemsFk, 'user_id']);
+        const placeholders = all.map((_, n) => `$${n + 1}`).join(',');
+        const values = all.map(c => (c === spec.itemsFk ? row.id : c === 'user_id' ? req.userId : it[c]));
+        const { rows: ir } = await client.query(
+          `INSERT INTO ${spec.items} (${all.join(',')}) VALUES (${placeholders}) RETURNING *`, values);
+        savedItems.push(ir[0]);
+      }
+    }
+
     await client.query('COMMIT');
-    res.json({ document: row });
+    res.json({ document: row, items: savedItems });
   } catch (err) {
     await client.query('ROLLBACK');
     throw err;
@@ -186,16 +261,36 @@ router.post('/:type/save', asyncRoute(async (req, res) => {
 // number being silently reissued.
 router.post('/:type/:id/cancel', asyncRoute(async (req, res) => {
   const type = String(req.params.type).trim().toLowerCase();
-  const { table } = docSpec(type);
+  const spec = docSpec(type);
+  const { table } = spec;
   badId(req.params.id);
+
+  // The registry decides what may be cancelled. Every type built so far
+  // may be, so this refuses nothing today — it is here so a type that
+  // must not be cancellable cannot be cancelled through this route by
+  // omission.
+  if (spec.cancellable === false) {
+    const e = new Error(`A ${type.replace(/_/g, ' ')} cannot be cancelled.`);
+    e.status = 409; e.expose = true; throw e;
+  }
+
+  // Tables that record when and why keep that; the others just change
+  // status. Driven off the column list so neither has a special case.
+  const cols = TABLES[table].columns;
+  const stamps = [];
+  if (cols.includes('cancelled_at')) stamps.push(`cancelled_at = NOW()`);
+  if (cols.includes('cancel_reason')) stamps.push(`cancel_reason = $3`);
+  const extra = stamps.length ? ', ' + stamps.join(', ') : '';
+  const params = [req.params.id, req.userId];
+  if (cols.includes('cancel_reason')) params.push((req.body && req.body.reason) || '');
 
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
     const { rows } = await client.query(
-      `UPDATE ${table} SET status = 'cancelled'
+      `UPDATE ${table} SET status = 'cancelled'${extra}
         WHERE id = $1 AND user_id = $2 AND status <> 'cancelled' RETURNING *`,
-      [req.params.id, req.userId]);
+      params);
     if (!rows.length) {
       const e = new Error('Document not found, or already cancelled.'); e.status = 404; e.expose = true; throw e;
     }

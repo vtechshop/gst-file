@@ -336,7 +336,7 @@ const GST_DOCUMENT_TYPES = [
     enabled: true, proven: false },
 
   { key: 'revised_invoice', label: 'Revised Invoice', portalName: 'Revised Invoice',
-    rule: 'Rule 53(1)', direction: 'outward', storage: null, series: 'revised_invoice',
+    rule: 'Rule 53(1)', direction: 'outward', storage: 'revised_invoices', series: 'revised_invoice',
     taxable: true, affectsTurnover: true, affectsHsn: true, affectsLiability: true,
     affectsAmendments: true,
     supportsCancellation: true, supportsAmendment: false,
@@ -350,7 +350,7 @@ const GST_DOCUMENT_TYPES = [
     requires: ['document_number', 'document_date', 'original_document', 'party', 'line_items'],
     masters: [], validations: ['original_document_exists', 'original_period_filed'],
     effectiveFrom: GST_COMMENCEMENT, effectiveTo: null, status: 'active', version: 1,
-    enabled: false, proven: false },
+    enabled: true, proven: false },
 
   { key: 'debit_note', label: 'Debit Note', portalName: 'Debit Note',
     rule: 'Section 34(3), Rule 53(1A)', direction: 'outward', storage: 'cdn_notes',
@@ -449,11 +449,25 @@ const GST_DOCUMENT_TYPES = [
     enabled: true, proven: false },
 
   // ── Outward: delivery challans, four separate Table 13 rows ──
+  //
+  // Each variant draws on its OWN numbering book. Rule 55 allows a challan
+  // to be numbered "in one or multiple series", so either would be lawful,
+  // and one shared book was the first design. It was changed because the
+  // four variants report as four separate Table 13 rows: a shared book
+  // interleaves them, so row 9 might report DC-00001..DC-00005 with a
+  // total of 3 while row 10 reports DC-00002..DC-00004 with a total of 2 —
+  // overlapping ranges across rows. Nothing in the portal documentation,
+  // the schema references or the offline utility material says whether
+  // that is accepted, and a filing is the wrong place to find out.
+  // Separate books make the question moot: every row's range is its own.
+  //
+  // `series` is the one place this is decided. Setting all four back to a
+  // single word restores shared numbering without a code change.
   // Goods move without being supplied: no supply table, no HSN summary,
   // no liability. Each variant is its own Table 13 row.
   { key: 'dc_job_work', label: 'Delivery Challan — job work',
     portalName: 'Delivery Challan for job work', rule: 'Rule 55, Rule 45',
-    direction: 'outward', storage: null, series: 'delivery_challan',
+    direction: 'outward', storage: 'delivery_challans', series: 'dc_job_work',
     taxable: false, affectsTurnover: false, affectsHsn: false, affectsLiability: false,
     affectsAmendments: false,
     supportsCancellation: true, supportsAmendment: false,
@@ -465,11 +479,11 @@ const GST_DOCUMENT_TYPES = [
     requires: ['document_number', 'document_date', 'job_worker', 'line_items', 'value'],
     masters: ['job worker'], validations: ['job_worker_gstin_or_address', 'return_within_time_limit'],
     effectiveFrom: GST_COMMENCEMENT, effectiveTo: null, status: 'active', version: 1,
-    enabled: false, proven: false },
+    enabled: true, proven: false },
 
   { key: 'dc_approval', label: 'Delivery Challan — supply on approval',
     portalName: 'Delivery Challan for supply on approval', rule: 'Rule 55(1)(c)',
-    direction: 'outward', storage: null, series: 'delivery_challan',
+    direction: 'outward', storage: 'delivery_challans', series: 'dc_approval',
     taxable: false, affectsTurnover: false, affectsHsn: false, affectsLiability: false,
     affectsAmendments: false,
     supportsCancellation: true, supportsAmendment: false,
@@ -478,11 +492,11 @@ const GST_DOCUMENT_TYPES = [
     requires: ['document_number', 'document_date', 'party', 'line_items', 'value'],
     masters: [], validations: ['invoice_within_six_months'],
     effectiveFrom: GST_COMMENCEMENT, effectiveTo: null, status: 'active', version: 1,
-    enabled: false, proven: false },
+    enabled: true, proven: false },
 
   { key: 'dc_liquid_gas', label: 'Delivery Challan — liquid gas',
     portalName: 'Delivery Challan in case of liquid gas', rule: 'Rule 55(1)(a)',
-    direction: 'outward', storage: null, series: 'delivery_challan',
+    direction: 'outward', storage: 'delivery_challans', series: 'dc_liquid_gas',
     taxable: false, affectsTurnover: false, affectsHsn: false, affectsLiability: false,
     affectsAmendments: false,
     supportsCancellation: true, supportsAmendment: false,
@@ -491,11 +505,11 @@ const GST_DOCUMENT_TYPES = [
     requires: ['document_number', 'document_date', 'party', 'line_items'],
     masters: [], validations: ['quantity_unknown_at_dispatch'],
     effectiveFrom: GST_COMMENCEMENT, effectiveTo: null, status: 'active', version: 1,
-    enabled: false, proven: false },
+    enabled: true, proven: false },
 
   { key: 'dc_other', label: 'Delivery Challan — other',
     portalName: 'Delivery Challan in cases other than by way of supply',
-    rule: 'Rule 55(1)(d)', direction: 'outward', storage: null, series: 'delivery_challan',
+    rule: 'Rule 55(1)(d)', direction: 'outward', storage: 'delivery_challans', series: 'dc_other',
     taxable: false, affectsTurnover: false, affectsHsn: false, affectsLiability: false,
     affectsAmendments: false,
     supportsCancellation: true, supportsAmendment: false,
@@ -504,7 +518,7 @@ const GST_DOCUMENT_TYPES = [
     requires: ['document_number', 'document_date', 'party', 'line_items'],
     masters: [], validations: [],
     effectiveFrom: GST_COMMENCEMENT, effectiveTo: null, status: 'active', version: 1,
-    enabled: false, proven: false },
+    enabled: true, proven: false },
 
   // ── Documents no GSTR-1 table reports, which other returns need ──
   // Recorded now so those returns are additions rather than redesigns.

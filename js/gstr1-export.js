@@ -140,7 +140,13 @@ const GSTR1_SECTIONS = [
   { key: 'version', kind: 'header',  type: 'string' },
   { key: 'hash',    kind: 'header',  type: 'string' },
   { key: 'b2b',     kind: 'section', type: 'array',  label: 'B2B — registered supplies',            emitWhenEmpty: false },
+  // Amendment sections, fed by revised invoices. Off by default — see
+  // GSTR1_EMIT_AMENDMENTS below for why. While it is off these stay empty
+  // and, like every other section, an empty one is not written at all, so
+  // the file is byte-for-byte what it was before they existed.
+  { key: 'b2ba',    kind: 'section', type: 'array',  label: 'B2BA — amended B2B invoices',           emitWhenEmpty: false },
   { key: 'b2cl',    kind: 'section', type: 'array',  label: 'B2CL — large inter-state B2C',          emitWhenEmpty: false },
+  { key: 'b2cla',   kind: 'section', type: 'array',  label: 'B2CLA — amended large inter-state B2C', emitWhenEmpty: false },
   { key: 'b2cs',    kind: 'section', type: 'array',  label: 'B2CS — small B2C, state+rate summary',  emitWhenEmpty: false },
   { key: 'cdnr',    kind: 'section', type: 'array',  label: 'CDNR — notes to registered customers',  emitWhenEmpty: false },
   { key: 'cdnur',   kind: 'section', type: 'array',  label: 'CDNUR — notes to unregistered',         emitWhenEmpty: false },
@@ -647,6 +653,78 @@ const GSTR1_TABLE13_HANDLED_ELSEWHERE = new Set([
   'b2b_invoices / b2c_invoices', 'cdn_notes', 'purchases', 'eway_bills'
 ]);
 
+// Whether a revised invoice is written into the amendment sections as
+// well as Table 13.
+//
+// OFF, deliberately, and this is the honest reason: the b2ba and b2cla
+// field names below are corroborated by two independent third-party
+// schema references that agree with each other, but no GST Offline
+// Utility export containing an amendment row has been seen here. Worse,
+// those same two sources DISAGREE about b2csa — one nests an itms[]
+// array, the other is flat — which is exactly the kind of difference that
+// makes a return fail on upload. Writing a section whose shape cannot be
+// confirmed into a live return risks a rejected filing to gain nothing
+// that Table 13 does not already report.
+//
+// So the data is captured in full, the builder below is written and
+// tested, and this switch turns it on. Everything needed to flip it is a
+// revised invoice's original number, original date and original period,
+// all of which are stored. Nothing needs re-entering.
+//
+// Consequence while off, stated plainly: a revised invoice appears in
+// Table 13 row 3 and nowhere else in the JSON.
+const GSTR1_EMIT_AMENDMENTS = false;
+
+// Builds b2ba and b2cla from revised invoices. A revised invoice under
+// Rule 53(1) points at exactly one original invoice, which is what the
+// amendment sections need: oinum and oidt identify what is being
+// replaced, inum and idt the document replacing it.
+//
+// B2CL applies to inter-state supplies to unregistered persons above the
+// threshold, so a revised invoice with no counterparty GSTIN goes there
+// and one with a GSTIN goes to b2ba.
+function gstr1BuildAmendments(revisedRows) {
+  const b2ba = [], b2cla = [];
+  if (!GSTR1_EMIT_AMENDMENTS) return { b2ba, b2cla };
+
+  const byCtin = new Map(), byPos = new Map();
+  (revisedRows || []).forEach(r => {
+    if (String(r.status || '').toLowerCase() === 'cancelled') return;
+    const txval = round2(r.taxable_amount);
+    const rt = round2(r.gst_percentage);
+    const inv = {
+      oinum: String(r.original_invoice_number || ''),
+      oidt: formatDateDDMMYYYY(r.original_invoice_date),
+      inum: String(r.document_number || ''),
+      idt: formatDateDDMMYYYY(r.document_date),
+      val: round2(r.total_amount),
+      itms: [{ num: 1, itm_det: {
+        txval, rt,
+        iamt: round2(r.igst), camt: round2(r.cgst),
+        samt: round2(r.sgst), csamt: round2(r.cess)
+      } }]
+    };
+    const ctin = String(r.party_gstin || '').trim().toUpperCase();
+    if (ctin) {
+      inv.pos = gstr1PosRegistered(ctin);
+      inv.rchrg = r.reverse_charge ? 'Y' : 'N';
+      inv.inv_typ = r.inv_typ || 'R';
+      if (!byCtin.has(ctin)) byCtin.set(ctin, []);
+      byCtin.get(ctin).push(inv);
+    } else {
+      const pos = getStateCode(r.place_of_supply || '');
+      if (!byPos.has(pos)) byPos.set(pos, []);
+      byPos.get(pos).push(inv);
+    }
+  });
+
+  [...byCtin.entries()].sort((a, b) => a[0].localeCompare(b[0]))
+    .forEach(([ctin, inv]) => b2ba.push({ ctin, inv }));
+  [...byPos.entries()].sort((a, b) => a[0].localeCompare(b[0]))
+    .forEach(([pos, inv]) => b2cla.push({ pos, inv }));
+  return { b2ba, b2cla };
+}
+
 function gstr1DocumentSources() {
   if (typeof GST_DOCUMENT_TYPES === 'undefined') return [];
   return GST_DOCUMENT_TYPES
@@ -655,18 +733,43 @@ function gstr1DocumentSources() {
     .map(d => ({ documentType: d.key, table: d.storage }));
 }
 
-// Reads every voucher and self invoice in the period. Each type's rows
-// come from its own table — there is no shared document table to filter,
-// which is what keeps this a set of small indexed reads.
+// Reads every document in the period that reports its own Table 13 row.
+//
+// Most types have a table to themselves, but not all: the four delivery
+// challan variants share one, because the registry gives them one
+// numbering series and a number must be unique across all four. So a row
+// is allowed to name its own document type, and when it does that is what
+// it counts as. Nothing here knows which types those are — a future type
+// that shares a table with another works the same way, and a type that
+// owns its table outright is unaffected.
+//
+// Each table is read once no matter how many types point at it.
 async function gstr1FetchDocuments(userId, start, end) {
   const sources = gstr1DocumentSources();
   if (!sources.length) return [];
-  const results = await Promise.all(sources.map(src =>
-    _supabase.from(src.table).select('*').eq('user_id', userId)
+
+  const byTable = new Map();
+  sources.forEach(src => {
+    if (!byTable.has(src.table)) byTable.set(src.table, []);
+    byTable.get(src.table).push(src.documentType);
+  });
+  const tables = [...byTable.keys()];
+
+  const results = await Promise.all(tables.map(table =>
+    _supabase.from(table).select('*').eq('user_id', userId)
       .gte('document_date', start).lte('document_date', end)));
+
   const out = [];
   results.forEach((res, i) => {
-    (res.data || []).forEach(row => out.push({ ...row, __documentType: sources[i].documentType }));
+    const wanted = byTable.get(tables[i]);
+    (res.data || []).forEach(row => {
+      // A row that names its type is taken at its word, but only if that
+      // type actually reads this table — otherwise a stray value could
+      // move a document into someone else's Table 13 row.
+      const declared = String(row.document_type || '').trim();
+      const type = wanted.includes(declared) ? declared : (wanted.length === 1 ? wanted[0] : null);
+      if (type) out.push({ ...row, __documentType: type });
+    });
   });
   return out;
 }
@@ -1811,7 +1914,22 @@ async function buildGSTR1Payload(userId, profile, periodFilter) {
   // `cancel` is a real count here rather than the 0 invoices carry: a
   // cancelled voucher keeps its row and its number precisely so Table 13
   // can report it.
-  gstr1DocumentRanges(documentRows).forEach(entry => {
+  // A return cannot contain a future-dated document. Invoices are already
+  // held to that above; every other document type is held to it here, so
+  // one file cannot reject a future invoice in row 1 while reporting a
+  // future challan in row 9.
+  const futureDocs = documentRows.filter(r => r.document_date && r.document_date > todayISO);
+  futureDocs.forEach(r => errors.push(gstr1Err({
+    invoice: r.document_number,
+    field: 'Document Date',
+    current: r.document_date,
+    expected: `a date on or before today (${todayISO})`,
+    message: `${gstDocumentTypeLabel(r.__documentType) || r.__documentType} ${r.document_number} is dated in the future.`,
+    fix: 'Correct the document date — a return cannot contain a future-dated document.'
+  })));
+  const datedDocumentRows = documentRows.filter(r => !(r.document_date && r.document_date > todayISO));
+
+  gstr1DocumentRanges(datedDocumentRows).forEach(entry => {
     const row = gstr1Table13RowFor(entry.documentType);
     if (row) addTable13(row.docNum, row.docTyp, entry.docs);
   });
@@ -1848,9 +1966,15 @@ async function buildGSTR1Payload(userId, profile, periodFilter) {
     ? { inv: [...nilBuckets.values()].sort((a, b) => a.sply_ty.localeCompare(b.sply_ty)) }
     : {};
 
+  // Revised invoices, if the amendment sections are switched on. While
+  // GSTR1_EMIT_AMENDMENTS is false both arrays come back empty and are
+  // therefore not written — the return is unchanged.
+  const { b2ba, b2cla } = gstr1BuildAmendments(
+    datedDocumentRows.filter(r => r.__documentType === 'revised_invoice'));
+
   const payload = assembleGSTR1Payload({
     gstin: businessGstin, fp, version: GSTR1_VERSION, hash: GSTR1_HASH,
-    b2b, b2cl, b2cs, cdnr, cdnur, nil, hsn, doc_issue
+    b2b, b2ba, b2cl, b2cla, b2cs, cdnr, cdnur, nil, hsn, doc_issue
   });
   return { payload, errors, context: { periodStart: start, periodEnd: end, salesReturnNettedTaxable, grandTotal } };
 }

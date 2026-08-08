@@ -289,6 +289,42 @@ const TABLES = {
       'refund_amount','gst_percentage','igst','cgst','sgst','cess','total_value',
       'notes','created_at','updated_at']
   },
+  // ── Challans, revised invoices, job workers (Module 4C) ──
+  //    See db/migration_challans.sql for why the four challan variants
+  //    share one table: one numbering series, so one uniqueness rule.
+  job_workers: {
+    columns: ['id','user_id','name','gstin','is_registered','address','city','state',
+      'state_code','pincode','phone','email','nature_of_work','customer_id','status',
+      'notes','created_at','updated_at']
+  },
+  delivery_challans: {
+    columns: ['id','user_id','document_type','document_number','document_date','document_series',
+      'status','job_worker_id','customer_id','party_name','party_gstin','from_address','from_state',
+      'to_address','to_state','place_of_supply','supply_type','purpose','reason',
+      'quantity_known_at_dispatch','approval_due_date','expected_return_date','returned_on',
+      'transporter_name','transporter_id','vehicle_number','transport_mode','transport_distance',
+      'lr_number','eway_bill_id','eway_bill_number','taxable_value','igst','cgst','sgst','cess',
+      'total_value','notes','cancelled_at','cancel_reason','created_at','updated_at']
+  },
+  delivery_challan_items: {
+    columns: ['id','user_id','challan_id','product_id','product_name','hsn_code','unit','quantity',
+      'rate','taxable_value','gst_percentage','igst','cgst','sgst','cess','total_value',
+      'delivered_quantity','returned_quantity','sort_order','created_at']
+  },
+  revised_invoices: {
+    columns: ['id','user_id','document_number','document_date','document_series','status',
+      'original_invoice_number','original_invoice_date','original_invoice_id',
+      'original_invoice_table','original_period','customer_id','party_name','party_gstin',
+      'place_of_supply','supply_type','gst_category','inv_typ','reverse_charge','taxable_amount',
+      'gst_percentage','gst_amount','igst','cgst','sgst','cess','total_amount','reason','notes',
+      'cancelled_at','cancel_reason','created_at','updated_at']
+  },
+  revised_invoice_items: {
+    columns: ['id','user_id','revised_invoice_id','product_id','product_name','hsn_code','unit',
+      'quantity','rate','discount_percentage','gst_percentage','taxable_value','gst_amount',
+      'igst','cgst','sgst','cess_rate','cess_amount','total_amount','gst_treatment','sort_order',
+      'created_at']
+  },
   // Append-only, same reasoning as invoice_series_migrations: an audit
   // trail the browser can edit or delete is not an audit trail.
   document_audit_log: {
