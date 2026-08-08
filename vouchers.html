@@ -1,0 +1,253 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Vouchers &amp; Self Invoices - GST Management System</title>
+  <link rel="stylesheet" href="css/style.css?v=17">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
+  <script src="js/apiClient.js?v=17"></script>
+  <script src="js/backup.js?v=17"></script>
+  <script src="js/config.js?v=17"></script>
+  <script src="js/product-sync.js?v=17"></script>
+  <script src="js/auth.js?v=17"></script>
+  <script src="js/utils.js?v=17"></script>
+  <script src="js/search.js?v=17"></script>
+  <script src="js/profile.js?v=17"></script>
+  <script src="js/vouchers.js?v=17"></script>
+
+</head>
+<body>
+<div class="app-layout">
+
+  <aside class="sidebar">
+    <a class="sidebar-brand" href="dashboard.html">
+      <div class="brand-icon"><i class="fas fa-file-invoice-dollar"></i></div>
+      <span>GST Invoice<br>Management</span>
+    </a>
+    <nav class="sidebar-menu">
+      <div class="menu-section">Main</div>
+      <a href="dashboard.html" class="menu-item"><i class="fas fa-tachometer-alt"></i> Dashboard</a>
+      <div class="menu-section">Invoices</div>
+      <a href="invoice.html" class="menu-item"><i class="fas fa-plus-circle"></i> New Invoice</a>
+      <a href="invoice-list.html" class="menu-item"><i class="fas fa-list-alt"></i> Invoice List</a>
+      <a href="cdnotes.html" class="menu-item"><i class="fas fa-file-minus"></i> Credit/Debit Notes</a>
+      <a href="vouchers.html" class="menu-item active"><i class="fas fa-receipt"></i> Vouchers</a>
+      <a href="sales-returns.html" class="menu-item"><i class="fas fa-rotate-left"></i> Sales Returns</a>
+      <a href="eway-bills.html" class="menu-item"><i class="fas fa-truck-fast"></i> E-Way Bills</a>
+      <div class="menu-section">HSN</div>
+      <a href="hsn.html#b2b" class="menu-item"><i class="fas fa-barcode"></i> B2B HSN</a>
+      <a href="hsn.html#b2c" class="menu-item"><i class="fas fa-tags"></i> B2C HSN</a>
+      <div class="menu-section">Masters</div>
+      <a href="customers.html" class="menu-item"><i class="fas fa-address-book"></i> Customers</a>
+      <a href="customer-ledger.html" class="menu-item"><i class="fas fa-book"></i> Customer Ledger</a>
+      <a href="products.html" class="menu-item"><i class="fas fa-box"></i> Products</a>
+      <div class="menu-section">Purchases</div>
+      <a href="vendors.html" class="menu-item"><i class="fas fa-truck"></i> Vendors</a>
+      <a href="vendor-ledger.html" class="menu-item"><i class="fas fa-book"></i> Vendor Ledger</a>
+      <a href="purchases.html" class="menu-item"><i class="fas fa-cart-plus"></i> New Purchase</a>
+      <a href="purchase-list.html" class="menu-item"><i class="fas fa-boxes"></i> Purchase List</a>
+      <a href="purchase-returns.html" class="menu-item"><i class="fas fa-undo"></i> Purchase Returns</a>
+      <div class="menu-section">Expenses</div>
+      <a href="expenses.html" class="menu-item"><i class="fas fa-receipt"></i> Expenses</a>
+      <div class="menu-section">Reports</div>
+      <a href="reports.html" class="menu-item"><i class="fas fa-chart-bar"></i> Reports &amp; Export</a>
+      <a href="gstr3b.html"  class="menu-item"><i class="fas fa-calculator"></i> GSTR-3B Summary</a>
+      <div class="menu-section">Settings</div>
+      <a href="#" class="menu-item" onclick="openProfileModal();return false;"><i class="fas fa-building"></i> Business Profile</a>
+    </nav>
+    <div class="sidebar-user">
+      <div class="user-avatar"><i class="fas fa-user"></i></div>
+      <div class="user-info" onclick="openSettingsModal()" title="Click to open settings">
+        <div class="user-name" id="navUserName">User</div>
+        <div class="user-role">GST Manager</div>
+      </div>
+      <button type="button" class="btn-logout btn-settings" onclick="openSettingsModal()" title="Settings"><i class="fas fa-cog"></i></button>
+      <button type="button" class="btn-logout" id="logoutBtn" title="Logout"><i class="fas fa-sign-out-alt"></i></button>
+    </div>
+  </aside>
+
+  <div class="main-content">
+    <div class="top-bar">
+      <button type="button" class="menu-toggle" id="menuToggle" aria-label="Toggle sidebar menu"><i class="fas fa-bars"></i></button>
+      <span class="page-title"><i class="fas fa-receipt"></i>Vouchers &amp; Self Invoices</span>
+      <button type="button" class="btn btn-secondary btn-sm btn-icon ml-auto" onclick="openGlobalSearch()" title="Search everywhere (Ctrl+K)" aria-label="Global search"><i class="fas fa-search"></i></button>
+    </div>
+
+    <div class="content">
+      <p class="text-muted-sm mb-16"><i class="fas fa-info-circle"></i>
+        Receipt, Payment and Refund Vouchers and Self Invoices. These are
+        <b>not sales invoices</b> &mdash; each is reported differently, and this page
+        follows what the Document Registry says about the one you pick.</p>
+
+      <div class="card mb-20">
+        <div class="card-header">
+          <span class="card-title"><i class="fas fa-file-signature"></i> <span id="vDocTitle">New Document</span></span>
+          <div class="d-flex gap-10 flex-wrap align-center">
+            <label for="vDocType" class="fs-12 fw-600 mb-0">Document Type</label>
+            <select id="vDocType" class="form-control w-220" onchange="onVoucherTypeChange()"></select>
+          </div>
+        </div>
+        <div class="card-body">
+          <!-- Everything the registry says about the chosen type, on
+               screen rather than only in a comment: which table it is
+               filed in, whether it creates a liability, whether it can
+               be cancelled or amended. -->
+          <div id="vRegistryNote" class="calc-box mb-16"></div>
+
+          <div class="form-grid cols-3 mb-16">
+            <div class="form-group">
+              <div class="d-flex align-center gap-10">
+                <label for="vDocNumber">Document Number <span class="text-required">*</span></label>
+                <span id="vNumberModes" class="fs-11 text-muted-sm"></span>
+              </div>
+              <div class="d-flex gap-8">
+                <input type="text" id="vDocNumber" class="form-control" oninput="validateVoucherForm()">
+                <button type="button" class="btn btn-secondary btn-sm text-nowrap" id="vAutoNumBtn"
+                        onclick="reserveVoucherNumber()" title="Issue the next number from this document type's own book"><i class="fas fa-magic"></i></button>
+              </div>
+              <div class="form-error" id="vDocNumberError"></div>
+            </div>
+            <div class="form-group">
+              <label for="vDocDate">Document Date <span class="text-required">*</span></label>
+              <input type="date" id="vDocDate" class="form-control" onchange="validateVoucherForm()">
+              <div class="form-error" id="vDocDateError"></div>
+            </div>
+            <div class="form-group">
+              <label>Status</label>
+              <div class="form-control" style="background:var(--bg);cursor:default;display:flex;align-items:center;">
+                <span id="vStatusBadge" class="badge badge-green">Issued</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- A self invoice and a payment voucher name an unregistered
+               SUPPLIER; a receipt and refund voucher name a customer.
+               Different masters, so the picker changes with the type. -->
+          <div class="section-title mb-14" id="vPartyTitle">Party</div>
+          <div class="form-grid cols-3 mb-16">
+            <div class="form-group">
+              <label for="vPartyName"><span id="vPartyLabel">Party Name</span> <span class="text-required">*</span></label>
+              <input type="text" id="vPartyName" class="form-control" list="vPartyList" oninput="onVoucherPartyInput()">
+              <datalist id="vPartyList"></datalist>
+              <div class="form-error" id="vPartyNameError"></div>
+            </div>
+            <div class="form-group">
+              <label for="vPartyGstin">GSTIN <span class="fs-11 text-muted-sm" id="vGstinHint"></span></label>
+              <input type="text" id="vPartyGstin" class="form-control uppercase" maxlength="15" oninput="validateVoucherForm()">
+              <div class="form-error" id="vPartyGstinError"></div>
+            </div>
+            <div class="form-group" id="vPosGroup">
+              <label for="vPos">Place of Supply <span class="text-required">*</span></label>
+              <select id="vPos" class="form-control" onchange="onVoucherPosChange()"></select>
+              <div class="form-error" id="vPosError"></div>
+            </div>
+          </div>
+
+          <!-- The document a refund or payment voucher relates to. A
+               refund voucher with no advance behind it reverses nothing,
+               so it is required there. -->
+          <div id="vOriginalGroup" class="d-none">
+            <div class="section-title mb-14">Original Document</div>
+            <div class="form-grid cols-3 mb-16">
+              <div class="form-group">
+                <label for="vOriginalRef"><span id="vOriginalLabel">Original Document</span> <span class="text-required">*</span></label>
+                <select id="vOriginalRef" class="form-control" onchange="onVoucherOriginalChange()"></select>
+                <div class="form-error" id="vOriginalRefError"></div>
+              </div>
+              <div class="form-group">
+                <label for="vOriginalNumber">Number</label>
+                <input type="text" id="vOriginalNumber" class="form-control" readonly>
+              </div>
+              <div class="form-group">
+                <label for="vOriginalDate">Date</label>
+                <input type="date" id="vOriginalDate" class="form-control" readonly>
+              </div>
+            </div>
+          </div>
+
+          <div class="section-title mb-14">Amount</div>
+          <div class="form-grid cols-3 mb-16">
+            <div class="form-group">
+              <label for="vAmount"><span id="vAmountLabel">Amount</span> <span class="text-required">*</span></label>
+              <input type="number" id="vAmount" class="form-control text-right" min="0" step="0.01" value="0" oninput="recalcVoucher()">
+              <div class="form-error" id="vAmountError"></div>
+            </div>
+            <div class="form-group" id="vRateGroup">
+              <label for="vRate">GST Rate %</label>
+              <select id="vRate" class="form-control" onchange="recalcVoucher()"></select>
+            </div>
+            <div class="form-group" id="vCessGroup">
+              <label for="vCess">CESS</label>
+              <input type="number" id="vCess" class="form-control text-right" min="0" step="0.01" value="0" oninput="recalcVoucher()">
+            </div>
+          </div>
+
+          <div class="calc-box mb-16" id="vTaxBox">
+            <div class="calc-row"><span class="label">Taxable Value</span><span class="value" id="vTaxable">&#8377;0.00</span></div>
+            <div class="calc-row"><span class="label">IGST</span><span class="value" id="vIgst">&#8377;0.00</span></div>
+            <div class="calc-row"><span class="label">CGST</span><span class="value" id="vCgst">&#8377;0.00</span></div>
+            <div class="calc-row"><span class="label">SGST</span><span class="value" id="vSgst">&#8377;0.00</span></div>
+            <div class="calc-row"><span class="label">CESS</span><span class="value" id="vCessOut">&#8377;0.00</span></div>
+            <div class="calc-row total"><span class="label">Total</span><span class="value" id="vTotal">&#8377;0.00</span></div>
+          </div>
+
+          <div class="form-grid cols-2 mb-16">
+            <div class="form-group">
+              <label for="vDescription">Description</label>
+              <input type="text" id="vDescription" class="form-control">
+            </div>
+            <div class="form-group">
+              <label for="vNotes">Notes</label>
+              <input type="text" id="vNotes" class="form-control">
+            </div>
+          </div>
+
+          <div class="btn-group">
+            <button type="button" class="btn btn-primary" id="vSaveBtn" onclick="saveVoucher()"><i class="fas fa-save"></i> Save Document</button>
+            <button type="button" class="btn btn-secondary" onclick="resetVoucherForm()"><i class="fas fa-redo"></i> Reset</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <span class="card-title"><i class="fas fa-list"></i> <span id="vListTitle">Documents</span></span>
+          <div class="d-flex gap-10 flex-wrap">
+            <div class="search-input-wrap w-220">
+              <i class="fas fa-search"></i>
+              <input type="text" id="vSearch" class="form-control" oninput="renderVoucherList()" aria-label="Search documents">
+            </div>
+            <select id="vStatusFilter" class="form-control w-150" onchange="renderVoucherList()" aria-label="Filter by status">
+              <option value="">All statuses</option>
+              <option value="issued">Issued</option>
+              <option value="cancelled">Cancelled</option>
+            </select>
+          </div>
+        </div>
+        <div class="card-body p-0">
+          <div class="table-wrapper">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th>#</th><th>Number</th><th>Date</th><th>Party</th>
+                  <th>Taxable</th><th>Tax</th><th>Total</th><th>Status</th><th>Actions</th>
+                </tr>
+              </thead>
+              <tbody id="vListBody">
+                <tr><td colspan="9" class="empty-state">Loading&hellip;</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+</div>
+
+<script>
+document.addEventListener('DOMContentLoaded', () => { initVouchers(); });
+</script>
+</body>
+</html>

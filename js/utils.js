@@ -316,7 +316,7 @@ const GST_DOCUMENT_TYPES = [
 
   { key: 'self_invoice', label: 'Self Invoice (RCM)',
     portalName: 'Invoices for inward supply from unregistered person',
-    rule: 'Section 31(3)(f)', direction: 'inward', storage: null, series: 'self_invoice',
+    rule: 'Section 31(3)(f)', direction: 'inward', storage: 'self_invoices', series: 'self_invoice',
     taxable: true, affectsTurnover: false, affectsHsn: false, affectsLiability: true,
     affectsAmendments: false,
     supportsCancellation: true, supportsAmendment: false,
@@ -333,7 +333,7 @@ const GST_DOCUMENT_TYPES = [
     requires: ['document_number', 'document_date', 'supplier', 'place_of_supply', 'line_items'],
     masters: ['unregistered supplier'], validations: ['reverse_charge_applies', 'place_of_supply'],
     effectiveFrom: GST_COMMENCEMENT, effectiveTo: null, status: 'active', version: 1,
-    enabled: false, proven: false },
+    enabled: true, proven: false },
 
   { key: 'revised_invoice', label: 'Revised Invoice', portalName: 'Revised Invoice',
     rule: 'Rule 53(1)', direction: 'outward', storage: null, series: 'revised_invoice',
@@ -390,7 +390,7 @@ const GST_DOCUMENT_TYPES = [
 
   // ── Outward: vouchers ──
   { key: 'receipt_voucher', label: 'Receipt Voucher', portalName: 'Receipt Voucher',
-    rule: 'Section 31(3)(d), Rule 50', direction: 'outward', storage: null,
+    rule: 'Section 31(3)(d), Rule 50', direction: 'outward', storage: 'receipt_vouchers',
     series: 'receipt_voucher',
     taxable: true, affectsTurnover: false, affectsHsn: false, affectsLiability: true,
     affectsAmendments: false,
@@ -408,10 +408,10 @@ const GST_DOCUMENT_TYPES = [
     requires: ['document_number', 'document_date', 'party', 'place_of_supply', 'rate', 'advance_amount'],
     masters: [], validations: ['place_of_supply', 'rate'],
     effectiveFrom: GST_COMMENCEMENT, effectiveTo: null, status: 'active', version: 1,
-    enabled: false, proven: false },
+    enabled: true, proven: false },
 
   { key: 'payment_voucher', label: 'Payment Voucher', portalName: 'Payment Voucher',
-    rule: 'Section 31(3)(g), Rule 52', direction: 'inward', storage: null,
+    rule: 'Section 31(3)(g), Rule 52', direction: 'inward', storage: 'payment_vouchers',
     series: 'payment_voucher',
     taxable: false, affectsTurnover: false, affectsHsn: false, affectsLiability: false,
     affectsAmendments: false,
@@ -426,10 +426,10 @@ const GST_DOCUMENT_TYPES = [
     requires: ['document_number', 'document_date', 'supplier', 'amount_paid'],
     masters: ['unregistered supplier'], validations: ['linked_self_invoice'],
     effectiveFrom: GST_COMMENCEMENT, effectiveTo: null, status: 'active', version: 1,
-    enabled: false, proven: false },
+    enabled: true, proven: false },
 
   { key: 'refund_voucher', label: 'Refund Voucher', portalName: 'Refund Voucher',
-    rule: 'Section 31(3)(e), Rule 51', direction: 'outward', storage: null,
+    rule: 'Section 31(3)(e), Rule 51', direction: 'outward', storage: 'refund_vouchers',
     series: 'refund_voucher',
     taxable: true, affectsTurnover: false, affectsHsn: false, affectsLiability: true,
     affectsAmendments: false,
@@ -446,7 +446,7 @@ const GST_DOCUMENT_TYPES = [
     requires: ['document_number', 'document_date', 'original_document', 'party', 'refund_amount'],
     masters: [], validations: ['original_receipt_voucher_exists', 'refund_not_exceeding_advance'],
     effectiveFrom: GST_COMMENCEMENT, effectiveTo: null, status: 'active', version: 1,
-    enabled: false, proven: false },
+    enabled: true, proven: false },
 
   // ── Outward: delivery challans, four separate Table 13 rows ──
   // Goods move without being supplied: no supply table, no HSN summary,

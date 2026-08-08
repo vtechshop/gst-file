@@ -218,6 +218,9 @@ const TABLES = {
       'legal_name','trade_name','business_constitution','registration_type',
       'lut_number','lut_expiry','iec_number','default_pos','reverse_charge_default',
       'einvoice_applicable','ewaybill_applicable','financial_year',
+      // Document numbering (Phase 2, Module 4B-impl) — kept apart from
+      // the invoice counters so invoice numbering is untouched.
+      'document_series_sequences','document_series_formats',
       'created_at']
   },
   customers: {
@@ -253,6 +256,45 @@ const TABLES = {
   payments: {
     columns: ['id','user_id','invoice_id','invoice_type','amount','method',
       'payment_date','reference_number','note','created_at']
+  },
+  // ── Vouchers and self invoices (Phase 2, Module 4B-impl) ──
+  //    Four separate domain tables, deliberately not one. See
+  //    db/migration_vouchers.sql.
+  unregistered_suppliers: {
+    columns: ['id','user_id','name','gstin','pan','phone','email','address','state',
+      'rcm_category','notes','created_at','updated_at']
+  },
+  self_invoices: {
+    columns: ['id','user_id','document_number','document_date','document_series','status',
+      'supplier_id','supplier_name','supplier_gstin','supplier_state','place_of_supply',
+      'description','taxable_value','gst_percentage','igst','cgst','sgst','cess','total_value',
+      'notes','created_at','updated_at']
+  },
+  receipt_vouchers: {
+    columns: ['id','user_id','document_number','document_date','document_series','status',
+      'customer_id','party_name','party_gstin','place_of_supply','supply_type','description',
+      'advance_amount','gst_percentage','igst','cgst','sgst','cess','total_value',
+      'adjusted_amount','notes','created_at','updated_at']
+  },
+  payment_vouchers: {
+    columns: ['id','user_id','document_number','document_date','document_series','status',
+      'supplier_id','supplier_name','supplier_gstin','self_invoice_id',
+      'original_document_number','original_document_date','description','amount_paid',
+      'payment_mode','reference_number','notes','created_at','updated_at']
+  },
+  refund_vouchers: {
+    columns: ['id','user_id','document_number','document_date','document_series','status',
+      'customer_id','party_name','party_gstin','place_of_supply','supply_type',
+      'receipt_voucher_id','original_document_number','original_document_date','reason',
+      'refund_amount','gst_percentage','igst','cgst','sgst','cess','total_value',
+      'notes','created_at','updated_at']
+  },
+  // Append-only, same reasoning as invoice_series_migrations: an audit
+  // trail the browser can edit or delete is not an audit trail.
+  document_audit_log: {
+    readOnly: true,
+    columns: ['id','user_id','document_type','document_table','document_id','document_number',
+      'action','changes','created_at']
   },
   // Read-only in practice: rows are written by POST /invoices/series-migration
   // inside the same transaction as the change they describe. Exposed here

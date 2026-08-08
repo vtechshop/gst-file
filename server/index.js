@@ -17,6 +17,7 @@ const rateLimit = require('express-rate-limit');
 const authRoutes = require('./routes/auth');
 const backupRoutes = require('./routes/backup');
 const invoiceRoutes = require('./routes/invoices');
+const documentRoutes = require('./routes/documents');
 const purchaseRoutes = require('./routes/purchases');
 const salesReturnRoutes = require('./routes/sales-returns');
 const paymentsRoutes = require('./routes/payments');
@@ -73,6 +74,9 @@ app.use('/api/auth', authRoutes);
 // route behind it too, regardless of registration order.
 app.use('/api/backup', backupRoutes);
 app.use('/api/invoices', invoiceRoutes);
+// Vouchers and self invoices (Phase 2, Module 4B-impl) — their own
+// namespace, so nothing about /api/invoices changes.
+app.use('/api/documents', documentRoutes);
 app.use('/api/purchases', purchaseRoutes);
 // Shares the /api/payments prefix with the generic router's plain
 // payments-table CRUD (still used for read-only ledger listing) —

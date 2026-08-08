@@ -632,6 +632,85 @@ function gstr1Table13RowFor(documentTypeKey) {
   return { docNum: 1, docTyp: 'Invoices for outward supply', keys: ['tax_invoice'] };
 }
 
+// ── Vouchers and self invoices in Table 13 ──────────
+// Which domain table each document type's rows live in, taken from the
+// registry rather than listed here — a type gains a table by having one,
+// not by being named in this file.
+// The tables Table 13 already gets its rows from by another route, and
+// so must not be read twice: the invoice tables build row 1 above, and
+// credit/debit notes have no Table 13 builder yet.
+//
+// An explicit set rather than a substring test — matching on "invoices"
+// silently swallowed self_invoices, whose name contains it, and dropped
+// row 2 from the return without any error to show for it.
+const GSTR1_TABLE13_HANDLED_ELSEWHERE = new Set([
+  'b2b_invoices / b2c_invoices', 'cdn_notes', 'purchases', 'eway_bills'
+]);
+
+function gstr1DocumentSources() {
+  if (typeof GST_DOCUMENT_TYPES === 'undefined') return [];
+  return GST_DOCUMENT_TYPES
+    .filter(d => d.enabled && d.docNum !== null && d.storage
+                 && !GSTR1_TABLE13_HANDLED_ELSEWHERE.has(d.storage))
+    .map(d => ({ documentType: d.key, table: d.storage }));
+}
+
+// Reads every voucher and self invoice in the period. Each type's rows
+// come from its own table — there is no shared document table to filter,
+// which is what keeps this a set of small indexed reads.
+async function gstr1FetchDocuments(userId, start, end) {
+  const sources = gstr1DocumentSources();
+  if (!sources.length) return [];
+  const results = await Promise.all(sources.map(src =>
+    _supabase.from(src.table).select('*').eq('user_id', userId)
+      .gte('document_date', start).lte('document_date', end)));
+  const out = [];
+  results.forEach((res, i) => {
+    (res.data || []).forEach(row => out.push({ ...row, __documentType: sources[i].documentType }));
+  });
+  return out;
+}
+
+// One docs[] entry per (document type, numbering book, number shape),
+// with cancelled documents counted rather than dropped.
+//
+// totnum is every document the book issued, cancelled ones included —
+// the number WAS issued, which is why Table 13 has a separate cancel
+// column instead of simply omitting them. net_issue is what remains.
+function gstr1DocumentRanges(rows) {
+  const groups = new Map();
+  (rows || []).forEach(r => {
+    const num = r.document_number;
+    if (!num) return;
+    const series = String(r.document_series || r.__documentType || '').trim().toLowerCase();
+    const shape = gstr1NumberShape(num);
+    const key = JSON.stringify([r.__documentType, series, shape]);
+    if (!groups.has(key)) groups.set(key, { documentType: r.__documentType, series, shape, numbers: [], cancelled: 0 });
+    const g = groups.get(key);
+    g.numbers.push(String(num));
+    if (String(r.status || '').trim().toLowerCase() === 'cancelled') g.cancelled++;
+  });
+
+  const byType = new Map();
+  [...groups.values()]
+    .sort((a, b) => a.documentType.localeCompare(b.documentType)
+                 || a.series.localeCompare(b.series)
+                 || a.shape.localeCompare(b.shape))
+    .forEach(g => {
+      const sorted = [...g.numbers].sort(gstr1CompareInvoiceNumbers);
+      if (!byType.has(g.documentType)) byType.set(g.documentType, { documentType: g.documentType, docs: [] });
+      byType.get(g.documentType).docs.push({
+        num: byType.get(g.documentType).docs.length + 1,
+        from: sorted[0],
+        to: sorted[sorted.length - 1],
+        totnum: sorted.length,
+        cancel: g.cancelled,
+        net_issue: sorted.length - g.cancelled
+      });
+    });
+  return [...byType.values()];
+}
+
 // The shape of an invoice number with its digits removed: "138" -> "#",
 // "W-00005" -> "W-#", "INV-2026-001" -> "INV-#-#".
 function gstr1NumberShape(num) {
@@ -1153,12 +1232,15 @@ async function buildGSTR1Payload(userId, profile, periodFilter) {
   const todayISO = toISO(new Date());
 
   // Round 1: everything that can be scoped by its own date column.
-  const [b2bRes, b2cRes, cdnRes, srRes, srItemsRes] = await Promise.all([
+  const [b2bRes, b2cRes, cdnRes, srRes, srItemsRes, documentRows] = await Promise.all([
     _supabase.from('b2b_invoices').select('*').eq('user_id', userId).gte('invoice_date', start).lte('invoice_date', end),
     _supabase.from('b2c_invoices').select('*').eq('user_id', userId).gte('invoice_date', start).lte('invoice_date', end),
     _supabase.from('cdn_notes').select('*').eq('user_id', userId).gte('note_date', start).lte('note_date', end),
     _supabase.from('sales_returns').select('*').eq('user_id', userId).gte('return_date', start).lte('return_date', end),
-    _supabase.from('sales_return_items').select('*').eq('user_id', userId)
+    _supabase.from('sales_return_items').select('*').eq('user_id', userId),
+    // Vouchers and self invoices, for Table 13. Each from its own table;
+    // a business with none gets an empty array and an unchanged file.
+    gstr1FetchDocuments(userId, start, end)
   ]);
 
   const b2bData = b2bRes.data || [], b2cData = b2cRes.data || [];
@@ -1701,23 +1783,49 @@ async function buildGSTR1Payload(userId, profile, periodFilter) {
       };
     });
 
-  // doc_num and doc_typ come from the document registry in js/utils.js,
-  // not from literals here. Table 13 has twelve rows and this generator
-  // currently issues documents on one of them — tax invoices, row 1 —
-  // so one doc_det is written, exactly as before.
+  // Table 13, built from the registry rather than from literals.
   //
-  // The point of reading it from the registry is that the other eleven
-  // rows arrive by their document type gaining rows in its own domain
-  // table, not by editing this function. gstr1Table13DocDet() below
-  // walks every row the registry defines and emits the ones that have
-  // documents; today that is row 1 and only row 1, which is why the file
-  // is byte-for-byte what it was.
-  const table13 = gstr1Table13RowFor('tax_invoice');
-  const doc_issue = seriesDocs.length ? { doc_det: [{
-    doc_num: table13.docNum,
-    doc_typ: table13.docTyp,
-    docs: seriesDocs
-  }] } : {};
+  // Every row the registry defines is walked in ordinal order and a
+  // doc_det written for each that actually has documents. Row 1 carries
+  // the tax invoices computed above; the voucher and self-invoice rows
+  // carry their own domain tables, fetched alongside the invoices. A row
+  // with nothing on it is not written at all, which is why a business
+  // that issues only invoices gets exactly the file it got before.
+  //
+  // doc_num, doc_typ, from, to, totnum, cancel and net_issue all come
+  // from here or from the domain data. Nothing names a document type.
+  const table13Buckets = new Map();   // docNum -> { docTyp, docs[] }
+  const addTable13 = (docNum, docTyp, docs) => {
+    if (!docs.length) return;
+    if (!table13Buckets.has(docNum)) table13Buckets.set(docNum, { docNum, docTyp, docs: [] });
+    table13Buckets.get(docNum).docs.push(...docs);
+  };
+  const invoiceRow = gstr1Table13RowFor('tax_invoice');
+  addTable13(invoiceRow.docNum, invoiceRow.docTyp, seriesDocs);
+
+  // The vouchers and self invoices. Grouped by numbering book and by the
+  // shape of the number, exactly as invoices are — a document type may
+  // legitimately run more than one book, and two ways of writing a
+  // number are two document series.
+  //
+  // `cancel` is a real count here rather than the 0 invoices carry: a
+  // cancelled voucher keeps its row and its number precisely so Table 13
+  // can report it.
+  gstr1DocumentRanges(documentRows).forEach(entry => {
+    const row = gstr1Table13RowFor(entry.documentType);
+    if (row) addTable13(row.docNum, row.docTyp, entry.docs);
+  });
+
+  const doc_det = [...table13Buckets.values()]
+    .sort((a, b) => a.docNum - b.docNum)
+    .map(bucket => ({
+      doc_num: bucket.docNum,
+      doc_typ: bucket.docTyp,
+      // num runs 1..n within each doc_det, so a bucket fed from more
+      // than one source is renumbered rather than carrying two 1s.
+      docs: bucket.docs.map((d, i) => ({ ...d, num: i + 1 }))
+    }));
+  const doc_issue = doc_det.length ? { doc_det } : {};
 
   // Still computed, no longer emitted: a Utility-written return has no gt
   // or cur_gt, and the value we produced was the period's invoice total,
