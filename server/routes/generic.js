@@ -221,7 +221,8 @@ const TABLES = {
       // Document numbering (Phase 2, Module 4B-impl) — kept apart from
       // the invoice counters so invoice numbering is untouched.
       'document_series_sequences','document_series_formats',
-      'created_at']
+      'created_at',
+      'hsn_digits_required','aggregate_turnover_band']
   },
   customers: {
     columns: ['id','user_id','name','gstin','phone','email','address','state',
@@ -234,7 +235,10 @@ const TABLES = {
     columns: ['id','user_id','note_type','note_number','note_date','original_invoice',
       'customer_name','gstin','state','reason','taxable_amount','gst_percentage','supply_type',
       'igst','cgst','sgst','gst_amount','total_amount',
-      'created_at','updated_at']
+      'created_at','updated_at',
+      'cess_amount','original_invoice_date','original_period','original_note_number','original_note_date',
+      'supply_nature','original_invoice_id','original_invoice_table',
+      'differential_65','reverse_charge','ecom_gstin']
   },
   products: {
     columns: ['id','user_id','name','hsn_code','type','gst_percentage','default_rate',
@@ -288,6 +292,16 @@ const TABLES = {
       'receipt_voucher_id','original_document_number','original_document_date','reason',
       'refund_amount','gst_percentage','igst','cgst','sgst','cess','total_value',
       'notes','created_at','updated_at']
+  },
+  // ── Amendments to already-filed returns (Batch 7) ──
+  //    An amendment is a record of its own, never an edit of the document
+  //    it amends: the original figures were filed and stay filed.
+  gst_amendments: {
+    columns: ['id','user_id','section','original_period','amendment_period','original_document_id',
+      'original_document_table','original_number','original_date','revised_number','revised_date',
+      'party_gstin','party_name','place_of_supply','supply_type','inv_typ','note_type',
+      'reverse_charge','taxable_amount','gst_percentage','igst','cgst','sgst','cess','total_amount',
+      'reason','notes','status','created_at','updated_at']
   },
   // ── Exports, advances, bill of supply (Batch 5) ──
   advance_adjustments: {
@@ -373,7 +387,10 @@ const TABLES = {
       'lr_number','lr_date','transporter_gstin','vehicle_type','dispatch_from','dispatch_to',
       'payment_status','amount_paid','invoice_source','gst_category','reverse_charge',
       'created_at','updated_at',
-      'export_type','shipping_bill_number','shipping_bill_date','port_code']
+      'export_type','shipping_bill_number','shipping_bill_date','port_code',
+      'cess_amount','ecom_gstin','ecom_supply_type',
+      'sez_recipient_type','export_of','lut_number',
+      'differential_65']
   },
   b2c_invoices: {
     columns: ['id','user_id','gst_number','customer_name','phone','address','state',
@@ -383,7 +400,10 @@ const TABLES = {
       'lr_number','lr_date','transporter_gstin','vehicle_type','dispatch_from','dispatch_to',
       'payment_status','amount_paid','invoice_source','gst_category','reverse_charge',
       'created_at','updated_at',
-      'export_type','shipping_bill_number','shipping_bill_date','port_code']
+      'export_type','shipping_bill_number','shipping_bill_date','port_code',
+      'cess_amount','ecom_gstin','ecom_supply_type',
+      'sez_recipient_type','export_of','lut_number',
+      'differential_65']
   },
   b2b_hsn: {
     // Legacy — no longer written to directly by normal invoice flow, but

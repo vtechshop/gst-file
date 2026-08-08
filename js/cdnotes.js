@@ -71,7 +71,14 @@ async function saveCDNote() {
   const r = calcGST(taxable, gstPct, supply);
   const payload = {
     user_id: user.id, note_type: noteType, note_number: noteNum, note_date: noteDate,
-    original_invoice: origInv, customer_name: custName, gstin, state,
+    original_invoice: origInv,
+    // What the note reverses. Defaults to an ordinary supply, so every
+    // note already saved keeps meaning exactly what it meant.
+    supply_nature: (document.getElementById('cdSupplyNature')?.value || 'regular'),
+    reverse_charge: !!document.getElementById('cdReverseCharge')?.checked,
+    ecom_gstin: (document.getElementById('cdEcomGstin')?.value || '').trim().toUpperCase() || null,
+    differential_65: !!document.getElementById('cdDifferential65')?.checked,
+    customer_name: custName, gstin, state,
     reason, taxable_amount: taxable, gst_percentage: gstPct, supply_type: supply,
     igst: r.igst, cgst: r.cgst, sgst: r.sgst,
     gst_amount: r.gstAmount, total_amount: r.totalAmount
@@ -171,6 +178,14 @@ function editCDNote(id) {
   document.getElementById('cdNoteNum').value    = rec.note_number;
   document.getElementById('cdNoteDate').value   = rec.note_date;
   document.getElementById('cdOrigInv').value    = rec.original_invoice || '';
+  const nat = document.getElementById('cdSupplyNature');
+  if (nat) nat.value = rec.supply_nature || 'regular';
+  const rc = document.getElementById('cdReverseCharge');
+  if (rc) rc.checked = !!rec.reverse_charge;
+  const eg = document.getElementById('cdEcomGstin');
+  if (eg) eg.value = rec.ecom_gstin || '';
+  const d65 = document.getElementById('cdDifferential65');
+  if (d65) d65.checked = !!rec.differential_65;
   document.getElementById('cdCustName').value   = rec.customer_name;
   document.getElementById('cdGSTIN').value      = rec.gstin || '';
   document.getElementById('cdState').value      = rec.state || '';

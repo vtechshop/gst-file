@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Revised Invoices - GST Management System</title>
+  <title>Amendments - GST Management System</title>
   <link rel="stylesheet" href="css/style.css?v=23">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
   <script src="js/apiClient.js?v=23"></script>
@@ -14,7 +14,7 @@
   <script src="js/utils.js?v=23"></script>
   <script src="js/search.js?v=23"></script>
   <script src="js/profile.js?v=23"></script>
-  <script src="js/revised-invoices.js?v=23"></script>
+  <script src="js/amendments.js?v=23"></script>
 
 </head>
 <body>
@@ -34,8 +34,8 @@
       <a href="cdnotes.html" class="menu-item"><i class="fas fa-file-minus"></i> Credit/Debit Notes</a>
       <a href="vouchers.html" class="menu-item"><i class="fas fa-receipt"></i> Vouchers</a>
       <a href="challans.html" class="menu-item"><i class="fas fa-file-signature"></i> Delivery Challans</a>
-      <a href="revised-invoice.html" class="menu-item active"><i class="fas fa-file-pen"></i> Revised Invoices</a>
-      <a href="amendments.html" class="menu-item"><i class="fas fa-pen-to-square"></i> Amendments</a>
+      <a href="revised-invoice.html" class="menu-item"><i class="fas fa-file-pen"></i> Revised Invoices</a>
+      <a href="amendments.html" class="menu-item active"><i class="fas fa-pen-to-square"></i> Amendments</a>
       <a href="bill-of-supply.html" class="menu-item"><i class="fas fa-file-invoice"></i> Bill of Supply</a>
       <a href="advances.html" class="menu-item"><i class="fas fa-hand-holding-dollar"></i> Advances</a>
       <a href="sales-returns.html" class="menu-item"><i class="fas fa-rotate-left"></i> Sales Returns</a>
@@ -76,153 +76,154 @@
   <div class="main-content">
     <div class="top-bar">
       <button type="button" class="menu-toggle" id="menuToggle" aria-label="Toggle sidebar menu"><i class="fas fa-bars"></i></button>
-      <span class="page-title"><i class="fas fa-file-pen"></i>Revised Invoices</span>
+      <span class="page-title"><i class="fas fa-pen-to-square"></i>Amendments</span>
       <button type="button" class="btn btn-secondary btn-sm btn-icon ml-auto" onclick="openGlobalSearch()" title="Search everywhere (Ctrl+K)" aria-label="Global search"><i class="fas fa-search"></i></button>
     </div>
 
     <div class="content">
       <p class="text-muted-sm mb-16"><i class="fas fa-info-circle"></i>
-        Rule 53(1). Invoices raised between your effective date of registration and the day
-        the certificate arrived were issued before you were registered &mdash; a revised invoice
-        replaces each of them, within one month of the certificate. A revised invoice is
-        <b>not a new sale</b> and <b>not a credit note</b>: it does not reduce a supply, it
-        re-issues the tax document for one.</p>
+        An amendment is <b>not an edit</b>. The original figures were filed and stay filed; this
+        records what they should have been. It belongs to the period it is <b>made</b> in, not the
+        one it corrects. Editing the original invoice instead would silently change a return you
+        have already submitted.</p>
 
       <div class="card mb-20">
-        <div class="card-header">
-          <span class="card-title"><i class="fas fa-file-pen"></i> New Revised Invoice</span>
-        </div>
+        <div class="card-header"><span class="card-title"><i class="fas fa-pen-to-square"></i> Record an amendment</span></div>
         <div class="card-body">
-          <div class="alert alert-info mb-16" id="riRegistryBox"></div>
-
           <div class="form-row">
             <div class="form-group">
-              <label for="riNumber">Revised Invoice Number *</label>
-              <div class="d-flex gap-8">
-                <input type="text" id="riNumber" class="form-control" placeholder="RI-00001">
-                <button type="button" class="btn btn-secondary btn-sm" onclick="riAutoNumber()">
-                  <i class="fas fa-wand-magic-sparkles"></i> Auto
-                </button>
-              </div>
-              <div class="form-error" id="riNumberError"></div>
+              <label for="amSection">Section being amended *</label>
+              <select id="amSection" class="form-control" onchange="onAmSectionChange()"></select>
             </div>
             <div class="form-group">
-              <label for="riDate">Revised Invoice Date *</label>
-              <input type="date" id="riDate" class="form-control">
-              <div class="form-error" id="riDateError"></div>
+              <label for="amAmendmentDate">Amendment made on *</label>
+              <input type="date" id="amAmendmentDate" class="form-control">
+              <small class="text-muted">Decides which return it appears in.</small>
             </div>
             <div class="form-group">
-              <label for="riOriginalPeriod">Original return period</label>
-              <input type="text" id="riOriginalPeriod" class="form-control" readonly placeholder="MMYYYY">
-              <small class="text-muted">Taken from the original invoice's date.</small>
+              <label for="amOriginalPeriod">Original return period</label>
+              <input type="text" id="amOriginalPeriod" class="form-control" readonly placeholder="MMYYYY">
             </div>
           </div>
 
-          <h4 class="mt-8 mb-8 fs-14"><i class="fas fa-link"></i> The invoice being revised</h4>
+          <div class="alert alert-warning mb-16" id="amEmitWarning"></div>
+
+          <h4 class="mt-8 mb-8 fs-14"><i class="fas fa-link"></i> The document being amended</h4>
           <div class="form-row">
             <div class="form-group form-group-wide">
-              <label for="riOriginal">Original invoice</label>
-              <select id="riOriginal" class="form-control" onchange="onRiOriginalChange()"></select>
-              <div class="form-error" id="riOriginalError"></div>
+              <label for="amOriginal">Pick it</label>
+              <select id="amOriginal" class="form-control" onchange="onAmOriginalChange()"></select>
             </div>
             <div class="form-group">
-              <label for="riOriginalNumber">Original number *</label>
-              <input type="text" id="riOriginalNumber" class="form-control">
-              <small class="text-muted">Editable &mdash; the original may predate this system.</small>
+              <label for="amOriginalNumber">Original number *</label>
+              <input type="text" id="amOriginalNumber" class="form-control">
+              <small class="text-muted">Editable &mdash; it may predate this system.</small>
             </div>
             <div class="form-group">
-              <label for="riOriginalDate">Original date *</label>
-              <input type="date" id="riOriginalDate" class="form-control">
+              <label for="amOriginalDate">Original date *</label>
+              <input type="date" id="amOriginalDate" class="form-control">
             </div>
           </div>
 
-          <h4 class="mt-8 mb-8 fs-14"><i class="fas fa-user"></i> Customer &amp; GST</h4>
+          <h4 class="mt-8 mb-8 fs-14"><i class="fas fa-arrow-right"></i> What it should have said</h4>
           <div class="form-row">
             <div class="form-group">
-              <label for="riPartyName">Customer *</label>
-              <input type="text" id="riPartyName" class="form-control">
-              <div class="form-error" id="riPartyError"></div>
+              <label for="amRevisedNumber">Revised number</label>
+              <input type="text" id="amRevisedNumber" class="form-control" placeholder="If the number changed">
             </div>
             <div class="form-group">
-              <label for="riPartyGstin">Customer GSTIN</label>
-              <input type="text" id="riPartyGstin" class="form-control">
+              <label for="amRevisedDate">Revised date</label>
+              <input type="date" id="amRevisedDate" class="form-control">
             </div>
             <div class="form-group">
-              <label for="riPlaceOfSupply">Place of supply</label>
-              <input type="text" id="riPlaceOfSupply" class="form-control">
+              <label for="amPartyName">Customer</label>
+              <input type="text" id="amPartyName" class="form-control">
             </div>
             <div class="form-group">
-              <label for="riSupplyType">Supply type</label>
-              <select id="riSupplyType" class="form-control" onchange="recalcRi()">
+              <label for="amPartyGstin">Customer GSTIN</label>
+              <input type="text" id="amPartyGstin" class="form-control">
+            </div>
+          </div>
+          <div class="form-row">
+            <div class="form-group">
+              <label for="amPlaceOfSupply">Place of supply</label>
+              <input type="text" id="amPlaceOfSupply" class="form-control">
+            </div>
+            <div class="form-group">
+              <label for="amSupplyType">Supply type</label>
+              <select id="amSupplyType" class="form-control" onchange="recalcAmendment()">
                 <option value="intrastate">Intra-state</option>
                 <option value="interstate">Inter-state</option>
               </select>
             </div>
+            <div class="form-group">
+              <label for="amInvTyp">Invoice type</label>
+              <select id="amInvTyp" class="form-control">
+                <option value="R">Regular</option>
+                <option value="SEWP">SEZ, with payment of IGST</option>
+                <option value="SEWOP">SEZ, without payment</option>
+                <option value="DE">Deemed export</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label for="amNoteType">Note type (notes only)</label>
+              <select id="amNoteType" class="form-control">
+                <option value="">&mdash;</option>
+                <option value="credit">Credit</option>
+                <option value="debit">Debit</option>
+              </select>
+            </div>
           </div>
-
           <div class="form-row">
             <div class="form-group">
-              <label for="riTaxable">Taxable value *</label>
-              <input type="number" step="0.01" id="riTaxable" class="form-control" oninput="recalcRi()">
-              <div class="form-error" id="riTaxableError"></div>
+              <label for="amTaxable">Taxable value *</label>
+              <input type="number" step="0.01" id="amTaxable" class="form-control" oninput="recalcAmendment()">
             </div>
             <div class="form-group">
-              <label for="riGstPct">GST %</label>
-              <input type="number" step="0.01" id="riGstPct" class="form-control" oninput="recalcRi()">
+              <label for="amGstPct">GST %</label>
+              <input type="number" step="0.01" id="amGstPct" class="form-control" oninput="recalcAmendment()">
             </div>
             <div class="form-group">
-              <label for="riCess">Cess</label>
-              <input type="number" step="0.01" id="riCess" class="form-control" oninput="recalcRi()">
+              <label for="amCess">Cess</label>
+              <input type="number" step="0.01" id="amCess" class="form-control" oninput="recalcAmendment()">
             </div>
             <div class="form-group">
-              <label for="riReason">Reason</label>
-              <input type="text" id="riReason" class="form-control" placeholder="Why it is being revised">
+              <label for="amReason">Reason</label>
+              <input type="text" id="amReason" class="form-control">
             </div>
           </div>
 
           <div class="alert alert-secondary mb-16">
             <div class="d-flex gap-20 flex-wrap fs-13">
-              <div>IGST <b id="riIgstOut">0.00</b></div>
-              <div>CGST <b id="riCgstOut">0.00</b></div>
-              <div>SGST <b id="riSgstOut">0.00</b></div>
-              <div>Cess <b id="riCessOut">0.00</b></div>
-              <div>Total <b id="riTotalOut">0.00</b></div>
+              <div>IGST <b id="amIgstOut">0.00</b></div>
+              <div>CGST <b id="amCgstOut">0.00</b></div>
+              <div>SGST <b id="amSgstOut">0.00</b></div>
+              <div>Total <b id="amTotalOut">0.00</b></div>
             </div>
           </div>
 
-          <div class="table-responsive">
-            <table class="table table-sm">
-              <thead><tr>
-                <th>Description</th><th>HSN</th><th class="text-right">Qty</th>
-                <th class="text-right">Rate</th><th class="text-right">GST %</th><th class="text-right">Total</th>
-              </tr></thead>
-              <tbody id="riItemsBody"></tbody>
-            </table>
+          <div class="form-group">
+            <label for="amNotes">Notes</label>
+            <input type="text" id="amNotes" class="form-control">
           </div>
-
-          <div class="form-group mt-12">
-            <label for="riNotes">Notes</label>
-            <input type="text" id="riNotes" class="form-control">
-          </div>
-          <input type="hidden" id="riCustomerId">
-
+          <div class="form-error" id="amError"></div>
           <div class="d-flex gap-10 mt-16">
-            <button type="button" class="btn btn-primary" onclick="saveRevisedInvoice()"><i class="fas fa-save"></i> Save Revised Invoice</button>
-            <button type="button" class="btn btn-secondary" onclick="resetRevisedInvoiceForm()"><i class="fas fa-rotate-left"></i> Reset</button>
+            <button type="button" class="btn btn-primary" onclick="saveAmendment()"><i class="fas fa-save"></i> Record Amendment</button>
+            <button type="button" class="btn btn-secondary" onclick="resetAmendmentForm()"><i class="fas fa-rotate-left"></i> Reset</button>
           </div>
         </div>
       </div>
 
       <div class="card">
-        <div class="card-header"><span class="card-title"><i class="fas fa-list"></i> Revised Invoices</span></div>
+        <div class="card-header"><span class="card-title"><i class="fas fa-list"></i> Recorded amendments</span></div>
         <div class="card-body">
           <div class="table-responsive">
             <table class="table">
               <thead><tr>
-                <th>Number</th><th>Date</th><th>Revises</th><th>Customer</th>
-                <th class="text-right">Total</th><th>Status</th><th class="text-center w-80">Actions</th>
+                <th>Section</th><th>Original</th><th>Filed in</th><th>Amended in</th>
+                <th>Customer</th><th class="text-right">Total</th><th class="text-center">Reaches JSON?</th><th class="w-60"></th>
               </tr></thead>
-              <tbody id="riListBody"></tbody>
+              <tbody id="amListBody"></tbody>
             </table>
           </div>
         </div>
@@ -233,7 +234,7 @@
 </div>
 
 <script>
-document.addEventListener('DOMContentLoaded', () => { initRevisedInvoices(); });
+document.addEventListener('DOMContentLoaded', () => { initAmendments(); });
 </script>
 </body>
 </html>

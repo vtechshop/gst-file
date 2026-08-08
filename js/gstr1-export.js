@@ -190,6 +190,68 @@ const GSTR1_UNPRODUCED_SECTIONS = [
 // IGST was paid and will be reclaimed; WOPAY means it went out under a LUT
 // or bond with no IGST charged.
 const GSTR1_EXPORT_TYPES = ['WPAY', 'WOPAY'];
+
+// Supplies made THROUGH an e-commerce operator carry the operator's GSTIN
+// as `etin`, which is part of the b2b and b2cs shapes already in use. It
+// is written only when there is one, so an ordinary supply is unchanged.
+//
+// Section 9(5) supplies — where the OPERATOR pays the tax rather than the
+// supplier — are reported in GSTR-1 Tables 14 and 15. Those two tables are
+// NOT emitted: no schema reference available here gives their shape, and a
+// section written to a guessed shape risks the whole return. The data is
+// captured and shown in the UI so nothing is lost, and turning emission on
+// later needs no re-entry. Marked UNVERIFIED.
+const GSTR1_ECOM_SUPPLY_TYPES = ['through_operator', 'section_9_5'];
+
+// A vehicle bought and leased before 1 July 2017 attracts GST at 65% of
+// the applicable rate. GSTR-1 carries that as `diff_percent`, whose only
+// accepted value is 0.65 — which is why the document stores a yes/no and
+// the number lives here. The field is optional, so it is written only for
+// a document that actually claims it and every other document is
+// unchanged.
+const GSTR1_DIFF_PERCENT = 0.65;
+function gstr1DiffPercentOf(doc) {
+  return (doc && doc.differential_65) ? GSTR1_DIFF_PERCENT : null;
+}
+
+// A credit or debit note inherits the nature of the supply it reverses.
+// Reversing an SEZ supply as though it were an ordinary domestic one
+// overstates domestic turnover and understates the SEZ figures.
+//
+// For a note to a REGISTERED customer this maps to cdnr's inv_typ, which
+// is the same enum b2b already uses and is therefore already validated
+// here. It is written only when the note is NOT ordinary, so every note
+// already issued produces exactly the JSON it produced before.
+const GSTR1_NOTE_INV_TYP = {
+  regular: 'R', sezwp: 'SEWP', sezwop: 'SEWOP', de: 'DE'
+};
+function gstr1NoteInvTyp(note) {
+  return GSTR1_NOTE_INV_TYP[String((note && note.supply_nature) || 'regular').trim()] || 'R';
+}
+
+// For a note to an UNREGISTERED customer the equivalent is cdnur's `typ`.
+// Every source available here shows only one value of that enum, B2CL, so
+// the others are guesses and a guessed enum is a rejected return.
+//
+// OFF: an export or SEZ note keeps being written as B2CL, which is what
+// this generator has always done, and the export reports it so the figure
+// can be corrected on the portal rather than discovered there. The nature
+// is captured and shown regardless, so switching this on later needs no
+// re-entry. Marked UNVERIFIED.
+let GSTR1_EMIT_CDNUR_TYPES = false;  // same reason
+const GSTR1_CDNUR_TYP = {
+  regular: 'B2CL', expwp: 'EXPWP', expwop: 'EXPWOP',
+  sezwp: 'SEZWP', sezwop: 'SEZWOP', de: 'DE'
+};
+function gstr1CdnurTyp(note) {
+  const nature = String((note && note.supply_nature) || 'regular').trim();
+  if (!GSTR1_EMIT_CDNUR_TYPES) return 'B2CL';
+  return GSTR1_CDNUR_TYP[nature] || 'B2CL';
+}
+function gstr1EcomGstinOf(inv) {
+  const g = String((inv && inv.ecom_gstin) || '').trim().toUpperCase();
+  return g && validateGstin(g).valid ? g : null;
+}
 function gstr1ExportTypeOf(inv) {
   const t = String((inv && inv.export_type) || '').trim().toUpperCase();
   return GSTR1_EXPORT_TYPES.includes(t) ? t : null;
@@ -687,7 +749,7 @@ const GSTR1_TABLE13_HANDLED_ELSEWHERE = new Set([
 //
 // Consequence while off, stated plainly: a revised invoice appears in
 // Table 13 row 3 and nowhere else in the JSON.
-const GSTR1_EMIT_AMENDMENTS = false;
+let GSTR1_EMIT_AMENDMENTS = false;   // let, not const: a flag that cannot be flipped is not a flag
 
 // Builds b2ba and b2cla from revised invoices. A revised invoice under
 // Rule 53(1) points at exactly one original invoice, which is what the
@@ -697,12 +759,33 @@ const GSTR1_EMIT_AMENDMENTS = false;
 // B2CL applies to inter-state supplies to unregistered persons above the
 // threshold, so a revised invoice with no counterparty GSTIN goes there
 // and one with a GSTIN goes to b2ba.
-function gstr1BuildAmendments(revisedRows) {
+function gstr1BuildAmendments(revisedRows, amendmentRows) {
   const b2ba = [], b2cla = [];
   if (!GSTR1_EMIT_AMENDMENTS) return { b2ba, b2cla };
 
+  // Two things feed the amendment sections and they arrive in different
+  // shapes: a revised invoice under Rule 53(1), and an amendment recorded
+  // against an already-filed return. Both say the same thing — here is a
+  // document, here is what it should have said — so both are reduced to
+  // that shape before either is grouped.
+  const fromAmendment = (amendmentRows || [])
+    .filter(a => a.section === 'b2b' || a.section === 'b2cl')
+    .filter(a => String(a.status || '').toLowerCase() !== 'cancelled')
+    .map(a => ({
+      status: a.status,
+      party_gstin: a.party_gstin,
+      original_invoice_number: a.original_number,
+      original_invoice_date: a.original_date,
+      document_number: a.revised_number || a.original_number,
+      document_date: a.revised_date || a.original_date,
+      place_of_supply: a.place_of_supply,
+      taxable_amount: a.taxable_amount, gst_percentage: a.gst_percentage,
+      igst: a.igst, cgst: a.cgst, sgst: a.sgst, cess: a.cess,
+      total_amount: a.total_amount, inv_typ: a.inv_typ, reverse_charge: a.reverse_charge
+    }));
+
   const byCtin = new Map(), byPos = new Map();
-  (revisedRows || []).forEach(r => {
+  [...(revisedRows || []), ...fromAmendment].forEach(r => {
     if (String(r.status || '').toLowerCase() === 'cancelled') return;
     const txval = round2(r.taxable_amount);
     const rt = round2(r.gst_percentage);
@@ -789,6 +872,20 @@ function gstr1BuildAdvanceSection(rows, amountOf, posOf, supplyTypeOf) {
 // Advance adjustments are their own dated rows rather than a running
 // total on the receipt voucher, because Table 11B asks which advances
 // were adjusted IN THIS PERIOD and a running total cannot answer that.
+// Amendments recorded against an already-filed return. Fetched by the
+// period they are being made IN, which is the return being built — an
+// amendment made in July to a June invoice belongs in July's return.
+async function gstr1FetchAmendments(userId, fp) {
+  if (!fp) return [];
+  try {
+    const res = await _supabase.from('gst_amendments').select('*').eq('user_id', userId)
+      .eq('amendment_period', fp);
+    return res.data || [];
+  } catch (e) {
+    return [];
+  }
+}
+
 async function gstr1FetchAdvanceAdjustments(userId, start, end) {
   try {
     const res = await _supabase.from('advance_adjustments').select('*').eq('user_id', userId)
@@ -1149,7 +1246,15 @@ function gstr1RecomputeItem(item, supplyType) {
   const taxable = round2(+item.taxable_value || 0);
   const rate = +item.gst_percentage || 0;
   const calc = calcGST(taxable, rate, supplyType);
-  return { taxable, rate, igst: calc.igst, cgst: calc.cgst, sgst: calc.sgst, gstAmount: calc.gstAmount };
+  // Compensation cess is charged on the taxable value, not on the GST,
+  // and it is recomputed here for the same reason the GST is: a stored
+  // figure that disagrees with its own line is the thing this generator
+  // exists to catch. The rate is preferred; a line that carries only an
+  // amount (raised before the rate was stored) keeps that amount.
+  const cessRate = +item.cess_rate || 0;
+  const cess = cessRate ? round2(taxable * cessRate / 100) : round2(+item.cess_amount || 0);
+  return { taxable, rate, igst: calc.igst, cgst: calc.cgst, sgst: calc.sgst,
+           gstAmount: calc.gstAmount, cess, cessRate };
 }
 
 // Recomputes an invoice's totals from its items, AND groups them by GST
@@ -1199,19 +1304,25 @@ function gstr1TotalMismatch(inv, rawTotal) {
 }
 
 function gstr1RecomputeInvoice(items, supplyType) {
-  let taxable = 0, igst = 0, cgst = 0, sgst = 0;
+  let taxable = 0, igst = 0, cgst = 0, sgst = 0, cess = 0;
   const byRate = new Map();
   items.forEach(it => {
     const r = gstr1RecomputeItem(it, supplyType);
     taxable = round2(taxable + r.taxable); igst = round2(igst + r.igst);
     cgst = round2(cgst + r.cgst); sgst = round2(sgst + r.sgst);
-    if (!byRate.has(r.rate)) byRate.set(r.rate, { rate: r.rate, taxable: 0, igst: 0, cgst: 0, sgst: 0 });
+    cess = round2(cess + r.cess);
+    if (!byRate.has(r.rate)) byRate.set(r.rate, { rate: r.rate, taxable: 0, igst: 0, cgst: 0, sgst: 0, cess: 0 });
     const b = byRate.get(r.rate);
     b.taxable = round2(b.taxable + r.taxable); b.igst = round2(b.igst + r.igst);
     b.cgst = round2(b.cgst + r.cgst); b.sgst = round2(b.sgst + r.sgst);
+    b.cess = round2(b.cess + r.cess);
   });
   const gstAmount = round2(igst + cgst + sgst);
-  return { taxable, igst, cgst, sgst, gstAmount, total: round2(taxable + gstAmount), byRate: [...byRate.values()] };
+  // Cess is part of what the invoice is worth, so it belongs in the total
+  // that `val` is derived from and that the stored total is checked
+  // against. An invoice with no cess totals exactly as it did before.
+  return { taxable, igst, cgst, sgst, cess, gstAmount,
+           total: round2(taxable + gstAmount + cess), byRate: [...byRate.values()] };
 }
 
 // A pre-line-item invoice (created before item-level tracking existed)
@@ -1409,7 +1520,7 @@ async function buildGSTR1Payload(userId, profile, periodFilter) {
   const todayISO = toISO(new Date());
 
   // Round 1: everything that can be scoped by its own date column.
-  const [b2bRes, b2cRes, cdnRes, srRes, srItemsRes, documentRows, advanceAdjustmentRows] = await Promise.all([
+  const [b2bRes, b2cRes, cdnRes, srRes, srItemsRes, documentRows, advanceAdjustmentRows, amendmentRows] = await Promise.all([
     _supabase.from('b2b_invoices').select('*').eq('user_id', userId).gte('invoice_date', start).lte('invoice_date', end),
     _supabase.from('b2c_invoices').select('*').eq('user_id', userId).gte('invoice_date', start).lte('invoice_date', end),
     _supabase.from('cdn_notes').select('*').eq('user_id', userId).gte('note_date', start).lte('note_date', end),
@@ -1418,7 +1529,8 @@ async function buildGSTR1Payload(userId, profile, periodFilter) {
     // Vouchers and self invoices, for Table 13. Each from its own table;
     // a business with none gets an empty array and an unchanged file.
     gstr1FetchDocuments(userId, start, end),
-    gstr1FetchAdvanceAdjustments(userId, start, end)
+    gstr1FetchAdvanceAdjustments(userId, start, end),
+    gstr1FetchAmendments(userId, gstr1FilingPeriod(periodFilter).fp)
   ]);
 
   const b2bData = b2bRes.data || [], b2cData = b2cRes.data || [];
@@ -1543,7 +1655,7 @@ async function buildGSTR1Payload(userId, profile, periodFilter) {
       // Flat item rows, not the num/itm_det pairs B2B uses. Both schema
       // references available here agree on that for this section.
       itms: recomputed.byRate.map(b => ({
-        txval: b.taxable, rt: b.rate, iamt: b.igst, csamt: 0
+        txval: b.taxable, rt: b.rate, iamt: b.igst, csamt: round2(b.cess || 0)
       }))
     };
     // The shipping bill may not exist yet when the return is filed, so
@@ -1579,12 +1691,25 @@ async function buildGSTR1Payload(userId, profile, periodFilter) {
     expGroups.get(expType).push(entry);
   }
 
+  const hsnDigitsRequired = parseInt(profile && profile.hsn_digits_required, 10) || 0;
   const hsnBuckets = { b2b: new Map(), b2c: new Map() }; // "hsncode|rate" -> row
   function addToHsn(channel, hsnCode, desc, uqc, qty, r, errCtx) {
     if (!gstr1HsnFormatOk(hsnCode)) { errors.push(gstr1Err({ field: 'HSN Code', current: hsnCode, expected: 'a 4, 6 or 8 digit code', message: `${errCtx}: HSN code is not valid.`, fix: 'Set a valid HSN code on the product, then re-save the invoice.' })); return; }
+    // Table 12 requires a minimum number of HSN digits, set by turnover.
+    // The requirement is stated on the Business Profile rather than worked
+    // out here, because the threshold moves by notification. When it has
+    // not been stated, nothing is enforced — which is exactly how every
+    // return behaved before this check existed.
+    if (hsnDigitsRequired && String(hsnCode).replace(/\D/g, '').length < hsnDigitsRequired) {
+      errors.push(gstr1Err({ field: 'HSN Code', current: hsnCode,
+        expected: `at least ${hsnDigitsRequired} digits`,
+        message: `${errCtx}: this HSN code is shorter than the ${hsnDigitsRequired} digits your Business Profile says you must report.`,
+        fix: `Set a ${hsnDigitsRequired}-digit HSN on the product, or correct the setting in Business Profile if it is wrong.` }));
+      return;
+    }
     const buckets = hsnBuckets[channel];
     const key = hsnCode + '|' + r.rate;
-    if (!buckets.has(key)) buckets.set(key, { hsn_sc: hsnCode, desc: desc || '', uqc, qty: 0, taxable: 0, igst: 0, cgst: 0, sgst: 0 });
+    if (!buckets.has(key)) buckets.set(key, { hsn_sc: hsnCode, desc: desc || '', uqc, qty: 0, taxable: 0, igst: 0, cgst: 0, sgst: 0, cess: 0 });
     const b = buckets.get(key);
     // GSTN's schema allows exactly one row per HSN+rate — different
     // units genuinely selling under the same HSN+rate can't become two
@@ -1596,6 +1721,7 @@ async function buildGSTR1Payload(userId, profile, periodFilter) {
       return;
     }
     b.qty = round2(b.qty + (qty || 0));
+    b.cess = round2(b.cess + (r.cess || 0));
     b.taxable = round2(b.taxable + r.taxable); b.igst = round2(b.igst + r.igst);
     b.cgst = round2(b.cgst + r.cgst); b.sgst = round2(b.sgst + r.sgst);
     // A later row can supply a UQC where an earlier one (e.g. a legacy
@@ -1755,8 +1881,12 @@ async function buildGSTR1Payload(userId, profile, periodFilter) {
       inum: inv.invoice_number, idt, val: gstr1InvoiceVal(recomputed.total), pos,
       rchrg: inv.reverse_charge ? 'Y' : 'N',
       inv_typ: gstr1InvTypFor(inv.gst_category, recomputed.igst + recomputed.cgst + recomputed.sgst),
-      itms: recomputed.byRate.map((b, i) => ({ num: i + 1, itm_det: { txval: b.taxable, rt: b.rate, iamt: b.igst, camt: b.cgst, samt: b.sgst, csamt: 0 } }))
+      itms: recomputed.byRate.map((b, i) => ({ num: i + 1, itm_det: { txval: b.taxable, rt: b.rate, iamt: b.igst, camt: b.cgst, samt: b.sgst, csamt: round2(b.cess || 0) } }))
     };
+    const b2bEtin = gstr1EcomGstinOf(inv);
+    if (b2bEtin) invEntry.etin = b2bEtin;
+    const b2bDiff = gstr1DiffPercentOf(inv);
+    if (b2bDiff) invEntry.diff_percent = b2bDiff;
     if (!b2bGroups.has(gstin)) b2bGroups.set(gstin, []);
     b2bGroups.get(gstin).push(invEntry);
   });
@@ -1834,15 +1964,32 @@ async function buildGSTR1Payload(userId, profile, periodFilter) {
     if (isLarge) {
       const invEntry = {
         inum: inv.invoice_number || `B2C-${inv.id.slice(0, 8)}`, idt, val: gstr1InvoiceVal(recomputed.total),
-        itms: recomputed.byRate.map((b, i) => ({ num: i + 1, itm_det: { txval: b.taxable, rt: b.rate, iamt: b.igst, csamt: 0 } }))
+        itms: recomputed.byRate.map((b, i) => ({ num: i + 1, itm_det: { txval: b.taxable, rt: b.rate, iamt: b.igst, csamt: round2(b.cess || 0) } }))
       };
+      // B2CL was the one supply section that never carried the operator
+      // GSTIN, so a large inter-state sale through an operator reported as
+      // though it had been made directly.
+      const b2clEtin = gstr1EcomGstinOf(inv);
+      if (b2clEtin) invEntry.etin = b2clEtin;
+      const b2clDiff = gstr1DiffPercentOf(inv);
+      if (b2clDiff) invEntry.diff_percent = b2clDiff;
       if (!b2clGroups.has(pos)) b2clGroups.set(pos, []);
       b2clGroups.get(pos).push(invEntry);
     } else {
       recomputed.byRate.forEach(b => {
-        const key = `${pos}|${b.rate}|${inv.supply_type}`;
-        if (!b2csBuckets.has(key)) b2csBuckets.set(key, { sply_ty: inv.supply_type === 'interstate' ? 'INTER' : 'INTRA', pos, typ: 'OE', rt: b.rate, txval: 0, iamt: 0, camt: 0, samt: 0, csamt: 0 });
+        // The operator is part of the identity of a B2CS row: two
+        // operators aggregated together would report one of them as the
+        // other's.
+        const etin = gstr1EcomGstinOf(inv) || '';
+        const key = `${pos}|${b.rate}|${inv.supply_type}|${etin}`;
+        if (!b2csBuckets.has(key)) {
+          const bucket = { sply_ty: inv.supply_type === 'interstate' ? 'INTER' : 'INTRA', pos,
+                           typ: etin ? 'E' : 'OE', rt: b.rate, txval: 0, iamt: 0, camt: 0, samt: 0, csamt: 0 };
+          if (etin) bucket.etin = etin;
+          b2csBuckets.set(key, bucket);
+        }
         const bucket = b2csBuckets.get(key);
+        bucket.csamt = round2(bucket.csamt + (b.cess || 0));
         bucket.txval = round2(bucket.txval + b.taxable); bucket.iamt = round2(bucket.iamt + b.igst);
         bucket.camt = round2(bucket.camt + b.cgst); bucket.samt = round2(bucket.samt + b.sgst);
       });
@@ -1918,14 +2065,30 @@ async function buildGSTR1Payload(userId, profile, periodFilter) {
 
     const taxable = round2(+note.taxable_amount);
     const calc = calcGST(taxable, +note.gst_percentage || 0, note.supply_type);
-    const val = round2(taxable + calc.gstAmount);
+    // A note that reverses a supply carrying cess reverses the cess too,
+    // otherwise the cess stays paid on a supply that was cancelled.
+    const noteCess = round2(+note.cess_amount || 0);
+    const val = round2(taxable + calc.gstAmount + noteCess);
     const gstin = (note.gstin || '').toUpperCase();
 
     if (gstin) {
       const gCheck = validateGstin(gstin);
       if (!gCheck.valid) { errors.push(gstr1Err({ invoice: note.note_number, customer: note.customer_name, field: 'Customer GST Number', current: gstin, expected: 'a valid 15-character GSTIN', message: `Customer GSTIN on this note is invalid (${gCheck.reason}).`, fix: 'Correct the GST Number on the note.' })); return; }
       const pos = gstr1PosRegistered(gstin);
-      const entry = { ntty, nt_num: note.note_number, nt_dt: ntDt, pos, rchrg: 'N', val, itms: [{ num: 1, itm_det: { txval: taxable, rt: +note.gst_percentage || 0, iamt: calc.igst, camt: calc.cgst, samt: calc.sgst, csamt: 0 } }] };
+      // A note reversing a reverse-charge invoice is itself a
+      // reverse-charge document. This was written as 'N' for every note
+      // because there was nowhere to record otherwise.
+      const entry = { ntty, nt_num: note.note_number, nt_dt: ntDt, pos,
+        rchrg: note.reverse_charge ? 'Y' : 'N', val,
+        itms: [{ num: 1, itm_det: { txval: taxable, rt: +note.gst_percentage || 0, iamt: calc.igst, camt: calc.cgst, samt: calc.sgst, csamt: noteCess } }] };
+      const noteEtin = gstr1EcomGstinOf(note);
+      if (noteEtin) entry.etin = noteEtin;
+      const noteDiff = gstr1DiffPercentOf(note);
+      if (noteDiff) entry.diff_percent = noteDiff;
+      // Written only when the note is not an ordinary domestic one, so a
+      // return containing only ordinary notes is byte-for-byte unchanged.
+      const noteInvTyp = gstr1NoteInvTyp(note);
+      if (noteInvTyp !== 'R') entry.inv_typ = noteInvTyp;
       if (!cdnrGroups.has(gstin)) cdnrGroups.set(gstin, []);
       cdnrGroups.get(gstin).push(entry);
     } else {
@@ -1934,7 +2097,21 @@ async function buildGSTR1Payload(userId, profile, periodFilter) {
       // large-value B2CL-style bucket, per GSTN's CDNUR shape — there is
       // no lower-value aggregate section for CDNUR the way B2CS covers
       // small B2C invoices.
-      cdnur.push({ typ: 'B2CL', ntty, nt_num: note.note_number, nt_dt: ntDt, pos, val, itms: [{ num: 1, itm_det: { txval: taxable, rt: +note.gst_percentage || 0, iamt: calc.igst, csamt: 0 } }] });
+      const nature = String(note.supply_nature || 'regular').trim();
+      // Said plainly rather than left to be discovered on the portal: this
+      // note is going out under the wrong type because the right one
+      // cannot be verified from here.
+      if (nature !== 'regular' && !GSTR1_EMIT_CDNUR_TYPES) {
+        errors.push(gstr1Err({ invoice: note.note_number, customer: note.customer_name,
+          field: 'Note Type', current: `${nature}, reported as B2CL`,
+          expected: `the ${nature.toUpperCase()} note type`,
+          message: `${ctx}: this note reverses a ${nature} supply, but it is being written as B2CL.`,
+          fix: 'Correct the note type on the Portal after uploading. The nature is recorded here; only the JSON value is held back, because the exact code could not be verified.' }));
+      }
+      const urEntry = { typ: gstr1CdnurTyp(note), ntty, nt_num: note.note_number, nt_dt: ntDt, pos, val, itms: [{ num: 1, itm_det: { txval: taxable, rt: +note.gst_percentage || 0, iamt: calc.igst, csamt: noteCess } }] };
+      const urDiff = gstr1DiffPercentOf(note);
+      if (urDiff) urEntry.diff_percent = urDiff;
+      cdnur.push(urEntry);
     }
   });
   const cdnr = [...cdnrGroups.entries()].map(([ctin, nt]) => ({ ctin, nt }));
@@ -1949,7 +2126,7 @@ async function buildGSTR1Payload(userId, profile, periodFilter) {
     .sort((a, b) => a.hsn_sc.localeCompare(b.hsn_sc) || a.rt - b.rt)
     .map((b, i) => ({
       num: i + 1, hsn_sc: b.hsn_sc, desc: b.desc, uqc: b.uqc, qty: b.qty,
-      txval: b.taxable, rt: b.rt, iamt: b.igst, camt: b.cgst, samt: b.sgst, csamt: 0
+      txval: b.taxable, rt: b.rt, iamt: b.igst, camt: b.cgst, samt: b.sgst, csamt: round2(b.cess || 0)
     }));
   const hsnB2B = hsnRows('b2b'), hsnB2C = hsnRows('b2c');
   // Only non-empty arrays are written, the same rule the top-level
@@ -2120,7 +2297,41 @@ async function buildGSTR1Payload(userId, profile, periodFilter) {
   // GSTR1_EMIT_AMENDMENTS is false both arrays come back empty and are
   // therefore not written — the return is unchanged.
   const { b2ba, b2cla } = gstr1BuildAmendments(
-    datedDocumentRows.filter(r => r.__documentType === 'revised_invoice'));
+    datedDocumentRows.filter(r => r.__documentType === 'revised_invoice'),
+    amendmentRows);
+
+  // Amendments this application records but does not yet write. Reported
+  // at export time so what is missing from the file is stated rather than
+  // left to be discovered — the same rule the unproduced sections follow.
+  const unwrittenAmendments = (amendmentRows || [])
+    .filter(a => !['b2b', 'b2cl'].includes(a.section));
+  if (unwrittenAmendments.length && !GSTR1_EMIT_AMENDMENTS) {
+    errors.push(gstr1Err({
+      field: 'Amendments',
+      current: `${unwrittenAmendments.length} recorded`,
+      expected: 'amendment sections in the file',
+      message: `${unwrittenAmendments.length} amendment${unwrittenAmendments.length === 1 ? ' is' : 's are'} recorded for this period but ${unwrittenAmendments.length === 1 ? 'is' : 'are'} not written to the JSON.`,
+      fix: 'Enter them on the Portal directly. Their JSON shape could not be verified from here, so they are held back rather than guessed.'
+    }));
+  }
+
+  // Section 9(5): supplies where the OPERATOR pays the tax, not the
+  // supplier. They belong in GSTR-1 Tables 14 and 15, which this file does
+  // not write because no schema reference available here gives their
+  // shape. Saying so at export time is the difference between a known gap
+  // and a silent one — the figures are here, they are just not in the JSON.
+  const section95 = [...b2bData, ...b2cData]
+    .filter(r => String(r.ecom_supply_type || '').trim() === 'section_9_5');
+  if (section95.length) {
+    const total = round2(section95.reduce((t, r) => t + (+r.taxable_amount || 0), 0));
+    errors.push(gstr1Err({
+      field: 'Section 9(5) supplies',
+      current: `${section95.length} invoice${section95.length === 1 ? '' : 's'}, ${total} taxable`,
+      expected: 'GSTR-1 Tables 14 and 15',
+      message: `${section95.length} supply${section95.length === 1 ? '' : ' supplies'} marked as section 9(5) — where the operator pays the tax — ${section95.length === 1 ? 'is' : 'are'} not written to the JSON.`,
+      fix: 'Enter them in Tables 14/15 on the Portal. Their JSON shape could not be verified from here, so they are held back rather than guessed. The Document Register lists them.'
+    }));
+  }
 
   // Table 6A. Ordered by export type, and the invoices within each by
   // number, so the same data always writes the same file.
@@ -2483,58 +2694,3 @@ function formatDateDDMMYYYY(d) {
 // invoice to either of those two UTs made a GSTR-1 file impossible to
 // produce at all. gstr1AssertStateTableComplete() below now fails the
 // export loudly if this table and INDIAN_STATES ever drift again.
-const GSTR1_STATE_CODES = {
-  'Andhra Pradesh':'37','Arunachal Pradesh':'12','Assam':'18','Bihar':'10',
-  'Chhattisgarh':'22','Goa':'30','Gujarat':'24','Haryana':'06',
-  'Himachal Pradesh':'02','Jharkhand':'20','Karnataka':'29','Kerala':'32',
-  'Madhya Pradesh':'23','Maharashtra':'27','Manipur':'14','Meghalaya':'17',
-  'Mizoram':'15','Nagaland':'13','Odisha':'21','Punjab':'03','Rajasthan':'08',
-  'Sikkim':'11','Tamil Nadu':'33','Telangana':'36','Tripura':'16',
-  'Uttar Pradesh':'09','Uttarakhand':'05','West Bengal':'19',
-  'Andaman and Nicobar Islands':'35','Chandigarh':'04',
-  'Dadra and Nagar Haveli and Daman and Diu':'26','Delhi':'07',
-  'Jammu and Kashmir':'01','Ladakh':'38','Lakshadweep':'31','Puducherry':'34'
-};
-
-// Values stored by older versions of this app, before INDIAN_STATES was
-// updated. They are not offered anywhere in the UI any more, but rows
-// carrying them still exist in the database and must still resolve.
-// Dadra and Nagar Haveli and Daman and Diu are one UT in INDIAN_STATES,
-// so both legacy names resolve to that single entry's code — code 25 has
-// no entry in INDIAN_STATES to belong to and is therefore never emitted.
-const GSTR1_LEGACY_STATE_ALIASES = {
-  'andaman and nicobar': 'Andaman and Nicobar Islands',
-  'dadra and nagar haveli': 'Dadra and Nagar Haveli and Daman and Diu',
-  'daman and diu': 'Dadra and Nagar Haveli and Daman and Diu'
-};
-
-// The POS codes this generator can legitimately emit: exactly the codes
-// reachable from the table above, derived rather than listed a second
-// time. utils.js's GST_VALID_STATE_CODES is deliberately left alone — it
-// backs validateGstin() for data entry app-wide, and is a wider set that
-// still accepts historical prefixes; narrowing it is a data-entry change,
-// not a generator change.
-const GSTR1_VALID_POS_CODES = new Set(Object.values(GSTR1_STATE_CODES));
-
-// Every state the app can store must be mappable. Run as part of export
-// validation, so drift surfaces as a blocked export with a precise
-// message instead of a silent 99 on someone's return.
-function gstr1AssertStateTableComplete(errors) {
-  if (typeof INDIAN_STATES === 'undefined') return;
-  const missing = INDIAN_STATES.filter(s => !GSTR1_STATE_CODES[s]);
-  if (missing.length) {
-    errors.push(`GSTR-1 generator: no GST state code is defined for ${missing.map(s => `"${s}"`).join(', ')} — GSTR1_STATE_CODES in js/gstr1-export.js has drifted from INDIAN_STATES in js/utils.js and must be updated before any return can be generated.`);
-  }
-}
-
-function getStateCode(stateName) {
-  const raw = (stateName || '').trim();
-  if (!raw) return '99';
-  if (GSTR1_STATE_CODES[raw]) return GSTR1_STATE_CODES[raw];
-  // Case-insensitive match against the canonical list, then legacy names.
-  const lower = raw.toLowerCase();
-  const canonical = Object.keys(GSTR1_STATE_CODES).find(k => k.toLowerCase() === lower);
-  if (canonical) return GSTR1_STATE_CODES[canonical];
-  const alias = GSTR1_LEGACY_STATE_ALIASES[lower];
-  return alias ? GSTR1_STATE_CODES[alias] : '99';
-}

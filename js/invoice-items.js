@@ -83,6 +83,7 @@ function renderItemsSectionShell(containerId) {
             <th class="text-right">Rate (&#8377;)</th>
             <th class="text-center">Discount %</th>
             <th class="text-center">GST %</th>
+            <th class="text-center">Cess %</th>
             <th class="text-right">Taxable Value</th>
             <th class="text-right">Total</th>
             <th></th>
@@ -106,6 +107,10 @@ function renderItemsSectionShell(containerId) {
           <span class="text-muted-sm">SGST: <b id="itemsSGST">0.00</b></span>
         </div>
         <span class="value"><input type="text" id="itemsGstAmt" class="form-control calc-input-sm" readonly aria-label="GST Amount"></span>
+      </div>
+      <div class="calc-row d-none" id="itemsCessRow">
+        <span class="label">Compensation Cess</span>
+        <span class="value"><b id="itemsCess">0.00</b></span>
       </div>
       <div class="calc-row">
         <span class="label">Round Off</span>
@@ -140,6 +145,10 @@ function blankRow() {
     // Nil-rated / exempt / non-GST lines are reported in GSTR-1 table 8,
     // not as taxable supplies. 'taxable' is every line raised before this.
     gst_treatment: 'taxable',
+    // Compensation cess, charged on top of GST on a short list of goods.
+    // The rate comes from the product master and is editable per line, the
+    // same arrangement the GST rate has.
+    cess_rate: 0, cess_amount: 0,
     taxable_value: 0, gst_amount: 0, igst: 0, cgst: 0, sgst: 0, total_amount: 0, locked: false
   };
 }
@@ -171,6 +180,7 @@ function loadItemsIntoTable(rows) {
       rowId: 'row' + itemsRowSeq, product_id: r.product_id || null, product_name: r.product_name || '',
       hsn_code: r.hsn_code || '', unit: r.unit || '', quantity: +r.quantity || 1, rate: +r.rate || 0,
       discount_percentage: +r.discount_percentage || 0, gst_percentage: +r.gst_percentage || 0,
+      cess_rate: +r.cess_rate || 0, cess_amount: +r.cess_amount || 0,
       taxable_value: +r.taxable_value || 0, gst_amount: +r.gst_amount || 0, igst: +r.igst || 0,
       cgst: +r.cgst || 0, sgst: +r.sgst || 0, total_amount: +r.total_amount || 0,
       // A line saved before treatments existed is taxable, which is what
@@ -243,6 +253,9 @@ function renderItemsTable() {
           oninput="onItemFieldChange('${row.rowId}','discount_percentage',this.value)"></td>
       <td><select class="form-control" onchange="onItemFieldChange('${row.rowId}','gst_percentage',this.value)"
           title="Auto-filled from Product Master — editable for this invoice line only">${gstRateSelectOptions(row.gst_percentage)}</select></td>
+      <td><input type="number" class="form-control text-center" min="0" max="500" step="0.001" value="${row.cess_rate || 0}"
+          title="Compensation cess — auto-filled from Product Master. Charged on the taxable value, not on the GST."
+          oninput="onItemFieldChange('${row.rowId}','cess_rate',this.value)"></td>
       <td class="text-right fw-600 item-taxable-cell">&#8377;${formatNum(row.taxable_value)}</td>
       <td class="text-right fw-700 item-total-cell">&#8377;${formatNum(row.total_amount)}</td>
       <td><button type="button" class="btn btn-danger btn-sm btn-icon" onclick="removeItemRow('${row.rowId}')" title="Remove row"><i class="fas fa-trash"></i></button></td>
@@ -584,6 +597,7 @@ function applyProductToRow(row, product) {
   row.hsn_code = p.hsn_code || '';
   row.unit = p.unit || '';
   row.gst_percentage = +p.gst_percentage || 0;
+  row.cess_rate = +p.cess_rate || 0;
   row.rate = +p.default_rate || 0;
   // The line inherits the product's GST classification, and keeps its
   // own copy from then on.
@@ -757,14 +771,23 @@ async function saveQuickAddProduct() {
 }
 
 // ── Recalc / rollups ────────────────────────────────
+// A line's tax, in one place. This was the same four lines written three
+// times; cess would have made it the same five lines written three times,
+// and the third copy is always the one that gets missed.
+function applyLineTax(row) {
+  const calc = calcGST(row.taxable_value, row.gst_percentage || 0, getInvoiceSupplyType());
+  row.gst_amount = calc.gstAmount;
+  row.igst = calc.igst; row.cgst = calc.cgst; row.sgst = calc.sgst;
+  // Cess is charged on the taxable value, not on the GST.
+  row.cess_amount = round2(row.taxable_value * (+row.cess_rate || 0) / 100);
+  row.total_amount = round2(row.taxable_value + calc.gstAmount + row.cess_amount);
+}
+
 function recalcItemRow(rowId) {
   const row = currentItems.find(r => r.rowId === rowId);
   if (!row) return;
   row.taxable_value = lineTaxableValue(row.quantity, row.rate, row.discount_percentage);
-  const calc = calcGST(row.taxable_value, row.gst_percentage || 0, getInvoiceSupplyType());
-  row.gst_amount = calc.gstAmount;
-  row.igst = calc.igst; row.cgst = calc.cgst; row.sgst = calc.sgst;
-  row.total_amount = round2(row.taxable_value + calc.gstAmount);
+  applyLineTax(row);
   renderItemsTable();
   computeInvoiceRollups();
   persistItemsDraft();
@@ -778,10 +801,7 @@ function recalcItemRowLive(rowId) {
   const row = currentItems.find(r => r.rowId === rowId);
   if (!row) return;
   row.taxable_value = lineTaxableValue(row.quantity, row.rate, row.discount_percentage);
-  const calc = calcGST(row.taxable_value, row.gst_percentage || 0, getInvoiceSupplyType());
-  row.gst_amount = calc.gstAmount;
-  row.igst = calc.igst; row.cgst = calc.cgst; row.sgst = calc.sgst;
-  row.total_amount = round2(row.taxable_value + calc.gstAmount);
+  applyLineTax(row);
   updateRowComputedCells(row);
   computeInvoiceRollups();
   persistItemsDraft();
@@ -799,10 +819,7 @@ function updateRowComputedCells(row) {
 function recalcAllRows() {
   currentItems.forEach(row => {
     row.taxable_value = lineTaxableValue(row.quantity, row.rate, row.discount_percentage);
-    const calc = calcGST(row.taxable_value, row.gst_percentage || 0, getInvoiceSupplyType());
-    row.gst_amount = calc.gstAmount;
-    row.igst = calc.igst; row.cgst = calc.cgst; row.sgst = calc.sgst;
-    row.total_amount = round2(row.taxable_value + calc.gstAmount);
+    applyLineTax(row);
   });
   renderItemsTable();
   computeInvoiceRollups();
@@ -816,7 +833,8 @@ function computeInvoiceRollups() {
   const cgst    = round2(rows.reduce((s, r) => s + r.cgst, 0));
   const sgst    = round2(rows.reduce((s, r) => s + r.sgst, 0));
   const gstAmt  = round2(igst + cgst + sgst);
-  const rawTotal = taxable + gstAmt;
+  const cess    = round2(rows.reduce((s, r) => s + (+r.cess_amount || 0), 0));
+  const rawTotal = taxable + gstAmt + cess;
   const grandTotal = Math.round(rawTotal);
   const roundOff = round2(grandTotal - rawTotal);
   const gstPercentage = taxable > 0 ? round2(gstAmt / taxable * 100) : 0;
@@ -830,6 +848,11 @@ function computeInvoiceRollups() {
   setTxt('itemsIGST', formatNum(igst));
   setTxt('itemsCGST', formatNum(cgst));
   setTxt('itemsSGST', formatNum(sgst));
+  setTxt('itemsCess', formatNum(cess));
+  // The cess line only appears when there is cess, so an invoice that
+  // never charges it looks exactly as it always has.
+  const cessRow = document.getElementById('itemsCessRow');
+  if (cessRow) cessRow.classList.toggle('d-none', !cess);
   const wordsEl = document.getElementById('itemsAmountWords');
   if (wordsEl) wordsEl.textContent = numberToWordsINR(grandTotal);
 
@@ -841,7 +864,7 @@ function computeInvoiceRollups() {
   // typeof because this file also loads on pages with no payment section.
   if (typeof renderInvPaymentPreview === 'function') renderInvPaymentPreview(grandTotal);
 
-  return { taxable_amount: taxable, gst_percentage: gstPercentage, gst_amount: gstAmt, igst, cgst, sgst, total_amount: grandTotal, round_off: roundOff };
+  return { taxable_amount: taxable, gst_percentage: gstPercentage, gst_amount: gstAmt, igst, cgst, sgst, cess_amount: cess, total_amount: grandTotal, round_off: roundOff };
 }
 
 function validateInvoiceItems() {
@@ -927,6 +950,7 @@ async function saveInvoiceWithItems(type, headerBase, editId, userId) {
       quantity: r.quantity, rate: r.rate, discount_percentage: r.discount_percentage, gst_percentage: r.gst_percentage,
       taxable_value: r.taxable_value, gst_amount: r.gst_amount,
       gst_treatment: r.gst_treatment || 'taxable', igst: r.igst, cgst: r.cgst, sgst: r.sgst,
+      cess_rate: r.cess_rate || 0, cess_amount: r.cess_amount || 0,
       total_amount: r.total_amount
     }));
 

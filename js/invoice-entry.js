@@ -628,6 +628,7 @@ async function loadInvoiceForEdit(type, id) {
   if (toggle) toggle.checked = !!rec.transport_required;
   onTransportToggleChange();
   restoreExportFields(rec);
+  restoreEcomFields(rec);
   setInvValue('invVehicleNo', (rec.vehicle_number || '').toUpperCase());
   setInvValue('invTransporter', rec.transporter_name || '');
   setInvValue('invTransportMode', rec.transport_mode || '');
@@ -690,6 +691,7 @@ async function loadInvoiceDuplicateDraft() {
   if (toggle) toggle.checked = !!draft.transport_required;
   onTransportToggleChange();
   restoreExportFields(draft);
+  restoreEcomFields(draft);
   setInvValue('invVehicleNo', (draft.vehicle_number || '').toUpperCase());
   setInvValue('invTransporter', draft.transporter_name || '');
   setInvValue('invTransportMode', draft.transport_mode || '');
@@ -792,6 +794,7 @@ async function saveInvoice() {
   // toggle is off every one of these is null, and the row is byte-for-byte
   // the row this page has always written.
   const isExport = !!document.getElementById('exportToggle')?.checked;
+  const isEcom = !!document.getElementById('ecomToggle')?.checked;
   const headerBase = {
     user_id: user.id,
     customer_name: custName, phone, address, state,
@@ -803,6 +806,15 @@ async function saveInvoice() {
     port_code: isExport ? getInvText('invPortCode').toUpperCase() : null,
     shipping_bill_number: isExport ? getInvText('invShippingBillNo') : null,
     shipping_bill_date: isExport ? (getInvText('invShippingBillDate') || null) : null,
+    ecom_gstin: isEcom ? getInvText('invEcomGstin').toUpperCase() : null,
+    ecom_supply_type: isEcom ? (document.getElementById('invEcomSupplyType')?.value || 'through_operator') : null,
+    export_of: isExport ? (document.getElementById('invExportOf')?.value || 'goods') : null,
+    sez_recipient_type: document.getElementById('invSezRecipient')?.value || null,
+    differential_65: !!document.getElementById('invDifferential65')?.checked,
+    // The LUT in force when this invoice was raised, copied onto it. The
+    // profile's LUT can be replaced next year; a filed return must not
+    // change because of that.
+    lut_number: (typeof getCachedProfile === 'function' ? (getCachedProfile()?.lut_number || null) : null),
     transport_required: transportRequired,
     vehicle_number: transportRequired ? getInvText('invVehicleNo').toUpperCase() : '',
     transporter_name: transportRequired ? getInvText('invTransporter') : '',
@@ -954,6 +966,7 @@ function clearInvoiceFormFields() {
   if (toggle) toggle.checked = false;
   onTransportToggleChange();
   restoreExportFields(null);
+  restoreEcomFields(null);
   ['invVehicleNo','invTransporter','invLrNumber','invTransportMode','invDistance','invLrDate',
    'invTransporterGstin','invVehicleType','invDispatchFrom','invDispatchTo'].forEach(id => setInvValue(id, ''));
 
@@ -1072,5 +1085,35 @@ function restoreExportFields(inv) {
   set('invPortCode', inv && inv.port_code);
   set('invShippingBillNo', inv && inv.shipping_bill_number);
   set('invShippingBillDate', inv && inv.shipping_bill_date);
+  set('invExportOf', (inv && inv.export_of) || 'goods');
+  set('invSezRecipient', (inv && inv.sez_recipient_type) || '');
+  const d65i = document.getElementById('invDifferential65');
+  if (d65i) d65i.checked = !!(inv && inv.differential_65);
   onExportToggleChange();
+}
+
+
+// ── Supplied through an e-commerce operator (Batch 6) ───────
+// Two different things: a supply MADE THROUGH an operator, where the
+// supplier still pays the tax and the operator's GSTIN is reported as
+// etin; and a section 9(5) supply, where the operator pays instead. Both
+// are recorded; only the first is written to the JSON today.
+function onEcomToggleChange() {
+  const on = !!document.getElementById('ecomToggle')?.checked;
+  document.getElementById('ecomFields')?.classList.toggle('d-none', !on);
+  const lbl = document.getElementById('ecomToggleLabel');
+  if (lbl) {
+    lbl.textContent = on ? 'Yes' : 'No';
+    lbl.classList.toggle('text-gray-mid', !on);
+  }
+}
+
+function restoreEcomFields(inv) {
+  const t = document.getElementById('ecomToggle');
+  if (!t) return;
+  t.checked = !!(inv && inv.ecom_gstin);
+  const set = (id, v) => { const e = document.getElementById(id); if (e) e.value = v == null ? '' : v; };
+  set('invEcomGstin', inv && inv.ecom_gstin);
+  set('invEcomSupplyType', (inv && inv.ecom_supply_type) || 'through_operator');
+  onEcomToggleChange();
 }

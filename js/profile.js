@@ -221,6 +221,16 @@ function buildProfileModal(profile, isRequired) {
               <span>e-Way Bills apply to me</span>
             </label>
           </div>
+          <div class="form-group">
+            <label for="profHsnDigits">HSN digits I must report</label>
+            <select id="profHsnDigits" class="form-control">
+              <option value="">Not stated &mdash; nothing is enforced</option>
+              <option value="4" ${String(profile?.hsn_digits_required) === '4' ? 'selected' : ''}>4 digits (turnover up to &#8377;5 crore)</option>
+              <option value="6" ${String(profile?.hsn_digits_required) === '6' ? 'selected' : ''}>6 digits (turnover above &#8377;5 crore)</option>
+              <option value="8" ${String(profile?.hsn_digits_required) === '8' ? 'selected' : ''}>8 digits</option>
+            </select>
+            <small class="text-muted">GSTR-1 Table 12. Stated by you, for the same reason as the two above.</small>
+          </div>
         </div>
         <p class="fs-11 text-muted-sm">Both are stated by you rather than worked out from turnover &mdash; the thresholds are changed by notification, and a figure built into the software would quietly go out of date.</p>
 
@@ -776,7 +786,8 @@ async function submitProfile() {
     iec_number:             val('profIec', true),
     reverse_charge_default: checked('profReverseChargeDefault'),
     einvoice_applicable:    checked('profEinvoiceApplicable'),
-    ewaybill_applicable:    checked('profEwaybillApplicable')
+    ewaybill_applicable:    checked('profEwaybillApplicable'),
+    hsn_digits_required:    parseInt(document.getElementById('profHsnDigits')?.value, 10) || null
   });
 
   if (!error) closeProfileModal();

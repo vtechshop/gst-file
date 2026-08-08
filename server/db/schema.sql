@@ -90,7 +90,12 @@ CREATE TABLE IF NOT EXISTS profiles (
   -- from the invoice counters so invoice numbering is untouched. Keyed
   -- by the document registry's `series` value.
   document_series_sequences JSONB NOT NULL DEFAULT '{}'::jsonb,
-  document_series_formats JSONB NOT NULL DEFAULT '{}'::jsonb
+  document_series_formats JSONB NOT NULL DEFAULT '{}'::jsonb,
+  -- How many HSN digits this business must report in GSTR-1 Table 12.
+  -- Stated, not inferred from turnover, for the same reason
+  -- einvoice_applicable is stated. NULL enforces nothing.
+  hsn_digits_required SMALLINT,
+  aggregate_turnover_band TEXT
 );
 
 -- ── B2B Invoices ─────────────────────────────────────
@@ -140,7 +145,26 @@ CREATE TABLE IF NOT EXISTS b2b_invoices (
   export_type TEXT,
   shipping_bill_number TEXT,
   shipping_bill_date DATE,
-  port_code TEXT
+  port_code TEXT,
+  -- Compensation cess totalled for the document (Batch 6). The lines have
+  -- carried a rate and an amount since before; this is the total the
+  -- return reports. Zero for every invoice raised before it existed.
+  cess_amount DECIMAL(15,2) NOT NULL DEFAULT 0,
+  -- Supplied through an e-commerce operator: the operator's GSTIN, and
+  -- whether the operator or the supplier pays the tax.
+  ecom_gstin TEXT,
+  ecom_supply_type TEXT,
+  -- SEZ and export detail (Batch 7). An SEZ supply can be to a unit or a
+  -- developer; an export can be of goods (shipping bill) or services (no
+  -- shipping bill). The LUT is copied onto the invoice so replacing next
+  -- year's LUT cannot change a return already filed.
+  sez_recipient_type TEXT,
+  export_of TEXT,
+  lut_number TEXT,
+  -- A vehicle bought and leased before 1 July 2017 attracts GST at 65% of
+  -- the applicable rate, reported as diff_percent 0.65. Stored as a
+  -- boolean because 0.65 is the only value the schema accepts.
+  differential_65 BOOLEAN NOT NULL DEFAULT FALSE
 );
 
 -- ── B2C Invoices ─────────────────────────────────────
@@ -190,7 +214,26 @@ CREATE TABLE IF NOT EXISTS b2c_invoices (
   export_type TEXT,
   shipping_bill_number TEXT,
   shipping_bill_date DATE,
-  port_code TEXT
+  port_code TEXT,
+  -- Compensation cess totalled for the document (Batch 6). The lines have
+  -- carried a rate and an amount since before; this is the total the
+  -- return reports. Zero for every invoice raised before it existed.
+  cess_amount DECIMAL(15,2) NOT NULL DEFAULT 0,
+  -- Supplied through an e-commerce operator: the operator's GSTIN, and
+  -- whether the operator or the supplier pays the tax.
+  ecom_gstin TEXT,
+  ecom_supply_type TEXT,
+  -- SEZ and export detail (Batch 7). An SEZ supply can be to a unit or a
+  -- developer; an export can be of goods (shipping bill) or services (no
+  -- shipping bill). The LUT is copied onto the invoice so replacing next
+  -- year's LUT cannot change a return already filed.
+  sez_recipient_type TEXT,
+  export_of TEXT,
+  lut_number TEXT,
+  -- A vehicle bought and leased before 1 July 2017 attracts GST at 65% of
+  -- the applicable rate, reported as diff_percent 0.65. Stored as a
+  -- boolean because 0.65 is the only value the schema accepts.
+  differential_65 BOOLEAN NOT NULL DEFAULT FALSE
 );
 
 -- No two invoices may share a number WITHIN A SERIES — a real DB-level
@@ -315,7 +358,25 @@ CREATE TABLE IF NOT EXISTS cdn_notes (
   gst_amount DECIMAL(15,2) NOT NULL,
   total_amount DECIMAL(15,2) NOT NULL,
   created_at TIMESTAMPTZ DEFAULT NOW(),
-  updated_at TIMESTAMPTZ DEFAULT NOW()
+  updated_at TIMESTAMPTZ DEFAULT NOW(),
+  cess_amount DECIMAL(15,2) NOT NULL DEFAULT 0,
+  -- What an amendment to this note will need. Captured now, emitted only
+  -- once the amendment sections' shape is settled.
+  original_invoice_date DATE,
+  original_period TEXT,
+  original_note_number TEXT,
+  original_note_date DATE,
+  -- What the note reverses: regular | expwp | expwop | sezwp | sezwop | de.
+  -- 'regular' is what every note issued before this meant.
+  supply_nature TEXT NOT NULL DEFAULT 'regular',
+  original_invoice_id UUID,
+  original_invoice_table TEXT,
+  differential_65 BOOLEAN NOT NULL DEFAULT FALSE,
+  -- A note reversing a reverse-charge invoice is itself a reverse-charge
+  -- document; this was written as 'N' for every note until there was
+  -- somewhere to record otherwise.
+  reverse_charge BOOLEAN NOT NULL DEFAULT FALSE,
+  ecom_gstin TEXT
 );
 
 -- Unlike every other transactional table, cdn_notes had no index beyond
@@ -1277,6 +1338,61 @@ CREATE INDEX IF NOT EXISTS idx_bill_of_supply_items_doc
   ON bill_of_supply_items(bill_of_supply_id, sort_order);
 
 
+-- ══ Amendments to already-filed returns (Batch 7) ══
+-- Mirrors db/migration_amendments.sql. An amendment is a record of
+-- its own, never an edit of the document it amends.
+CREATE TABLE IF NOT EXISTS gst_amendments (
+  id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
+  user_id UUID REFERENCES users(id) ON DELETE CASCADE NOT NULL,
+
+  -- Which GSTR-1 section this amends: 'b2b' | 'b2cl' | 'b2cs' | 'cdnr'
+  -- | 'cdnur' | 'at' | 'txpd'. Named rather than inferred, because the
+  -- same original document can be amended in more than one way.
+  section TEXT NOT NULL,
+  -- The return period being amended ("062026") and the one it is being
+  -- amended IN. Both are needed: the amendment appears in the second and
+  -- refers to the first.
+  original_period TEXT NOT NULL,
+  amendment_period TEXT NOT NULL,
+
+  -- What is being amended, as filed.
+  original_document_id UUID,
+  original_document_table TEXT,
+  original_number TEXT,
+  original_date DATE,
+
+  -- What it should have said. A revised number and date are allowed
+  -- because an amendment may correct them.
+  revised_number TEXT,
+  revised_date DATE,
+  party_gstin TEXT,
+  party_name TEXT,
+  place_of_supply TEXT,
+  supply_type TEXT NOT NULL DEFAULT 'intrastate',
+  inv_typ TEXT NOT NULL DEFAULT 'R',
+  note_type TEXT,
+  reverse_charge BOOLEAN NOT NULL DEFAULT FALSE,
+
+  taxable_amount DECIMAL(15,2) NOT NULL DEFAULT 0,
+  gst_percentage DECIMAL(5,2) NOT NULL DEFAULT 0,
+  igst DECIMAL(15,2) NOT NULL DEFAULT 0,
+  cgst DECIMAL(15,2) NOT NULL DEFAULT 0,
+  sgst DECIMAL(15,2) NOT NULL DEFAULT 0,
+  cess DECIMAL(15,2) NOT NULL DEFAULT 0,
+  total_amount DECIMAL(15,2) NOT NULL DEFAULT 0,
+
+  reason TEXT,
+  notes TEXT,
+  status TEXT NOT NULL DEFAULT 'draft',
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_gst_amendments_period
+  ON gst_amendments(user_id, amendment_period);
+CREATE INDEX IF NOT EXISTS idx_gst_amendments_section
+  ON gst_amendments(user_id, section, original_period);
+
+
 CREATE TRIGGER unregistered_suppliers_upd BEFORE UPDATE ON unregistered_suppliers FOR EACH ROW EXECUTE FUNCTION update_updated_at();
 CREATE TRIGGER self_invoices_upd    BEFORE UPDATE ON self_invoices    FOR EACH ROW EXECUTE FUNCTION update_updated_at();
 CREATE TRIGGER receipt_vouchers_upd BEFORE UPDATE ON receipt_vouchers FOR EACH ROW EXECUTE FUNCTION update_updated_at();
@@ -1287,6 +1403,7 @@ CREATE TRIGGER delivery_challans_upd  BEFORE UPDATE ON delivery_challans  FOR EA
 CREATE TRIGGER revised_invoices_upd   BEFORE UPDATE ON revised_invoices   FOR EACH ROW EXECUTE FUNCTION update_updated_at();
 CREATE TRIGGER advance_adjustments_upd BEFORE UPDATE ON advance_adjustments FOR EACH ROW EXECUTE FUNCTION update_updated_at();
 CREATE TRIGGER bill_of_supply_upd      BEFORE UPDATE ON bill_of_supply      FOR EACH ROW EXECUTE FUNCTION update_updated_at();
+CREATE TRIGGER gst_amendments_upd      BEFORE UPDATE ON gst_amendments      FOR EACH ROW EXECUTE FUNCTION update_updated_at();
 
 CREATE TRIGGER b2b_invoices_upd    BEFORE UPDATE ON b2b_invoices    FOR EACH ROW EXECUTE FUNCTION update_updated_at();
 CREATE TRIGGER b2c_invoices_upd    BEFORE UPDATE ON b2c_invoices    FOR EACH ROW EXECUTE FUNCTION update_updated_at();

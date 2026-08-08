@@ -1427,6 +1427,67 @@ function renderGstinStatusInto(elId, value) {
     : '<span class="fw-600" style="color:var(--danger);">🔴 Invalid GST Number</span>';
 }
 
+// ── GST state codes ────────────────────────────────────────
+// Moved here from js/gstr1-export.js, which is loaded only on the
+// Reports page. GSTR-3B needs the same lookup to report Table 3.2 per
+// place of supply, and the alternative to sharing it was a second copy
+// of the map — which is the one thing a state-code table must not have.
+const GSTR1_STATE_CODES = {
+  'Andhra Pradesh':'37','Arunachal Pradesh':'12','Assam':'18','Bihar':'10',
+  'Chhattisgarh':'22','Goa':'30','Gujarat':'24','Haryana':'06',
+  'Himachal Pradesh':'02','Jharkhand':'20','Karnataka':'29','Kerala':'32',
+  'Madhya Pradesh':'23','Maharashtra':'27','Manipur':'14','Meghalaya':'17',
+  'Mizoram':'15','Nagaland':'13','Odisha':'21','Punjab':'03','Rajasthan':'08',
+  'Sikkim':'11','Tamil Nadu':'33','Telangana':'36','Tripura':'16',
+  'Uttar Pradesh':'09','Uttarakhand':'05','West Bengal':'19',
+  'Andaman and Nicobar Islands':'35','Chandigarh':'04',
+  'Dadra and Nagar Haveli and Daman and Diu':'26','Delhi':'07',
+  'Jammu and Kashmir':'01','Ladakh':'38','Lakshadweep':'31','Puducherry':'34'
+};
+
+// Values stored by older versions of this app, before INDIAN_STATES was
+// updated. They are not offered anywhere in the UI any more, but rows
+// carrying them still exist in the database and must still resolve.
+// Dadra and Nagar Haveli and Daman and Diu are one UT in INDIAN_STATES,
+// so both legacy names resolve to that single entry's code — code 25 has
+// no entry in INDIAN_STATES to belong to and is therefore never emitted.
+const GSTR1_LEGACY_STATE_ALIASES = {
+  'andaman and nicobar': 'Andaman and Nicobar Islands',
+  'dadra and nagar haveli': 'Dadra and Nagar Haveli and Daman and Diu',
+  'daman and diu': 'Dadra and Nagar Haveli and Daman and Diu'
+};
+
+// The POS codes this generator can legitimately emit: exactly the codes
+// reachable from the table above, derived rather than listed a second
+// time. utils.js's GST_VALID_STATE_CODES is deliberately left alone — it
+// backs validateGstin() for data entry app-wide, and is a wider set that
+// still accepts historical prefixes; narrowing it is a data-entry change,
+// not a generator change.
+const GSTR1_VALID_POS_CODES = new Set(Object.values(GSTR1_STATE_CODES));
+
+// Every state the app can store must be mappable. Run as part of export
+// validation, so drift surfaces as a blocked export with a precise
+// message instead of a silent 99 on someone's return.
+function gstr1AssertStateTableComplete(errors) {
+  if (typeof INDIAN_STATES === 'undefined') return;
+  const missing = INDIAN_STATES.filter(s => !GSTR1_STATE_CODES[s]);
+  if (missing.length) {
+    errors.push(`GSTR-1 generator: no GST state code is defined for ${missing.map(s => `"${s}"`).join(', ')} — GSTR1_STATE_CODES in js/gstr1-export.js has drifted from INDIAN_STATES in js/utils.js and must be updated before any return can be generated.`);
+  }
+}
+
+function getStateCode(stateName) {
+  const raw = (stateName || '').trim();
+  if (!raw) return '99';
+  if (GSTR1_STATE_CODES[raw]) return GSTR1_STATE_CODES[raw];
+  // Case-insensitive match against the canonical list, then legacy names.
+  const lower = raw.toLowerCase();
+  const canonical = Object.keys(GSTR1_STATE_CODES).find(k => k.toLowerCase() === lower);
+  if (canonical) return GSTR1_STATE_CODES[canonical];
+  const alias = GSTR1_LEGACY_STATE_ALIASES[lower];
+  return alias ? GSTR1_STATE_CODES[alias] : '99';
+}
+
 const INDIAN_STATES = [
   'Andhra Pradesh','Arunachal Pradesh','Assam','Bihar','Chhattisgarh','Goa',
   'Gujarat','Haryana','Himachal Pradesh','Jharkhand','Karnataka','Kerala',

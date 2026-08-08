@@ -4,21 +4,21 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>GSTR-3B Summary - GST Management System</title>
-  <link rel="stylesheet" href="css/style.css?v=19">
+  <link rel="stylesheet" href="css/style.css?v=23">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
   <script src="https://cdn.sheetjs.com/xlsx-latest/package/dist/xlsx.full.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.31/jspdf.plugin.autotable.min.js"></script>
-  <script src="js/apiClient.js?v=19"></script>
-  <script src="js/backup.js?v=19"></script>
-  <script src="js/config.js?v=19"></script>
-  <script src="js/product-sync.js?v=19"></script>
-  <script src="js/auth.js?v=19"></script>
-  <script src="js/utils.js?v=19"></script>
-  <script src="js/search.js?v=19"></script>
-  <script src="js/profile.js?v=19"></script>
-  <script src="js/export.js?v=19"></script>
-  <script src="js/gstr3b.js?v=19"></script>
+  <script src="js/apiClient.js?v=23"></script>
+  <script src="js/backup.js?v=23"></script>
+  <script src="js/config.js?v=23"></script>
+  <script src="js/product-sync.js?v=23"></script>
+  <script src="js/auth.js?v=23"></script>
+  <script src="js/utils.js?v=23"></script>
+  <script src="js/search.js?v=23"></script>
+  <script src="js/profile.js?v=23"></script>
+  <script src="js/export.js?v=23"></script>
+  <script src="js/gstr3b.js?v=23"></script>
 </head>
 <body>
 <div class="app-layout">
@@ -38,6 +38,7 @@
       <a href="vouchers.html" class="menu-item"><i class="fas fa-receipt"></i> Vouchers</a>
       <a href="challans.html" class="menu-item"><i class="fas fa-file-signature"></i> Delivery Challans</a>
       <a href="revised-invoice.html" class="menu-item"><i class="fas fa-file-pen"></i> Revised Invoices</a>
+      <a href="amendments.html" class="menu-item"><i class="fas fa-pen-to-square"></i> Amendments</a>
       <a href="bill-of-supply.html" class="menu-item"><i class="fas fa-file-invoice"></i> Bill of Supply</a>
       <a href="advances.html" class="menu-item"><i class="fas fa-hand-holding-dollar"></i> Advances</a>
       <a href="sales-returns.html" class="menu-item"><i class="fas fa-rotate-left"></i> Sales Returns</a>
@@ -97,6 +98,38 @@
       </div>
 
       <!-- Stat Cards -->
+      <div class="card mb-20">
+        <div class="card-header"><span class="card-title"><i class="fas fa-table-list"></i> Table 3.1 &mdash; outward supplies and inward reverse charge</span></div>
+        <div class="card-body">
+          <div class="d-flex gap-20 flex-wrap fs-13">
+            <div><span class="text-muted">3.1(b) Zero rated (exports / SEZ)</span><br><b id="g3bZeroRated">&#8377;0</b></div>
+            <div><span class="text-muted">3.1(c) Nil rated &amp; exempt</span><br><b id="g3bNilExempt">&#8377;0</b></div>
+            <div><span class="text-muted">3.1(d) Inward, reverse charge</span><br><b id="g3bRcm">&#8377;0</b></div>
+            <div><span class="text-muted">3.1(e) Non-GST outward</span><br><b id="g3bNonGst">&#8377;0</b></div>
+          </div>
+          <p class="fs-11 text-muted-sm mt-8">Built from exports, bills of supply, exempt invoice lines and self invoices.</p>
+        </div>
+      </div>
+
+      <div class="card mb-20">
+        <div class="card-header">
+          <span class="card-title"><i class="fas fa-hand-holding-dollar"></i> Table 4 &mdash; input tax credit</span>
+          <span class="text-muted fs-12" id="g3bItcSource"></span>
+        </div>
+        <div class="card-body">
+          <div class="d-flex gap-20 flex-wrap fs-13">
+            <div><span class="text-muted">4(A)(5) Ordinary inward supplies</span><br><b id="g3bItcOth">&#8377;0</b></div>
+            <div><span class="text-muted">4(A)(3) Reverse charge</span><br><b id="g3bItcRcm">&#8377;0</b></div>
+            <div><span class="text-muted">4(C) Net ITC available</span><br><b id="g3bItcNet">&#8377;0</b></div>
+          </div>
+          <p class="fs-11 text-muted-sm mt-8">
+            Computed from your purchases and self invoices. <b>Imports (IMPG/IMPS), ISD credit, and
+            reversals under rules 42/43 are exported as zero</b> &mdash; this application records no bill
+            of entry, no ISD document, and does not apportion exempt turnover. Add those on the portal
+            if they apply to you.</p>
+        </div>
+      </div>
+
       <div class="stat-grid mb-20">
         <div class="stat-card border-green">
           <div class="stat-icon green"><i class="fas fa-rupee-sign"></i></div>

@@ -37,7 +37,14 @@ async function loadGSTR3B() {
   const now = new Date();
   const month = sel?.value || (now.getFullYear() + '-' + String(now.getMonth() + 1).padStart(2, '0'));
   const start = month + '-01';
-  const end   = month + '-31';
+  // The last day of the month, not a fixed 31st. April, June, September,
+  // November and February have no 31st, and Postgres rejects the date
+  // outright rather than clamping it — so the query errored and the page
+  // reported an empty month as a month with no sales. Built the same way
+  // getReportDateRange() builds it: day 0 of the next month.
+  const [my, mm] = month.split('-').map(Number);
+  const lastDay = new Date(my, mm, 0).getDate();
+  const end = `${month}-${String(lastDay).padStart(2, '0')}`;
 
   const [b2bRes, b2cRes, itemsRes] = await Promise.all([
     _supabase.from('b2b_invoices').select('*').eq('user_id', gstr3bUser.id).gte('invoice_date', start).lte('invoice_date', end),
@@ -55,6 +62,131 @@ async function loadGSTR3B() {
   });
 
   renderGSTR3B(b2b, b2c, month, itemsByInvoice);
+  await loadGSTR3BExtras(start, end, itemsByInvoice, [...b2b, ...b2c]);
+}
+
+// The three lines of 3.1 that are not built from the invoice headers.
+//
+// 3.1(c) nil-rated and exempt, and 3.1(e) non-GST, come from the invoice
+// LINES (a taxable invoice can carry an exempt line) and from bills of
+// supply, which are entirely non-taxable. 3.1(d) is inward reverse charge,
+// and the document that records one is the self invoice.
+//
+// Run after the page has rendered so a slow read never delays the figures
+// that were already on screen; the JSON export reads the same object.
+async function loadGSTR3BExtras(start, end, itemsByInvoice, invoices) {
+  const d = window._gstr3bData;
+  if (!d) return;
+  const r2v = n => round2(+n || 0);
+
+  // Lines belonging to invoices inside the period, by treatment.
+  const inPeriod = new Set(invoices.map(r => (r.gst_number ? 'b2b:' : 'b2c:') + r.id));
+  let nil = 0, nonGst = 0;
+  Object.entries(itemsByInvoice || {}).forEach(([key, rows]) => {
+    if (!inPeriod.has(key)) return;
+    rows.forEach(it => {
+      const t = String(it.gst_treatment || 'taxable');
+      if (t === 'nil_rated' || t === 'exempt' || t === 'exempted') nil += (+it.taxable_value || 0);
+      else if (t === 'non_gst') nonGst += (+it.taxable_value || 0);
+    });
+  });
+
+  const [bosRes, siRes] = await Promise.all([
+    _supabase.from('bill_of_supply').select('*').eq('user_id', gstr3bUser.id)
+      .gte('document_date', start).lte('document_date', end).then(r => r).catch(() => ({ data: [] })),
+    _supabase.from('self_invoices').select('*').eq('user_id', gstr3bUser.id)
+      .gte('document_date', start).lte('document_date', end).then(r => r).catch(() => ({ data: [] }))
+  ]);
+
+  (bosRes.data || [])
+    .filter(r => String(r.status || '').toLowerCase() !== 'cancelled')
+    .forEach(r => {
+      if (String(r.supply_nature) === 'non_gst') nonGst += (+r.total_value || 0);
+      else nil += (+r.total_value || 0);
+    });
+
+  const rcm = (siRes.data || []).filter(r => String(r.status || '').toLowerCase() !== 'cancelled');
+
+  // ── Table 4: input tax credit ──────────────────────────────
+  // This was exported as all zeros. A business filing that would pay its
+  // full output tax with no credit against it — the single most expensive
+  // thing this file could get wrong — while the tax it had already paid
+  // sat in the purchases table untouched.
+  //
+  // Two kinds are computed here, and only two:
+  //   OTH   — ordinary inward supplies, from purchases
+  //   ISRC  — inward supplies liable to reverse charge, from self
+  //           invoices, which is the document that records one
+  // IMPG and IMPS (imports) and ISD stay zero because this application
+  // has no bill of entry and no ISD document, so it has nothing to say
+  // about them. Reversals under rules 42/43 stay zero for the same
+  // reason: they depend on exempt-turnover apportionment this file does
+  // not compute. All of that is stated on the page rather than implied.
+  const purRes = await _supabase.from('purchases').select('*').eq('user_id', gstr3bUser.id)
+    .gte('purchase_date', start).lte('purchase_date', end).then(r => r).catch(() => ({ data: [] }));
+  const purchases = purRes.data || [];
+
+  d.itcOthIGST = r2v(purchases.reduce((s2, r) => s2 + (+r.igst || 0), 0));
+  d.itcOthCGST = r2v(purchases.reduce((s2, r) => s2 + (+r.cgst || 0), 0));
+  d.itcOthSGST = r2v(purchases.reduce((s2, r) => s2 + (+r.sgst || 0), 0));
+  d.itcOthCess = 0;
+  d.itcPurchaseCount = purchases.length;
+
+  // Tax paid under reverse charge is itself creditable, so a self invoice
+  // both creates the liability at 3.1(d) and the credit here.
+  //
+  // Summed from `rcm` directly rather than read back off `d`: the 3.1(d)
+  // figures are assigned further down this function, so reading them here
+  // got undefined and quietly credited nothing.
+  d.itcRcmIGST = r2v(rcm.reduce((s2, r) => s2 + (+r.igst || 0), 0));
+  d.itcRcmCGST = r2v(rcm.reduce((s2, r) => s2 + (+r.cgst || 0), 0));
+  d.itcRcmSGST = r2v(rcm.reduce((s2, r) => s2 + (+r.sgst || 0), 0));
+  d.itcRcmCess = r2v(rcm.reduce((s2, r) => s2 + (+r.cess || 0), 0));
+
+  d.itcNetIGST = r2v(d.itcOthIGST + d.itcRcmIGST);
+  d.itcNetCGST = r2v(d.itcOthCGST + d.itcRcmCGST);
+  d.itcNetSGST = r2v(d.itcOthSGST + d.itcRcmSGST);
+  d.itcNetCess = r2v(d.itcOthCess + d.itcRcmCess);
+
+  // ── Table 3.2: inter-state supplies to unregistered persons ──
+  // Reported per place of supply, which is what makes it a different
+  // question from 3.1. It was written as a single aggregate row typed
+  // 'EXPWOP' — an export code — for supplies that are neither exports nor
+  // place-of-supply-wise.
+  const posBuckets = new Map();
+  (invoices || [])
+    .filter(r => r.supply_type === 'interstate')
+    .filter(r => !String(r.gst_number || '').trim())     // unregistered only
+    .filter(r => !r.export_type)                          // an export is not a 3.2 supply
+    .forEach(r => {
+      const pos = (typeof getStateCode === 'function' ? getStateCode(r.state || '') : '') || '';
+      if (!pos || pos === '99') return;
+      if (!posBuckets.has(pos)) posBuckets.set(pos, { pos, txval: 0, iamt: 0 });
+      const b = posBuckets.get(pos);
+      b.txval = r2v(b.txval + (+r.taxable_amount || 0));
+      b.iamt = r2v(b.iamt + (+r.igst || 0));
+    });
+  d.unregByPos = [...posBuckets.values()].sort((a, b) => a.pos.localeCompare(b.pos));
+  d.nilExemptTxval = r2v(nil);
+  d.nonGstTxval = r2v(nonGst);
+  d.rcmTxval = r2v(rcm.reduce((s, r) => s + (+r.taxable_value || 0), 0));
+  d.rcmIGST = r2v(rcm.reduce((s, r) => s + (+r.igst || 0), 0));
+  d.rcmCGST = r2v(rcm.reduce((s, r) => s + (+r.cgst || 0), 0));
+  d.rcmSGST = r2v(rcm.reduce((s, r) => s + (+r.sgst || 0), 0));
+  d.rcmCess = r2v(rcm.reduce((s, r) => s + (+r.cess || 0), 0));
+
+  // Shown as well as exported — a figure that only appears in a JSON file
+  // nobody opens is a figure nobody can check.
+  const setTxt = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = '₹' + fmt(v); };
+  setTxt('g3bZeroRated', d.osupZeroTxval || 0);
+  setTxt('g3bNilExempt', d.nilExemptTxval);
+  setTxt('g3bNonGst', d.nonGstTxval);
+  setTxt('g3bRcm', d.rcmTxval);
+  setTxt('g3bItcOth', d.itcOthIGST + d.itcOthCGST + d.itcOthSGST);
+  setTxt('g3bItcRcm', d.itcRcmIGST + d.itcRcmCGST + d.itcRcmCess + d.itcRcmSGST);
+  setTxt('g3bItcNet', d.itcNetIGST + d.itcNetCGST + d.itcNetSGST);
+  const cnt = document.getElementById('g3bItcSource');
+  if (cnt) cnt.textContent = `from ${d.itcPurchaseCount} purchase${d.itcPurchaseCount === 1 ? '' : 's'} in this period`;
 }
 
 function sum(arr, key) { return arr.reduce((s, r) => s + (+r[key] || 0), 0); }
@@ -135,7 +267,36 @@ function renderGSTR3B(b2b, b2c, month, itemsByInvoice) {
     .sort((a, b) => a.rate - b.rate);
 
   // ── Save for export ───────────────────────────────
-  window._gstr3bData = { b2b, b2c, month, totTax, totIGST, totCGST, totSGST, totGST, rateWise, regInterTax, regInterIGST, unregInterTax, unregInterIGST };
+  // 3.1 has five lines, and this page reported one of them and wrote zero
+  // for the rest. Every figure below is data the application already
+  // holds — exports since Batch 5, reverse-charge inward since Module 4B,
+  // nil/exempt since Module 3, cess since Module 10 — so reporting them
+  // as zero was understating the return, not simplifying it.
+  //
+  // An export is an outward supply but a ZERO-RATED one: it belongs in
+  // 3.1(b), not 3.1(a), and counting it in both would double the turnover.
+  const isExport = r => !!r.export_type;
+  const zeroRated = all.filter(isExport);
+  const taxableOnly = all.filter(r => !isExport(r));
+
+  const osupDetTxval = r2(sum(taxableOnly, 'taxable_amount'));
+  const osupDetIGST  = r2(sum(taxableOnly, 'igst'));
+  const osupDetCGST  = r2(sum(taxableOnly, 'cgst'));
+  const osupDetSGST  = r2(sum(taxableOnly, 'sgst'));
+  const osupDetCess  = r2(sum(taxableOnly, 'cess_amount'));
+
+  const osupZeroTxval = r2(sum(zeroRated, 'taxable_amount'));
+  const osupZeroIGST  = r2(sum(zeroRated, 'igst'));
+  const osupZeroCess  = r2(sum(zeroRated, 'cess_amount'));
+
+  window._gstr3bData = { b2b, b2c, month, totTax, totIGST, totCGST, totSGST, totGST, rateWise,
+    regInterTax, regInterIGST, unregInterTax, unregInterIGST,
+    osupDetTxval, osupDetIGST, osupDetCGST, osupDetSGST, osupDetCess,
+    osupZeroTxval, osupZeroIGST, osupZeroCess,
+    // Filled in by loadGSTR3BExtras() below, which reads the documents
+    // that 3.1(c) and 3.1(d) are built from.
+    nilExemptTxval: 0, nonGstTxval: 0,
+    rcmTxval: 0, rcmIGST: 0, rcmCGST: 0, rcmSGST: 0, rcmCess: 0 };
 
   // ── Stat cards ────────────────────────────────────
   setEl('g3bTotTaxable', '&#8377;' + fmt(totTax));
@@ -258,33 +419,48 @@ function exportGSTR3BJSON() {
     gstin:      p?.gstin || '',
     ret_period: fp,
     sup_details: {
+      // 3.1(a) — taxable outward supplies, exports excluded because they
+      // are reported at 3.1(b) and counting them twice doubles turnover.
       osup_det: {
-        txval: d.totTax,
-        iamt:  d.totIGST,
-        camt:  d.totCGST,
-        samt:  d.totSGST,
-        csamt: 0
+        txval: d.osupDetTxval ?? d.totTax,
+        iamt:  d.osupDetIGST ?? d.totIGST,
+        camt:  d.osupDetCGST ?? d.totCGST,
+        samt:  d.osupDetSGST ?? d.totSGST,
+        csamt: d.osupDetCess ?? 0
       },
-      osup_zero:     { txval: 0, iamt: 0, csamt: 0 },
-      osup_nil_exmp: { txval: 0 },
-      isup_rev:      { txval: 0, iamt: 0, camt: 0, samt: 0, csamt: 0 },
-      osup_nongst:   { txval: 0 }
+      // 3.1(b) — zero rated: exports and SEZ supplies.
+      osup_zero:     { txval: d.osupZeroTxval ?? 0, iamt: d.osupZeroIGST ?? 0, csamt: d.osupZeroCess ?? 0 },
+      // 3.1(c) — nil rated and exempt.
+      osup_nil_exmp: { txval: d.nilExemptTxval ?? 0 },
+      // 3.1(d) — inward supplies on which tax is payable by the recipient.
+      // Built from self invoices, which is the document that records one.
+      isup_rev:      { txval: d.rcmTxval ?? 0, iamt: d.rcmIGST ?? 0, camt: d.rcmCGST ?? 0,
+                       samt: d.rcmSGST ?? 0, csamt: d.rcmCess ?? 0 },
+      // 3.1(e) — non-GST outward supplies.
+      osup_nongst:   { txval: d.nonGstTxval ?? 0 }
     },
     inter_sup: {
-      unreg_details: d.unregInterTax > 0 ? [{ ty: 'EXPWOP', txval: d.unregInterTax, iamt: d.unregInterIGST, csamt: 0 }] : [],
+      // 3.2 is reported per place of supply. It previously wrote one
+      // aggregate row typed 'EXPWOP', which is an export code and was
+      // never right for a domestic B2C supply.
+      unreg_details: (d.unregByPos || []).map(r => ({ pos: r.pos, txval: r.txval, iamt: r.iamt })),
       comp_details:  [],
       uin_details:   []
     },
     itc_elg: {
+      // IMPG, IMPS and ISD stay zero: this application records no bill of
+      // entry and no ISD document, so it has nothing to say about them.
+      // ISRC and OTH are computed from self invoices and purchases.
       itc_avl: [
         { ty: 'IMPG', iamt: 0, camt: 0, samt: 0, csamt: 0 },
         { ty: 'IMPS', iamt: 0, camt: 0, samt: 0, csamt: 0 },
-        { ty: 'ISRC', iamt: 0, camt: 0, samt: 0, csamt: 0 },
+        { ty: 'ISRC', iamt: d.itcRcmIGST ?? 0, camt: d.itcRcmCGST ?? 0, samt: d.itcRcmSGST ?? 0, csamt: d.itcRcmCess ?? 0 },
         { ty: 'ISD',  iamt: 0, camt: 0, samt: 0, csamt: 0 },
-        { ty: 'OTH',  iamt: 0, camt: 0, samt: 0, csamt: 0 }
+        { ty: 'OTH',  iamt: d.itcOthIGST ?? 0, camt: d.itcOthCGST ?? 0, samt: d.itcOthSGST ?? 0, csamt: d.itcOthCess ?? 0 }
       ],
       itc_rev:  [{ ty: 'RUL_42_43', iamt: 0, camt: 0, samt: 0, csamt: 0 }, { ty: 'OTH', iamt: 0, camt: 0, samt: 0, csamt: 0 }],
-      itc_net:  { iamt: 0, camt: 0, samt: 0, csamt: 0 },
+      itc_net:  { iamt: d.itcNetIGST ?? 0, camt: d.itcNetCGST ?? 0,
+                  samt: d.itcNetSGST ?? 0, csamt: d.itcNetCess ?? 0 },
       itc_inelg:[{ ty: 'RUL_42_43', iamt: 0, camt: 0, samt: 0, csamt: 0 }, { ty: 'OTH', iamt: 0, camt: 0, samt: 0, csamt: 0 }]
     },
     intr_ltfee: {
