@@ -258,11 +258,21 @@ function closeProfileModal() {
 function e(v) { return (v || '').toString().replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;'); }
 
 // ── Generic image upload/clear (reused for logo/seal/signature/QR) ──
-// Uploads to Cloudinary (server/routes/uploads.js) and stores the
-// returned URL — not a base64 data-URL — in the hidden input, which is
-// the only thing the rest of this modal's read/save logic cares about
-// (it just reads/writes whatever string is there under the same
-// logo_base64/seal_base64/etc. column names, now holding URLs).
+// The file goes to POST /uploads/image, which writes it into this
+// company's profile row and answers with a confirmation. The image
+// itself never comes back and never enters this form, so Save Profile
+// carries text only.
+//
+// It used to come back as a base64 data URL and sit in a hidden input
+// until save, at which point a 500KB logo became about 667KB of JSON and
+// the save died with 413 Content Too Large.
+const IMAGE_SLOT_BY_INPUT = {
+  brandLogoBase64: 'logo',
+  brandSealBase64: 'seal',
+  brandSignatureBase64: 'signature',
+  brandQRBase64: 'qr'
+};
+
 async function handleImageUpload(file, hiddenId, previewWrapId, iconClass) {
   if (!file) return;
   if (file.size > 500 * 1024) { showToast('Image too large — please use a file under 500KB.', 'error'); return; }
@@ -278,6 +288,9 @@ async function handleImageUpload(file, hiddenId, previewWrapId, iconClass) {
 
   const formData = new FormData();
   formData.append('image', file);
+  // Which of the four slots this is. The server maps it to a column; it
+  // is never interpolated into SQL.
+  formData.append('slot', IMAGE_SLOT_BY_INPUT[hiddenId] || '');
   try {
     const token = localStorage.getItem('gst_jwt');
     const res = await fetch(API_BASE_URL + '/uploads/image', {
@@ -287,18 +300,29 @@ async function handleImageUpload(file, hiddenId, previewWrapId, iconClass) {
     });
     const body = await res.json().catch(() => null);
     if (!res.ok) throw (body && body.error) || { message: 'Upload failed' };
-    if (hidden) hidden.value = body.url;
+    // Stored server-side. The hidden input is deliberately left empty:
+    // the image is already saved, and putting it here would only put it
+    // back into the next PATCH. `cleared` is reset so a previous clear in
+    // the same sitting does not wipe what was just uploaded.
+    if (hidden) {
+      hidden.value = '';
+      delete hidden.dataset.cleared;
+      hidden.dataset.stored = '1';
+    }
+    if (typeof showToast === 'function') showToast('Image saved.', 'success');
   } catch (error) {
     showToast('Image upload failed: ' + (error.message || 'unknown error'), 'error');
     // Upload didn't succeed — roll the preview back rather than leaving
     // it showing a local-only image the hidden input doesn't reference.
-    if (wrap) wrap.innerHTML = hidden?.value ? `<img src="${hidden.value}" style="width:100%;height:100%;object-fit:contain;">` : `<i class="fas ${iconClass} text-gray-mid"></i>`;
+    if (wrap) wrap.innerHTML = `<i class="fas ${iconClass} text-gray-mid"></i>`;
   }
 }
 
 function clearImageUpload(hiddenId, previewWrapId, iconClass) {
   const hidden = document.getElementById(hiddenId);
-  if (hidden) hidden.value = '';
+  // Removing an image IS sent on save — an empty string is a few bytes,
+  // and it is the only way the column gets emptied.
+  if (hidden) { hidden.value = ''; hidden.dataset.cleared = '1'; delete hidden.dataset.stored; }
   const wrap = document.getElementById(previewWrapId);
   if (wrap) wrap.innerHTML = `<i class="fas ${iconClass} text-gray-mid"></i>`;
 }
@@ -741,7 +765,7 @@ function _brandUpload(label, hiddenId, previewId, currentValue, iconClass) {
         ${currentValue ? `<button type="button" class="btn btn-secondary btn-sm" style="font-size:11px;padding:5px 8px;margin-left:4px;" onclick="clearImageUpload('${hiddenId}','${previewId}','${iconClass}')" aria-label="Remove ${label}"><i class="fas fa-times"></i></button>` : ''}
       </div>
     </div>
-    <input type="hidden" id="${hiddenId}" value="${e(currentValue)}">
+    <input type="hidden" id="${hiddenId}" value="">
   </div>`;
 }
 
@@ -833,11 +857,38 @@ async function submitCompanyBranding() {
   const user = await getCurrentUser();
   if (!user) return;
 
+  // Images are sent ONLY when the user actually changed one.
+  //
+  // These four columns are named *_base64 for historical reasons but now
+  // hold a URL from POST /uploads/image. A profile created before that
+  // change still holds a real data-URL, and one 500KB image becomes about
+  // 667KB of base64 — so re-sending the untouched values on every save
+  // pushed the PATCH past the JSON body limit and the save failed with
+  // 413 Content Too Large. The image had uploaded fine; it was the save
+  // that broke.
+  //
+  // A field the user did not touch is simply left out, and a partial
+  // PATCH leaves the stored value alone — which is also what preserves
+  // the legacy data-URLs already in the database. The data: guard is
+  // belt and braces: nothing should put a data-URL in these inputs any
+  // more, and if something does it must not travel in this request.
+  const imageFields = {
+    logo_base64:      'brandLogoBase64',
+    seal_base64:      'brandSealBase64',
+    signature_base64: 'brandSignatureBase64',
+    qr_base64:        'brandQRBase64'
+  };
+  const images = {};
+  Object.entries(imageFields).forEach(([column, inputId]) => {
+    const el = document.getElementById(inputId);
+    // An upload already wrote itself to the profile, so there is nothing
+    // to send. Only a removal travels here, and it travels as ''.
+    if (!el || el.dataset.cleared !== '1') return;
+    images[column] = '';
+  });
+
   const { error } = await saveUserProfile(user.id, {
-    logo_base64:      document.getElementById('brandLogoBase64')?.value || '',
-    seal_base64:      document.getElementById('brandSealBase64')?.value || '',
-    signature_base64: document.getElementById('brandSignatureBase64')?.value || '',
-    qr_base64:        document.getElementById('brandQRBase64')?.value || '',
+    ...images,
     header_color:     document.getElementById('brandHeaderColor')?.value || '#004d40',
     footer_text:      document.getElementById('brandFooterText')?.value?.trim() || '',
     terms_conditions: document.getElementById('brandTerms')?.value?.trim() || '',
