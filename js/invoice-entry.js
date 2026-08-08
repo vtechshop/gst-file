@@ -627,6 +627,7 @@ async function loadInvoiceForEdit(type, id) {
   const toggle = document.getElementById('transportToggle');
   if (toggle) toggle.checked = !!rec.transport_required;
   onTransportToggleChange();
+  restoreExportFields(rec);
   setInvValue('invVehicleNo', (rec.vehicle_number || '').toUpperCase());
   setInvValue('invTransporter', rec.transporter_name || '');
   setInvValue('invTransportMode', rec.transport_mode || '');
@@ -688,6 +689,7 @@ async function loadInvoiceDuplicateDraft() {
   const toggle = document.getElementById('transportToggle');
   if (toggle) toggle.checked = !!draft.transport_required;
   onTransportToggleChange();
+  restoreExportFields(draft);
   setInvValue('invVehicleNo', (draft.vehicle_number || '').toUpperCase());
   setInvValue('invTransporter', draft.transporter_name || '');
   setInvValue('invTransportMode', draft.transport_mode || '');
@@ -786,6 +788,10 @@ async function saveInvoice() {
   }
 
   const transportRequired = !!document.getElementById('transportToggle')?.checked;
+  // An export is an invoice with a shipping bill against it. When the
+  // toggle is off every one of these is null, and the row is byte-for-byte
+  // the row this page has always written.
+  const isExport = !!document.getElementById('exportToggle')?.checked;
   const headerBase = {
     user_id: user.id,
     customer_name: custName, phone, address, state,
@@ -793,6 +799,10 @@ async function saveInvoice() {
     invoice_source: source,
     gst_category: gstCategory,
     reverse_charge: reverseCharge,
+    export_type: isExport ? (document.getElementById('invExportType')?.value || 'WPAY') : null,
+    port_code: isExport ? getInvText('invPortCode').toUpperCase() : null,
+    shipping_bill_number: isExport ? getInvText('invShippingBillNo') : null,
+    shipping_bill_date: isExport ? (getInvText('invShippingBillDate') || null) : null,
     transport_required: transportRequired,
     vehicle_number: transportRequired ? getInvText('invVehicleNo').toUpperCase() : '',
     transporter_name: transportRequired ? getInvText('invTransporter') : '',
@@ -943,6 +953,7 @@ function clearInvoiceFormFields() {
   const toggle = document.getElementById('transportToggle');
   if (toggle) toggle.checked = false;
   onTransportToggleChange();
+  restoreExportFields(null);
   ['invVehicleNo','invTransporter','invLrNumber','invTransportMode','invDistance','invLrDate',
    'invTransporterGstin','invVehicleType','invDispatchFrom','invDispatchTo'].forEach(id => setInvValue(id, ''));
 
@@ -1035,3 +1046,31 @@ document.addEventListener('keydown', (e) => {
   e.preventDefault();
   focusNextFormField(el);
 });
+
+
+// ── Export invoice (Batch 5) ────────────────────────────────
+// An export is reported in GSTR-1 Table 6A rather than B2B, B2CL or
+// B2CS, because it is not a domestic supply. It still counts in the HSN
+// summary and its number is still reported in Table 13.
+function onExportToggleChange() {
+  const on = !!document.getElementById('exportToggle')?.checked;
+  document.getElementById('exportFields')?.classList.toggle('d-none', !on);
+  const lbl = document.getElementById('exportToggleLabel');
+  if (lbl) {
+    lbl.textContent = on ? 'Yes' : 'No';
+    lbl.classList.toggle('text-gray-mid', !on);
+  }
+}
+
+// Called when an existing invoice is opened, so an export stays an export.
+function restoreExportFields(inv) {
+  const t = document.getElementById('exportToggle');
+  if (!t) return;
+  t.checked = !!(inv && inv.export_type);
+  const set = (id, v) => { const e = document.getElementById(id); if (e) e.value = v == null ? '' : v; };
+  set('invExportType', (inv && inv.export_type) || 'WPAY');
+  set('invPortCode', inv && inv.port_code);
+  set('invShippingBillNo', inv && inv.shipping_bill_number);
+  set('invShippingBillDate', inv && inv.shipping_bill_date);
+  onExportToggleChange();
+}

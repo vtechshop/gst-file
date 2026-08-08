@@ -155,6 +155,14 @@ const GSTR1_SECTIONS = [
   // notes and before the HSN summary. emitWhenEmpty is false like every
   // other section, so a business that classifies nothing gets no nil key
   // at all and its file is unchanged.
+  // Exports (Table 6A) and advances (11A / 11B). Placed after the credit
+  // and debit notes and before the nil-rated summary, which is where a
+  // Utility-written file carries them. Empty ones are omitted like every
+  // other section, so a business with no exports and no advances gets the
+  // file it got before these existed.
+  { key: 'exp',     kind: 'section', type: 'array',  label: 'Exports',                               emitWhenEmpty: false },
+  { key: 'at',      kind: 'section', type: 'array',  label: 'Advances received',                     emitWhenEmpty: false },
+  { key: 'txpd',    kind: 'section', type: 'array',  label: 'Advances adjusted against invoices',    emitWhenEmpty: false },
   { key: 'nil',     kind: 'section', type: 'object', label: 'Nil-rated / exempt / non-GST',          emitWhenEmpty: false,
     isEmpty: v => !(v && Array.isArray(v.inv) && v.inv.length) },
   // Split by supply channel, exactly as the Utility writes it. This was a
@@ -175,11 +183,17 @@ const GSTR1_SECTIONS = [
 // this period", which this codebase cannot know. Whether a given filing
 // requires any of them is a question for the Portal, not for this file.
 const GSTR1_UNPRODUCED_SECTIONS = [
-  { key: 'exp',       label: 'Exports',                     reason: 'no export-invoice model exists in this application' },
-  { key: 'at',        label: 'Advances received',           reason: 'no advance-receipt model exists in this application' },
-  { key: 'txpd',      label: 'Advances adjusted',           reason: 'no advance-adjustment model exists in this application' },
-  { key: 'amendments', label: 'Amendments to earlier periods', reason: 'this application does not track amendments to already-filed returns' }
+  { key: 'amendments', label: 'Amendments to earlier periods', reason: 'the data is captured against every revised invoice, but the b2csa shape is contradicted between the sources available here, so emission stays off until a Utility export settles it' }
 ];
+
+// An export is an invoice with a shipping bill against it. WPAY means the
+// IGST was paid and will be reclaimed; WOPAY means it went out under a LUT
+// or bond with no IGST charged.
+const GSTR1_EXPORT_TYPES = ['WPAY', 'WOPAY'];
+function gstr1ExportTypeOf(inv) {
+  const t = String((inv && inv.export_type) || '').trim().toUpperCase();
+  return GSTR1_EXPORT_TYPES.includes(t) ? t : null;
+}
 
 const GSTR1_SECTION_KEYS = GSTR1_SECTIONS.map(s => s.key);
 const gstr1Section = key => GSTR1_SECTIONS.find(s => s.key === key);
@@ -723,6 +737,66 @@ function gstr1BuildAmendments(revisedRows) {
   [...byPos.entries()].sort((a, b) => a[0].localeCompare(b[0]))
     .forEach(([pos, inv]) => b2cla.push({ pos, inv }));
   return { b2ba, b2cla };
+}
+
+// Tables 11A and 11B have the same shape, so they have one builder.
+//
+// 11A is tax paid on advances received where the supply has not yet been
+// invoiced; 11B is that same tax being backed out as the invoices are
+// raised. Both are summaries by place of supply and rate — the individual
+// documents are reported in Table 13, not here.
+//
+// Shape: [{ pos, sply_ty, itms: [{ rt, ad_amt, iamt, camt, samt, csamt }] }]
+// CORROBORATED against two independent schema references; no Utility
+// export containing an advance has been seen here.
+function gstr1BuildAdvanceSection(rows, amountOf, posOf, supplyTypeOf) {
+  const buckets = new Map();   // "pos|sply_ty|rate" -> row
+  (rows || []).forEach(r => {
+    if (String(r.status || '').trim().toLowerCase() === 'cancelled') return;
+    const amount = round2(amountOf(r));
+    if (!amount) return;                      // nothing to report
+
+    const pos = String(posOf(r) || '').trim();
+    const inter = String(supplyTypeOf(r) || '').trim().toLowerCase() === 'interstate';
+    const sply_ty = inter ? 'INTER' : 'INTRA';
+    const rt = round2(r.gst_percentage);
+    const key = `${pos}|${sply_ty}|${rt}`;
+    if (!buckets.has(key)) {
+      buckets.set(key, { pos, sply_ty, rt, ad_amt: 0, iamt: 0, camt: 0, samt: 0, csamt: 0 });
+    }
+    const b = buckets.get(key);
+    b.ad_amt = round2(b.ad_amt + amount);
+    b.iamt = round2(b.iamt + round2(r.igst));
+    b.camt = round2(b.camt + round2(r.cgst));
+    b.samt = round2(b.samt + round2(r.sgst));
+    b.csamt = round2(b.csamt + round2(r.cess));
+  });
+
+  // Grouped by place of supply and supply type, each carrying its rates.
+  const byPos = new Map();
+  [...buckets.values()]
+    .sort((a, b) => a.pos.localeCompare(b.pos) || a.sply_ty.localeCompare(b.sply_ty) || a.rt - b.rt)
+    .forEach(b => {
+      const k = `${b.pos}|${b.sply_ty}`;
+      if (!byPos.has(k)) byPos.set(k, { pos: b.pos, sply_ty: b.sply_ty, itms: [] });
+      byPos.get(k).itms.push({
+        rt: b.rt, ad_amt: b.ad_amt, iamt: b.iamt, camt: b.camt, samt: b.samt, csamt: b.csamt
+      });
+    });
+  return [...byPos.values()];
+}
+
+// Advance adjustments are their own dated rows rather than a running
+// total on the receipt voucher, because Table 11B asks which advances
+// were adjusted IN THIS PERIOD and a running total cannot answer that.
+async function gstr1FetchAdvanceAdjustments(userId, start, end) {
+  try {
+    const res = await _supabase.from('advance_adjustments').select('*').eq('user_id', userId)
+      .gte('adjusted_on', start).lte('adjusted_on', end);
+    return res.data || [];
+  } catch (e) {
+    return [];
+  }
 }
 
 function gstr1DocumentSources() {
@@ -1335,7 +1409,7 @@ async function buildGSTR1Payload(userId, profile, periodFilter) {
   const todayISO = toISO(new Date());
 
   // Round 1: everything that can be scoped by its own date column.
-  const [b2bRes, b2cRes, cdnRes, srRes, srItemsRes, documentRows] = await Promise.all([
+  const [b2bRes, b2cRes, cdnRes, srRes, srItemsRes, documentRows, advanceAdjustmentRows] = await Promise.all([
     _supabase.from('b2b_invoices').select('*').eq('user_id', userId).gte('invoice_date', start).lte('invoice_date', end),
     _supabase.from('b2c_invoices').select('*').eq('user_id', userId).gte('invoice_date', start).lte('invoice_date', end),
     _supabase.from('cdn_notes').select('*').eq('user_id', userId).gte('note_date', start).lte('note_date', end),
@@ -1343,7 +1417,8 @@ async function buildGSTR1Payload(userId, profile, periodFilter) {
     _supabase.from('sales_return_items').select('*').eq('user_id', userId),
     // Vouchers and self invoices, for Table 13. Each from its own table;
     // a business with none gets an empty array and an unchanged file.
-    gstr1FetchDocuments(userId, start, end)
+    gstr1FetchDocuments(userId, start, end),
+    gstr1FetchAdvanceAdjustments(userId, start, end)
   ]);
 
   const b2bData = b2bRes.data || [], b2cData = b2cRes.data || [];
@@ -1452,6 +1527,58 @@ async function buildGSTR1Payload(userId, profile, periodFilter) {
   // kept apart from the moment a line is counted rather than being split
   // afterwards (a line already knows which invoice it came from; the
   // combined totals do not).
+  // Exports are grouped by export type, because that is how Table 6A is
+  // written: one entry per WPAY/WOPAY, each holding its own invoices.
+  const expGroups = new Map();   // 'WPAY' | 'WOPAY' -> inv[]
+
+  // An export invoice is still an invoice: it is counted in the HSN
+  // summary and its number is still reported in Table 13. What changes is
+  // only which supply section it lands in — Table 6A instead of B2B, B2CL
+  // or B2CS — because an export is not a domestic supply.
+  function collectExport(inv, recomputed, idt, expType) {
+    const entry = {
+      inum: inv.invoice_number || `EXP-${String(inv.id).slice(0, 8)}`,
+      idt,
+      val: gstr1InvoiceVal(recomputed.total),
+      // Flat item rows, not the num/itm_det pairs B2B uses. Both schema
+      // references available here agree on that for this section.
+      itms: recomputed.byRate.map(b => ({
+        txval: b.taxable, rt: b.rate, iamt: b.igst, csamt: 0
+      }))
+    };
+    // The shipping bill may not exist yet when the return is filed, so
+    // these are written only when they are actually known — an empty
+    // string is not a shipping bill number.
+    const sbnum = String(inv.shipping_bill_number || '').trim();
+    const sbdt = String(inv.shipping_bill_date || '').trim();
+    const sbpcode = String(inv.port_code || '').trim();
+    if (sbpcode) entry.sbpcode = sbpcode;
+    if (sbnum) entry.sbnum = sbnum;
+    if (sbdt) entry.sbdt = formatDateDDMMYYYY(sbdt);
+
+    // Exported under a LUT means no IGST may be charged; exported on
+    // payment means some must be. Either way round is a filing that will
+    // not reconcile, so it is caught here rather than at the Portal.
+    const tax = recomputed.igst + recomputed.cgst + recomputed.sgst;
+    if (expType === 'WOPAY' && tax > 0) {
+      errors.push(gstr1Err({ invoice: inv.invoice_number, customer: inv.customer_name,
+        field: 'Export Type', current: `WOPAY with ${tax} tax charged`,
+        expected: 'no tax on an export under LUT or bond',
+        message: 'This invoice is marked exported without payment of IGST, but it charges tax.',
+        fix: 'Either remove the tax, or change the export type to WPAY.' }));
+    }
+    if (expType === 'WPAY' && tax === 0) {
+      errors.push(gstr1Err({ invoice: inv.invoice_number, customer: inv.customer_name,
+        field: 'Export Type', current: 'WPAY with no tax charged',
+        expected: 'IGST charged on an export made on payment of tax',
+        message: 'This invoice is marked exported on payment of IGST, but no tax is charged.',
+        fix: 'Either charge IGST, or change the export type to WOPAY if it went out under a LUT.' }));
+    }
+
+    if (!expGroups.has(expType)) expGroups.set(expType, []);
+    expGroups.get(expType).push(entry);
+  }
+
   const hsnBuckets = { b2b: new Map(), b2c: new Map() }; // "hsncode|rate" -> row
   function addToHsn(channel, hsnCode, desc, uqc, qty, r, errCtx) {
     if (!gstr1HsnFormatOk(hsnCode)) { errors.push(gstr1Err({ field: 'HSN Code', current: hsnCode, expected: 'a 4, 6 or 8 digit code', message: `${errCtx}: HSN code is not valid.`, fix: 'Set a valid HSN code on the product, then re-save the invoice.' })); return; }
@@ -1619,6 +1746,11 @@ async function buildGSTR1Payload(userId, profile, periodFilter) {
       }
     }
 
+    // Counted in HSN above, reported in Table 13 below; only the supply
+    // section differs.
+    const b2bExportType = gstr1ExportTypeOf(inv);
+    if (b2bExportType) { collectExport(inv, recomputed, idt, b2bExportType); return; }
+
     const invEntry = {
       inum: inv.invoice_number, idt, val: gstr1InvoiceVal(recomputed.total), pos,
       rchrg: inv.reverse_charge ? 'Y' : 'N',
@@ -1694,6 +1826,9 @@ async function buildGSTR1Payload(userId, profile, periodFilter) {
       errors.push(gstr1TotalMismatch(inv, recomputed.total));
       return;
     }
+
+    const b2cExportType = gstr1ExportTypeOf(inv);
+    if (b2cExportType) { collectExport(inv, recomputed, idt, b2cExportType); return; }
 
     const isLarge = inv.supply_type === 'interstate' && recomputed.total > GSTR1_B2CL_THRESHOLD;
     if (isLarge) {
@@ -1962,6 +2097,21 @@ async function buildGSTR1Payload(userId, profile, periodFilter) {
   // GSTR1_SECTIONS and cannot drift from what the audit expects.
   // Ordered by supply channel so the same data always writes the same
   // file. Only channels that actually carry a non-taxable supply appear.
+  // A Bill of Supply is issued instead of a tax invoice, by a composition
+  // dealer or a supplier of exempt goods. It carries no tax, so it belongs
+  // in Table 8 with the other non-taxable supplies rather than in any of
+  // the taxable sections. Its number is still reported in Table 13, which
+  // it shares with tax invoices because that table reports numbering
+  // series rather than tax status.
+  const BOS_TREATMENT = { exempted: 'exempt', nil_rated: 'nil_rated', non_gst: 'non_gst' };
+  datedDocumentRows
+    .filter(r => r.__documentType === 'bill_of_supply')
+    .filter(r => String(r.status || '').toLowerCase() !== 'cancelled')
+    .forEach(r => {
+      const treatment = BOS_TREATMENT[String(r.supply_nature || '').trim()] || 'exempt';
+      addToNil(!!String(r.party_gstin || '').trim(), r.supply_type, treatment, round2(r.total_value));
+    });
+
   const nil = nilBuckets.size
     ? { inv: [...nilBuckets.values()].sort((a, b) => a.sply_ty.localeCompare(b.sply_ty)) }
     : {};
@@ -1972,9 +2122,28 @@ async function buildGSTR1Payload(userId, profile, periodFilter) {
   const { b2ba, b2cla } = gstr1BuildAmendments(
     datedDocumentRows.filter(r => r.__documentType === 'revised_invoice'));
 
+  // Table 6A. Ordered by export type, and the invoices within each by
+  // number, so the same data always writes the same file.
+  const exp = [...expGroups.entries()]
+    .sort((a, b) => a[0].localeCompare(b[0]))
+    .map(([exp_typ, inv]) => ({
+      exp_typ,
+      inv: inv.sort((x, y) => gstr1CompareInvoiceNumbers(x.inum, y.inum))
+    }));
+
+  // Tables 11A and 11B. An advance is reported by place of supply and
+  // rate, not per document — the receipt voucher that recorded it is
+  // reported separately, in Table 13.
+  const at = gstr1BuildAdvanceSection(
+    datedDocumentRows.filter(r => r.__documentType === 'receipt_voucher'),
+    r => round2(r.advance_amount), r => r.place_of_supply, r => r.supply_type);
+  const txpd = gstr1BuildAdvanceSection(
+    advanceAdjustmentRows,
+    r => round2(r.adjusted_amount), r => r.place_of_supply, r => r.supply_type);
+
   const payload = assembleGSTR1Payload({
     gstin: businessGstin, fp, version: GSTR1_VERSION, hash: GSTR1_HASH,
-    b2b, b2ba, b2cl, b2cla, b2cs, cdnr, cdnur, nil, hsn, doc_issue
+    b2b, b2ba, b2cl, b2cla, b2cs, cdnr, cdnur, exp, at, txpd, nil, hsn, doc_issue
   });
   return { payload, errors, context: { periodStart: start, periodEnd: end, salesReturnNettedTaxable, grandTotal } };
 }

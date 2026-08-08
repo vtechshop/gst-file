@@ -4,28 +4,28 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>New Invoice - GST Management System</title>
-  <link rel="stylesheet" href="css/style.css?v=18">
+  <link rel="stylesheet" href="css/style.css?v=19">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.31/jspdf.plugin.autotable.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/qrcode@1.4.4/build/qrcode.min.js"></script>
-  <script src="js/apiClient.js?v=18"></script>
-  <script src="js/backup.js?v=18"></script>
-  <script src="js/config.js?v=18"></script>
-  <script src="js/product-sync.js?v=18"></script>
-  <script src="js/auth.js?v=18"></script>
-  <script src="js/utils.js?v=18"></script>
-  <script src="js/search.js?v=18"></script>
-  <script src="js/profile.js?v=18"></script>
-  <script src="js/products.js?v=18"></script>
-  <script src="js/drafts.js?v=18"></script>
-  <script src="js/invoice-items.js?v=18"></script>
-  <script src="js/invoice-pdf.js?v=18"></script>
-  <script src="js/payments.js?v=18"></script>
-  <script src="js/invoice-entry.js?v=18"></script>
+  <script src="js/apiClient.js?v=19"></script>
+  <script src="js/backup.js?v=19"></script>
+  <script src="js/config.js?v=19"></script>
+  <script src="js/product-sync.js?v=19"></script>
+  <script src="js/auth.js?v=19"></script>
+  <script src="js/utils.js?v=19"></script>
+  <script src="js/search.js?v=19"></script>
+  <script src="js/profile.js?v=19"></script>
+  <script src="js/products.js?v=19"></script>
+  <script src="js/drafts.js?v=19"></script>
+  <script src="js/invoice-items.js?v=19"></script>
+  <script src="js/invoice-pdf.js?v=19"></script>
+  <script src="js/payments.js?v=19"></script>
+  <script src="js/invoice-entry.js?v=19"></script>
   <!-- Invoice scanner. Uploads to /api/invoice-scan, which calls Gemini
        with a server-held key; no OCR library is loaded in the browser. -->
-  <script src="js/invoice-scan.js?v=18"></script>
+  <script src="js/invoice-scan.js?v=19"></script>
 </head>
 <body>
 <div class="app-layout">
@@ -46,6 +46,8 @@
       <a href="vouchers.html" class="menu-item"><i class="fas fa-receipt"></i> Vouchers</a>
       <a href="challans.html" class="menu-item"><i class="fas fa-file-signature"></i> Delivery Challans</a>
       <a href="revised-invoice.html" class="menu-item"><i class="fas fa-file-pen"></i> Revised Invoices</a>
+      <a href="bill-of-supply.html" class="menu-item"><i class="fas fa-file-invoice"></i> Bill of Supply</a>
+      <a href="advances.html" class="menu-item"><i class="fas fa-hand-holding-dollar"></i> Advances</a>
       <a href="sales-returns.html" class="menu-item"><i class="fas fa-rotate-left"></i> Sales Returns</a>
       <a href="eway-bills.html" class="menu-item"><i class="fas fa-truck-fast"></i> E-Way Bills</a>
       <div class="menu-section">HSN</div>
@@ -241,6 +243,36 @@
               <span class="inv-toggle-track"><span class="inv-toggle-thumb"></span></span>
             </label>
             <span id="transportToggleLabel" class="fs-12 fw-700 text-gray-mid">Not Required</span>
+          </div>
+          <div class="d-flex align-center gap-10 mb-8 mt-8">
+            <label class="inv-toggle" title="Export invoice">
+              <input type="checkbox" id="exportToggle" onchange="onExportToggleChange()" aria-label="Export Invoice">
+              <span class="inv-toggle-track"><span class="inv-toggle-thumb"></span></span>
+            </label>
+            <span class="fs-12 fw-700">Export Invoice</span>
+            <span id="exportToggleLabel" class="fs-12 fw-700 text-gray-mid">No</span>
+            <small class="text-muted">Reported in GSTR-1 Table 6A, not in B2B / B2CL / B2CS.</small>
+          </div>
+          <div id="exportFields" class="form-grid cols-4 mb-16 d-none">
+            <div class="form-group">
+              <label for="invExportType">Export Type *</label>
+              <select id="invExportType" class="form-control">
+                <option value="WPAY">WPAY &mdash; with payment of IGST</option>
+                <option value="WOPAY">WOPAY &mdash; under LUT / bond, no IGST</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label for="invPortCode">Port Code</label>
+              <input type="text" id="invPortCode" class="form-control uppercase" placeholder="INMAA1">
+            </div>
+            <div class="form-group">
+              <label for="invShippingBillNo">Shipping Bill No.</label>
+              <input type="text" id="invShippingBillNo" class="form-control">
+            </div>
+            <div class="form-group">
+              <label for="invShippingBillDate">Shipping Bill Date</label>
+              <input type="date" id="invShippingBillDate" class="form-control">
+            </div>
           </div>
           <div id="transportFields" class="form-grid cols-3 mb-16 d-none">
             <div class="form-group">

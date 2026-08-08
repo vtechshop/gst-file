@@ -52,6 +52,9 @@ const DOCUMENT_TABLES = {
   revised_invoice: { table: 'revised_invoices', series: 'revised_invoice',
                      items: 'revised_invoice_items', itemsFk: 'revised_invoice_id' },
 
+  bill_of_supply:  { table: 'bill_of_supply', series: 'bill_of_supply',
+                     items: 'bill_of_supply_items', itemsFk: 'bill_of_supply_id' },
+
   dc_job_work:     { table: 'delivery_challans', series: 'dc_job_work',
                      items: 'delivery_challan_items', itemsFk: 'challan_id', stamp: 'dc_job_work' },
   dc_approval:     { table: 'delivery_challans', series: 'dc_approval',
@@ -76,6 +79,7 @@ const DEFAULT_DOCUMENT_FORMATS = {
   payment_voucher: 'PV-#####',
   refund_voucher:  'RF-#####',
   revised_invoice: 'RI-#####',
+  bill_of_supply:  'BOS-#####',
   // One per challan book, so each variant's numbers are visibly its own
   // rather than four prefixes competing for one run of digits.
   dc_job_work:     'JW-#####',

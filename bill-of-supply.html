@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Purchase Returns - GST Management System</title>
+  <title>Bill of Supply - GST Management System</title>
   <link rel="stylesheet" href="css/style.css?v=19">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
   <script src="js/apiClient.js?v=19"></script>
@@ -14,9 +14,8 @@
   <script src="js/utils.js?v=19"></script>
   <script src="js/search.js?v=19"></script>
   <script src="js/profile.js?v=19"></script>
-  <script src="js/products.js?v=19"></script>
-  <script src="js/purchase-items.js?v=19"></script>
-  <script src="js/purchase-returns.js?v=19"></script>
+  <script src="js/bill-of-supply.js?v=19"></script>
+
 </head>
 <body>
 <div class="app-layout">
@@ -36,7 +35,7 @@
       <a href="vouchers.html" class="menu-item"><i class="fas fa-receipt"></i> Vouchers</a>
       <a href="challans.html" class="menu-item"><i class="fas fa-file-signature"></i> Delivery Challans</a>
       <a href="revised-invoice.html" class="menu-item"><i class="fas fa-file-pen"></i> Revised Invoices</a>
-      <a href="bill-of-supply.html" class="menu-item"><i class="fas fa-file-invoice"></i> Bill of Supply</a>
+      <a href="bill-of-supply.html" class="menu-item active"><i class="fas fa-file-invoice"></i> Bill of Supply</a>
       <a href="advances.html" class="menu-item"><i class="fas fa-hand-holding-dollar"></i> Advances</a>
       <a href="sales-returns.html" class="menu-item"><i class="fas fa-rotate-left"></i> Sales Returns</a>
       <a href="eway-bills.html" class="menu-item"><i class="fas fa-truck-fast"></i> E-Way Bills</a>
@@ -52,7 +51,7 @@
       <a href="vendor-ledger.html" class="menu-item"><i class="fas fa-book"></i> Vendor Ledger</a>
       <a href="purchases.html" class="menu-item"><i class="fas fa-cart-plus"></i> New Purchase</a>
       <a href="purchase-list.html" class="menu-item"><i class="fas fa-boxes"></i> Purchase List</a>
-      <a href="purchase-returns.html" class="menu-item active"><i class="fas fa-undo"></i> Purchase Returns</a>
+      <a href="purchase-returns.html" class="menu-item"><i class="fas fa-undo"></i> Purchase Returns</a>
       <div class="menu-section">Expenses</div>
       <a href="expenses.html" class="menu-item"><i class="fas fa-receipt"></i> Expenses</a>
       <div class="menu-section">Reports</div>
@@ -76,128 +75,123 @@
   <div class="main-content">
     <div class="top-bar">
       <button type="button" class="menu-toggle" id="menuToggle" aria-label="Toggle sidebar menu"><i class="fas fa-bars"></i></button>
-      <span class="page-title"><i class="fas fa-undo"></i>Purchase Returns</span>
+      <span class="page-title"><i class="fas fa-file-invoice"></i>Bill of Supply</span>
       <button type="button" class="btn btn-secondary btn-sm btn-icon ml-auto" onclick="openGlobalSearch()" title="Search everywhere (Ctrl+K)" aria-label="Global search"><i class="fas fa-search"></i></button>
     </div>
 
     <div class="content">
+      <p class="text-muted-sm mb-16"><i class="fas fa-info-circle"></i>
+        Rule 49. Issued <b>instead of</b> a tax invoice by a composition dealer or by anyone
+        supplying exempt, nil-rated or non-GST goods. No tax is charged, so there is none to
+        enter. It is reported in GSTR-1 <b>Table 8</b> and never in B2B, B2CL or B2CS.</p>
 
-      <!-- Add / Edit Form -->
       <div class="card mb-20">
-        <div class="card-header">
-          <span class="card-title"><i class="fas fa-plus-circle"></i> <span id="retFormTitle">New Purchase Return</span></span>
-        </div>
+        <div class="card-header"><span class="card-title"><i class="fas fa-file-invoice"></i> New Bill of Supply</span></div>
         <div class="card-body">
-          <div class="section-title mb-14">Vendor Details</div>
-          <datalist id="retVendorDatalist"></datalist>
-          <div class="form-grid cols-2 mb-16">
+          <div class="alert alert-info mb-16" id="bosRegistryBox"></div>
+          <div class="form-row">
             <div class="form-group">
-              <label for="retVendorName">Vendor Name <span class="text-required">*</span></label>
-              <input type="text" id="retVendorName" class="form-control" list="retVendorDatalist" oninput="onRetVendorInput()" autocomplete="off">
-            </div>
-            <div class="form-group">
-              <label for="retGstin">Vendor GSTIN <span class="fs-11 text-muted-sm">(Optional)</span></label>
-              <input type="text" id="retGstin" class="form-control uppercase" maxlength="15" oninput="onRetGstinInput(this)">
-              <div id="retGstinStatus" class="d-flex align-center gap-8 d-none" style="margin-top:6px;"></div>
-            </div>
-          </div>
-          <div class="form-grid cols-2 mb-16">
-            <div class="form-group">
-              <label for="retState">State</label>
-              <select id="retState" class="form-control" onchange="detectRetSupplyType()"><option value="">Select State</option></select>
-            </div>
-            <div class="form-group">
-              <label>Supply Type <span class="fs-11 text-muted-sm">(auto-detected)</span></label>
-              <div class="form-control" style="background:var(--bg);cursor:default;display:flex;align-items:center;">
-                <span id="retSupplyBadge" class="badge badge-green">Intrastate</span>
+              <label for="bosNumber">Number *</label>
+              <div class="d-flex gap-8">
+                <input type="text" id="bosNumber" class="form-control" placeholder="BOS-00001">
+                <button type="button" class="btn btn-secondary btn-sm" onclick="bosAutoNumber()"><i class="fas fa-wand-magic-sparkles"></i> Auto</button>
               </div>
-              <input type="hidden" id="retSupply" value="intrastate">
-            </div>
-          </div>
-
-          <div class="section-title mb-14">Return Information</div>
-          <div class="form-grid cols-3 mb-16">
-            <div class="form-group">
-              <label for="retNum">Return Number <span class="text-required">*</span></label>
-              <input type="text" id="retNum" class="form-control">
+              <div class="form-error" id="bosNumberError"></div>
             </div>
             <div class="form-group">
-              <label for="retDate">Return Date <span class="text-required">*</span></label>
-              <input type="date" id="retDate" class="form-control">
+              <label for="bosDate">Date *</label>
+              <input type="date" id="bosDate" class="form-control">
+              <div class="form-error" id="bosDateError"></div>
             </div>
             <div class="form-group">
-              <label for="retOrigPurchase">Original Purchase No. <span class="fs-11 text-muted-sm">(Optional)</span></label>
-              <input type="text" id="retOrigPurchase" class="form-control">
+              <label for="bosNature">Nature of supply *</label>
+              <select id="bosNature" class="form-control"></select>
+              <small class="text-muted">Decides which Table 8 column it lands in.</small>
             </div>
           </div>
-          <div class="form-group mb-16">
-            <label for="retReason">Reason</label>
-            <input type="text" id="retReason" class="form-control">
-          </div>
-
-          <!-- Products (multi-item, per return) -->
-          <div id="purchItemsSection"></div>
-
-          <div class="btn-group">
-            <button type="button" class="btn btn-primary" id="retSaveBtn" onclick="savePurchaseReturn()"><i class="fas fa-save"></i> Save Return</button>
-            <button type="button" class="btn btn-secondary" onclick="resetPurchaseReturn()"><i class="fas fa-redo"></i> Reset</button>
-          </div>
-        </div>
-      </div>
-
-      <!-- Return History -->
-      <div class="card">
-        <div class="card-header">
-          <span class="card-title"><i class="fas fa-list"></i> Purchase Return History</span>
-          <div class="d-flex gap-10">
-            <div class="search-input-wrap w-240">
-              <i class="fas fa-search"></i>
-              <input type="text" id="retSearch" class="form-control" aria-label="Search purchase returns">
+          <div class="form-row">
+            <div class="form-group">
+              <label for="bosCustomer">Issued to</label>
+              <select id="bosCustomer" class="form-control"></select>
+            </div>
+            <div class="form-group">
+              <label for="bosPartyName">Or type the name</label>
+              <input type="text" id="bosPartyName" class="form-control">
+              <div class="form-error" id="bosPartyError"></div>
+            </div>
+            <div class="form-group">
+              <label for="bosPlaceOfSupply">Place of supply</label>
+              <input type="text" id="bosPlaceOfSupply" class="form-control" placeholder="State code">
+            </div>
+            <div class="form-group">
+              <label for="bosSupplyType">Supply type</label>
+              <select id="bosSupplyType" class="form-control">
+                <option value="intrastate">Intra-state</option>
+                <option value="interstate">Inter-state</option>
+              </select>
             </div>
           </div>
-        </div>
-        <div class="card-body p-0">
-          <div class="table-wrapper">
-            <table class="data-table">
-              <thead>
-                <tr>
-                  <th>#</th><th>Return No</th><th>Date</th><th>Vendor</th>
-                  <th>Original Purchase</th><th>Total</th><th>Actions</th>
-                </tr>
-              </thead>
-              <tbody id="retTableBody">
-                <tr><td colspan="7" class="empty-state"><i class="fas fa-spinner fa-spin table-loading-icon"></i>Loading...</td></tr>
-              </tbody>
-              <tfoot id="retTableTotal"></tfoot>
+
+          <div class="table-responsive">
+            <table class="table table-sm">
+              <thead><tr>
+                <th>Description</th><th class="w-110">HSN</th><th class="w-90">UQC</th>
+                <th class="w-100 text-right">Quantity</th><th class="w-110 text-right">Rate</th>
+                <th class="text-right">Value</th>
+              </tr></thead>
+              <tbody id="bosItemsBody"></tbody>
             </table>
           </div>
-          <div class="table-pagination-row">
-            <div id="retPagination" class="pagination"></div>
+          <div class="form-error" id="bosItemsError"></div>
+          <div class="d-flex justify-between align-center mt-8 flex-wrap gap-10">
+            <button type="button" class="btn btn-secondary btn-sm" onclick="bosAddItem()"><i class="fas fa-plus"></i> Add Line</button>
+            <div class="fs-14">Total: <b id="bosTotal">0.00</b>
+              <small class="text-muted d-block">No tax is charged on a bill of supply.</small></div>
+          </div>
+
+          <div class="form-row mt-12">
+            <div class="form-group">
+              <label for="bosReason">Reason / notification</label>
+              <input type="text" id="bosReason" class="form-control" placeholder="e.g. composition scheme">
+            </div>
+            <div class="form-group">
+              <label for="bosNotes">Notes</label>
+              <input type="text" id="bosNotes" class="form-control">
+            </div>
+            <div class="form-group">
+              <label for="bosPartyGstin">Customer GSTIN (if any)</label>
+              <input type="text" id="bosPartyGstin" class="form-control">
+            </div>
+          </div>
+
+          <div class="d-flex gap-10 mt-16">
+            <button type="button" class="btn btn-primary" onclick="saveBillOfSupply()"><i class="fas fa-save"></i> Save</button>
+            <button type="button" class="btn btn-secondary" onclick="resetBillOfSupplyForm()"><i class="fas fa-rotate-left"></i> Reset</button>
           </div>
         </div>
       </div>
+
+      <div class="card">
+        <div class="card-header"><span class="card-title"><i class="fas fa-list"></i> Bills of Supply</span></div>
+        <div class="card-body">
+          <div class="table-responsive">
+            <table class="table">
+              <thead><tr><th>Number</th><th>Date</th><th>Issued to</th><th>Nature</th>
+                <th class="text-right">Value</th><th class="text-center w-140">Status</th></tr></thead>
+              <tbody id="bosListBody"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <datalist id="bosProductList"></datalist>
 
     </div>
   </div>
 </div>
 
 <script>
-document.addEventListener('DOMContentLoaded', initPurchaseReturns);
+document.addEventListener('DOMContentLoaded', () => { initBillOfSupply(); });
 </script>
-
-<!-- Global Search Modal -->
-<div class="modal-overlay" id="globalSearchModal">
-  <div class="modal modal-lg">
-    <div class="modal-header">
-      <span class="modal-title"><i class="fas fa-search"></i> Search Everywhere</span>
-      <button type="button" class="modal-close" onclick="closeGlobalSearch()" aria-label="Close"><i class="fas fa-times"></i></button>
-    </div>
-    <div class="modal-body">
-      <input type="text" id="globalSearchInput" class="form-control mb-16" oninput="onGlobalSearchInput(this.value)" aria-label="Global search input">
-      <div id="globalSearchResults"><p class="text-muted-sm">Type at least 2 characters&hellip;</p></div>
-    </div>
-  </div>
-</div>
-
 </body>
 </html>

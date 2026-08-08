@@ -268,7 +268,7 @@ const GST_DOCUMENT_TYPES = [
     enabled: true, proven: true },
 
   { key: 'bill_of_supply', label: 'Bill of Supply', portalName: 'Invoices for outward supply',
-    rule: 'Rule 49', direction: 'outward', storage: null, series: 'bill_of_supply',
+    rule: 'Rule 49', direction: 'outward', storage: 'bill_of_supply', series: 'bill_of_supply',
     taxable: false, affectsTurnover: true, affectsHsn: true, affectsLiability: false,
     affectsAmendments: false,
     supportsCancellation: true, supportsAmendment: false,
@@ -288,7 +288,7 @@ const GST_DOCUMENT_TYPES = [
     requires: ['document_number', 'document_date', 'party', 'line_items'],
     masters: [], validations: ['no_tax_charged', 'hsn'],
     effectiveFrom: GST_COMMENCEMENT, effectiveTo: null, status: 'active', version: 1,
-    enabled: false, proven: false },
+    enabled: true, proven: false },
 
   { key: 'invoice_cum_bill_of_supply', label: 'Invoice-cum-Bill of Supply',
     portalName: 'Invoices for outward supply', rule: 'Rule 46A',

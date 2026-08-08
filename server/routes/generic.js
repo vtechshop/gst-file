@@ -289,6 +289,21 @@ const TABLES = {
       'refund_amount','gst_percentage','igst','cgst','sgst','cess','total_value',
       'notes','created_at','updated_at']
   },
+  // ── Exports, advances, bill of supply (Batch 5) ──
+  advance_adjustments: {
+    columns: ['id','user_id','receipt_voucher_id','invoice_id','invoice_table','invoice_number',
+      'invoice_date','adjusted_on','place_of_supply','supply_type','gst_percentage',
+      'adjusted_amount','igst','cgst','sgst','cess','notes','created_at','updated_at']
+  },
+  bill_of_supply: {
+    columns: ['id','user_id','document_number','document_date','document_series','status',
+      'customer_id','party_name','party_gstin','place_of_supply','supply_type','supply_nature',
+      'total_value','reason','notes','cancelled_at','cancel_reason','created_at','updated_at']
+  },
+  bill_of_supply_items: {
+    columns: ['id','user_id','bill_of_supply_id','product_id','product_name','hsn_code','unit',
+      'quantity','rate','total_value','gst_treatment','sort_order','created_at']
+  },
   // ── Challans, revised invoices, job workers (Module 4C) ──
   //    See db/migration_challans.sql for why the four challan variants
   //    share one table: one numbering series, so one uniqueness rule.
@@ -357,7 +372,8 @@ const TABLES = {
       'vehicle_number','transporter_name','transport_mode','transport_distance_km',
       'lr_number','lr_date','transporter_gstin','vehicle_type','dispatch_from','dispatch_to',
       'payment_status','amount_paid','invoice_source','gst_category','reverse_charge',
-      'created_at','updated_at']
+      'created_at','updated_at',
+      'export_type','shipping_bill_number','shipping_bill_date','port_code']
   },
   b2c_invoices: {
     columns: ['id','user_id','gst_number','customer_name','phone','address','state',
@@ -366,7 +382,8 @@ const TABLES = {
       'vehicle_number','transporter_name','transport_mode','transport_distance_km',
       'lr_number','lr_date','transporter_gstin','vehicle_type','dispatch_from','dispatch_to',
       'payment_status','amount_paid','invoice_source','gst_category','reverse_charge',
-      'created_at','updated_at']
+      'created_at','updated_at',
+      'export_type','shipping_bill_number','shipping_bill_date','port_code']
   },
   b2b_hsn: {
     // Legacy — no longer written to directly by normal invoice flow, but
