@@ -52,6 +52,13 @@ async function fetchInvoiceRecord(type, id) {
     address: data.address || customer?.address || '',
     phone: data.phone || customer?.phone || '',
     email: customer?.email || '',
+    // Ship-to lives on the customer record, not the invoice. Where none is
+    // recorded the goods went to the billing address, so that is what the
+    // Ship To box shows — the section is never dropped, because a tax
+    // invoice that omits where the goods went is missing information a
+    // reader expects to find.
+    shipping_address: customer?.shipping_address || '',
+    shipping_state: customer?.shipping_state || '',
     taxable_amount: +data.taxable_amount,
     gst_percentage: +data.gst_percentage,
     gst_amount: +data.gst_amount,
@@ -416,150 +423,286 @@ async function buildInvoiceHTML(inv, opts) {
 
   const qrSource = p?.qr_base64 || await generateQRDataUrl(`Invoice: ${inv.invoice_number}\nDate: ${formatDate(inv.invoice_date)}\nAmount: Rs.${formatNum(inv.total_amount)}`, accentHex);
   const qrCaption = p?.qr_base64 ? 'Scan QR' : 'Scan to verify invoice';
-  const contactLine = [p?.email, p?.phone, p?.website].filter(Boolean).join(' &middot; ');
+  const contactLine = [p?.email, p?.phone].filter(Boolean).join(' &middot; ');
   const bankLines = bankDetailLines(p);
 
+  // The tax split a line was raised at, for display only. The AMOUNTS are
+  // the stored ones — nothing here recomputes tax. An intra-state supply
+  // splits its rate across CGST and SGST; an inter-state one carries it
+  // all as IGST. Which of the two it is comes from the line's own stored
+  // figures, so a corrected invoice prints what it was actually raised at.
+  const splitOf = (row) => {
+    const rate = +row.gst_percentage || 0;
+    const inter = (+row.igst || 0) > 0 || ((+row.cgst || 0) === 0 && (+row.sgst || 0) === 0 && inv.supply_type === 'interstate');
+    return inter ? { cg: 0, sg: 0, ig: rate } : { cg: rate / 2, sg: rate / 2, ig: 0 };
+  };
+  const pct = v => v ? (Math.round(v * 100) / 100) + '%' : '-';
+  const amt = v => (+v > 0 ? formatNum(v) : '-');
+
+  const rowHtml = (row, i) => {
+    const s = splitOf(row);
+    return `<tr>
+      <td class="c">${i + 1}</td>
+      <td class="desc"><b>${escHtml(row.product_name)}</b></td>
+      <td class="c">${escHtml(row.hsn_code) || '-'}</td>
+      <td class="c">${escHtml(row.unit) || '-'}</td>
+      <td class="r">${formatNum(row.quantity)}</td>
+      <td class="r">${formatNum(row.rate)}</td>
+      <td class="r">${formatNum(row.taxable_value)}</td>
+      <td class="c">${pct(s.cg)}</td><td class="r">${amt(row.cgst)}</td>
+      <td class="c">${pct(s.sg)}</td><td class="r">${amt(row.sgst)}</td>
+      <td class="c">${pct(s.ig)}</td><td class="r">${amt(row.igst)}</td>
+      <td class="r"><b>${formatNum(row.total_amount)}</b></td>
+    </tr>`;
+  };
+
+  // A pre-line-item invoice has no rows of its own; it prints as the one
+  // supply it is, exactly as it did before.
   const printItemRowsHtml = inv.items
-    ? inv.items.map((it, i) => `<tr>
-        <td>${i + 1}</td><td><b>${escHtml(it.product_name)}</b></td><td>${escHtml(it.hsn_code) || '-'}</td><td>${escHtml(it.unit) || '-'}</td><td class="c">${formatNum(it.quantity)}</td><td class="r">${formatNum(it.rate)}</td><td class="c">${it.gst_percentage}%</td><td class="r">${formatNum(it.taxable_value)}</td>
-        <td class="r">${it.cgst > 0 ? formatNum(it.cgst) : '-'}</td><td class="r">${it.sgst > 0 ? formatNum(it.sgst) : '-'}</td><td class="r">${it.igst > 0 ? formatNum(it.igst) : '-'}</td>
-        <td class="r"><b>${formatNum(it.total_amount)}</b></td>
-      </tr>`).join('')
-    : `<tr>
-        <td>1</td><td><b>Taxable Supply</b></td><td>-</td><td>-</td><td class="c">1</td><td class="r">${formatNum(inv.taxable_amount)}</td><td class="c">${inv.gst_percentage}%</td><td class="r">${formatNum(inv.taxable_amount)}</td>
-        <td class="r">${inv.cgst > 0 ? formatNum(inv.cgst) : '-'}</td><td class="r">${inv.sgst > 0 ? formatNum(inv.sgst) : '-'}</td><td class="r">${inv.igst > 0 ? formatNum(inv.igst) : '-'}</td>
-        <td class="r"><b>${formatNum(inv.total_amount)}</b></td>
-      </tr>`;
+    ? inv.items.map(rowHtml).join('')
+    : rowHtml({
+        product_name: 'Taxable Supply', hsn_code: '', unit: '', quantity: 1,
+        rate: inv.taxable_amount, taxable_value: inv.taxable_amount,
+        gst_percentage: inv.gst_percentage, cgst: inv.cgst, sgst: inv.sgst,
+        igst: inv.igst, total_amount: inv.total_amount
+      }, 0);
+
   const roundOffRowHtml = Math.abs(inv.round_off) >= 0.005
-    ? `<tr><td>Round Off</td><td class="r">Rs.${(inv.round_off >= 0 ? '+' : '') + formatNum(inv.round_off)}</td></tr>`
+    ? `<tr><td>Round Off</td><td class="r">${(inv.round_off >= 0 ? '+' : '') + formatNum(inv.round_off)}</td></tr>`
     : '';
+
+  const billLines = [
+    escHtml([inv.address, inv.state].filter(Boolean).join(', ')),
+    inv.phone ? 'Phone: ' + escHtml(inv.phone) : '',
+    inv.gstin ? 'GSTIN: ' + escHtml(inv.gstin) : ''
+  ].filter(Boolean);
+
+  // Same address unless a separate one was recorded — stated plainly
+  // rather than left as an empty box the reader has to interpret.
+  const sameAddress = !inv.shipping_address;
+  const shipLines = sameAddress
+    ? [escHtml([inv.address, inv.state].filter(Boolean).join(', ')),
+       inv.phone ? 'Phone: ' + escHtml(inv.phone) : '',
+       inv.gstin ? 'GSTIN: ' + escHtml(inv.gstin) : '',
+       '<i>Same as billing address</i>'].filter(Boolean)
+    : [escHtml([inv.shipping_address, inv.shipping_state || inv.state].filter(Boolean).join(', ')),
+       inv.phone ? 'Phone: ' + escHtml(inv.phone) : '',
+       inv.gstin ? 'GSTIN: ' + escHtml(inv.gstin) : ''].filter(Boolean);
+
+  const sellerLines = [
+    escHtml(p?.address), escHtml(p?.state),
+    p?.gstin ? 'GSTIN: ' + escHtml(p.gstin) : '',
+    p?.pan ? 'PAN: ' + escHtml(p.pan) : ''
+  ].filter(Boolean);
+
+  // Rendered only when the company actually uploaded them. Nothing is
+  // drawn, substituted or approximated in their place.
+  const hasSeal = !!p?.seal_base64;
+  const hasSign = !!p?.signature_base64;
 
   return `<!DOCTYPE html>
 <html><head><meta charset="UTF-8"><title>Invoice ${escHtml(inv.invoice_number)}</title>
 <style>
-  @page { margin: 14mm 16mm; size: A4; }
+  /* A4 with real print margins. Every width below is a percentage of the
+     printable area, so nothing can run off the right edge. */
+  @page { size: A4 portrait; margin: 10mm 10mm 8mm; }
   * { box-sizing: border-box; }
-  body { font-family: Arial, Helvetica, sans-serif; font-size: 11.5px; color: #1a1a1a; margin: 0; }
-  .top { display: flex; justify-content: space-between; align-items: flex-start; }
-  .top .logo { max-height: 44px; max-width: 44px; margin-right: 10px; }
-  .top .brand { display: flex; align-items: center; }
-  .top h1 { margin: 0; font-size: 22px; }
-  .top .website { font-size: 10px; color: #888; margin-top: 3px; }
-  .top .right { text-align: right; }
-  .top .right .title { font-size: 17px; font-weight: 800; color: ${accentHex}; }
-  .top .right .sub { font-size: 10px; color: #888; margin-top: 3px; }
-  .divider { background: ${accentHex}; height: 2.5px; margin: 10px 0 16px; border-radius: 2px; }
-  .two-col { display: flex; justify-content: space-between; gap: 24px; margin-bottom: 16px; }
-  .two-col > div { flex: 1; }
-  h3 { color: ${accentHex}; font-size: 11px; border-bottom: 1.5px solid #b2dfdb; padding-bottom: 4px; margin: 0 0 6px; text-transform: uppercase; letter-spacing: 0.5px; }
-  .two-col p { margin: 2px 0; font-size: 10.5px; }
-  table { width: 100%; border-collapse: collapse; margin-top: 6px; font-size: 10.5px; }
-  th { background: #e0f2f1; color: ${accentHex}; padding: 7px 8px; text-align: left; border: 1px solid #b2dfdb; }
-  td { padding: 7px 8px; border: 1px solid #e5e5e5; }
+  html, body { margin: 0; padding: 0; }
+  body { font-family: Arial, Helvetica, sans-serif; font-size: 9.5px; color: #1a1a1a;
+         -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  .sheet { width: 100%; max-width: 190mm; margin: 0 auto; }
+
+  /* ── header ── */
+  .hdr { display: flex; justify-content: space-between; align-items: flex-start;
+         border-bottom: 2.5px solid ${accentHex}; padding-bottom: 8px; }
+  .hdr .who { display: flex; gap: 10px; align-items: flex-start; }
+  .hdr .logo { max-height: 60px; max-width: 90px; object-fit: contain; }
+  .hdr .name { font-size: 17px; font-weight: 800; color: ${accentHex}; line-height: 1.15; }
+  .hdr .meta { font-size: 9px; color: #444; margin-top: 3px; line-height: 1.45; }
+  .hdr .gstin { font-weight: 700; color: #1a1a1a; }
+  .hdr .right { text-align: right; white-space: nowrap; padding-left: 12px; }
+  .hdr .title { font-size: 19px; font-weight: 800; color: ${accentHex}; letter-spacing: 0.5px; }
+  .hdr .copy { font-size: 8.5px; color: #666; margin-top: 2px; }
+
+  /* ── two-column strips ── */
+  .cols { display: flex; gap: 10px; margin-top: 9px; }
+  .cols > * { flex: 1 1 0; min-width: 0; }
+  .box { border: 1px solid #cfcfcf; border-radius: 3px; padding: 6px 8px; }
+  .box h3, .strip h3 { margin: 0 0 4px; font-size: 8.5px; letter-spacing: 0.6px;
+      text-transform: uppercase; color: #fff; background: ${accentHex};
+      padding: 3px 6px; border-radius: 2px; display: block; }
+  .box p, .strip p { margin: 1.5px 0; font-size: 9px; line-height: 1.4; word-wrap: break-word; }
+  .strip { padding: 0 2px; }
+  .kv { display: flex; justify-content: space-between; gap: 8px; }
+  .kv span:first-child { color: #555; }
+
+  /* ── items ── */
+  table.items { width: 100%; border-collapse: collapse; margin-top: 9px; table-layout: fixed; font-size: 8.2px; }
+  table.items th { background: ${accentHex}; color: #fff; padding: 5px 3px; border: 1px solid ${accentHex};
+                   font-weight: 700; text-align: center; font-size: 7.8px; }
+  table.items td { padding: 4px 3px; border: 1px solid #d8d8d8; vertical-align: top; }
+  table.items td.desc { word-wrap: break-word; }
   .r { text-align: right; } .c { text-align: center; }
-  .totals { display: flex; justify-content: flex-end; margin-top: 14px; }
-  .totals table { width: 260px; margin: 0; }
-  .totals td { border: none; padding: 3px 0; font-size: 10.5px; }
-  .totals .grand td { border-top: 1.5px solid #333; font-weight: 800; font-size: 13px; color: ${accentHex}; padding-top: 8px; }
-  .words { margin-top: 14px; font-size: 10.5px; }
-  .notes { margin-top: 8px; font-size: 9px; color: #888; font-style: italic; }
-  .bank-block { margin-top: 16px; }
-  .bank-block h3 { margin-bottom: 4px; }
-  .bank-block p { margin: 2px 0; font-size: 10px; color: #444; }
-  .footer-grid { display: flex; justify-content: space-between; margin-top: 22px; gap: 20px; align-items: flex-start; }
-  .qr-cap { font-size: 8.5px; color: ${accentHex}; margin-top: 4px; }
-  .sign { text-align: right; font-size: 10.5px; display: flex; flex-direction: column; align-items: flex-end; gap: 6px; }
-  .sign .seal { max-height: 55px; max-width: 55px; }
-  .sign .sig-img { max-height: 36px; max-width: 120px; }
-  .sign .auth { color: #888; }
-  .policy-footer { margin-top: 20px; border-top: 1px solid #b2dfdb; padding-top: 10px; text-align: center; }
-  .policy-footer .tc-title { font-size: 8.5px; font-weight: 700; color: ${accentHex}; margin-bottom: 3px; }
-  .policy-footer .terms, .policy-footer .footer-text { font-size: 8.5px; color: #777; white-space: pre-line; margin-bottom: 8px; }
-  .policy-footer .gen { font-size: 8.5px; color: #999; }
-  .policy-footer .contact { font-size: 8.5px; color: #999; margin-top: 4px; }
+  /* Repeat the header and never split a line across pages. */
+  table.items thead { display: table-header-group; }
+  table.items tr { page-break-inside: avoid; }
+
+  /* ── totals ── */
+  .totrow { display: flex; gap: 12px; margin-top: 9px; align-items: flex-start; }
+  .totrow .left { flex: 1 1 0; min-width: 0; }
+  .totrow .right { flex: 0 0 46%; }
+  .words { font-size: 9px; }
+  .words b { display: block; margin-top: 2px; }
+  .notes { margin-top: 6px; font-size: 8px; color: #666; font-style: italic; line-height: 1.4; }
+  table.tot { width: 100%; border-collapse: collapse; font-size: 9px; }
+  table.tot td { padding: 3px 6px; border: none; }
+  table.tot td:last-child { text-align: right; }
+  table.tot tr.grand td { border-top: 2px solid ${accentHex}; font-weight: 800;
+      font-size: 12.5px; color: ${accentHex}; padding-top: 6px; }
+
+  /* ── payment + signature ── */
+  .paysign { display: flex; gap: 12px; margin-top: 10px; align-items: stretch;
+             page-break-inside: avoid; }
+  .paysign .pay { flex: 1 1 0; min-width: 0; }
+  .paysign .qr { flex: 0 0 auto; text-align: center; padding-top: 18px; }
+  .paysign .qr img { width: 62px; height: 62px; object-fit: contain; }
+  .qr-cap { font-size: 7.5px; color: ${accentHex}; margin-top: 2px; }
+
+  .signblock { flex: 0 0 32%; text-align: center; display: flex; flex-direction: column;
+               align-items: center; justify-content: flex-start; }
+  .signblock .for { font-size: 9.5px; font-weight: 700; margin-bottom: 2px; }
+  /* The seal is the frame; the signature sits over its centre. Both are
+     the exact uploaded images — object-fit keeps their aspect ratio, so
+     neither is stretched or redrawn. */
+  .stamp { position: relative; width: 108px; height: 108px; margin: 2px auto 0; }
+  .stamp .seal { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; }
+  .stamp .sig { position: absolute; left: 50%; top: 52%; transform: translate(-50%, -50%);
+                max-width: 74%; max-height: 46%; object-fit: contain; }
+  /* With no seal uploaded the signature simply sits in the same space. */
+  .stamp.no-seal .sig { position: static; transform: none; display: block;
+                        margin: 26px auto 0; max-width: 92%; max-height: 60%; }
+  .stamp.empty { height: 74px; }
+  .signblock .auth { font-size: 9px; color: #444; margin-top: 3px;
+                     border-top: 1px solid #bbb; padding-top: 3px; min-width: 118px; }
+
+  /* ── footer ── */
+  .foot { margin-top: 12px; border-top: 1px solid ${accentHex}; padding-top: 7px;
+          text-align: center; page-break-inside: avoid; }
+  .foot .tc-title { font-size: 8px; font-weight: 700; color: ${accentHex}; }
+  .foot .terms, .foot .ftext { font-size: 7.8px; color: #666; white-space: pre-line; margin: 2px 0 5px; }
+  .foot .gen { font-size: 8px; color: #777; }
+  .foot .contact { font-size: 8px; color: #777; margin-top: 2px; }
 </style></head>
-<body>
-  <div class="top">
-    <div>
-      <div class="brand">
-        ${p?.logo_base64 ? `<img class="logo" src="${p.logo_base64}">` : ''}
-        <h1>${escHtml(p?.business_name) || 'Your Business Name'}</h1>
+<body><div class="sheet">
+
+  <div class="hdr">
+    <div class="who">
+      ${p?.logo_base64 ? `<img class="logo" src="${p.logo_base64}" alt="">` : ''}
+      <div>
+        <div class="name">${escHtml(p?.business_name) || 'Your Business Name'}</div>
+        <div class="meta">
+          ${sellerLines.map(l => `<div${l.startsWith('GSTIN') ? ' class="gstin"' : ''}>${l}</div>`).join('')}
+          ${p?.website ? `<div>${escHtml(p.website)}</div>` : ''}
+        </div>
       </div>
-      ${p?.website ? `<div class="website">${escHtml(p.website)}</div>` : ''}
     </div>
     <div class="right">
       <div class="title">TAX INVOICE</div>
-      <div class="sub">Original for Recipient</div>
+      <div class="copy">Original for Recipient</div>
     </div>
   </div>
-  <div class="divider"></div>
 
-  <div class="two-col">
-    <div>
+  <div class="cols">
+    <div class="strip">
       <h3>Sold By</h3>
       <p><b>${escHtml(p?.business_name)}</b></p>
-      <p>${escHtml(p?.address)}</p>
-      <p>${escHtml(p?.state)}</p>
-      ${p?.gstin ? `<p>GSTIN: ${escHtml(p.gstin)}</p>` : ''}
-      ${p?.pan ? `<p>PAN: ${escHtml(p.pan)}</p>` : ''}
+      ${sellerLines.map(l => `<p>${l}</p>`).join('')}
     </div>
-    <div>
+    <div class="strip">
       <h3>Order &amp; Invoice Details</h3>
-      <p>Invoice No: <b>${escHtml(inv.invoice_number)}</b></p>
-      <p>Invoice Date: ${formatDate(inv.invoice_date)}</p>
-      <p>Place of Supply: ${escHtml(invoicePlaceOfSupply(inv)) || '-'}</p>
-      <p>Type: ${inv.type === 'b2b' ? 'B2B (Registered)' : 'B2C (Unregistered)'}</p>
-      <p>Reverse Charge: No</p>
+      <p class="kv"><span>Invoice Number</span><b>${escHtml(inv.invoice_number)}</b></p>
+      <p class="kv"><span>Invoice Date</span><b>${formatDate(inv.invoice_date)}</b></p>
+      <p class="kv"><span>Place of Supply</span><b>${escHtml(invoicePlaceOfSupply(inv)) || '-'}</b></p>
+      <p class="kv"><span>Type of Supply</span><b>${inv.supply_type === 'interstate' ? 'Inter-State' : 'Intra-State'}${inv.type === 'b2b' ? ' (B2B)' : ' (B2C)'}</b></p>
+      <p class="kv"><span>Reverse Charge</span><b>${inv.reverse_charge ? 'Yes' : 'No'}</b></p>
     </div>
   </div>
 
-  <h3>Bill To</h3>
-  <p><b>${escHtml(inv.customer_name)}</b></p>
-  ${inv.gstin ? `<p>GSTIN: ${escHtml(inv.gstin)}</p>` : ''}
-  <p>${escHtml([inv.address, inv.state].filter(Boolean).join(', '))}</p>
-  ${inv.phone ? `<p>Phone: ${escHtml(inv.phone)}</p>` : ''}
-  ${inv.email ? `<p>${escHtml(inv.email)}</p>` : ''}
+  <div class="cols">
+    <div class="box">
+      <h3>Bill To</h3>
+      <p><b>${escHtml(inv.customer_name)}</b></p>
+      ${billLines.map(l => `<p>${l}</p>`).join('')}
+    </div>
+    <div class="box">
+      <h3>Ship To</h3>
+      <p><b>${escHtml(inv.customer_name)}</b></p>
+      ${shipLines.map(l => `<p>${l}</p>`).join('')}
+    </div>
+  </div>
 
-  <table>
-    <thead><tr><th>#</th><th>Product Name</th><th>HSN</th><th>Unit</th><th class="c">Qty</th><th class="r">Rate</th><th class="c">GST%</th><th class="r">Taxable Value</th><th class="r">CGST</th><th class="r">SGST</th><th class="r">IGST</th><th class="r">Total</th></tr></thead>
+  <table class="items">
+    <colgroup>
+      <col style="width:3%"><col style="width:18%"><col style="width:7%"><col style="width:5%">
+      <col style="width:5%"><col style="width:8%"><col style="width:9%">
+      <col style="width:5%"><col style="width:7%">
+      <col style="width:5%"><col style="width:7%">
+      <col style="width:5%"><col style="width:7%">
+      <col style="width:9%">
+    </colgroup>
+    <thead><tr>
+      <th>#</th><th>Product Name</th><th>HSN</th><th>Unit</th><th>Qty</th><th>Rate</th>
+      <th>Taxable Value</th>
+      <th>CGST %</th><th>CGST</th><th>SGST %</th><th>SGST</th><th>IGST %</th><th>IGST</th>
+      <th>Total</th>
+    </tr></thead>
     <tbody>${printItemRowsHtml}</tbody>
   </table>
 
-  <div class="totals">
-    <table>
-      <tr><td>Subtotal</td><td class="r">Rs.${formatNum(inv.taxable_amount)}</td></tr>
-      ${inv.cgst > 0 ? `<tr><td>CGST</td><td class="r">Rs.${formatNum(inv.cgst)}</td></tr>` : ''}
-      ${inv.sgst > 0 ? `<tr><td>SGST</td><td class="r">Rs.${formatNum(inv.sgst)}</td></tr>` : ''}
-      ${inv.igst > 0 ? `<tr><td>IGST (${inv.gst_percentage}%)</td><td class="r">Rs.${formatNum(inv.igst)}</td></tr>` : ''}
-      ${roundOffRowHtml}
-      <tr class="grand"><td>Grand Total</td><td class="r">Rs.${formatNum(inv.total_amount)}</td></tr>
-    </table>
+  <div class="totrow">
+    <div class="left">
+      <div class="words">Amount in Words:<b>${escHtml(numberToWordsINR(inv.total_amount))}</b></div>
+      <div class="notes">
+        GST has been charged separately as shown above.<br>
+        Whether tax is payable under reverse charge: <b>${inv.reverse_charge ? 'Yes' : 'No'}</b>
+      </div>
+    </div>
+    <div class="right">
+      <table class="tot">
+        <tr><td>Sub Total (Taxable Value)</td><td>Rs.${formatNum(inv.taxable_amount)}</td></tr>
+        ${inv.cgst > 0 ? `<tr><td>CGST</td><td>Rs.${formatNum(inv.cgst)}</td></tr>` : ''}
+        ${inv.sgst > 0 ? `<tr><td>SGST</td><td>Rs.${formatNum(inv.sgst)}</td></tr>` : ''}
+        ${inv.igst > 0 ? `<tr><td>IGST</td><td>Rs.${formatNum(inv.igst)}</td></tr>` : ''}
+        ${roundOffRowHtml}
+        <tr class="grand"><td>Grand Total</td><td>Rs.${formatNum(inv.total_amount)}</td></tr>
+      </table>
+    </div>
   </div>
 
-  <div class="words">Amount in Words:<br><b>${escHtml(numberToWordsINR(inv.total_amount))}</b></div>
-  <div class="notes">* GST has been charged separately as shown above.<br>Whether tax is payable under reverse charge: No</div>
-
-  ${bankLines.length ? `<div class="bank-block"><h3>Bank Details for Payment</h3>${bankLines.map(l => `<p>${escHtml(l)}</p>`).join('')}</div>` : ''}
-
-  <div class="footer-grid">
-    <div>
-      ${qrSource ? `<img src="${qrSource}" style="width:70px;height:70px;"><div class="qr-cap">${qrCaption}</div>` : ''}
+  <div class="paysign">
+    <div class="pay">
+      ${bankLines.length ? `<h3 style="margin:0 0 4px;font-size:8.5px;letter-spacing:.6px;text-transform:uppercase;color:#fff;background:${accentHex};padding:3px 6px;border-radius:2px;">Bank Details for Payment</h3>
+        ${bankLines.map(l => `<p style="margin:1.5px 0;font-size:9px;">${escHtml(l)}</p>`).join('')}` : ''}
     </div>
-    <div class="sign">
-      ${p?.seal_base64 ? `<img class="seal" src="${p.seal_base64}">` : ''}
-      <div class="for">For ${escHtml(p?.business_name) || 'Us'}</div>
-      ${p?.signature_base64 ? `<img class="sig-img" src="${p.signature_base64}">` : ''}
+    ${qrSource ? `<div class="qr"><img src="${qrSource}" alt=""><div class="qr-cap">${qrCaption}</div></div>` : ''}
+    <div class="signblock">
+      <div class="for">For ${escHtml(p?.business_name) || ''}</div>
+      <div class="stamp${hasSeal ? '' : (hasSign ? ' no-seal' : ' empty')}">
+        ${hasSeal ? `<img class="seal" src="${p.seal_base64}" alt="">` : ''}
+        ${hasSign ? `<img class="sig" src="${p.signature_base64}" alt="">` : ''}
+      </div>
       <div class="auth">Authorized Signatory</div>
     </div>
   </div>
 
-  <div class="policy-footer">
+  <div class="foot">
     ${p?.terms_conditions ? `<div class="tc-title">Terms &amp; Conditions</div><div class="terms">${escHtml(p.terms_conditions)}</div>` : ''}
-    ${p?.footer_text ? `<div class="footer-text">${escHtml(p.footer_text)}</div>` : ''}
+    ${p?.footer_text ? `<div class="ftext">${escHtml(p.footer_text)}</div>` : ''}
     <div class="gen">This is a computer-generated invoice.</div>
     ${contactLine ? `<div class="contact">${contactLine}</div>` : ''}
   </div>
 
+</div>
   ${opts.autoPrint ? '<script>window.onload = function(){ window.print(); }<\/script>' : ''}
 </body></html>`;
 }
