@@ -339,17 +339,38 @@ async function buildInvoicePDFDoc(inv) {
     } catch {}
   }
 
+  // Seal and signature are one block, not two side-by-side images: the
+  // signature belongs over the centre of the seal, the way it is signed on
+  // paper. They used to be drawn 40mm apart, which printed as a small
+  // circle with a separate scribble beside it.
+  //
+  // Laid out around one centre line so the caption, the stamp and the
+  // wording underneath all share it. Matches the print/preview layout.
+  const SEAL = 26;                       // mm across, readable at A4
+  const sealCx = R - 5 - SEAL / 2;       // centre, held clear of the margin
+  const sealTop = sigBlockY + 5;         // "For ..." sits above
+
   doc.setFont('helvetica', 'normal'); doc.setFontSize(9.5); doc.setTextColor(30, 30, 30);
-  doc.text('For ' + (p?.business_name || 'Us'), R, sigBlockY + 4, { align: 'right' });
+  doc.text('For ' + (p?.business_name || 'Us'), sealCx, sigBlockY + 3, { align: 'center' });
+
   if (sealData) {
-    try { doc.addImage(sealData, 'PNG', R - 88, sigBlockY, 20, 20); } catch {}
+    try { doc.addImage(sealData, 'PNG', sealCx - SEAL / 2, sealTop, SEAL, SEAL); } catch {}
   }
   if (signatureData) {
-    try { doc.addImage(signatureData, 'PNG', R - 45, sigBlockY + 6, 35, 14); } catch {}
+    // Sized to sit within the seal's inner area and centred slightly below
+    // its middle, which is where a signature lands on a real stamp.
+    const SW = SEAL * 0.66, SH = SEAL * 0.36;
+    const sigX = sealCx - SW / 2;
+    const sigY = sealTop + SEAL * 0.54 - SH / 2;
+    try { doc.addImage(signatureData, 'PNG', sigX, sigY, SW, SH); } catch {}
   }
+
+  const authY = sealTop + SEAL + 5;
+  doc.setDrawColor(170, 170, 170);
+  doc.line(sealCx - 22, authY - 3.5, sealCx + 22, authY - 3.5);
   doc.setFontSize(8); doc.setTextColor(120, 120, 120);
-  doc.text('Authorized Signatory', R, sigBlockY + 24, { align: 'right' });
-  y = sigBlockY + 32;
+  doc.text('Authorized Signatory', sealCx, authY, { align: 'center' });
+  y = sealTop + SEAL + 11;
 
   // ── Footer: Terms & Conditions, footer text, computer-generated line, contact ──
   if (y > 260) { doc.addPage(); y = 20; }
