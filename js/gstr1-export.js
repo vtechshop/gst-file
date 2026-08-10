@@ -2392,11 +2392,22 @@ function runFinalGSTR1Audit(payload, errors, context) {
   // B2CL + B2CS + adjustments AND = HSN taxable total."
   //
   // The only "adjustment" that can legitimately apply to this check is
-  // sales-return netting: HSN rows are built by summing B2B+B2CL+B2CS
-  // line items by HSN+rate and then subtracting returned quantity/value
-  // for that same HSN+rate (see buildGSTR1Payload's Sales Returns
-  // section) — so HSN taxable is *always* (B2B+B2CL+B2CS) minus exactly
-  // that netted figure, never more, never less.
+  // sales-return netting: HSN rows are built by summing the line items of
+  // every taxable outward supply by HSN+rate and then subtracting
+  // returned quantity/value for that same HSN+rate (see
+  // buildGSTR1Payload's Sales Returns section) — so HSN taxable is
+  // *always* those supplies minus exactly that netted figure, never more,
+  // never less.
+  //
+  // Exports count as one of those supplies. addToHsn() runs at the top of
+  // each item loop, and the export short-circuit that sends the invoice
+  // to table 6A (collectExport) comes after it — so an export's lines are
+  // already in the HSN buckets by the time the invoice leaves for 6A.
+  // This side used to omit them, which made every return containing an
+  // export fail by exactly the export taxable value: HSN counted them and
+  // the invoice side did not. Nil-rated, exempt and non-GST invoices are
+  // a genuine exception and are correctly absent from both sides — they
+  // return before addToHsn() is ever reached, and are reported in table 8.
   //
   // CDNR/CDNUR (Credit/Debit Notes) are deliberately NOT part of this
   // specific check: cdn_notes has no hsn_code column anywhere in the
@@ -2410,13 +2421,17 @@ function runFinalGSTR1Audit(payload, errors, context) {
   const b2bTaxable = round2(sumItmTaxable(reparsed.b2b || []));
   const b2clTaxable = round2(sumItmTaxable(reparsed.b2cl || []));
   const b2csTaxable = round2((reparsed.b2cs || []).reduce((s, r) => s + r.txval, 0));
+  // exp rows carry flat item objects — txval sits on the item itself,
+  // not inside the num/itm_det pair b2b and b2cl use.
+  const expTaxable = round2((reparsed.exp || []).reduce((s, g) =>
+    s + g.inv.reduce((s2, i) => s2 + i.itms.reduce((s3, it) => s3 + it.txval, 0), 0), 0));
   const salesReturnNettedTaxable = round2(context?.salesReturnNettedTaxable || 0);
-  const invoiceSideTaxable = round2(b2bTaxable + b2clTaxable + b2csTaxable - salesReturnNettedTaxable);
+  const invoiceSideTaxable = round2(b2bTaxable + b2clTaxable + b2csTaxable + expTaxable - salesReturnNettedTaxable);
   const hsnTaxable = round2(['hsn_b2b', 'hsn_b2c']
     .flatMap(k => (reparsed.hsn && reparsed.hsn[k]) || [])
     .reduce((s, r) => s + r.txval, 0));
   if (Math.abs(invoiceSideTaxable - hsnTaxable) > GSTR1_RECONCILE_TOLERANCE) {
-    errors.push(`Final audit — RECONCILIATION FAILED: (B2B + B2CL + B2CS − Sales Return adjustments) = ₹${invoiceSideTaxable} does not equal HSN section taxable total (₹${hsnTaxable}). Difference: ₹${round2(invoiceSideTaxable - hsnTaxable)}.`);
+    errors.push(`Final audit — RECONCILIATION FAILED: (B2B + B2CL + B2CS + Exports − Sales Return adjustments) = ₹${invoiceSideTaxable} does not equal HSN section taxable total (₹${hsnTaxable}). Difference: ₹${round2(invoiceSideTaxable - hsnTaxable)}.`);
   }
 
   // 5b. CDNR/CDNUR self-consistency — each note's stated val must equal
