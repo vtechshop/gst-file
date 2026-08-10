@@ -351,7 +351,7 @@ async function buildInvoicePDFDoc(inv) {
   const sealTop = sigBlockY + 5;         // "For ..." sits above
 
   doc.setFont('helvetica', 'normal'); doc.setFontSize(9.5); doc.setTextColor(30, 30, 30);
-  doc.text('For ' + (p?.business_name || 'Us'), sealCx, sigBlockY + 3, { align: 'center' });
+  doc.text('For ' + (p?.business_name || 'Us'), sealCx, sigBlockY + 4, { align: 'center' });
 
   if (sealData) {
     try { doc.addImage(sealData, 'PNG', sealCx - SEAL / 2, sealTop, SEAL, SEAL); } catch {}
