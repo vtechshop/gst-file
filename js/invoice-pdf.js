@@ -139,6 +139,75 @@ async function imageUrlToDataUrl(url) {
   }
 }
 
+// Where the ink actually is inside an uploaded image, as fractions of the
+// file (0..1), plus the file's natural size.
+//
+// A stamp or a signature is nearly always saved with a wide empty margin
+// around the mark. Laying out from the file's edges then goes wrong in two
+// ways at once: a seal drawn at 26mm shows perhaps 11mm of stamp, so the
+// caption above it appears stranded over the gap, and a signature sized
+// from the same 26mm comes out wider than the stamp it is meant to sit
+// inside. Measuring the mark itself fixes both, and costs nothing when the
+// image is already tightly cropped.
+//
+// Transparent pixels are the usual margin; a file saved without an alpha
+// channel uses white instead, so both count as empty.
+async function inkBoundsOf(dataUrl) {
+  if (!dataUrl) return null;
+  try {
+    const img = await new Promise((resolve, reject) => {
+      const i = new Image();
+      i.onload = () => resolve(i);
+      i.onerror = reject;
+      i.src = dataUrl;
+    });
+    const w = img.naturalWidth, h = img.naturalHeight;
+    if (!w || !h) return null;
+    const canvas = document.createElement('canvas');
+    canvas.width = w; canvas.height = h;
+    const ctx = canvas.getContext('2d', { willReadFrequently: true });
+    ctx.drawImage(img, 0, 0);
+    const d = ctx.getImageData(0, 0, w, h).data;
+    let x0 = w, y0 = h, x1 = -1, y1 = -1;
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        const i = (y * w + x) * 4;
+        if (d[i + 3] < 24) continue;                                        // transparent
+        if (d[i] > 244 && d[i + 1] > 244 && d[i + 2] > 244) continue;       // white
+        if (x < x0) x0 = x;
+        if (x > x1) x1 = x;
+        if (y < y0) y0 = y;
+        if (y > y1) y1 = y;
+      }
+    }
+    if (x1 < x0 || y1 < y0) return null;   // nothing but margin — treat as unmeasurable
+    return {
+      x: x0 / w, y: y0 / h,
+      w: (x1 - x0 + 1) / w, h: (y1 - y0 + 1) / h,
+      imgW: w, imgH: h
+    };
+  } catch {
+    return null;   // tainted canvas, broken file — fall back to the file's edges
+  }
+}
+
+// Where to draw a whole image so that its ink lands on a wanted box.
+// Returns the rectangle for doc.addImage plus the ink rectangle it
+// produces, all in mm.
+function placeInk(ink, wantW, cx, topY) {
+  const b = ink || { x: 0, y: 0, w: 1, h: 1, imgW: 1, imgH: 1 };
+  const ar = b.imgH / b.imgW;                  // the file's own aspect ratio
+  const W = wantW / b.w;                       // full-image width, mm
+  const H = W * ar;
+  const inkW = b.w * W, inkH = b.h * H;
+  return {
+    x: cx - b.x * W - inkW / 2,
+    y: topY - b.y * H,
+    w: W, h: H,
+    inkW, inkH
+  };
+}
+
 function bankDetailLines(p) {
   if (!p) return [];
   return [
@@ -346,31 +415,52 @@ async function buildInvoicePDFDoc(inv) {
   //
   // Laid out around one centre line so the caption, the stamp and the
   // wording underneath all share it. Matches the print/preview layout.
-  const SEAL = 26;                       // mm across, readable at A4
+  // Every measurement below is of the ink inside each file, never of the
+  // file's edges — see inkBoundsOf(). SEAL is therefore the size of the
+  // stamp a reader sees, not of the PNG it came in.
+  const [sealInk, sigInk] = await Promise.all([inkBoundsOf(sealData), inkBoundsOf(signatureData)]);
+
+  const SEAL = 26;                       // mm across the visible stamp
   const sealCx = R - 5 - SEAL / 2;       // centre, held clear of the margin
-  const sealTop = sigBlockY + 5;         // "For ..." sits above
+  const sealTop = sigBlockY + 6;         // top of the stamp; "For ..." sits above
+
+  // Fit the stamp's longer side to SEAL, so a mark that is wider than it is
+  // tall does not overshoot the space reserved for it.
+  const sb = sealInk || { w: 1, h: 1, imgW: 1, imgH: 1 };
+  const sealWantW = SEAL * sb.w / Math.max(sb.w, sb.h * (sb.imgH / sb.imgW));
+  const seal = sealData ? placeInk(sealInk, sealWantW, sealCx, sealTop)
+                        : { inkW: SEAL, inkH: SEAL };   // no seal: the space is still reserved
 
   doc.setFont('helvetica', 'normal'); doc.setFontSize(9.5); doc.setTextColor(30, 30, 30);
-  doc.text('For ' + (p?.business_name || 'Us'), sealCx, sigBlockY + 4, { align: 'center' });
+  doc.text('For ' + (p?.business_name || 'Us'), sealCx, sealTop - 1.8, { align: 'center' });
 
   if (sealData) {
-    try { doc.addImage(sealData, 'PNG', sealCx - SEAL / 2, sealTop, SEAL, SEAL); } catch {}
+    try { doc.addImage(sealData, 'PNG', seal.x, seal.y, seal.w, seal.h); } catch {}
   }
   if (signatureData) {
-    // Sized to sit within the seal's inner area and centred slightly below
-    // its middle, which is where a signature lands on a real stamp.
-    const SW = SEAL * 0.66, SH = SEAL * 0.36;
-    const sigX = sealCx - SW / 2;
-    const sigY = sealTop + SEAL * 0.54 - SH / 2;
-    try { doc.addImage(signatureData, 'PNG', sigX, sigY, SW, SH); } catch {}
+    // Centred on the stamp, a little below its middle, which is where a
+    // signature falls on a real one. Width is taken from the stamp the
+    // reader sees; the height that follows from the signature's own shape
+    // is capped so a tall scan cannot spill out of it.
+    const cx = sealCx, cy = sealTop + seal.inkH * 0.52;
+    let sig = placeInk(sigInk, seal.inkW * 0.62, cx, 0);
+    const maxH = seal.inkH * 0.5;
+    if (sig.inkH > maxH) {
+      const k = maxH / sig.inkH;
+      sig = placeInk(sigInk, seal.inkW * 0.62 * k, cx, 0);
+    }
+    // placeInk aligns the ink's top; the block wants its centre.
+    const sb2 = sigInk || { y: 0, h: 1 };
+    sig.y = cy - sb2.y * sig.h - sig.inkH / 2;
+    try { doc.addImage(signatureData, 'PNG', sig.x, sig.y, sig.w, sig.h); } catch {}
   }
 
-  const authY = sealTop + SEAL + 5;
+  const authY = sealTop + seal.inkH + 5;
   doc.setDrawColor(170, 170, 170);
   doc.line(sealCx - 22, authY - 3.5, sealCx + 22, authY - 3.5);
   doc.setFontSize(8); doc.setTextColor(120, 120, 120);
   doc.text('Authorized Signatory', sealCx, authY, { align: 'center' });
-  y = sealTop + SEAL + 11;
+  y = sealTop + seal.inkH + 11;
 
   // ── Footer: Terms & Conditions, footer text, computer-generated line, contact ──
   if (y > 260) { doc.addPage(); y = 20; }
