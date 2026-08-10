@@ -2241,7 +2241,31 @@ async function buildGSTR1Payload(userId, profile, periodFilter) {
   })));
   const datedDocumentRows = documentRows.filter(r => !(r.document_date && r.document_date > todayISO));
 
-  gstr1DocumentRanges(datedDocumentRows).forEach(entry => {
+  // Credit and debit notes are documents issued too, and the registry
+  // gives them Table 13 rows 5 and 4. gstr1FetchDocuments() cannot read
+  // them: cdn_notes holds both types in one table with no document_type
+  // column to tell them apart, and dates its rows note_date rather than
+  // document_date — which is why cdn_notes sits in
+  // GSTR1_TABLE13_HANDLED_ELSEWHERE. They are already fetched above for
+  // 9B, so the rows are mapped into the shape the shared builder expects
+  // and go through exactly the same grouping, ordering and cancellation
+  // counting as every other document type. No second Table 13 builder.
+  //
+  // Two books of notes numbered differently stay two docs[] entries, the
+  // same way the shop's 138 and the website's W-00001 do — merging them
+  // would report a range that was never issued.
+  const noteDocumentRows = cdnNotes
+    .filter(n => !(n.note_date && n.note_date > todayISO))
+    .map(n => ({
+      __documentType: String(n.note_type || '').trim().toLowerCase() === 'debit' ? 'debit_note' : 'credit_note',
+      document_number: n.note_number,
+      document_date: n.note_date,
+      // cdn_notes carries no status column: a note cannot be cancelled in
+      // this application, so nothing lands in Table 13's cancel column.
+      status: null
+    }));
+
+  gstr1DocumentRanges([...datedDocumentRows, ...noteDocumentRows]).forEach(entry => {
     const row = gstr1Table13RowFor(entry.documentType);
     if (row) addTable13(row.docNum, row.docTyp, entry.docs);
   });
