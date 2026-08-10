@@ -438,11 +438,12 @@ async function buildInvoicePDFDoc(inv) {
     try { doc.addImage(sealData, 'PNG', seal.x, seal.y, seal.w, seal.h); } catch {}
   }
   if (signatureData) {
-    // Centred on the stamp, a little below its middle, which is where a
-    // signature falls on a real one. Width is taken from the stamp the
-    // reader sees; the height that follows from the signature's own shape
-    // is capped so a tall scan cannot spill out of it.
-    const cx = sealCx, cy = sealTop + seal.inkH * 0.52;
+    // Centred on the stamp's visible ink, horizontally and vertically —
+    // the mark's own bounds, not the edges of the file it arrived in.
+    // Width is taken from the stamp the reader sees; the height that
+    // follows from the signature's own shape is capped so a tall scan
+    // cannot spill out of it.
+    const cx = sealCx, cy = sealTop + seal.inkH * 0.50;
     let sig = placeInk(sigInk, seal.inkW * 0.62, cx, 0);
     const maxH = seal.inkH * 0.5;
     if (sig.inkH > maxH) {
