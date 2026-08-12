@@ -34,6 +34,24 @@ const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGIN || 'http://localhost:5500')
 
 const app = express();
 
+// One proxy sits in front of this app in production (Render's load
+// balancer, which sets X-Forwarded-For). Without this, Express reports
+// every request as coming from the proxy's own address, so the rate
+// limiter below keyed EVERY user in the world to a single bucket — one
+// busy session could exhaust the 600-request window for everyone, and
+// express-rate-limit logged ERR_ERL_UNEXPECTED_X_FORWARDED_FOR on every
+// request to say so.
+//
+// A hop count, not `true`. `true` trusts the whole X-Forwarded-For chain
+// including the part the CLIENT can write, which would let anyone spoof
+// a fresh address per request and bypass the limiter completely — the
+// opposite of the problem being fixed. `1` takes the address Render's
+// balancer appended and nothing further left of it.
+//
+// Locally there is no proxy and no X-Forwarded-For, so req.ip stays the
+// real connecting address and nothing changes.
+app.set('trust proxy', 1);
+
 // Gzip every response big enough to be worth it. These endpoints return
 // plain JSON arrays — highly repetitive keys — which compress by roughly
 // 90%, and the report pages fetch a few MB of them. Mounted before the
