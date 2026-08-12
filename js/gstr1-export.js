@@ -114,7 +114,13 @@ function gstr1ToUQC(unit, hsnCode) {
 // Copied verbatim from a Utility-generated return; neither value is
 // derived or guessed. "hash" really is the literal string "hash" in that
 // file. One constant each, so a future Utility revision is one edit.
-const GSTR1_VERSION = 'GST3.1.7';
+// Read out of the installed Offline Tool's own generator rather than off a
+// downloaded return: utility/common.js sets `var version = "GST3.2.4"` and
+// `var hash = "hash"` on every branch that builds the file. A return
+// carrying an older version is what the Portal means by "Download the
+// latest version of Offline tool to generate the JSON file" — the message
+// is about the generator, not the data.
+const GSTR1_VERSION = 'GST3.2.4';
 const GSTR1_HASH = 'hash';
 
 // ── Payload section registry ────────────────────────────────
@@ -162,7 +168,12 @@ const GSTR1_SECTIONS = [
   // file it got before these existed.
   { key: 'exp',     kind: 'section', type: 'array',  label: 'Exports',                               emitWhenEmpty: false },
   { key: 'at',      kind: 'section', type: 'array',  label: 'Advances received',                     emitWhenEmpty: false },
-  { key: 'txpd',    kind: 'section', type: 'array',  label: 'Advances adjusted against invoices',    emitWhenEmpty: false },
+  // atadj, not txpd. The Offline Tool's generator writes "atadj" in every
+  // branch; txpd is only a legacy name it still accepts when READING a
+  // file (service/offline.js falls back to prevContent['txpd'] when atadj
+  // is absent). Writing the name the current generator writes is what the
+  // Portal is checking the file against.
+  { key: 'atadj',   kind: 'section', type: 'array',  label: 'Advances adjusted against invoices',    emitWhenEmpty: false },
   { key: 'nil',     kind: 'section', type: 'object', label: 'Nil-rated / exempt / non-GST',          emitWhenEmpty: false,
     isEmpty: v => !(v && Array.isArray(v.inv) && v.inv.length) },
   // Split by supply channel, exactly as the Utility writes it. This was a
@@ -877,23 +888,18 @@ function gstr1BuildAdvanceSection(rows, amountOf, posOf, supplyTypeOf) {
 // amendment made in July to a June invoice belongs in July's return.
 async function gstr1FetchAmendments(userId, fp) {
   if (!fp) return [];
-  try {
-    const res = await _supabase.from('gst_amendments').select('*').eq('user_id', userId)
-      .eq('amendment_period', fp);
-    return res.data || [];
-  } catch (e) {
-    return [];
-  }
+  const [rows] = await gstr1Read([
+    _supabase.from('gst_amendments').select('*').eq('user_id', userId).eq('amendment_period', fp)
+  ], 'amendments for this period');
+  return rows;
 }
 
 async function gstr1FetchAdvanceAdjustments(userId, start, end) {
-  try {
-    const res = await _supabase.from('advance_adjustments').select('*').eq('user_id', userId)
-      .gte('adjusted_on', start).lte('adjusted_on', end);
-    return res.data || [];
-  } catch (e) {
-    return [];
-  }
+  const [rows] = await gstr1Read([
+    _supabase.from('advance_adjustments').select('*').eq('user_id', userId)
+      .gte('adjusted_on', start).lte('adjusted_on', end)
+  ], 'advance adjustments');
+  return rows;
 }
 
 function gstr1DocumentSources() {
@@ -926,14 +932,16 @@ async function gstr1FetchDocuments(userId, start, end) {
   });
   const tables = [...byTable.keys()];
 
-  const results = await Promise.all(tables.map(table =>
-    _supabase.from(table).select('*').eq('user_id', userId)
-      .gte('document_date', start).lte('document_date', end)));
+  const results = await gstr1Read(
+    tables.map(table => _supabase.from(table).select('*').eq('user_id', userId)
+      .gte('document_date', start).lte('document_date', end)),
+    'the documents issued in this period'
+  );
 
   const out = [];
-  results.forEach((res, i) => {
+  results.forEach((rows, i) => {
     const wanted = byTable.get(tables[i]);
-    (res.data || []).forEach(row => {
+    rows.forEach(row => {
       // A row that names its type is taken at its word, but only if that
       // type actually reads this table — otherwise a stray value could
       // move a document into someone else's Table 13 row.
@@ -1375,15 +1383,42 @@ function gstr1PosUnregistered(customerState, errors, context) {
 //   - that the code is the RIGHT one for the goods: no. That is a tax
 //     classification, there is no official HSN list in this codebase, and
 //     the Portal is the only authority (it answers RET191349).
+// ── Reads behind a return ──────────────────────────────────────────
+// Every read that feeds a GSTR-1 goes through gstr1Read(). It exists
+// because the alternative — `(res.data || [])` — turns a FAILED read
+// into an empty array, and an empty array here is not "nothing to
+// report", it is a section of the return silently going missing: no B2B
+// invoices, no credit notes, no HSN summary, filed as though the period
+// genuinely had none. A return is either built from complete data or not
+// built at all, so a failure is thrown rather than defaulted, caught
+// once in buildGSTR1Payload(), and reported as a blocking error like any
+// other validation failure.
+function gstr1ReadError(context, error) {
+  const e = new Error('gstr1-read-failed');
+  e.__gstr1Read = true;
+  e.context = context;
+  e.apiError = error || null;
+  return e;
+}
+
+async function gstr1Read(queries, context) {
+  const results = await Promise.all(queries);
+  const failed = results.find(r => r && r.error);
+  if (failed) throw gstr1ReadError(context, failed.error);
+  return results.map(r => (r && r.data) || []);
+}
+
 async function gstr1FetchProductsForLines(userId, items) {
   const ids = [...new Set(items.map(i => i.product_id).filter(Boolean))];
   if (!ids.length) return {};
   const chunks = [];
   for (let i = 0; i < ids.length; i += GSTR1_ID_CHUNK_SIZE) chunks.push(ids.slice(i, i + GSTR1_ID_CHUNK_SIZE));
-  const res = await Promise.all(chunks.map(c =>
-    _supabase.from('products').select('*').eq('user_id', userId).in('id', c)));
+  const rows = await gstr1Read(
+    chunks.map(c => _supabase.from('products').select('*').eq('user_id', userId).in('id', c)),
+    'the product master'
+  );
   const byId = {};
-  res.flatMap(r => r.data || []).forEach(p => { byId[p.id] = p; });
+  rows.flat().forEach(p => { byId[p.id] = p; });
   return byId;
 }
 
@@ -1464,7 +1499,31 @@ function gstr1AuditProducts(lines, productsById, errors) {
 // `errors` with enough context (invoice number, table, row) to act on —
 // the payload is still fully built even when invalid so the caller can
 // show every problem at once instead of stopping at the first one. ──
+// Wraps the generator so a failed read (gstr1Read() above) comes out as a
+// blocking validation error rather than an exception that escapes into
+// the click handler. The caller already refuses to export when `errors`
+// is non-empty, so this needs no separate path — a return that could not
+// read its own data is simply a return that does not pass validation.
 async function buildGSTR1Payload(userId, profile, periodFilter) {
+  try {
+    return await buildGSTR1PayloadUnguarded(userId, profile, periodFilter);
+  } catch (e) {
+    if (!e || !e.__gstr1Read) throw e;
+    const status = e.apiError && e.apiError.status;
+    return {
+      errors: [gstr1Err({
+        field: 'Data',
+        message: `Could not read ${e.context} — the return was not built.`,
+        current: status ? `the request failed (${status})` : 'the request failed',
+        expected: 'every invoice, note, line item and document in the period',
+        fix: 'This is not a problem with your data. Check your connection, reload the page and export again — '
+           + 'a return built from a partial read would understate what you owe.'
+      })]
+    };
+  }
+}
+
+async function buildGSTR1PayloadUnguarded(userId, profile, periodFilter) {
   const errors = [];
 
   // The filing period is settled first, from the selection alone. If it
@@ -1520,22 +1579,26 @@ async function buildGSTR1Payload(userId, profile, periodFilter) {
   const todayISO = toISO(new Date());
 
   // Round 1: everything that can be scoped by its own date column.
-  const [b2bRes, b2cRes, cdnRes, srRes, srItemsRes, documentRows, advanceAdjustmentRows, amendmentRows] = await Promise.all([
+  // gstr1Read() rather than a raw Promise.all whose results are then
+  // read as `(res.data || [])` — see its definition for why a defaulted
+  // empty array is the most dangerous thing this file could do.
+  const [b2bData, b2cData, cdnNotes, salesReturns, srItemsAllRows] = await gstr1Read([
     _supabase.from('b2b_invoices').select('*').eq('user_id', userId).gte('invoice_date', start).lte('invoice_date', end),
     _supabase.from('b2c_invoices').select('*').eq('user_id', userId).gte('invoice_date', start).lte('invoice_date', end),
     _supabase.from('cdn_notes').select('*').eq('user_id', userId).gte('note_date', start).lte('note_date', end),
     _supabase.from('sales_returns').select('*').eq('user_id', userId).gte('return_date', start).lte('return_date', end),
-    _supabase.from('sales_return_items').select('*').eq('user_id', userId),
-    // Vouchers and self invoices, for Table 13. Each from its own table;
-    // a business with none gets an empty array and an unchanged file.
+    _supabase.from('sales_return_items').select('*').eq('user_id', userId)
+  ], 'the invoices, credit/debit notes and sales returns for this period');
+
+  // Vouchers and self invoices (Table 13), advance adjustments and
+  // amendments. Each throws through gstr1Read() on a failed read too, so
+  // a business with none still gets an empty array and an unchanged file
+  // while a business whose read FAILED gets no file at all.
+  const [documentRows, advanceAdjustmentRows, amendmentRows] = await Promise.all([
     gstr1FetchDocuments(userId, start, end),
     gstr1FetchAdvanceAdjustments(userId, start, end),
     gstr1FetchAmendments(userId, gstr1FilingPeriod(periodFilter).fp)
   ]);
-
-  const b2bData = b2bRes.data || [], b2cData = b2cRes.data || [];
-  const cdnNotes = cdnRes.data || [];
-  const salesReturns = srRes.data || [];
 
   // ── The filing period, decided by the invoices actually going into the
   // file ──────────────────────────────────────────────────────────────
@@ -1568,7 +1631,7 @@ async function buildGSTR1Payload(userId, profile, periodFilter) {
   // for a month with nothing in it can still be filed. There is no
   // invoice date to derive from, and refusing would make an empty month
   // impossible to file rather than merely empty.
-  const srItemsAll = srItemsRes.data || [];
+  const srItemsAll = srItemsAllRows;
 
   // Round 2: invoice_items and the legacy HSN tables have no date column
   // of their own (items belong to an invoice, not a day) — the old
@@ -1583,13 +1646,19 @@ async function buildGSTR1Payload(userId, profile, periodFilter) {
   const chunk = (arr, size) => { const out = []; for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size)); return out; };
   const idChunks = chunk(periodInvoiceIds, GSTR1_ID_CHUNK_SIZE);
 
-  const [itemsChunks, hsnB2BChunks, hsnB2CChunks] = await Promise.all([
-    Promise.all(idChunks.map(ids => _supabase.from('invoice_items').select('*').eq('user_id', userId).in('invoice_id', ids))),
-    Promise.all(idChunks.map(ids => _supabase.from('b2b_hsn').select('*').eq('user_id', userId).in('source_invoice_id', ids))),
-    Promise.all(idChunks.map(ids => _supabase.from('b2c_hsn').select('*').eq('user_id', userId).in('source_invoice_id', ids)))
-  ]);
-  const allItems = itemsChunks.flatMap(r => r.data || []);
-  const legacyHsnRows = [...hsnB2BChunks.flatMap(r => r.data || []), ...hsnB2CChunks.flatMap(r => r.data || [])];
+  // One flat gstr1Read() across all three tables' chunks: a single failed
+  // chunk anywhere in here would otherwise drop part of the line items or
+  // the HSN summary — the return would still build, and the HSN totals
+  // would silently disagree with the invoices they are supposed to add up
+  // to.
+  const itemChunkCount = idChunks.length;
+  const readChunks = await gstr1Read([
+    ...idChunks.map(ids => _supabase.from('invoice_items').select('*').eq('user_id', userId).in('invoice_id', ids)),
+    ...idChunks.map(ids => _supabase.from('b2b_hsn').select('*').eq('user_id', userId).in('source_invoice_id', ids)),
+    ...idChunks.map(ids => _supabase.from('b2c_hsn').select('*').eq('user_id', userId).in('source_invoice_id', ids))
+  ], 'the invoice line items and HSN rows for this period');
+  const allItems = readChunks.slice(0, itemChunkCount).flat();
+  const legacyHsnRows = readChunks.slice(itemChunkCount).flat();
 
   const itemsByInvoice = {};
   allItems.forEach(r => {
@@ -2372,13 +2441,13 @@ async function buildGSTR1Payload(userId, profile, periodFilter) {
   const at = gstr1BuildAdvanceSection(
     datedDocumentRows.filter(r => r.__documentType === 'receipt_voucher'),
     r => round2(r.advance_amount), r => r.place_of_supply, r => r.supply_type);
-  const txpd = gstr1BuildAdvanceSection(
+  const atadj = gstr1BuildAdvanceSection(
     advanceAdjustmentRows,
     r => round2(r.adjusted_amount), r => r.place_of_supply, r => r.supply_type);
 
   const payload = assembleGSTR1Payload({
     gstin: businessGstin, fp, version: GSTR1_VERSION, hash: GSTR1_HASH,
-    b2b, b2ba, b2cl, b2cla, b2cs, cdnr, cdnur, exp, at, txpd, nil, hsn, doc_issue
+    b2b, b2ba, b2cl, b2cla, b2cs, cdnr, cdnur, exp, at, atadj, nil, hsn, doc_issue
   });
   return { payload, errors, context: { periodStart: start, periodEnd: end, salesReturnNettedTaxable, grandTotal } };
 }
