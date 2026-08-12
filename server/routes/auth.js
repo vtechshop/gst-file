@@ -73,6 +73,16 @@ router.post('/register',
       res.status(201).json({ token: signToken(user.id), user: publicUser(user) });
     } catch (err) {
       await client.query('ROLLBACK');
+      // A unique violation here can only be the email — reworded on the
+      // way out, because the generic 23505 handler in
+      // middleware/errorHandler.js would say "A record with that value
+      // already exists", which tells someone signing up nothing about
+      // what to do next.
+      if (err && err.code === '23505') {
+        const e = new Error('An account with that email already exists — try signing in instead.');
+        e.status = 409; e.expose = true; e.code = 'email_taken';
+        throw e;
+      }
       throw err;
     } finally {
       client.release();
@@ -91,7 +101,17 @@ router.post('/login',
     const user = rows[0];
     // Same generic message whether the email doesn't exist or the
     // password is wrong — never reveal which, to avoid account enumeration.
-    const genericError = () => { const e = new Error('Invalid email or password.'); e.status = 401; e.expose = true; throw e; };
+    // 'invalid_credentials' rather than the status-derived 'auth_required':
+    // this 401 means "those sign-in details are wrong", NOT "your session
+    // ended". The browser's handleApiError() only tears down the session
+    // and bounces to the login page for the latter, so without its own
+    // code a mistyped password on index.html would be reported as an
+    // expired session.
+    const genericError = () => {
+      const e = new Error('Invalid email or password.');
+      e.status = 401; e.expose = true; e.code = 'invalid_credentials';
+      throw e;
+    };
     if (!user) genericError();
     const ok = await bcrypt.compare(req.body.password, user.password_hash);
     if (!ok) genericError();
@@ -114,7 +134,7 @@ router.post('/forgot-password', authLimiter, body('email').isEmail(), (req, res)
 
 router.get('/me', requireAuth, asyncRoute(async (req, res) => {
   const { rows } = await pool.query('SELECT id, email, name FROM users WHERE id = $1', [req.userId]);
-  if (!rows[0]) return res.status(401).json({ error: { message: 'User no longer exists.' } });
+  if (!rows[0]) return res.status(401).json({ error: { message: 'This account no longer exists.', code: 'auth_required' } });
   res.json({ user: publicUser(rows[0]) });
 }));
 

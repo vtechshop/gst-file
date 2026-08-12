@@ -11,6 +11,12 @@ const API_BASE_URL = IS_LOCAL_DEV ? 'http://localhost:4000/api' : 'https://gst-f
 
 const _supabase = new ApiClient();
 
+// Wired here because config.js is loaded immediately after apiClient.js
+// on every page (including index.html, which loads nothing else), so
+// this is the earliest single point that runs everywhere. See
+// installGlobalErrorHandlers() in js/apiClient.js for what it catches.
+installGlobalErrorHandlers();
+
 // ── Feature flags ─────────────────────────────
 // Toggle these on once the corresponding integration is built.
 // Keeping them here (rather than scattered checks) is the hook

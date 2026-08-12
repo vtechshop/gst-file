@@ -218,7 +218,10 @@ function resetBillOfSupplyForm() {
 
 async function loadBillsOfSupply() {
   if (!bosUserId) return;
-  const { data } = await _supabase.from('bill_of_supply').select('*').eq('user_id', bosUserId);
+  const { data, error } = await _supabase.from('bill_of_supply').select('*').eq('user_id', bosUserId);
+  // Reported and abandoned rather than rendered as an empty list — an
+  // empty table is indistinguishable from having no records at all.
+  if (error) { handleApiError(error, 'Could not load the bills of supply'); return; }
   bosRows = (data || []).sort((a, b) => compareInvoiceNumbers(b.document_number, a.document_number));
   const body = bosEl('bosListBody');
   if (!body) return;

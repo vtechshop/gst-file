@@ -29,7 +29,7 @@ async function exportLocalBackup() {
   try {
     backup = await apiFetch('/backup/export');
   } catch (error) {
-    showToast('Backup failed: ' + (error.message || 'could not reach the server'), 'error');
+    handleApiError(error, 'Backup failed');
     return;
   }
 
@@ -69,7 +69,7 @@ function importLocalBackup(file) {
       showToast(`Restored ${restoredCount} records successfully!`, 'success');
       setTimeout(() => location.reload(), 1200);
     } catch (error) {
-      showToast('Restore failed: ' + (error.message || 'could not reach the server'), 'error');
+      handleApiError(error, 'Restore failed');
     }
   };
   reader.readAsText(file);
@@ -82,7 +82,7 @@ async function clearAllData() {
     showToast('All data cleared!', 'warning');
     setTimeout(() => location.reload(), 1000);
   } catch (error) {
-    showToast('Clear failed: ' + (error.message || 'could not reach the server'), 'error');
+    handleApiError(error, 'Could not clear the data');
   }
 }
 

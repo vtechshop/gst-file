@@ -179,9 +179,9 @@ async function applySeriesMigration() {
 
   const sources = [...new Set(changing.map(r => invoiceSourceLabel(invoiceSourceOf(r))))];
   const ok = await showYesNo(
-    `You are about to update ${changing.length} invoice${changing.length === 1 ? '' : 's'} from ${escItemHtml(sources.join(' and '))} to ${escItemHtml(invoiceSourceLabel(target))}.<br><br>` +
+    `You are about to update ${changing.length} invoice${changing.length === 1 ? '' : 's'} from ${sources.join(' and ')} to ${invoiceSourceLabel(target)}.\n\n` +
     `This action only changes the Invoice Source and will affect only the GSTR-1 Documents Issued section. ` +
-    `Invoice numbers, dates, customers, GST and totals are not touched.<br><br>Continue?`,
+    `Invoice numbers, dates, customers, GST and totals are not touched.\n\nContinue?`,
     'Invoice Series Migration');
   if (!ok) return;
 
@@ -205,7 +205,7 @@ async function applySeriesMigration() {
     loadSeriesMigrationHistory();
     populateSeriesMigrationTargets();
   } catch (error) {
-    showToast('Migration failed: ' + (error.message || 'unknown error'), 'error');
+    handleApiError(error, 'Migration failed');
   } finally {
     if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fas fa-check"></i> Update'; }
   }
@@ -219,9 +219,14 @@ async function loadSeriesMigrationHistory() {
   try {
     const user = await getCurrentUser();
     if (!user) return;
-    const { data } = await _supabase.from('invoice_series_migrations')
-      .select('*').eq('user_id', user.id).order('created_at', { ascending: false }).limit(10);
-    const rows = data || [];
+    const read = await readAll([
+      _supabase.from('invoice_series_migrations')
+        .select('*').eq('user_id', user.id).order('created_at', { ascending: false }).limit(10)
+    ], 'Could not load the migration history');
+    // "No migrations recorded yet" is a claim about history, so it is only
+    // made when the history was actually read.
+    if (!read) { el.innerHTML = '<p class="text-muted-sm">History could not be loaded.</p>'; return; }
+    const rows = read[0];
     if (!rows.length) { el.innerHTML = '<p class="text-muted-sm">No migrations recorded yet.</p>'; return; }
     el.innerHTML = `
       <div class="table-wrapper">

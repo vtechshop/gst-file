@@ -21,10 +21,14 @@ async function initCustomerLedger() {
 }
 
 async function loadCustLedgerData(userId) {
-  const [{ data: b2b }, { data: b2c }] = await Promise.all([
+  // A ledger built from one of the two invoice tables would show
+  // customers as owing less than they do — worse than showing nothing.
+  const rows = await readAll([
     _supabase.from('b2b_invoices').select('*').eq('user_id', userId),
     _supabase.from('b2c_invoices').select('*').eq('user_id', userId)
-  ]);
+  ], 'Could not load the customer ledger');
+  if (!rows) return;
+  const [b2b, b2c] = rows;
 
   const b2bRows = (b2b || []).map(r => ({
     type: 'b2b', id: r.id, invoice_number: r.invoice_number, invoice_date: r.invoice_date,

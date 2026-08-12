@@ -37,11 +37,21 @@ let invScanApplied = {};      // what Import wrote, per field id — basis of "n
 // reconnects to the same job by id rather than re-uploading anything.
 const INV_SCAN_JOB_KEY = 'gst_invoice_scan_job';
 const INV_SCAN_POLL_MS = 2000;
+// Consecutive failed status checks tolerated before the page gives up and
+// says so. At INV_SCAN_POLL_MS apart that is a little under a minute of
+// retrying, which absorbs a restart or a brief network drop but does not
+// leave a spinner running forever against a backend that is gone.
+const INV_SCAN_MAX_POLL_FAILURES = 25;
 let invScanJobId = null;
 let invScanPollTimer = null;
+let invScanPollFailures = 0;
 
-const rememberScanJob = id => { invScanJobId = id; try { localStorage.setItem(INV_SCAN_JOB_KEY, id); } catch {} };
-const forgetScanJob = () => { invScanJobId = null; try { localStorage.removeItem(INV_SCAN_JOB_KEY); } catch {} };
+// The failure count is reset when a job STARTS or is dropped, not in
+// stopInvScanPolling() — pollInvScanJob() calls that on every single
+// retry to clear the previous timer, so resetting there would put the
+// counter back to zero each tick and it would never reach its limit.
+const rememberScanJob = id => { invScanJobId = id; invScanPollFailures = 0; try { localStorage.setItem(INV_SCAN_JOB_KEY, id); } catch {} };
+const forgetScanJob = () => { invScanJobId = null; invScanPollFailures = 0; try { localStorage.removeItem(INV_SCAN_JOB_KEY); } catch {} };
 const storedScanJob = () => { try { return localStorage.getItem(INV_SCAN_JOB_KEY); } catch { return null; } };
 
 function stopInvScanPolling() {
@@ -97,7 +107,7 @@ async function handleInvoiceScanUpload(fileList) {
   } catch (err) {
     hideInvScanProgress();
     console.log(`[invoice-scan] start FAILED: ${err.message || 'unknown'}`);
-    showToast(err.message || 'Could not start the scan.', 'error');
+    handleApiError(err, 'Could not start the scan');
   } finally {
     if (input) { input.disabled = false; input.value = ''; }   // let the same file be picked again
   }
@@ -121,8 +131,27 @@ function pollInvScanJob() {
       // 404 means the job expired or was already cleared; anything else
       // is a blip worth retrying rather than throwing the scan away.
       if (status === 404) { forgetScanJob(); hideInvScanProgress(); return; }
+      // An expired session is NOT a blip — retrying it just re-fails
+      // every few seconds, forever, in complete silence. Reported once,
+      // which also signs the user back out via handleApiError().
+      if (status === 401 || status === 403) {
+        stopInvScanPolling(); hideInvScanProgress();
+        handleApiError(apiErrorFrom({ status, headers: null }, body), 'The scan could not be checked');
+        return;
+      }
+      // Everything else is retried, but not indefinitely — a backend
+      // that has gone away would otherwise be polled until the tab is
+      // closed, with a progress spinner up the whole time and nothing
+      // ever telling the user why it never finishes.
+      invScanPollFailures++;
+      if (invScanPollFailures >= INV_SCAN_MAX_POLL_FAILURES) {
+        stopInvScanPolling(); hideInvScanProgress();
+        showToast('Lost contact with the server while scanning — the scan may still finish; reload to check.', 'warning');
+        return;
+      }
       return pollInvScanJob();
     }
+    invScanPollFailures = 0;
     applyInvScanJobState(body);
   }, INV_SCAN_POLL_MS);
 }
@@ -145,7 +174,11 @@ function applyInvScanJobState(job) {
     // deleteInvScanJob() captures the id before clearing it — calling
     // forgetScanJob() first would leave the failed job on the server.
     deleteInvScanJob();
-    showToast((job.error && job.error.message) || 'The scan failed.', 'error');
+    // job.error is stored server-side as { status, message, reason }
+    // (server/services/scanJobs.js), so it classifies exactly like a
+    // failed request would — a 502 from the analysis upstream reads
+    // differently from a 503 saying scanning isn't configured at all.
+    handleApiError(job.error || { message: 'The scan failed.', status: 500 }, 'Scan failed');
     return;
   }
 
@@ -210,11 +243,13 @@ async function sendInvoicesForScan(files) {
       body: form
     });
   } catch {
-    throw new Error('Could not reach the server. Check your connection and try again.');
+    throw { message: 'Could not reach the server — check your connection and try again.', code: 'network', status: 0, networkError: true };
   }
 
   const body = await res.json().catch(() => null);
-  if (!res.ok) throw new Error((body && body.error && body.error.message) || `Invoice analysis failed (${res.status}).`);
+  // apiErrorFrom() rather than a bare Error — same reasoning as
+  // js/purchase-scan.js's sendBillForScan().
+  if (!res.ok) throw apiErrorFrom(res, body);
   // 202 with a jobId — the analysis has not run yet, so there is nothing
   // invoice-shaped to validate here. assertInvScanShape() is applied to
   // the finished job instead, in applyInvScanJobState().

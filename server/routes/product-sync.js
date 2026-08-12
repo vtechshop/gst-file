@@ -54,8 +54,20 @@ router.get('/', asyncRoute(async (req, res) => {
   const { rows } = await pool.query('SELECT product_api_url, product_api_key FROM profiles WHERE id = $1', [req.userId]);
   const profile = rows[0];
   const apiUrl = profile?.product_api_url;
+  // Every error body below is the API-wide { error: { message, code } }
+  // shape. They used to be a bare { error: '<string>' }, which was the
+  // only place in the API that broke that contract — and it broke it
+  // invisibly, because js/apiClient.js builds its thrown error by
+  // SPREADING body.error: spreading a string yields {0:'P',1:'r',…} with
+  // no `message` at all, so any caller reaching these through apiFetch
+  // would have shown the user "Error: undefined".
   if (!apiUrl) {
-    return res.status(503).json({ error: 'Product Sync is not configured for your company yet — set your Product API URL in Business Profile.' });
+    return res.status(503).json({
+      error: {
+        message: 'Product Sync is not configured for your company yet — set your Product API URL in Business Profile.',
+        code: 'not_configured'
+      }
+    });
   }
 
   try {
@@ -71,13 +83,23 @@ router.get('/', asyncRoute(async (req, res) => {
       const pageUrl = `${apiUrl}${sep}page=${page}&limit=${WEBSITE_PRODUCT_PAGE_SIZE}`;
       const upstream = await fetch(pageUrl, { headers });
       if (!upstream.ok) {
-        return res.status(502).json({ error: `Website product API returned HTTP ${upstream.status}` });
+        return res.status(502).json({
+          error: {
+            message: `Your website's product API returned HTTP ${upstream.status}.`,
+            code: 'upstream_failed'
+          }
+        });
       }
 
       const payload = await upstream.json();
       const items = Array.isArray(payload) ? payload : (payload.data || payload.products || []);
       if (!Array.isArray(items)) {
-        return res.status(502).json({ error: 'Unexpected response shape from website product API.' });
+        return res.status(502).json({
+          error: {
+            message: "Unexpected response shape from your website's product API.",
+            code: 'upstream_failed'
+          }
+        });
       }
       allItems.push(...items);
 
@@ -96,7 +118,9 @@ router.get('/', asyncRoute(async (req, res) => {
     // existing fallback logic (js/product-sync.js) already keeps using
     // its last-synced product data on any error here.
     console.error('Product sync failed for user', req.userId, ':', err);
-    res.status(502).json({ error: 'Failed to reach the website product API.' });
+    res.status(502).json({
+      error: { message: "Could not reach your website's product API.", code: 'upstream_failed' }
+    });
   }
 }));
 

@@ -32,6 +32,28 @@ function populateMonthDropdown() {
   }
 }
 
+// Puts the page into an explicit "no figures" state after a read failed.
+//
+// Returning early without this would be worse than useless: the tables
+// would still be showing the PREVIOUS month's numbers under the newly
+// selected month, and window._gstr3bData — which the Excel and Portal
+// JSON exports read — would still hold that month's figures, so the user
+// could file one period's return labelled as another's. Clearing it is
+// what makes those exports refuse.
+function gstr3bUnavailable() {
+  window._gstr3bData = null;
+  const area = document.getElementById('gstr3bPrintArea');
+  if (area) {
+    area.querySelectorAll('tbody').forEach(tb => {
+      const cols = tb.closest('table')?.querySelectorAll('thead th').length || 6;
+      tb.innerHTML = `<tr><td colspan="${cols}" class="empty-state">`
+        + '<i class="fas fa-triangle-exclamation table-loading-icon-sm"></i>'
+        + 'Figures could not be loaded. Nothing is shown rather than a partial return &mdash; reload to try again.'
+        + '</td></tr>';
+    });
+  }
+}
+
 async function loadGSTR3B() {
   const sel   = document.getElementById('gstr3bMonth');
   const now = new Date();
@@ -46,17 +68,24 @@ async function loadGSTR3B() {
   const lastDay = new Date(my, mm, 0).getDate();
   const end = `${month}-${String(lastDay).padStart(2, '0')}`;
 
-  const [b2bRes, b2cRes, itemsRes] = await Promise.all([
+  // readAll() rather than Promise.all + `(res.data || [])`. The comment
+  // above is a record of what that pattern already cost once: a query
+  // that errored was reported as a month with no sales. It coerced a
+  // FAILED read into an empty array, and every figure below then came out
+  // as a confident, wrong zero. The date bug that triggered it was fixed;
+  // the pattern that turned it into a silent wrong return was not.
+  //
+  // Now a failed read produces no return at all — see gstr3bUnavailable().
+  const rows = await readAll([
     _supabase.from('b2b_invoices').select('*').eq('user_id', gstr3bUser.id).gte('invoice_date', start).lte('invoice_date', end),
     _supabase.from('b2c_invoices').select('*').eq('user_id', gstr3bUser.id).gte('invoice_date', start).lte('invoice_date', end),
     _supabase.from('invoice_items').select('*').eq('user_id', gstr3bUser.id)
-  ]);
-
-  const b2b = (b2bRes.data || []);
-  const b2c = (b2cRes.data || []);
+  ], 'Could not load GSTR-3B for ' + month);
+  if (!rows) { gstr3bUnavailable(); return; }
+  const [b2b, b2c, itemRows] = rows;
 
   const itemsByInvoice = {};
-  (itemsRes.data || []).forEach(r => {
+  itemRows.forEach(r => {
     const key = r.invoice_type + ':' + r.invoice_id;
     (itemsByInvoice[key] = itemsByInvoice[key] || []).push(r);
   });
@@ -91,21 +120,28 @@ async function loadGSTR3BExtras(start, end, itemsByInvoice, invoices) {
     });
   });
 
-  const [bosRes, siRes] = await Promise.all([
+  // The .catch(() => ({ data: [] })) these two reads used to carry meant a
+  // failed read landed in the return as a genuine zero for 3.1(c)/(e) and
+  // for reverse charge — understating exactly the lines these reads exist
+  // to fill. A failure now voids the return instead of quietly flattening
+  // those lines to nothing.
+  const extras = await readAll([
     _supabase.from('bill_of_supply').select('*').eq('user_id', gstr3bUser.id)
-      .gte('document_date', start).lte('document_date', end).then(r => r).catch(() => ({ data: [] })),
+      .gte('document_date', start).lte('document_date', end),
     _supabase.from('self_invoices').select('*').eq('user_id', gstr3bUser.id)
-      .gte('document_date', start).lte('document_date', end).then(r => r).catch(() => ({ data: [] }))
-  ]);
+      .gte('document_date', start).lte('document_date', end)
+  ], 'Could not load the nil-rated, exempt and reverse-charge figures');
+  if (!extras) { gstr3bUnavailable(); return; }
+  const [bosRows, siRows] = extras;
 
-  (bosRes.data || [])
+  bosRows
     .filter(r => String(r.status || '').toLowerCase() !== 'cancelled')
     .forEach(r => {
       if (String(r.supply_nature) === 'non_gst') nonGst += (+r.total_value || 0);
       else nil += (+r.total_value || 0);
     });
 
-  const rcm = (siRes.data || []).filter(r => String(r.status || '').toLowerCase() !== 'cancelled');
+  const rcm = siRows.filter(r => String(r.status || '').toLowerCase() !== 'cancelled');
 
   // ── Table 4: input tax credit ──────────────────────────────
   // This was exported as all zeros. A business filing that would pay its
@@ -122,9 +158,16 @@ async function loadGSTR3BExtras(start, end, itemsByInvoice, invoices) {
   // about them. Reversals under rules 42/43 stay zero for the same
   // reason: they depend on exempt-turnover apportionment this file does
   // not compute. All of that is stated on the page rather than implied.
-  const purRes = await _supabase.from('purchases').select('*').eq('user_id', gstr3bUser.id)
-    .gte('purchase_date', start).lte('purchase_date', end).then(r => r).catch(() => ({ data: [] }));
-  const purchases = purRes.data || [];
+  // Guarded for the reason spelled out directly above: a swallowed failure
+  // here reported NO input tax credit at all, which is the most expensive
+  // way this file can be wrong — the business pays its full output tax
+  // with nothing set against it.
+  const purRows = await readAll([
+    _supabase.from('purchases').select('*').eq('user_id', gstr3bUser.id)
+      .gte('purchase_date', start).lte('purchase_date', end)
+  ], 'Could not load purchases for the input tax credit');
+  if (!purRows) { gstr3bUnavailable(); return; }
+  const purchases = purRows[0];
 
   d.itcOthIGST = r2v(purchases.reduce((s2, r) => s2 + (+r.igst || 0), 0));
   d.itcOthCGST = r2v(purchases.reduce((s2, r) => s2 + (+r.cgst || 0), 0));
@@ -410,7 +453,12 @@ function fmt(n) { return Number(n).toLocaleString('en-IN', { minimumFractionDigi
 // ── Export GSTR-3B JSON (Portal Format) ──────────
 function exportGSTR3BJSON() {
   const d = window._gstr3bData;
-  if (!d) return;
+  // Null whenever the figures failed to load (gstr3bUnavailable()), which
+  // is precisely when an export must not happen — the alternative is a
+  // Portal JSON built from a previous month's numbers under this month's
+  // filing period. Said out loud rather than returning silently, so a
+  // click that does nothing is never mistaken for a click that worked.
+  if (!d) { showToast('There are no figures to export — the return could not be loaded. Reload and try again.', 'warning'); return; }
   const p    = (typeof getCachedProfile === 'function') ? getCachedProfile() : null;
   const mon  = d.month.replace('-', '');
   const fp   = mon.slice(4) + mon.slice(0, 4); // MMYYYY
@@ -480,7 +528,8 @@ function exportGSTR3BJSON() {
 // ── Export GSTR-3B Excel ──────────────────────────
 function exportGSTR3BExcel() {
   const d = window._gstr3bData;
-  if (!d) return;
+  // Same guard as exportGSTR3BJSON() above.
+  if (!d) { showToast('There are no figures to export — the return could not be loaded. Reload and try again.', 'warning'); return; }
 
   const s31 = [
     { 'Table': '3.1(a)', 'Description': 'B2B Outward Taxable Supplies', 'Taxable Value': d.b2b.reduce((s,r)=>s+ +r.taxable_amount,0), 'IGST': d.b2b.reduce((s,r)=>s+ +r.igst,0), 'CGST': d.b2b.reduce((s,r)=>s+ +r.cgst,0), 'SGST': d.b2b.reduce((s,r)=>s+ +r.sgst,0) },

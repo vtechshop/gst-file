@@ -153,10 +153,15 @@ function restoreInvListState() {
 // Split out from loadInvoiceList() so the data can be re-read without
 // also resetting the view — see refreshInvoiceListInPlace().
 async function fetchInvoiceListRows(userId) {
-  const [{ data: b2b }, { data: b2c }] = await Promise.all([
+  // Returns null rather than a half-list. One table failing would drop
+  // every B2B or every B2C invoice out of the list silently, and this
+  // page is where people go to check whether an invoice was saved.
+  const rows = await readAll([
     _supabase.from('b2b_invoices').select('*').eq('user_id', userId),
     _supabase.from('b2c_invoices').select('*').eq('user_id', userId)
-  ]);
+  ], 'Could not load the invoices');
+  if (!rows) return null;
+  const [b2b, b2c] = rows;
 
   // `state` comes from the rows already fetched above — the select('*')
   // has always returned it, it just wasn't carried into the view model.
@@ -188,7 +193,9 @@ async function fetchInvoiceListRows(userId) {
 async function loadInvoiceList(userId) {
   // Ordered by invoice number the moment it is loaded, so filtering and
   // pagination both operate on an already-sorted list.
-  invListAllData = sortInvoicesByNumber(await fetchInvoiceListRows(userId));
+  const fetched = await fetchInvoiceListRows(userId);
+  if (!fetched) return;                       // read failed, already reported
+  invListAllData = sortInvoicesByNumber(fetched);
   invListPage = 1;
   // Populated here rather than in populateInvoiceListFilters(): the option
   // list is derived from the loaded records, which don't exist until now.
@@ -216,7 +223,12 @@ async function refreshInvoiceListInPlace(userId, highlightId) {
   const content = document.querySelector('.content');
   const contentScroll = content?.scrollTop || 0;
 
-  invListAllData = sortInvoicesByNumber(await fetchInvoiceListRows(userId));
+  const fetched = await fetchInvoiceListRows(userId);
+  // Leaves the list showing what it already had rather than emptying it —
+  // this runs after a save or delete, where blanking the page would look
+  // like the records themselves had gone.
+  if (!fetched) return;
+  invListAllData = sortInvoicesByNumber(fetched);
   populateInvoiceListStateFilter();    // rebuilt from the data, selection kept
   applyInvoiceListFilters();           // resets to page 1...
   // ...then back to where they were. Clamped to the last page that still
@@ -450,7 +462,7 @@ async function openMarkPaymentModal(type, id) {
   setInvListValue('mpDate', toISO(new Date()));
   setInvListValue('mpReference', '');
   setInvListValue('mpNote', '');
-  setPaymentModalError('');
+  setPaymentModalError();
   document.getElementById('markPaymentModal')?.classList.add('open');
   await refreshPaymentModal();
 }
@@ -468,6 +480,12 @@ async function refreshPaymentModal() {
   if (!rec) return;
 
   const history = await loadPaymentsForInvoice(mpTarget.type, mpTarget.id);
+  // null means the ledger could not be READ (loadPaymentsForInvoice()),
+  // which is not the same as an invoice with no payments yet. Opening the
+  // dialog anyway would show "₹0 received" against a possibly part-paid
+  // invoice and invite the user to record a payment twice, so it does not
+  // open at all — handleApiError() has already said why.
+  if (!history) { closeMarkPaymentModal?.(); return; }
   const receivedSoFar = round2(history.reduce((s, p) => s + (+p.amount || 0), 0));
   const outstanding = round2(Math.max(0, (rec.total_amount || 0) - receivedSoFar));
 
@@ -509,7 +527,7 @@ async function submitReceivePayment() {
   // A failure leaves the modal exactly as it is — the amount the user typed
   // is still there to correct and retry — with the reason shown against the
   // button rather than only in a toast that fades.
-  if (!result.ok) { setPaymentModalError(result.reason || 'Could not record payment.'); return; }
+  if (!result.ok) { setPaymentModalError(result.error, 'Could not record the payment'); return; }
 
   showToast('Payment recorded.', 'success');
   closeMarkPaymentModal();
@@ -519,14 +537,20 @@ async function submitReceivePayment() {
 }
 
 // The inline error line inside the payment modal. Cleared whenever the
-// modal opens and whenever a save succeeds.
-function setPaymentModalError(message) {
+// modal opens and whenever a save succeeds — call with no arguments.
+//
+// Takes the failed request itself rather than a pre-built string, so the
+// line in the modal carries the same status-aware wording as the toast
+// (including the code and log reference on a 5xx) and an expired session
+// is handled here too instead of being reported as a payment problem.
+function setPaymentModalError(error, context) {
   const el = document.getElementById('mpError');
+  const message = error ? describeApiError(error, context) : '';
   if (el) {
-    el.textContent = message || '';
+    el.textContent = message;
     el.classList.toggle('show', !!message);   // .form-error is hidden until 'show'
   }
-  if (message) showToast(message, 'error');
+  if (error) handleApiError(error, context);
 }
 
 async function removePayment(paymentId) {
@@ -536,9 +560,9 @@ async function removePayment(paymentId) {
   const ok = await showConfirm('Remove this payment record? The invoice balance will be recalculated.');
   if (!ok) return;
   const result = await deletePayment(paymentId, mpTarget.type, mpTarget.id, user.id);
-  if (!result.ok) { setPaymentModalError(result.reason || 'Could not remove payment.'); return; }
+  if (!result.ok) { setPaymentModalError(result.error, 'Could not remove the payment'); return; }
   showToast('Payment removed.', 'success');
-  setPaymentModalError('');
+  setPaymentModalError();
   // Same in-place refresh, but the modal stays open: removing a payment is
   // an action taken inside the history list the user is still looking at.
   await refreshInvoiceListInPlace(user.id, mpTarget.id);
@@ -551,7 +575,7 @@ async function deleteInvoiceFromList(type, id) {
   const table = type === 'b2b' ? 'b2b_invoices' : 'b2c_invoices';
   await cascadeInvoiceItemsDelete(type, id); // items + HSN + stock reversal first
   const { error } = await _supabase.from(table).delete().eq('id', id);
-  if (error) { showToast('Error: ' + error.message, 'error'); return; }
+  if (error) { handleApiError(error, 'Could not delete the invoice'); return; }
   showToast('Invoice permanently deleted.', 'success');
   if (typeof refreshStorageStatus === 'function') refreshStorageStatus();
   const user = await getCurrentUser();

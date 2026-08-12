@@ -184,13 +184,22 @@ async function loadVoucherOriginals() {
   const selEl = document.getElementById('vOriginalRef');
   if (!f.original || !selEl) return;
   if (f.original === 'receipt_voucher') {
-    const { data } = await _supabase.from('receipt_vouchers').select('*').eq('user_id', vUserId);
-    vReceiptVouchers = (data || []).filter(r => r.status !== 'cancelled');
+    // The picker for "which advance is being returned". An empty list on
+    // a failed read says no advance exists to refund against, which is a
+    // dead end the user cannot diagnose.
+    const rows = await readAll([
+      _supabase.from('receipt_vouchers').select('*').eq('user_id', vUserId)
+    ], 'Could not load the receipt vouchers');
+    if (!rows) return;
+    vReceiptVouchers = rows[0].filter(r => r.status !== 'cancelled');
     selEl.innerHTML = '<option value="">Select the advance being returned</option>' +
       vReceiptVouchers.map(r => `<option value="${escHtmlAttr(r.id)}">${escItemHtml(r.document_number)} — ${escItemHtml(r.party_name)} — ₹${formatNum(r.advance_amount)}</option>`).join('');
   } else if (f.original === 'self_invoice') {
-    const { data } = await _supabase.from('self_invoices').select('*').eq('user_id', vUserId);
-    vSelfInvoices = (data || []).filter(r => r.status !== 'cancelled');
+    const rows = await readAll([
+      _supabase.from('self_invoices').select('*').eq('user_id', vUserId)
+    ], 'Could not load the self invoices');
+    if (!rows) return;
+    vSelfInvoices = rows[0].filter(r => r.status !== 'cancelled');
     selEl.innerHTML = '<option value="">Select the self invoice being settled</option>' +
       vSelfInvoices.map(r => `<option value="${escHtmlAttr(r.id)}">${escItemHtml(r.document_number)} — ${escItemHtml(r.supplier_name)} — ₹${formatNum(r.total_value)}</option>`).join('');
   }
@@ -319,7 +328,7 @@ async function reserveVoucherNumber() {
     setVoucherValue('vDocNumber', res.documentNumber);
     validateVoucherForm();
   } catch (e) {
-    showToast('Could not issue a number: ' + (e.message || 'unknown error'), 'error');
+    handleApiError(e, 'Could not issue a number');
   }
 }
 
@@ -377,7 +386,7 @@ async function saveVoucher() {
     await loadVouchers();
     await loadVoucherOriginals();
   } catch (e) {
-    showToast('Could not save: ' + (e.message || 'unknown error'), 'error');
+    handleApiError(e, 'Could not save the document');
   }
 }
 
@@ -401,8 +410,14 @@ function resetVoucherForm(keepType) {
 
 // ── List, edit, cancel, delete ──────────────────────
 async function loadVouchers() {
-  const { data } = await _supabase.from(vForm().table).select('*').eq('user_id', vUserId);
-  vDocs = (data || []).sort((a, b) => compareInvoiceNumbers(b.document_number, a.document_number));
+  // Leaves the previous list on screen rather than replacing it with an
+  // empty one — this list is also what editVoucher()/cancelVoucher() look
+  // documents up in, so emptying it would break those too.
+  const rows = await readAll([
+    _supabase.from(vForm().table).select('*').eq('user_id', vUserId)
+  ], 'Could not load the documents');
+  if (!rows) return;
+  vDocs = rows[0].sort((a, b) => compareInvoiceNumbers(b.document_number, a.document_number));
   renderVoucherList();
 }
 
@@ -497,10 +512,10 @@ async function cancelVoucher(id) {
   const r = vDocs.find(x => x.id === id);
   if (!r) return;
   const ok = await showYesNo(
-    `Cancel <b>${escItemHtml(r.document_number)}</b>?<br><br>` +
+    `Cancel "${r.document_number}"?\n\n` +
     'It keeps its number and stays on the books. Documents Issued will report it as cancelled, ' +
-    'which is what a cancelled document is for &mdash; deleting it would report nothing at all.' +
-    '<br><br>Continue?', 'Cancel Document');
+    'which is what a cancelled document is for — deleting it would report nothing at all.' +
+    '\n\nContinue?', 'Cancel Document');
   if (!ok) return;
   try {
     await apiFetch(`/documents/${vType()}/${id}/cancel`, { method: 'POST', body: JSON.stringify({ reason: '' }) });
@@ -508,7 +523,7 @@ async function cancelVoucher(id) {
     await loadVouchers();
     await loadVoucherOriginals();
   } catch (e) {
-    showToast('Could not cancel: ' + (e.message || 'unknown error'), 'error');
+    handleApiError(e, 'Could not cancel the document');
   }
 }
 
@@ -518,9 +533,9 @@ async function deleteVoucher(id) {
   const r = vDocs.find(x => x.id === id);
   if (!r) return;
   const ok = await showYesNo(
-    `Permanently delete <b>${escItemHtml(r.document_number)}</b>?<br><br>` +
+    `Permanently delete "${r.document_number}"?\n\n` +
     'Nothing will record that this number was ever issued. If the document was issued and is being ' +
-    'withdrawn, <b>cancel</b> it instead so Documents Issued can report it.<br><br>Delete anyway?',
+    'withdrawn, CANCEL it instead so Documents Issued can report it.\n\nDelete anyway?',
     'Delete Document');
   if (!ok) return;
   try {
@@ -530,6 +545,6 @@ async function deleteVoucher(id) {
     await loadVouchers();
     await loadVoucherOriginals();
   } catch (e) {
-    showToast('Could not delete: ' + (e.message || 'unknown error'), 'error');
+    handleApiError(e, 'Could not delete the document');
   }
 }

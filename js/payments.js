@@ -127,9 +127,16 @@ function validatePaymentPreviewAmount(cfg) {
   return false;
 }
 
+// Returns null — not an empty list — when the ledger could not be read.
+// An empty payment history reads as "nothing has been paid yet", and
+// someone looking at that is liable to record a payment that is already
+// on the invoice. The caller must show "could not be loaded" instead.
 async function loadPaymentsForInvoice(type, invoiceId) {
-  const { data } = await _supabase.from('payments').select('*').eq('invoice_id', invoiceId).eq('invoice_type', type);
-  return (data || []).sort((a, b) => (b.payment_date || '').localeCompare(a.payment_date || '') || (b.created_at || '').localeCompare(a.created_at || ''));
+  const rows = await readAll([
+    _supabase.from('payments').select('*').eq('invoice_id', invoiceId).eq('invoice_type', type)
+  ], 'Could not load the payment history');
+  if (!rows) return null;
+  return rows[0].sort((a, b) => (b.payment_date || '').localeCompare(a.payment_date || '') || (b.created_at || '').localeCompare(a.created_at || ''));
 }
 
 // Recording/removing a payment writes both the payments ledger AND the
@@ -139,7 +146,14 @@ async function loadPaymentsForInvoice(type, invoiceId) {
 // calls could if the second one failed after the first succeeded.
 async function recordPayment(type, invoiceId, userId, { amount, method, date, referenceNumber, note }) {
   amount = +amount || 0;
-  if (amount <= 0) return { ok: false, reason: 'Enter an amount greater than zero.' };
+  // Shaped like a rejected request (status 400) even though it never
+  // leaves the browser, so that EVERY failure out of this function can be
+  // reported the same way — `handleApiError(result.error, …)` with no
+  // caller having to special-case the one that was caught locally.
+  if (amount <= 0) {
+    const reason = 'Enter an amount greater than zero.';
+    return { ok: false, reason, error: { message: reason, status: 400, code: 'invalid_amount' } };
+  }
   try {
     const summary = await apiFetch(`/payments/${type}/${invoiceId}/record`, {
       method: 'POST',
@@ -150,7 +164,12 @@ async function recordPayment(type, invoiceId, userId, { amount, method, date, re
     });
     return { ok: true, ...summary };
   } catch (error) {
-    return { ok: false, reason: error.message };
+    // `error` is carried alongside `reason` so callers can report this
+    // through handleApiError() and get the status-aware treatment (an
+    // expired session, a 429, a 500 with a log reference) instead of a
+    // bare message string that has already thrown the status away.
+    // `reason` is kept for the callers that render into an inline panel.
+    return { ok: false, reason: error.message, error };
   }
 }
 
@@ -159,7 +178,7 @@ async function deletePayment(paymentId, type, invoiceId, userId) {
     const summary = await apiFetch(`/payments/${type}/${invoiceId}/${paymentId}/delete`, { method: 'POST' });
     return { ok: true, ...summary };
   } catch (error) {
-    return { ok: false, reason: error.message };
+    return { ok: false, reason: error.message, error };
   }
 }
 
@@ -171,12 +190,18 @@ async function deletePayment(paymentId, type, invoiceId, userId) {
 // netted off their outstanding balance here — this reads sales_returns
 // only and never touches the invoice rows themselves.
 async function loadCustomerOutstandingSummary(userId) {
-  const [{ data: b2b }, { data: b2c }, { data: srData }] = await Promise.all([
+  // null, not a partial summary. Losing the sales_returns read alone
+  // would OVERSTATE what every customer owes, and losing an invoice table
+  // would understate it; neither is safe to put in front of someone
+  // chasing payments.
+  const rows = await readAll([
     _supabase.from('b2b_invoices').select('customer_name,total_amount,amount_paid,payment_status').eq('user_id', userId),
     _supabase.from('b2c_invoices').select('customer_name,total_amount,amount_paid,payment_status').eq('user_id', userId),
     _supabase.from('sales_returns').select('customer_name,total_amount').eq('user_id', userId)
-  ]);
-  const all = [...(b2b || []), ...(b2c || [])].filter(r => r.customer_name);
+  ], 'Could not load the customer outstanding summary');
+  if (!rows) return null;
+  const [b2b, b2c, srData] = rows;
+  const all = [...b2b, ...b2c].filter(r => r.customer_name);
   const byCustomer = {};
   all.forEach(r => {
     const key = r.customer_name;
@@ -202,7 +227,15 @@ async function loadCustomerOutstandingSummary(userId) {
 // of scope — a return reduces what's owed to the vendor on the next
 // purchase, it isn't itself a payable).
 async function loadVendorOutstandingSummary(userId) {
-  const { data } = await _supabase.from('purchases').select('vendor_name,total_amount,amount_paid,payment_status').eq('user_id', userId);
+  // null, not an empty summary — the same reasoning as
+  // loadCustomerOutstandingSummary() above: a vendor page showing nothing
+  // outstanding is a statement about the business, not about a request
+  // that failed.
+  const rows = await readAll([
+    _supabase.from('purchases').select('vendor_name,total_amount,amount_paid,payment_status').eq('user_id', userId)
+  ], 'Could not load the vendor outstanding summary');
+  if (!rows) return null;
+  const data = rows[0];
   const byVendor = {};
   (data || []).filter(r => r.vendor_name).forEach(r => {
     const key = r.vendor_name;

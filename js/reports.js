@@ -68,13 +68,20 @@ async function collectReportMonths(userId) {
     ['purchases', 'purchase_date'], ['expenses', 'expense_date'],
     ['sales_returns', 'return_date'], ['cdn_notes', 'note_date']
   ];
-  const results = await Promise.all(sources.map(([table, col]) =>
-    _supabase.from(table).select(col).eq('user_id', userId)));
+  // Throws on a failed read rather than skipping that table: swallowing it
+  // silently removed months from the dropdown, and a month that cannot be
+  // selected is a month that cannot be filed. populateMonthFilter()
+  // catches this and says so instead of quietly offering a short list.
+  const results = await readAll(
+    sources.map(([table, col]) => _supabase.from(table).select(col).eq('user_id', userId)),
+    'Could not read the months you have data for'
+  );
+  if (!results) throw new Error('report-months-read-failed');
 
   const months = new Set();
-  results.forEach((res, i) => {
+  results.forEach((rows, i) => {
     const col = sources[i][1];
-    (res.data || []).forEach(row => {
+    rows.forEach(row => {
       const d = String(row[col] || '');
       if (/^\d{4}-(0[1-9]|1[0-2])/.test(d)) months.add(d.slice(0, 7));
     });
@@ -113,8 +120,15 @@ async function populateMonthFilter(userId) {
   sel.innerHTML = reportStaticPeriodOptions();
 
   let months = [];
+  let monthsFailed = false;
   try { months = await collectReportMonths(userId); }
-  catch (e) { console.error('Could not read the months you have data for:', e); }
+  catch (e) {
+    // readAll() has already reported the reason; this only records that
+    // the list on offer is incomplete, so a short dropdown is never
+    // presented as the full set of months that have data.
+    monthsFailed = true;
+    console.error('Could not read the months you have data for:', e);
+  }
   reportAvailableMonths = months.map(m => ({ value: m, label: reportMonthLabel(m) }));
 
   // Current Month drives the dashboard view and stays first. The named
@@ -124,7 +138,13 @@ async function populateMonthFilter(userId) {
   const monthOptions = months.length
     ? `<optgroup label="Filing months">${months
         .map(m => `<option value="${m}">${reportMonthLabel(m)}</option>`).join('')}</optgroup>`
-    : '';
+    : monthsFailed
+      // Labelled rather than left empty. An empty "Filing months" group is
+      // indistinguishable from a business with no data at all, and someone
+      // who cannot find last month in this list needs to know the list
+      // failed to load — not conclude the month has nothing in it.
+      ? '<optgroup label="Filing months (could not be loaded — reload)"></optgroup>'
+      : '';
 
   // Redrawn now that the months are known, from the same static options.
   sel.innerHTML = reportStaticPeriodOptions()
@@ -170,11 +190,48 @@ function defaultFilingMonth(months, today = new Date()) {
   return (months || []).find(m => m <= closed) || null;
 }
 
+// Puts the page into an explicit "no figures" state after a failed read.
+//
+// The in-memory arrays are emptied and every table and stat tile is
+// blanked, because the alternative is worse than an error: the previously
+// loaded period's rows would still be on screen under the newly chosen
+// period's label, and every export button on this page reads those same
+// arrays. A report that could not be loaded must look nothing like a
+// report that loaded and found little.
+function reportsUnavailable() {
+  repB2B = []; repB2C = []; repB2BHSN = []; repB2CHSN = [];
+  repItemsByInvoice = {};
+  repPurchases = []; repPurchaseItems = [];
+  repExpenses = []; repExpensesAllTime = [];
+  repSalesReturns = []; repSalesReturnItems = [];
+
+  document.querySelectorAll('#reportPrintArea tbody').forEach(tb => {
+    const cols = tb.closest('table')?.querySelectorAll('thead th').length || 6;
+    tb.innerHTML = `<tr><td colspan="${cols}" class="empty-state">`
+      + '<i class="fas fa-triangle-exclamation table-loading-icon-sm"></i>'
+      + 'Could not be loaded. Nothing is shown rather than part of the picture &mdash; reload to try again.'
+      + '</td></tr>';
+  });
+  ['repB2BCount', 'repB2CCount', 'repTotalCount'].forEach(id => {
+    const el = document.getElementById(id); if (el) el.textContent = '—';
+  });
+  ['repB2BTaxable', 'repB2CTaxable', 'repTotalGST', 'repIGST', 'repCGST', 'repSGST', 'repGrandTotal'].forEach(id => {
+    const el = document.getElementById(id); if (el) el.textContent = '—';
+  });
+  showRepLoader(false);
+}
+
 async function loadReports(filter) {
   showRepLoader(true);
   const { start, end } = getReportDateRange(filter);
 
-  const [b2bRes, b2cRes, hsnB2BRes, hsnB2CRes, itemsRes, purchRes, purchItemsRes, expRes, expAllRes, srRes, srItemsRes] = await Promise.all([
+  // readAll() rather than Promise.all: eleven reads feed this page, and
+  // `(res.data || [])` on each turned any one of them failing into an
+  // empty table — a report showing less sales, less purchase credit or
+  // fewer returns than the business actually had, with nothing on screen
+  // saying so. These figures are what a filing gets prepared from, so a
+  // partial read now renders nothing at all.
+  const repRows = await readAll([
     _supabase.from('b2b_invoices').select('*').eq('user_id', currentUser.id).gte('invoice_date', start).lte('invoice_date', end).order('invoice_date', { ascending: false }),
     _supabase.from('b2c_invoices').select('*').eq('user_id', currentUser.id).gte('invoice_date', start).lte('invoice_date', end).order('invoice_date', { ascending: false }),
     _supabase.from('b2b_hsn').select('*').eq('user_id', currentUser.id).order('created_at', { ascending: false }),
@@ -186,23 +243,25 @@ async function loadReports(filter) {
     _supabase.from('expenses').select('*').eq('user_id', currentUser.id),
     _supabase.from('sales_returns').select('*').eq('user_id', currentUser.id).gte('return_date', start).lte('return_date', end).order('return_date', { ascending: false }),
     _supabase.from('sales_return_items').select('*').eq('user_id', currentUser.id)
-  ]);
+  ], 'Could not load the reports');
+  if (!repRows) { reportsUnavailable(); return; }
+  const [b2bRows, b2cRows, hsnB2BRows, hsnB2CRows, itemRows, purchRows, purchItemRows, expRows, expAllRows, srRows, srItemRows] = repRows;
 
-  repB2B = (b2bRes.data || []);
-  repB2C = (b2cRes.data || []);
+  repB2B = b2bRows;
+  repB2C = b2cRows;
 
   // HSN/Product reports are driven by invoice line items now — the
   // invoice is the only source of truth. 'source' !== 'auto' historical
   // rows (manual entries / Excel imports from before this was a live
   // report) are kept alongside so no past data disappears.
-  const allItems = (itemsRes.data || []);
+  const allItems = itemRows;
   const toHSNRow = it => ({
     hsn_code: it.hsn_code, product_name: it.product_name, type: 'goods',
     quantity: it.quantity, taxable_value: +it.taxable_value, gst_percentage: it.gst_percentage,
     igst: +it.igst, cgst: +it.cgst, sgst: +it.sgst, total_gst: +it.gst_amount, total_invoice_value: +it.total_amount
   });
-  const legacyB2BHSN = (hsnB2BRes.data || []).filter(r => r.source !== 'auto');
-  const legacyB2CHSN = (hsnB2CRes.data || []).filter(r => r.source !== 'auto');
+  const legacyB2BHSN = hsnB2BRows.filter(r => r.source !== 'auto');
+  const legacyB2CHSN = hsnB2CRows.filter(r => r.source !== 'auto');
   repB2BHSN = [...allItems.filter(it => it.invoice_type === 'b2b' && it.hsn_code).map(toHSNRow), ...legacyB2BHSN];
   repB2CHSN = [...allItems.filter(it => it.invoice_type === 'b2c' && it.hsn_code).map(toHSNRow), ...legacyB2CHSN];
 
@@ -212,12 +271,12 @@ async function loadReports(filter) {
     (repItemsByInvoice[key] = repItemsByInvoice[key] || []).push(r);
   });
 
-  repPurchases = (purchRes.data || []);
-  repPurchaseItems = (purchItemsRes.data || []);
-  repExpenses = (expRes.data || []);
-  repExpensesAllTime = (expAllRes.data || []);
-  repSalesReturns = (srRes.data || []);
-  repSalesReturnItems = (srItemsRes.data || []);
+  repPurchases = purchRows;
+  repPurchaseItems = purchItemRows;
+  repExpenses = expRows;
+  repExpensesAllTime = expAllRows;
+  repSalesReturns = srRows;
+  repSalesReturnItems = srItemRows;
 
   renderSummaryCards();
   renderGSTR1Summary();

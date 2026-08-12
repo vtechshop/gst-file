@@ -320,7 +320,7 @@ async function deleteHSN(prefix, id) {
   if (!ok) return;
   const table = prefix === 'b2b' ? 'b2b_hsn' : 'b2c_hsn';
   const { error } = await _supabase.from(table).delete().eq('id', id);
-  if (error) { showToast('Error: ' + error.message, 'error'); return; }
+  if (error) { handleApiError(error, 'Could not delete the HSN entry'); return; }
   showToast('HSN entry permanently deleted.');
   const user = await getCurrentUser();
   if (user) { if (prefix === 'b2b') await loadB2BHSN(user.id); else await loadB2CHSN(user.id); }

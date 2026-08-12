@@ -60,11 +60,19 @@ app.use(express.json());
 // because a blanket limit on the whole /api/auth/* prefix would also
 // throttle GET /api/auth/me, which fires on every single authenticated
 // page load and would lock normal users out after a few page visits.
+// `message` is given explicitly because express-rate-limit's default 429
+// body is PLAIN TEXT — which would be the one response in the whole API
+// that isn't { error: { message, code } }, so js/apiClient.js's
+// res.json() would fail on it and the user would see a bare
+// "Request failed (429)" instead of being told to wait. The RateLimit-*
+// / Retry-After headers (standardHeaders) are what the browser reads to
+// say HOW long.
 app.use('/api', rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 600,
   standardHeaders: true,
-  legacyHeaders: false
+  legacyHeaders: false,
+  message: { error: { message: 'Too many requests — please wait a moment and try again.', code: 'rate_limited' } }
 }));
 
 app.use('/api/auth', authRoutes);
@@ -106,9 +114,33 @@ app.use('/api/bill-scan', billScanRoutes);
 app.use('/api/invoice-scan', invoiceScanRoutes);
 mountGenericRoutes(app);
 
+// Any /api/* path that no route above claimed. Without this Express
+// falls through to its own HTML 404 page, which the browser's
+// res.json() can't parse — so a typo'd endpoint surfaced as a confusing
+// "Request failed (404)" instead of naming the path.
+app.use('/api', (req, res) => {
+  res.status(404).json({
+    error: { message: `No such endpoint: ${req.method} ${req.originalUrl}`, code: 'not_found' }
+  });
+});
+
 // Must be mounted last — Express only routes an error to this once no
 // earlier route/middleware has already sent a response.
 app.use(errorHandler);
+
+// Last-resort guards. asyncRoute covers every route handler, but a
+// rejection raised OUTSIDE a request (a background scan job in
+// services/scanJobs.js, a pool-level error, a stray timer) has no
+// request to fail and would otherwise either kill the process on a
+// modern Node or vanish silently. Logged, not swallowed — and
+// deliberately NOT exited on, because dropping the process would take
+// every in-flight invoice save down with it.
+process.on('unhandledRejection', (reason) => {
+  console.error('[unhandledRejection]', reason && reason.stack ? reason.stack : reason);
+});
+process.on('uncaughtException', (err) => {
+  console.error('[uncaughtException]', err && err.stack ? err.stack : err);
+});
 
 app.listen(PORT, () => {
   console.log(`GST Billing backend listening on http://localhost:${PORT}`);

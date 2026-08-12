@@ -19,7 +19,11 @@ async function initInvoiceItems(userId, formPrefix) {
   // Reading the product list is a local DB read (or a local-storage
   // read in demo mode) — never a network call, so this always succeeds
   // instantly even if the website/internet is down (requirement 7).
-  itemsProductsList = await loadProductsList(userId);
+  // loadProductsList() returns null when the read failed. Keeping the
+  // previous list (rather than replacing it with an empty one) is what
+  // stops the Quick Add prompt from offering to create products that
+  // are already in the master.
+  itemsProductsList = (await loadProductsList(userId)) || [];
   renderItemsSectionShell('itemsSection');
   ensureQuickAddProductModal();
   populateItemsProductDatalist();
@@ -27,7 +31,7 @@ async function initInvoiceItems(userId, formPrefix) {
   setupItemsDraftAutosave(formPrefix + '_invoice');
   renderProductSyncNotice();
   window.addEventListener('productSyncUpdated', async () => {
-    itemsProductsList = await loadProductsList(itemsUserId);
+    itemsProductsList = (await loadProductsList(itemsUserId)) || itemsProductsList;
     populateItemsProductDatalist();
     renderProductSyncNotice();
   });
@@ -564,7 +568,7 @@ async function onItemProductBlur(rowId, name) {
   row.product_id = null; row.locked = false;
   renderItemsTable();
 
-  const ok = await showYesNo(`"${escItemHtml(trimmed)}" does not exist in Product Master. Would you like to add it?`, 'Product Not Found');
+  const ok = await showYesNo(`"${trimmed}" does not exist in Product Master. Would you like to add it?`, 'Product Not Found');
   const stillThere = currentItems.find(r => r.rowId === rowId);
   if (!stillThere) return; // row was removed while the popup was open
 
@@ -748,9 +752,9 @@ async function saveQuickAddProduct() {
     gst_percentage: gstPct, default_rate: rate, unit, description,
     source: 'local'
   });
-  if (error) { showToast('Error: ' + error.message, 'error'); return; }
+  if (error) { handleApiError(error, 'Could not add the product'); return; }
 
-  itemsProductsList = await loadProductsList(itemsUserId);
+  itemsProductsList = (await loadProductsList(itemsUserId)) || itemsProductsList;
   populateItemsProductDatalist();
   if (typeof loadProducts === 'function' && document.getElementById('prodTableBody')) {
     // Product Master page itself is open in this tab — keep its own list in sync too.
@@ -961,7 +965,7 @@ async function saveInvoiceWithItems(type, headerBase, editId, userId) {
     });
     return invoiceId;
   } catch (error) {
-    showToast('Error: ' + (error.message || 'save failed'), 'error');
+    handleApiError(error, 'Could not save the invoice');
     return false;
   }
 }
@@ -973,7 +977,7 @@ async function cascadeInvoiceItemsDelete(type, invoiceId) {
   try {
     await apiFetch(`/invoices/${type}/${invoiceId}/cascade-delete`, { method: 'POST' });
   } catch (error) {
-    showToast('Error: ' + (error.message || 'cascade delete failed'), 'error');
+    handleApiError(error, 'Could not delete the invoice items');
   }
 }
 

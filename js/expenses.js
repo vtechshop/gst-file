@@ -35,7 +35,10 @@ function setExpValue(id, v) { const el = document.getElementById(id); if (el) el
 
 // ── Categories ────────────────────────────────────────
 async function loadExpCategories(userId) {
-  const { data } = await _supabase.from('expense_categories').select('*').eq('user_id', userId).order('name', { ascending: true });
+  const { data, error } = await _supabase.from('expense_categories').select('*').eq('user_id', userId).order('name', { ascending: true });
+  // Reported and abandoned rather than rendered as an empty list — an
+  // empty table is indistinguishable from having no records at all.
+  if (error) { handleApiError(error, 'Could not load the expense categories'); return; }
   expCategories = (data || []);
   const sel = document.getElementById('expCategory');
   if (sel) {
@@ -98,7 +101,7 @@ async function saveExpCategory() {
     if (dup) { showToast('Category already exists!', 'warning'); return; }
     ({ error } = await _supabase.from('expense_categories').insert({ user_id: user.id, name, description }));
   }
-  if (error) { showToast('Error: ' + error.message, 'error'); return; }
+  if (error) { handleApiError(error, 'Could not save the category'); return; }
   showToast(ecEditId ? 'Category updated!' : 'Category added!');
   ecEditId = null;
   setExpValue('ecName', '');
@@ -110,7 +113,7 @@ async function deleteExpCategory(id) {
   const ok = await showConfirm('Permanently delete this category? Existing expenses keep their recorded category name. This cannot be undone.');
   if (!ok) return;
   const { error } = await _supabase.from('expense_categories').delete().eq('id', id);
-  if (error) { showToast('Error: ' + error.message, 'error'); return; }
+  if (error) { handleApiError(error, 'Could not delete the category'); return; }
   showToast('Category permanently deleted.');
   const user = await getCurrentUser();
   if (user) await loadExpCategories(user.id);
@@ -143,7 +146,7 @@ async function saveExpense() {
   } else {
     ({ error } = await _supabase.from('expenses').insert(payload));
   }
-  if (error) { showToast('Error: ' + error.message, 'error'); return; }
+  if (error) { handleApiError(error, 'Could not save the expense'); return; }
   showToast(expEditId ? 'Expense updated!' : 'Expense saved!');
   resetExpense();
   await loadExpenses(user.id);
@@ -162,7 +165,10 @@ function resetExpense() {
 }
 
 async function loadExpenses(userId) {
-  const { data } = await _supabase.from('expenses').select('*').eq('user_id', userId).order('expense_date', { ascending: false });
+  const { data, error } = await _supabase.from('expenses').select('*').eq('user_id', userId).order('expense_date', { ascending: false });
+  // Reported and abandoned rather than rendered as an empty list — an
+  // empty table is indistinguishable from having no records at all.
+  if (error) { handleApiError(error, 'Could not load the expenses'); return; }
   expAllData = (data || []);
   expPage = 1;
   renderExpTable(expAllData);
@@ -237,7 +243,7 @@ async function deleteExpense(id) {
   const ok = await showConfirm('Permanently delete this expense? This cannot be undone.');
   if (!ok) return;
   const { error } = await _supabase.from('expenses').delete().eq('id', id);
-  if (error) { showToast('Error: ' + error.message, 'error'); return; }
+  if (error) { handleApiError(error, 'Could not delete the expense'); return; }
   showToast('Expense permanently deleted.');
   expAllData = expAllData.filter(r => r.id !== id);
   renderExpTable(expAllData);

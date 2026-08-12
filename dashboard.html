@@ -387,7 +387,13 @@ let _dashCache = null;
 let _dashUserId = null;
 
 async function loadDashboardSharedData(userId) {
-  const [b2bRes, b2cRes, prodRes, itemsRes, b2bHsnRes, b2cHsnRes, custRes, purchRes] = await Promise.all([
+  // readAll() rather than Promise.all with `.data || []` on each result.
+  // Every tile, chart and top-N list on this page reads this one cache, so
+  // a single failed read used to redraw the WHOLE dashboard around a
+  // silently missing table — turnover, receivables and top customers all
+  // recomputed as smaller numbers, with no error anywhere and no way to
+  // tell them apart from a slow month.
+  const rows = await readAll([
     _supabase.from('b2b_invoices').select('*').eq('user_id', userId),
     _supabase.from('b2c_invoices').select('*').eq('user_id', userId),
     _supabase.from('products').select('*').eq('user_id', userId),
@@ -396,18 +402,16 @@ async function loadDashboardSharedData(userId) {
     _supabase.from('b2c_hsn').select('product_name,total_invoice_value,source').eq('user_id', userId),
     _supabase.from('customers').select('name,created_at').eq('user_id', userId),
     _supabase.from('purchases').select('total_amount,amount_paid,payment_status').eq('user_id', userId)
-  ]);
+  ], 'Could not load the dashboard');
+
+  // Null on failure. The cache is left EMPTY rather than half-filled, and
+  // deliberately not stamped with _dashUserId, so the next call retries
+  // instead of serving a partial cache as though it were complete.
+  if (!rows) { _dashCache = null; _dashUserId = null; return null; }
+
+  const [b2b, b2c, products, items, b2bHsn, b2cHsn, customers, purchases] = rows;
   _dashUserId = userId;
-  _dashCache = {
-    b2b: b2bRes.data || [],
-    b2c: b2cRes.data || [],
-    products: prodRes.data || [],
-    items: itemsRes.data || [],
-    b2bHsn: b2bHsnRes.data || [],
-    b2cHsn: b2cHsnRes.data || [],
-    customers: custRes.data || [],
-    purchases: purchRes.data || []
-  };
+  _dashCache = { b2b, b2c, products, items, b2bHsn, b2cHsn, customers, purchases };
   return _dashCache;
 }
 
@@ -421,10 +425,18 @@ async function ensureDashCache(userId) {
   return _dashCache;
 }
 
+// Every widget below starts with `if (!cache) return;`. ensureDashCache()
+// returns null when the underlying read failed (readAll() has already
+// said so), and a widget that carried on would either throw on
+// `cache.b2b` or, worse, draw itself from nothing and present a confident
+// zero. Returning leaves the tile showing its placeholder, which reads as
+// "not loaded" rather than as a figure.
+
 // ── Dashboard data load (stat cards + charts + top customers) ──────
 // Reads the shared cache — issues no network request of its own.
 async function loadDashboardData(userId, start, end) {
   const cache = await ensureDashCache(userId);
+  if (!cache) return;
   const b2b = cache.b2b.filter(r => r.invoice_date >= start && r.invoice_date <= end);
   const b2c = cache.b2c.filter(r => r.invoice_date >= start && r.invoice_date <= end);
   const all = [...b2b, ...b2c];
@@ -471,6 +483,7 @@ async function loadInsights(userId) {
   // any historical HSN entries saved before HSN Summary became a live
   // report, so past product sales aren't lost from this list.
   const cache = await ensureDashCache(userId);
+  if (!cache) return;
   const totals = {};
   const legacyRows = [...cache.b2bHsn, ...cache.b2cHsn].filter(r => r.source !== 'auto');
   const itemRows   = cache.items;
@@ -500,6 +513,7 @@ async function loadInsights(userId) {
 // Reads the shared cache — issues no network request of its own.
 async function loadTodayStats(userId) {
   const cache = await ensureDashCache(userId);
+  if (!cache) return;
   const today = toISO(new Date());
   const all = [...cache.b2b, ...cache.b2c].filter(r => r.invoice_date === today);
   const total = all.reduce((s, r) => s + (+r.total_amount || 0), 0);
@@ -515,10 +529,16 @@ async function loadMonthlyExpenses(userId) {
   const now = new Date();
   const start = toISO(new Date(now.getFullYear(), now.getMonth(), 1));
   const end = toISO(new Date(now.getFullYear(), now.getMonth() + 1, 0));
-  const { data } = await _supabase.from('expenses').select('amount,expense_date')
-    .eq('user_id', userId).gte('expense_date', start).lte('expense_date', end);
-  const total = (data || []).reduce((s, r) => s + (+r.amount || 0), 0);
+  const rows = await readAll([
+    _supabase.from('expenses').select('amount,expense_date')
+      .eq('user_id', userId).gte('expense_date', start).lte('expense_date', end)
+  ], "Could not load this month's expenses");
   const set = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
+  // An em dash, not a zero. A failed read showing "0" claims the business
+  // spent nothing this month, which is a statement about the data rather
+  // than about the request that failed to fetch it.
+  if (!rows) { set('statMonthlyExpenses', '—'); return; }
+  const total = rows[0].reduce((s, r) => s + (+r.amount || 0), 0);
   set('statMonthlyExpenses', formatCurrency(total));
 }
 
@@ -528,10 +548,13 @@ async function loadMonthlySalesReturns(userId) {
   const now = new Date();
   const start = toISO(new Date(now.getFullYear(), now.getMonth(), 1));
   const end = toISO(new Date(now.getFullYear(), now.getMonth() + 1, 0));
-  const { data } = await _supabase.from('sales_returns').select('total_amount,return_date')
-    .eq('user_id', userId).gte('return_date', start).lte('return_date', end);
-  const total = (data || []).reduce((s, r) => s + (+r.total_amount || 0), 0);
+  const rows = await readAll([
+    _supabase.from('sales_returns').select('total_amount,return_date')
+      .eq('user_id', userId).gte('return_date', start).lte('return_date', end)
+  ], "Could not load this month's sales returns");
   const set = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
+  if (!rows) { set('statMonthlySalesReturns', '—'); return; }
+  const total = rows[0].reduce((s, r) => s + (+r.total_amount || 0), 0);
   set('statMonthlySalesReturns', formatCurrency(total));
 }
 
@@ -541,6 +564,7 @@ async function loadMonthlySalesReturns(userId) {
 // its own. ─────────────────────────────────────
 async function loadOutstandingReceivables(userId) {
   const cache = await ensureDashCache(userId);
+  if (!cache) return;
   const all = [...cache.b2b, ...cache.b2c].filter(r => (r.payment_status || 'unpaid') !== 'paid');
   const pending = all.reduce((s, r) => s + Math.max(0, (+r.total_amount || 0) - (+r.amount_paid || 0)), 0);
   const set = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
@@ -549,6 +573,7 @@ async function loadOutstandingReceivables(userId) {
 
 async function loadOutstandingPayables(userId) {
   const cache = await ensureDashCache(userId);
+  if (!cache) return;
   const all = cache.purchases.filter(r => (r.payment_status || 'unpaid') !== 'paid');
   const pending = all.reduce((s, r) => s + Math.max(0, (+r.total_amount || 0) - (+r.amount_paid || 0)), 0);
   const set = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
@@ -562,6 +587,7 @@ async function loadOutstandingPayables(userId) {
 // Reads the shared cache — issues no network request of its own.
 async function loadTopSellingProducts(userId) {
   const cache = await ensureDashCache(userId);
+  if (!cache) return;
   const byProduct = {};
   cache.items.forEach(r => {
     const key = r.product_name;
@@ -584,6 +610,7 @@ async function loadTopSellingProducts(userId) {
 // Reads the shared cache — issues no network request of its own.
 async function loadRecentActivity(userId) {
   const cache = await ensureDashCache(userId);
+  if (!cache) return;
   const events = [];
   cache.b2b.forEach(r => events.push({ at: r.created_at, icon: 'fa-file-invoice', text: `Invoice ${r.invoice_number || ''} for ${r.customer_name} — ₹${formatNum(r.total_amount)}` }));
   cache.b2c.forEach(r => events.push({ at: r.created_at, icon: 'fa-file-invoice', text: `Invoice ${r.invoice_number || ''} for ${r.customer_name || 'Walk-in Customer'} — ₹${formatNum(r.total_amount)}` }));
@@ -612,6 +639,7 @@ const LOW_STOCK_THRESHOLD = 10;
 // Reads the shared cache — issues no network request of its own.
 async function loadInventoryIntelligence(userId) {
   const cache = await ensureDashCache(userId);
+  if (!cache) return;
   const tracked = cache.products.filter(p => p.stock !== null && p.stock !== undefined);
 
   const outOfStock = tracked.filter(p => +p.stock <= 0);
@@ -687,6 +715,7 @@ async function loadYearMonthSummary(userId) {
 
   // Reads the shared cache — issues no network request of its own.
   const cache = await ensureDashCache(userId);
+  if (!cache) return;
   const yearStart = `${y}-01-01`, yearEnd = `${y}-12-31`;
   const b2b = cache.b2b.filter(r => r.invoice_date >= yearStart && r.invoice_date <= yearEnd);
   const b2c = cache.b2c.filter(r => r.invoice_date >= yearStart && r.invoice_date <= yearEnd);

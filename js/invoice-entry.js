@@ -461,7 +461,7 @@ async function reserveNextInvoiceNumber(userId, source) {
     });
     return invoiceNumber;
   } catch (error) {
-    showToast('Could not reserve an invoice number: ' + (error.message || 'unknown error'), 'error');
+    handleApiError(error, 'Could not reserve an invoice number');
     return null;
   }
 }
@@ -540,7 +540,10 @@ function setPaymentSectionMode(editable, statusLabel) {
 
 // ── Customer Master helpers ─────────────────────────
 async function loadInvoiceCustomersList(userId) {
-  const { data } = await _supabase.from('customers').select('*').eq('user_id', userId);
+  const { data, error } = await _supabase.from('customers').select('*').eq('user_id', userId);
+  // Reported and abandoned rather than rendered as an empty list — an
+  // empty table is indistinguishable from having no records at all.
+  if (error) { handleApiError(error, 'Could not load Customer Master'); return; }
   invoiceCustomersList = (data || []);
   const dl = document.getElementById('customerDatalist');
   if (dl) {
@@ -577,7 +580,7 @@ async function saveCustomerFromInvoiceForm() {
     user_id: user.id, name, gstin: getInvText('invGstin'), phone: getInvText('invPhone'),
     address: getInvText('invAddress'), state: document.getElementById('invState')?.value || ''
   });
-  if (error) { showToast('Error: ' + error.message, 'error'); return; }
+  if (error) { handleApiError(error, 'Could not save the customer to master'); return; }
   showToast('Customer saved to master!', 'success');
   await loadInvoiceCustomersList(user.id);
 }
@@ -601,8 +604,29 @@ function discardInvoiceDraftFull(formKey) {
 // ── Edit mode ────────────────────────────────────────
 async function loadInvoiceForEdit(type, id) {
   const table = type === 'b2b' ? 'b2b_invoices' : 'b2c_invoices';
-  const { data: rec } = await _supabase.from(table).select('*').eq('id', id).single();
-  if (!rec) { showToast('Invoice not found.', 'error'); return; }
+
+  // BOTH reads happen up front, before a single field is filled in, and
+  // the form is only populated once both have genuinely succeeded.
+  //
+  // The line items used to be read at the bottom of this function, after
+  // the header had already been written into the form, and a failed read
+  // there was indistinguishable from an invoice that has no item rows —
+  // so it fell through to synthesizeLegacyItemRow(), which builds ONE
+  // summary line out of the header. The user then pressed Update and that
+  // single synthetic line replaced every real line on the invoice. A
+  // failed read has to stop the edit before it can start.
+  const rec = await readMaybeOne(
+    _supabase.from(table).select('*').eq('id', id).single(),
+    'Could not open the invoice'
+  );
+  if (rec === undefined) return;                                   // read failed, already reported
+  if (!rec) { showToast('That invoice no longer exists.', 'warning'); return; }
+
+  const itemRows = await readAll([
+    _supabase.from('invoice_items').select('*').eq('invoice_id', id).eq('invoice_type', type)
+  ], 'Could not open the invoice');
+  if (!itemRows) return;
+  const items = itemRows[0];
 
   invoiceEditId = id;
   invoiceEditType = type;
@@ -640,8 +664,10 @@ async function loadInvoiceForEdit(type, id) {
   setInvValue('invDispatchFrom', rec.dispatch_from || '');
   setInvValue('invDispatchTo', rec.dispatch_to || '');
 
-  const { data: items } = await _supabase.from('invoice_items').select('*').eq('invoice_id', id).eq('invoice_type', type);
-  const activeItems = (items || []).sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0));
+  // Read at the top of this function — see the note there. An empty list
+  // here now means only what it says: an older invoice saved before line
+  // items existed, which synthesizeLegacyItemRow() is for.
+  const activeItems = items.slice().sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0));
   if (activeItems.length) loadItemsIntoTable(activeItems);
   else synthesizeLegacyItemRow(rec);
 
@@ -778,11 +804,21 @@ async function saveInvoice() {
     // Only within the same series. Two series may legitimately both hold
     // a 5 — they are different documents in different books, and GSTR-1
     // reports them as such.
+    // readMaybeOne(), not a bare destructure of `.data`. A `.single()`
+    // that finds nothing and a `.single()` whose REQUEST failed both
+    // arrive with no data, and reading them the same way meant a failed
+    // duplicate check was taken as "no duplicate" and the save went
+    // ahead — putting two documents on one number into a filing, which
+    // the Portal rejects and which has to be unpicked by hand. undefined
+    // means the check itself failed, so nothing is saved.
     const [dupB2B, dupB2C] = await Promise.all([
-      _supabase.from('b2b_invoices').select('id').eq('user_id', user.id).eq('invoice_number', invNum).eq('invoice_source', source).single(),
-      _supabase.from('b2c_invoices').select('id').eq('user_id', user.id).eq('invoice_number', invNum).eq('invoice_source', source).single()
+      readMaybeOne(_supabase.from('b2b_invoices').select('id').eq('user_id', user.id).eq('invoice_number', invNum).eq('invoice_source', source).single(),
+        'Could not check whether that invoice number is already used'),
+      readMaybeOne(_supabase.from('b2c_invoices').select('id').eq('user_id', user.id).eq('invoice_number', invNum).eq('invoice_source', source).single(),
+        'Could not check whether that invoice number is already used')
     ]);
-    const dupId = dupB2B.data?.id || dupB2C.data?.id;
+    if (dupB2B === undefined || dupB2C === undefined) return;
+    const dupId = dupB2B?.id || dupB2C?.id;
     // On a type change, the invoice being edited still has this exact
     // number on its OLD table row (not deleted yet) — that's not a real
     // duplicate, it's the record we're about to migrate off of.
@@ -869,7 +905,7 @@ async function saveInvoice() {
         const referenceNumber = payStatus === 'paid' ? '' : getInvText('invPaymentReference');
         const note = payStatus === 'paid' ? 'Recorded at invoice creation' : (getInvText('invPaymentNote') || 'Recorded at invoice creation');
         const payResult = await recordPayment(type, invoiceId, user.id, { amount, method, date: payDate, referenceNumber, note });
-        if (!payResult.ok) showToast('Invoice saved, but the payment could not be recorded: ' + (payResult.reason || 'unknown error'), 'error');
+        if (!payResult.ok) handleApiError(payResult.error, 'Invoice saved, but the payment could not be recorded');
       }
     }
   }

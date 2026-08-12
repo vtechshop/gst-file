@@ -90,7 +90,10 @@ function detectRetSupplyType() {
 
 // ── Vendor Master helpers ────────────────────────────
 async function loadRetVendorsList(userId) {
-  const { data } = await _supabase.from('vendors').select('*').eq('user_id', userId);
+  const { data, error } = await _supabase.from('vendors').select('*').eq('user_id', userId);
+  // Reported and abandoned rather than rendered as an empty list — an
+  // empty table is indistinguishable from having no records at all.
+  if (error) { handleApiError(error, 'Could not load Vendor Master'); return; }
   retVendorsList = (data || []);
   const dl = document.getElementById('retVendorDatalist');
   if (dl) {
@@ -135,8 +138,19 @@ async function savePurchaseReturn() {
   }
 
   if (!retEditId) {
-    const { data: dup } = await _supabase.from('purchase_returns').select('id').eq('user_id', user.id).eq('return_number', returnNum).single();
-    if (dup?.id) { showToast('Return number already exists!', 'error'); return; }
+    // readMaybeOne(), not a bare destructure of `.data`. A `.single()`
+    // that finds nothing and a `.single()` whose REQUEST failed both
+    // arrive with no data, and reading them the same way meant a failed
+    // duplicate check was taken as "no duplicate" and the save went
+    // ahead — putting two documents on one number into a filing, which
+    // the Portal rejects and which has to be unpicked by hand. undefined
+    // means the check itself failed, so nothing is saved.
+    const dup = await readMaybeOne(
+      _supabase.from('purchase_returns').select('id').eq('user_id', user.id).eq('return_number', returnNum).single(),
+      'Could not check whether that return number is already used'
+    );
+    if (dup === undefined) return;
+    if (dup?.id) { showToast('Return number already exists!', 'warning'); return; }
   }
 
   const headerBase = {
@@ -172,7 +186,10 @@ function resetPurchaseReturn() {
 
 // ── History list ──────────────────────────────────────
 async function loadPurchaseReturns(userId) {
-  const { data } = await _supabase.from('purchase_returns').select('*').eq('user_id', userId).order('return_date', { ascending: false });
+  const { data, error } = await _supabase.from('purchase_returns').select('*').eq('user_id', userId).order('return_date', { ascending: false });
+  // Reported and abandoned rather than rendered as an empty list — an
+  // empty table is indistinguishable from having no records at all.
+  if (error) { handleApiError(error, 'Could not load the purchase returns'); return; }
   retAllData = (data || []);
   retPage = 1;
   renderRetTable(retAllData);
@@ -229,8 +246,17 @@ function renderRetPagination(total) {
 }
 
 async function editPurchaseReturn(id) {
-  const { data: rec } = await _supabase.from('purchase_returns').select('*').eq('id', id).single();
-  if (!rec) return;
+  // Header and line items are both read before the form is touched, and a
+  // failed read stops the edit rather than opening a form that looks like
+  // the record has fewer lines than it has — saving that back would
+  // overwrite the real ones. Same reasoning as loadInvoiceForEdit() in
+  // js/invoice-entry.js.
+  const rec = await readMaybeOne(
+    _supabase.from('purchase_returns').select('*').eq('id', id).single(),
+    'Could not open the purchase return'
+  );
+  if (rec === undefined) return;
+  if (!rec) { showToast('That purchase return no longer exists.', 'warning'); return; }
 
   retEditId = id;
   retSelectedVendorId = rec.vendor_id || null;
@@ -242,8 +268,13 @@ async function editPurchaseReturn(id) {
   setRetValue('retReason', rec.reason || '');
   setRetValue('retOrigPurchase', rec.original_purchase_number || '');
 
-  const { data: items } = await _supabase.from('purchase_return_items').select('*').eq('return_id', id);
-  const activeItems = (items || []).sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0));
+  // A failed read here would open the edit form showing no lines, and
+  // saving that back would wipe the ones the return actually has.
+  const itemRead = await readAll([
+    _supabase.from('purchase_return_items').select('*').eq('return_id', id)
+  ], 'Could not open the purchase return');
+  if (!itemRead) return;
+  const activeItems = itemRead[0].sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0));
   if (activeItems.length) loadPurchItemsIntoTable(activeItems);
 
   document.getElementById('retFormTitle').textContent = 'Edit Purchase Return';
@@ -258,7 +289,7 @@ async function deletePurchaseReturn(id) {
   if (!ok) return;
   await cascadePurchaseItemsDelete('return', id); // items + stock reversal first
   const { error } = await _supabase.from('purchase_returns').delete().eq('id', id);
-  if (error) { showToast('Error: ' + error.message, 'error'); return; }
+  if (error) { handleApiError(error, 'Could not delete the purchase return'); return; }
   showToast('Purchase return permanently deleted.', 'success');
   const user = await getCurrentUser();
   if (user) await loadPurchaseReturns(user.id);

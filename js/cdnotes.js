@@ -91,7 +91,7 @@ async function saveCDNote() {
     ({ error } = await _supabase.from('cdn_notes').insert(payload));
   }
 
-  if (error) { showToast('Error: ' + error.message, 'error'); return; }
+  if (error) { handleApiError(error, 'Could not save the note'); return; }
   showToast(cdEditId ? 'Note updated!' : 'Note saved!');
   cdEditId = null;
   resetCDNote();
@@ -115,7 +115,10 @@ function resetCDNote() {
 }
 
 async function loadCDNotes(userId) {
-  const { data } = await _supabase.from('cdn_notes').select('*').eq('user_id', userId).order('note_date', { ascending: false });
+  const { data, error } = await _supabase.from('cdn_notes').select('*').eq('user_id', userId).order('note_date', { ascending: false });
+  // Reported and abandoned rather than rendered as an empty list — an
+  // empty table is indistinguishable from having no records at all.
+  if (error) { handleApiError(error, 'Could not load the credit/debit notes'); return; }
   cdAllData = (data || []);
   cdPage = 1;
   renderCDTable(cdAllData);
@@ -203,7 +206,7 @@ async function deleteCDNote(id) {
   const ok = await showConfirm('Permanently delete this note? This cannot be undone.');
   if (!ok) return;
   const { error } = await _supabase.from('cdn_notes').delete().eq('id', id);
-  if (error) { showToast('Error: ' + error.message, 'error'); return; }
+  if (error) { handleApiError(error, 'Could not delete the note'); return; }
   showToast('Note permanently deleted.');
   cdAllData = cdAllData.filter(r => r.id !== id);
   renderCDTable(cdAllData);

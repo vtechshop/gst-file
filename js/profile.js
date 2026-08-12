@@ -12,7 +12,15 @@ let _currentProfile = null;
 // state. The GSTR-1 exporter turned exactly that into an empty gstin and
 // place of supply 99 on a return.
 async function loadUserProfile(userId) {
-  const { data } = await _supabase.from('profiles').select('*').eq('id', userId).single();
+  // readMaybeOne(), so "this user has no profile row yet" (a real state on
+  // a brand-new account) stays distinct from "the read failed". The
+  // keep-what-we-have behaviour below is unchanged — it is right — but a
+  // failure is now reported instead of passing silently, because the GSTIN
+  // and state this profile carries end up on the return.
+  const data = await readMaybeOne(
+    _supabase.from('profiles').select('*').eq('id', userId).single(),
+    'Could not load your business profile'
+  );
   if (data) {
     _currentProfile = data;
     updateNavFromProfile(data);
@@ -299,7 +307,11 @@ async function handleImageUpload(file, hiddenId, previewWrapId, iconClass) {
       body: formData
     });
     const body = await res.json().catch(() => null);
-    if (!res.ok) throw (body && body.error) || { message: 'Upload failed' };
+    // apiErrorFrom() (js/apiClient.js) rather than lifting body.error
+    // straight out: that lost the status, so a 413 (file too large for
+    // the server's limit) and an expired session both surfaced as the
+    // same anonymous red toast.
+    if (!res.ok) throw apiErrorFrom(res, body);
     // Stored server-side. The hidden input is deliberately left empty:
     // the image is already saved, and putting it here would only put it
     // back into the next PATCH. `cleared` is reset so a previous clear in
@@ -311,7 +323,7 @@ async function handleImageUpload(file, hiddenId, previewWrapId, iconClass) {
     }
     if (typeof showToast === 'function') showToast('Image saved.', 'success');
   } catch (error) {
-    showToast('Image upload failed: ' + (error.message || 'unknown error'), 'error');
+    handleApiError(error, 'Image upload failed');
     // Upload didn't succeed — roll the preview back rather than leaving
     // it showing a local-only image the hidden input doesn't reference.
     if (wrap) wrap.innerHTML = `<i class="fas ${iconClass} text-gray-mid"></i>`;
@@ -914,10 +926,22 @@ async function fetchProductSyncConfig() {
     const res = await fetch(API_BASE_URL + '/product-sync/config', {
       headers: token ? { Authorization: 'Bearer ' + token } : {}
     });
-    if (!res.ok) return { product_api_url: '', has_key: false };
+    if (!res.ok) {
+      // Reported rather than silently falling back to blanks. An empty
+      // Product API URL box looks exactly like "not configured yet", so
+      // a failed read here invited the user to retype a URL they had
+      // already saved — or to save an empty one over it.
+      const body = await res.json().catch(() => null);
+      handleApiError(apiErrorFrom(res, body), 'Could not load your Product Sync settings');
+      return { product_api_url: '', has_key: false, unavailable: true };
+    }
     return await res.json();
   } catch {
-    return { product_api_url: '', has_key: false };
+    handleApiError(
+      { message: 'Could not reach the server — check your connection and try again.', code: 'network', status: 0, networkError: true },
+      'Could not load your Product Sync settings'
+    );
+    return { product_api_url: '', has_key: false, unavailable: true };
   }
 }
 
@@ -931,11 +955,16 @@ async function saveProductSyncConfig(body) {
     });
     if (!res.ok) {
       const errBody = await res.json().catch(() => null);
-      throw new Error(errBody?.error?.message || errBody?.error || 'Save failed');
+      // The `errBody?.error` string fallback that used to be here was
+      // covering for server/routes/product-sync.js answering with a bare
+      // { error: '<string>' }; those now send the standard
+      // { error: { message, code } } like every other endpoint, and
+      // apiErrorFrom() handles either shape anyway.
+      throw apiErrorFrom(res, errBody);
     }
     return { ok: true };
   } catch (err) {
-    return { ok: false, message: err.message };
+    return { ok: false, error: err, message: err.message };
   }
 }
 
@@ -944,7 +973,7 @@ async function submitProductSyncSettings() {
   const product_api_key = document.getElementById('pSyncApiKey')?.value?.trim() || '';
 
   const result = await saveProductSyncConfig({ product_api_url, product_api_key });
-  if (!result.ok) { showToast('Error: ' + result.message, 'error'); return; }
+  if (!result.ok) { handleApiError(result.error, 'Could not save the Product Sync settings'); return; }
   showToast('Product Sync settings saved.', 'success');
   await openSettingsModal(); // re-render so the key field/status reflects what's now saved
 }
@@ -953,7 +982,7 @@ async function clearProductSyncKey() {
   const ok = await showConfirm('Remove the saved Product API key? Sync will stop authenticating until a new one is added.');
   if (!ok) return;
   const result = await saveProductSyncConfig({ clear_key: true });
-  if (!result.ok) { showToast('Error: ' + result.message, 'error'); return; }
+  if (!result.ok) { handleApiError(result.error, 'Could not remove the Product API key'); return; }
   showToast('Product API key removed.', 'success');
   await openSettingsModal();
 }

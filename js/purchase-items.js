@@ -20,7 +20,11 @@ let purchQuickAddTargetRowId = null;
 async function initPurchaseItems(userId, kind) {
   purchUserId = userId;
   purchKind = kind;
-  purchProductsList = await loadProductsList(userId);
+  // loadProductsList() returns null when the read failed. Keeping the
+  // previous list (rather than replacing it with an empty one) is what
+  // stops the Quick Add prompt from offering to create products that
+  // are already in the master.
+  purchProductsList = (await loadProductsList(userId)) || [];
   renderPurchItemsSectionShell('purchItemsSection');
   ensurePurchQuickAddProductModal();
   populatePurchProductDatalist();
@@ -329,7 +333,7 @@ async function onPurchProductBlur(rowId, name) {
   row.product_id = null; row.locked = false;
   renderPurchItemsTable();
 
-  const ok = await showYesNo(`"${escItemHtml(trimmed)}" does not exist in Product Master. Would you like to add it?`, 'Product Not Found');
+  const ok = await showYesNo(`"${trimmed}" does not exist in Product Master. Would you like to add it?`, 'Product Not Found');
   const stillThere = purchItems.find(r => r.rowId === rowId);
   if (!stillThere) return;
 
@@ -492,9 +496,9 @@ async function savePurchQuickAddProduct() {
     user_id: purchUserId, name, hsn_code: hsn, type: 'goods',
     gst_percentage: gstPct, default_rate: rate, unit, source: 'local'
   });
-  if (error) { showToast('Error: ' + error.message, 'error'); return; }
+  if (error) { handleApiError(error, 'Could not add the product'); return; }
 
-  purchProductsList = await loadProductsList(purchUserId);
+  purchProductsList = (await loadProductsList(purchUserId)) || purchProductsList;
   populatePurchProductDatalist();
   if (typeof loadProducts === 'function' && document.getElementById('prodTableBody')) {
     loadProducts(purchUserId);
@@ -624,7 +628,7 @@ async function savePurchaseWithItems(kind, headerBase, editId, userId) {
     });
     return id;
   } catch (error) {
-    showToast('Error: ' + (error.message || 'save failed'), 'error');
+    handleApiError(error, 'Could not save the purchase');
     return false;
   }
 }
@@ -635,6 +639,6 @@ async function cascadePurchaseItemsDelete(kind, id) {
   try {
     await apiFetch(`/purchases/${kind}/${id}/cascade-delete`, { method: 'POST' });
   } catch (error) {
-    showToast('Error: ' + (error.message || 'cascade delete failed'), 'error');
+    handleApiError(error, 'Could not delete the purchase items');
   }
 }

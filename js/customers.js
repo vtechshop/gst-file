@@ -136,7 +136,7 @@ async function saveCustomer() {
 
   // The backend runs the exact same checks — this only fires if the
   // request reached the API some other way than this validated form.
-  if (error) { showToast('Error: ' + error.message, 'error'); return; }
+  if (error) { handleApiError(error, 'Could not save the customer'); return; }
   showToast(custEditId ? 'Customer updated!' : 'Customer saved!');
   custEditId = null;
   resetCustomer();
@@ -160,7 +160,10 @@ function resetCustomer() {
 }
 
 async function loadCustomers(userId) {
-  const { data } = await _supabase.from('customers').select('*').eq('user_id', userId).order('name', { ascending: true });
+  const { data, error } = await _supabase.from('customers').select('*').eq('user_id', userId).order('name', { ascending: true });
+  // Reported and abandoned rather than rendered as an empty list — an
+  // empty table is indistinguishable from having no records at all.
+  if (error) { handleApiError(error, 'Could not load the customers'); return; }
   custAllData = (data || []);
   custPage = 1;
   renderCustTable(custAllData);
@@ -241,7 +244,7 @@ async function deleteCustomer(id) {
   const ok = await showConfirm('Permanently delete this customer? This cannot be undone.');
   if (!ok) return;
   const { error } = await _supabase.from('customers').delete().eq('id', id);
-  if (error) { showToast('Error: ' + error.message, 'error'); return; }
+  if (error) { handleApiError(error, 'Could not delete the customer'); return; }
   showToast('Customer permanently deleted.');
   custAllData = custAllData.filter(r => r.id !== id);
   renderCustTable(custAllData);

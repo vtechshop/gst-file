@@ -51,13 +51,17 @@ function escEwb(v) { return (v || '').toString().replace(/&/g,'&amp;').replace(/
 // Both invoice tables, unioned the same way Invoice List does it, so a
 // number from either can be selected.
 async function loadEwbInvoicesList(userId) {
-  const [{ data: b2b }, { data: b2c }] = await Promise.all([
+  // Half a picker is worse than none: the invoice someone is looking for
+  // would simply not be listed, reading as "that invoice doesn't exist".
+  const rows = await readAll([
     _supabase.from('b2b_invoices').select('*').eq('user_id', userId),
     _supabase.from('b2c_invoices').select('*').eq('user_id', userId)
-  ]);
+  ], 'Could not load the invoice list');
+  if (!rows) return;
+  const [b2b, b2c] = rows;
   ewbInvoices = [
-    ...(b2b || []).map(r => ({ ...r, type: 'b2b' })),
-    ...(b2c || []).map(r => ({ ...r, type: 'b2c', invoice_number: r.invoice_number || ('B2C-' + r.id.slice(0, 8).toUpperCase()) }))
+    ...b2b.map(r => ({ ...r, type: 'b2b' })),
+    ...b2c.map(r => ({ ...r, type: 'b2c', invoice_number: r.invoice_number || ('B2C-' + r.id.slice(0, 8).toUpperCase()) }))
   ].sort((a, b) => (b.invoice_date || '').localeCompare(a.invoice_date || ''));
 
   const dl = document.getElementById('ewbInvoiceDatalist');
@@ -84,9 +88,11 @@ function clearEwbInvoiceSelection() {
 // nothing on the invoice is ever written back by this module.
 async function selectEwbInvoice(inv) {
   ewbSelectedInvoice = inv;
-  const { data: items } = await _supabase.from('invoice_items')
-    .select('*').eq('invoice_id', inv.id).eq('invoice_type', inv.type);
-  ewbSelectedItems = (items || []).sort((a, b) => (+a.sort_order || 0) - (+b.sort_order || 0));
+  const itemRead = await readAll([
+    _supabase.from('invoice_items').select('*').eq('invoice_id', inv.id).eq('invoice_type', inv.type)
+  ], 'Could not load the invoice line items');
+  if (!itemRead) return;
+  ewbSelectedItems = itemRead[0].sort((a, b) => (+a.sort_order || 0) - (+b.sort_order || 0));
 
   document.getElementById('ewbInvoicePanel')?.classList.remove('d-none');
   const badge = document.getElementById('ewbStatusBadge');
@@ -164,7 +170,7 @@ async function saveEwayBill() {
       // integration should ever set them.
     };
     const { error } = await _supabase.from('eway_bills').insert(payload);
-    if (error) { showToast('Error: ' + error.message, 'error'); return; }
+    if (error) { handleApiError(error, 'Could not save the transport document'); return; }
     showToast('Transport document saved.', 'success');
     resetEwayBillForm();
     await loadEwayBills(ewbUserId);
@@ -183,8 +189,11 @@ function resetEwayBillForm() {
 
 // ── List ─────────────────────────────────────────────
 async function loadEwayBills(userId) {
-  const { data } = await _supabase.from('eway_bills').select('*').eq('user_id', userId)
+  const { data, error } = await _supabase.from('eway_bills').select('*').eq('user_id', userId)
     .order('created_at', { ascending: false });
+  // Reported and abandoned rather than rendered as an empty list — an
+  // empty table is indistinguishable from having no records at all.
+  if (error) { handleApiError(error, 'Could not load the transport documents'); return; }
   ewbAllData = data || [];
   ewbPage = 1;
   renderEwbTable();
@@ -244,7 +253,7 @@ async function deleteEwayBill(id) {
   const ok = await showConfirm('Delete this transport document? The invoice itself is not affected.');
   if (!ok) return;
   const { error } = await _supabase.from('eway_bills').delete().eq('id', id);
-  if (error) { showToast('Error: ' + error.message, 'error'); return; }
+  if (error) { handleApiError(error, 'Could not delete the transport document'); return; }
   showToast('Transport document deleted.');
   await loadEwayBills(ewbUserId);
 }
@@ -260,9 +269,13 @@ async function printTransportDocument(id) {
   if (!rec) { showToast('Transport document not found.', 'error'); return; }
 
   const inv = ewbInvoices.find(i => i.id === rec.invoice_id && i.type === rec.invoice_type);
-  const { data: items } = await _supabase.from('invoice_items')
-    .select('*').eq('invoice_id', rec.invoice_id).eq('invoice_type', rec.invoice_type);
-  const lines = (items || []).sort((a, b) => (+a.sort_order || 0) - (+b.sort_order || 0));
+  // Printed onto the transport document that travels with the goods —
+  // printing it with no lines on it is worse than not printing it.
+  const itemRead = await readAll([
+    _supabase.from('invoice_items').select('*').eq('invoice_id', rec.invoice_id).eq('invoice_type', rec.invoice_type)
+  ], 'Could not load the invoice line items');
+  if (!itemRead) return;
+  const lines = itemRead[0].sort((a, b) => (+a.sort_order || 0) - (+b.sort_order || 0));
   const profile = (typeof getCachedProfile === 'function') ? getCachedProfile() : null;
 
   const notGen = '<span style="color:#b26a00;">Not Generated</span>';

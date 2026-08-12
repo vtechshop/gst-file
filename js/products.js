@@ -76,11 +76,14 @@ async function runManualSync() {
   if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fas fa-sync"></i> Sync Now'; }
   if (result.ok) showToast(`Product sync complete — ${result.inserted} new, ${result.updated} updated.`, 'success');
   else if (result.reason === 'not_configured') showToast('Product Sync is not set up yet — add your Product API URL in Business Profile > Settings.', 'warning');
-  else showToast('Product sync failed: ' + result.reason, 'error');
+  else handleApiError(result.error || { message: result.reason || 'Product sync failed.', status: 500 }, 'Product sync failed');
 }
 
 async function loadProducts(userId) {
-  const { data } = await _supabase.from('products').select('*').eq('user_id', userId).order('name', { ascending: true });
+  const { data, error } = await _supabase.from('products').select('*').eq('user_id', userId).order('name', { ascending: true });
+  // Reported and abandoned rather than rendered as an empty list — an
+  // empty table is indistinguishable from having no records at all.
+  if (error) { handleApiError(error, 'Could not load the products'); return; }
   prodAllData = (data || []);
   prodPage = 1;
   renderProdTable(prodAllData);
@@ -173,19 +176,26 @@ async function deleteProduct(id) {
     return;
   }
 
-  const { data: used } = await _supabase.from('invoice_items')
-    .select('id').eq('user_id', user.id).eq('product_id', id);
-  if ((used || []).length) {
+  // This read IS the safety check. Reading a failure as an empty list
+  // meant "not used on any invoice", which is exactly the answer that
+  // lets the delete proceed — so a dropped request could remove a product
+  // that a filed invoice's audit trail points at.
+  const usedRead = await readAll([
+    _supabase.from('invoice_items').select('id').eq('user_id', user.id).eq('product_id', id)
+  ], 'Could not check whether this product is used on an invoice');
+  if (!usedRead) return;
+  const used = usedRead[0];
+  if (used.length) {
     showToast(`Used on ${used.length} invoice line${used.length === 1 ? '' : 's'} — a product on a filed invoice cannot be deleted. Edit it instead.`, 'error');
     return;
   }
 
   const ok = await showYesNo(
-    `Permanently delete <b>${escProdHtml(rec.name)}</b>?<br><br>It is not used on any invoice. This cannot be undone.`,
+    `Permanently delete "${rec.name}"?\n\nIt is not used on any invoice. This cannot be undone.`,
     'Delete Product');
   if (!ok) return;
   const { error } = await _supabase.from('products').delete().eq('id', id);
-  if (error) { showToast('Error: ' + error.message, 'error'); return; }
+  if (error) { handleApiError(error, 'Could not delete the product'); return; }
   showToast('Product deleted.');
   prodAllData = prodAllData.filter(r => r.id !== id);
   applyProdFilters();
@@ -222,8 +232,14 @@ function applyProdFilters() {
 // Exposed for other pages (B2B/B2C invoice entry auto-fill, HSN
 // display, Excel import auto-classification)
 async function loadProductsList(userId) {
-  const { data } = await _supabase.from('products').select('*').eq('user_id', userId);
-  return (data || []);
+  // null on failure, never an empty array. Callers use this list to decide
+  // whether a typed product name already exists — an empty list answers
+  // "no such product" to every name, which is what prompts Quick Add to
+  // offer creating one that is already in the master.
+  const rows = await readAll([
+    _supabase.from('products').select('*').eq('user_id', userId)
+  ], 'Could not load the product list');
+  return rows ? rows[0] : null;
 }
 
 function findProductByName(list, name) {
@@ -447,7 +463,7 @@ async function saveProduct() {
   if (prodEditId) ({ error } = await _supabase.from('products').update(payload).eq('id', prodEditId));
   else ({ error } = await _supabase.from('products').insert({ ...payload, source: 'local' }));
 
-  if (error) { showToast('Could not save: ' + (error.message || 'unknown error'), 'error'); return; }
+  if (error) { handleApiError(error, 'Could not save the product'); return; }
   showToast(prodEditId ? 'Product updated.' : 'Product added.', 'success');
   closeProductModal();
   await loadProducts(user.id);
@@ -496,9 +512,9 @@ async function applyBulkUnit() {
   if (!unit || !targets.length) { showToast('Nothing to change.', 'error'); return; }
 
   const ok = await showYesNo(
-    `Set the unit to <b>${escItemHtml(unit)}</b> on <b>${targets.length}</b> product${targets.length === 1 ? '' : 's'}.<br><br>` +
+    `Set the unit to "${unit}" on ${targets.length} product${targets.length === 1 ? '' : 's'}.\n\n` +
     'This is stored as a GST correction, so the next product sync will not overwrite it. ' +
-    'No price, name or stock is touched.<br><br>Continue?', 'Set Unit in Bulk');
+    'No price, name or stock is touched.\n\nContinue?', 'Set Unit in Bulk');
   if (!ok) return;
 
   const btn = document.getElementById('bulkUnitBtn');

@@ -115,8 +115,13 @@ async function onRiOriginalChange() {
     set('riOriginalPeriod', `${m}${y}`);
   }
 
-  const { data } = await _supabase.from('invoice_items').select('*').eq('invoice_id', id);
-  riItems = (data || []).map((it, i) => ({
+  // These lines are copied onto the revised invoice, so a failed read
+  // would produce a revised invoice with no products on it at all.
+  const itemRead = await readAll([
+    _supabase.from('invoice_items').select('*').eq('invoice_id', id)
+  ], 'Could not load the original invoice line items');
+  if (!itemRead) return;
+  riItems = itemRead[0].map((it, i) => ({
     product_name: it.product_name, hsn_code: it.hsn_code, unit: it.unit,
     quantity: it.quantity, rate: it.rate, discount_percentage: it.discount_percentage,
     gst_percentage: it.gst_percentage, taxable_value: it.taxable_value,
@@ -265,7 +270,10 @@ function resetRevisedInvoiceForm() {
 
 async function loadRevisedInvoices() {
   if (!riUserId) return;
-  const { data } = await _supabase.from('revised_invoices').select('*').eq('user_id', riUserId);
+  const { data, error } = await _supabase.from('revised_invoices').select('*').eq('user_id', riUserId);
+  // Reported and abandoned rather than rendered as an empty list — an
+  // empty table is indistinguishable from having no records at all.
+  if (error) { handleApiError(error, 'Could not load the revised invoices'); return; }
   riRows = (data || []).sort((a, b) => compareInvoiceNumbers(b.document_number, a.document_number));
   renderRevisedInvoices();
 }

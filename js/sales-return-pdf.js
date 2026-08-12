@@ -10,11 +10,22 @@
 // =============================================
 
 async function fetchSalesReturnRecord(id) {
-  const { data } = await _supabase.from('sales_returns').select('*').eq('id', id).single();
-  if (!data) { showToast('Sales return not found.', 'error'); return null; }
+  // Same reasoning as fetchInvoiceRecord() in js/invoice-pdf.js: a failed
+  // read must not be reported as a missing record, and must never reach
+  // the point of printing a document with none of its lines on it.
+  const data = await readMaybeOne(
+    _supabase.from('sales_returns').select('*').eq('id', id).single(),
+    'Could not load the sales return'
+  );
+  if (data === undefined) return null;
+  if (!data) { showToast('That sales return no longer exists.', 'warning'); return null; }
 
-  const { data: itemRows } = await _supabase.from('sales_return_items').select('*').eq('return_id', data.id);
-  const activeItems = (itemRows || []).sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0));
+  const itemRead = await readAll(
+    [_supabase.from('sales_return_items').select('*').eq('return_id', data.id)],
+    'Could not load the sales return line items'
+  );
+  if (!itemRead) return null;
+  const activeItems = itemRead[0].sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0));
 
   return {
     id: data.id,

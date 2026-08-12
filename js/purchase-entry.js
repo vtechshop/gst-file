@@ -109,7 +109,10 @@ function populatePurchStateOptions() {
 let purchSelectedVendorId = null;
 
 async function loadPurchVendorsList(userId) {
-  const { data } = await _supabase.from('vendors').select('*').eq('user_id', userId);
+  const { data, error } = await _supabase.from('vendors').select('*').eq('user_id', userId);
+  // Reported and abandoned rather than rendered as an empty list — an
+  // empty table is indistinguishable from having no records at all.
+  if (error) { handleApiError(error, 'Could not load Vendor Master'); return; }
   purchVendorsList = (data || []);
   const dl = document.getElementById('purchVendorDatalist');
   if (dl) {
@@ -234,7 +237,7 @@ async function saveVendorFromPurchaseForm() {
     user_id: user.id, name, gstin, phone: getPurchText('purchPhone'),
     address: getPurchText('purchAddress'), state: document.getElementById('purchState')?.value || ''
   });
-  if (error) { showToast('Error: ' + error.message, 'error'); return false; }
+  if (error) { handleApiError(error, 'Could not save the vendor'); return false; }
   showToast('Vendor saved to master!', 'success');
   await loadPurchVendorsList(user.id);
   return true;
@@ -304,8 +307,23 @@ function setPurchPaymentSectionMode(editable, statusLabel) {
 
 // ── Edit mode ────────────────────────────────────────
 async function loadPurchaseForEdit(id) {
-  const { data: rec } = await _supabase.from('purchases').select('*').eq('id', id).single();
-  if (!rec) { showToast('Purchase not found.', 'error'); return; }
+  // Header and line items are both read before the form is touched, and a
+  // failed read stops the edit rather than opening a form that looks like
+  // the record has fewer lines than it has — saving that back would
+  // overwrite the real ones. Same reasoning as loadInvoiceForEdit() in
+  // js/invoice-entry.js.
+  const rec = await readMaybeOne(
+    _supabase.from('purchases').select('*').eq('id', id).single(),
+    'Could not open the purchase'
+  );
+  if (rec === undefined) return;
+  if (!rec) { showToast('That purchase no longer exists.', 'warning'); return; }
+
+  const itemRead = await readAll([
+    _supabase.from('purchase_items').select('*').eq('purchase_id', id)
+  ], 'Could not open the purchase');
+  if (!itemRead) return;
+  const items = itemRead[0];
 
   purchEditId = id;
   purchSelectedVendorId = rec.vendor_id || null;
@@ -320,8 +338,8 @@ async function loadPurchaseForEdit(id) {
   setPurchValue('purchSupply', rec.supply_type || 'intrastate');
   setPurchPaymentSectionMode(false, rec.payment_status);
 
-  const { data: items } = await _supabase.from('purchase_items').select('*').eq('purchase_id', id);
-  const activeItems = (items || []).sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0));
+  // Read at the top of this function — see the note there.
+  const activeItems = items.slice().sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0));
   if (activeItems.length) loadPurchItemsIntoTable(activeItems);
 
   document.getElementById('purchPageTitle').textContent = 'Edit Purchase';
@@ -359,8 +377,19 @@ async function savePurchase() {
   if (wasNew && !validatePurchPaymentAmount()) return;
 
   if (!purchEditId) {
-    const { data: dup } = await _supabase.from('purchases').select('id').eq('user_id', user.id).eq('purchase_number', purchNum).single();
-    if (dup?.id) { showToast('Purchase number already exists!', 'error'); return; }
+    // readMaybeOne(), not a bare destructure of `.data`. A `.single()`
+    // that finds nothing and a `.single()` whose REQUEST failed both
+    // arrive with no data, and reading them the same way meant a failed
+    // duplicate check was taken as "no duplicate" and the save went
+    // ahead — putting two documents on one number into a filing, which
+    // the Portal rejects and which has to be unpicked by hand. undefined
+    // means the check itself failed, so nothing is saved.
+    const dup = await readMaybeOne(
+      _supabase.from('purchases').select('id').eq('user_id', user.id).eq('purchase_number', purchNum).single(),
+      'Could not check whether that purchase number is already used'
+    );
+    if (dup === undefined) return;
+    if (dup?.id) { showToast('Purchase number already exists!', 'warning'); return; }
   }
 
   const headerBase = {
@@ -396,7 +425,7 @@ async function savePurchase() {
         const referenceNumber = payStatus === 'paid' ? '' : getPurchText('purchPaymentReference');
         const note = payStatus === 'paid' ? 'Recorded at purchase creation' : (getPurchText('purchPaymentNote') || 'Recorded at purchase creation');
         const payResult = await recordPayment('purchase', id, user.id, { amount, method, date: payDate, referenceNumber, note });
-        if (!payResult.ok) showToast('Purchase saved, but the payment could not be recorded: ' + (payResult.reason || 'unknown error'), 'error');
+        if (!payResult.ok) handleApiError(payResult.error, 'Purchase saved, but the payment could not be recorded');
       }
     }
   }

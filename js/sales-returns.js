@@ -53,11 +53,15 @@ async function loadSrInvoicesList(userId) {
   // actually read. These tables carry ~30 columns each including the
   // whole transport block, none of which is used here.
   const INVOICE_FIELDS = 'id,invoice_number,customer_name,gst_number,phone,address,state,supply_type,invoice_date';
-  const [{ data: b2b }, { data: b2c }] = await Promise.all([
+  // Same reasoning as the e-way bill picker: an invoice missing from this
+  // list looks like an invoice that cannot be returned against.
+  const rows = await readAll([
     _supabase.from('b2b_invoices').select(INVOICE_FIELDS).eq('user_id', userId),
     _supabase.from('b2c_invoices').select(INVOICE_FIELDS).eq('user_id', userId)
-  ]);
-  const b2bRows = (b2b || []).map(r => ({
+  ], 'Could not load the invoice list');
+  if (!rows) return;
+  const [b2b, b2c] = rows;
+  const b2bRows = b2b.map(r => ({
     type: 'b2b', id: r.id, invoice_number: r.invoice_number, customer_name: r.customer_name,
     gst_number: r.gst_number, phone: r.phone, address: r.address, state: r.state,
     supply_type: r.supply_type, invoice_date: r.invoice_date
@@ -99,15 +103,27 @@ async function selectSrInvoice(match) {
     badge.className = 'badge ' + (match.supply_type === 'interstate' ? 'badge-blue' : 'badge-green');
   }
 
-  const { data: items } = await _supabase.from('invoice_items').select('*').eq('invoice_id', match.id).eq('invoice_type', match.type);
-  const activeItems = (items || []).sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0));
+  // The lines of the original invoice are what the whole return is built
+  // from — an empty list after a failed read offers nothing to return and
+  // looks like an invoice with no products on it.
+  const itemRead = await readAll([
+    _supabase.from('invoice_items').select('*').eq('invoice_id', match.id).eq('invoice_type', match.type)
+  ], 'Could not load the invoice being returned against');
+  if (!itemRead) return;
+  const activeItems = itemRead[0].sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0));
 
   const alreadyReturned = await computeAlreadyReturnedByProduct(match.id, match.type, srEditId);
   loadOriginalInvoiceItems(activeItems, alreadyReturned);
 
   if (srEditId) {
-    const { data: savedItems } = await _supabase.from('sales_return_items').select('*').eq('return_id', srEditId);
-    prefillSrReturnQuantities((savedItems || []));
+    // In edit mode these are the quantities already on the return. Read
+    // failing here would show every quantity as zero, and saving would
+    // record a return of nothing.
+    const savedRead = await readAll([
+      _supabase.from('sales_return_items').select('*').eq('return_id', srEditId)
+    ], 'Could not load the quantities already on this return');
+    if (!savedRead) return;
+    prefillSrReturnQuantities(savedRead[0]);
   }
 }
 
@@ -143,8 +159,19 @@ async function saveSalesReturn() {
   if (!returnDate) { showToast('Please enter the return date.', 'error'); return; }
 
   if (!srEditId) {
-    const { data: dup } = await _supabase.from('sales_returns').select('id').eq('user_id', user.id).eq('return_number', returnNum).single();
-    if (dup?.id) { showToast('Return number already exists!', 'error'); return; }
+    // readMaybeOne(), not a bare destructure of `.data`. A `.single()`
+    // that finds nothing and a `.single()` whose REQUEST failed both
+    // arrive with no data, and reading them the same way meant a failed
+    // duplicate check was taken as "no duplicate" and the save went
+    // ahead — putting two documents on one number into a filing, which
+    // the Portal rejects and which has to be unpicked by hand. undefined
+    // means the check itself failed, so nothing is saved.
+    const dup = await readMaybeOne(
+      _supabase.from('sales_returns').select('id').eq('user_id', user.id).eq('return_number', returnNum).single(),
+      'Could not check whether that return number is already used'
+    );
+    if (dup === undefined) return;
+    if (dup?.id) { showToast('Return number already exists!', 'warning'); return; }
   }
 
   const headerBase = {
@@ -295,7 +322,11 @@ async function goToSrPage(page) {
 }
 
 async function editSalesReturn(id) {
-  const { data: rec } = await _supabase.from('sales_returns').select('*').eq('id', id).single();
+  const rec = await readMaybeOne(
+    _supabase.from('sales_returns').select('*').eq('id', id).single(),
+    'Could not open the sales return'
+  );
+  if (rec === undefined) return;
   if (!rec) return;
 
   srEditId = id;
@@ -321,7 +352,7 @@ async function deleteSalesReturn(id) {
   if (!ok) return;
   await cascadeSalesReturnItemsDelete(id); // items + stock reversal first
   const { error } = await _supabase.from('sales_returns').delete().eq('id', id);
-  if (error) { showToast('Error: ' + error.message, 'error'); return; }
+  if (error) { handleApiError(error, 'Could not delete the sales return'); return; }
   showToast('Sales return permanently deleted.', 'success');
   const user = await getCurrentUser();
   if (user) await loadSalesReturns(user.id);

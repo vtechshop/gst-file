@@ -379,7 +379,10 @@ function resetChallanForm() {
 // ── List ────────────────────────────────────────────────────
 async function loadChallans() {
   if (!dcUserId) return;
-  const { data } = await _supabase.from('delivery_challans').select('*').eq('user_id', dcUserId);
+  const { data, error } = await _supabase.from('delivery_challans').select('*').eq('user_id', dcUserId);
+  // Reported and abandoned rather than rendered as an empty list — an
+  // empty table is indistinguishable from having no records at all.
+  if (error) { handleApiError(error, 'Could not load the challans'); return; }
   // The table holds all four variants; this page shows one at a time.
   dcRows = (data || []).filter(r => r.document_type === dcType());
   dcRows.sort((a, b) => compareInvoiceNumbers(b.document_number, a.document_number));
@@ -431,8 +434,13 @@ async function editChallan(id) {
   if (f.extra === 'quantity_known_at_dispatch') {
     const b = dcEl('dcExtraBool'); if (b) b.checked = !!r.quantity_known_at_dispatch;
   }
-  const { data } = await _supabase.from('delivery_challan_items').select('*').eq('challan_id', id);
-  dcItems = (data || []).sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0));
+  // A failed read would open the challan for editing with no lines on it,
+  // and saving would write that back over the real ones.
+  const itemRead = await readAll([
+    _supabase.from('delivery_challan_items').select('*').eq('challan_id', id)
+  ], 'Could not open the challan');
+  if (!itemRead) return;
+  dcItems = itemRead[0].sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0));
   renderDcItems();
   const t = dcEl('dcFormTitle'); if (t) t.textContent = 'Edit ' + gstDocumentTypeLabel(dcType());
   window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -521,9 +529,16 @@ async function saveJobWorker() {
 async function deleteJobWorker(id) {
   // A job worker named on a challan cannot be removed: the challan would
   // stop saying where the goods went.
-  const { data } = await _supabase.from('delivery_challans').select('id').eq('job_worker_id', id);
-  if ((data || []).length) {
-    alert(`${data.length} challan${data.length === 1 ? '' : 's'} name this job worker. Remove or reassign them first.`);
+  // Same shape of hazard as deleteProduct() in js/products.js: an empty
+  // list is the answer that PERMITS the delete, so a failed read must not
+  // produce one.
+  const usedRead = await readAll([
+    _supabase.from('delivery_challans').select('id').eq('job_worker_id', id)
+  ], 'Could not check whether this job worker is named on a challan');
+  if (!usedRead) return;
+  const used = usedRead[0];
+  if (used.length) {
+    alert(`${used.length} challan${used.length === 1 ? '' : 's'} name this job worker. Remove or reassign them first.`);
     return;
   }
   if (!confirm('Delete this job worker?')) return;

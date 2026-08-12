@@ -60,7 +60,7 @@ async function saveVendor() {
     ({ error } = await _supabase.from('vendors').insert(payload));
   }
 
-  if (error) { showToast('Error: ' + error.message, 'error'); return; }
+  if (error) { handleApiError(error, 'Could not save the vendor'); return; }
   showToast(vendEditId ? 'Vendor updated!' : 'Vendor saved!');
   vendEditId = null;
   resetVendor();
@@ -81,7 +81,10 @@ function resetVendor() {
 }
 
 async function loadVendors(userId) {
-  const { data } = await _supabase.from('vendors').select('*').eq('user_id', userId).order('name', { ascending: true });
+  const { data, error } = await _supabase.from('vendors').select('*').eq('user_id', userId).order('name', { ascending: true });
+  // Reported and abandoned rather than rendered as an empty list — an
+  // empty table is indistinguishable from having no records at all.
+  if (error) { handleApiError(error, 'Could not load the vendors'); return; }
   vendAllData = (data || []);
   vendPage = 1;
   renderVendTable(vendAllData);
@@ -153,7 +156,7 @@ async function deleteVendor(id) {
   const ok = await showConfirm('Permanently delete this vendor? This cannot be undone.');
   if (!ok) return;
   const { error } = await _supabase.from('vendors').delete().eq('id', id);
-  if (error) { showToast('Error: ' + error.message, 'error'); return; }
+  if (error) { handleApiError(error, 'Could not delete the vendor'); return; }
   showToast('Vendor permanently deleted.');
   vendAllData = vendAllData.filter(r => r.id !== id);
   renderVendTable(vendAllData);

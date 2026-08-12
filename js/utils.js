@@ -1196,7 +1196,30 @@ function monthYearOptions() {
   return opts;
 }
 
+// How long each severity stays on screen. A success needs only to be
+// noticed; an error has to be READ, and often contains a status code or
+// a log reference the user may want to write down — 3.5s for all four
+// was too short for that and too long for "Saved".
+const TOAST_DURATION = { success: 3000, info: 4000, warning: 5000, error: 7000 };
+// Newest toasts push older ones out rather than growing without bound —
+// bulk operations (the apply-to-many loops in js/products.js) can report
+// one failure per row and would otherwise fill the viewport.
+const TOAST_MAX_VISIBLE = 4;
+// Identical messages inside this window collapse onto one toast, for the
+// same reason.
+const TOAST_DEDUPE_MS = 1200;
+const _toastRecent = new Map();
+
 function showToast(msg, type = 'success') {
+  const text = String(msg == null ? '' : msg);
+  if (!text) return;
+
+  const now = Date.now();
+  const dedupeKey = type + '|' + text;
+  for (const [k, t] of _toastRecent) if (now - t > TOAST_DEDUPE_MS) _toastRecent.delete(k);
+  if (_toastRecent.has(dedupeKey)) return;
+  _toastRecent.set(dedupeKey, now);
+
   let container = document.getElementById('toastContainer');
   if (!container) {
     container = document.createElement('div');
@@ -1204,13 +1227,27 @@ function showToast(msg, type = 'success') {
     container.style.cssText = 'position:fixed;top:20px;right:20px;z-index:9999;display:flex;flex-direction:column;gap:8px;';
     document.body.appendChild(container);
   }
+  while (container.children.length >= TOAST_MAX_VISIBLE) container.firstElementChild.remove();
+
   const toast = document.createElement('div');
   const colors = { success: '#00796b', error: '#d32f2f', warning: '#f57c00', info: '#1565c0' };
-  toast.style.cssText = `background:${colors[type]||colors.success};color:#fff;padding:12px 20px;border-radius:8px;font-size:14px;font-weight:500;box-shadow:0 4px 12px rgba(0,0,0,0.2);min-width:250px;display:flex;align-items:center;gap:10px;animation:slideIn 0.3s ease;`;
+  toast.style.cssText = `background:${colors[type]||colors.success};color:#fff;padding:12px 20px;border-radius:8px;font-size:14px;font-weight:500;box-shadow:0 4px 12px rgba(0,0,0,0.2);min-width:250px;max-width:380px;display:flex;align-items:center;gap:10px;animation:slideIn 0.3s ease;`;
   const icons = { success: 'fa-check-circle', error: 'fa-times-circle', warning: 'fa-exclamation-triangle', info: 'fa-info-circle' };
-  toast.innerHTML = `<i class="fas ${icons[type]||icons.success}"></i><span>${msg}</span>`;
+
+  // The icon is markup we control; the MESSAGE is not. Toast text
+  // routinely carries server messages and user-entered values (product
+  // and customer names, invoice numbers) — interpolating that into
+  // innerHTML, as this did, executes anything script-shaped inside it.
+  // Built as two nodes so the message can only ever be text.
+  const icon = document.createElement('i');
+  icon.className = 'fas ' + (icons[type] || icons.success);
+  const span = document.createElement('span');
+  span.textContent = text;
+  toast.append(icon, span);
+
   container.appendChild(toast);
-  setTimeout(() => { toast.style.opacity = '0'; toast.style.transform = 'translateX(100px)'; toast.style.transition = 'all 0.3s'; setTimeout(() => toast.remove(), 300); }, 3500);
+  const dwell = TOAST_DURATION[type] || TOAST_DURATION.success;
+  setTimeout(() => { toast.style.opacity = '0'; toast.style.transform = 'translateX(100px)'; toast.style.transition = 'all 0.3s'; setTimeout(() => toast.remove(), 300); }, dwell);
 }
 
 function showConfirm(msg) {
@@ -1223,12 +1260,16 @@ function showConfirm(msg) {
           <i class="fas fa-exclamation-triangle" style="color:#f57c00;font-size:22px;"></i>
           <h3 style="margin:0;color:#333;font-size:17px;">Confirm Action</h3>
         </div>
-        <p style="margin:0 0 24px;color:#666;font-size:14px;">${msg}</p>
+        <p id="confirmMsg" style="margin:0 0 24px;color:#666;font-size:14px;white-space:pre-line;"></p>
         <div style="display:flex;gap:10px;justify-content:flex-end;">
           <button id="confirmNo" style="padding:8px 20px;border:1px solid #ddd;background:#fff;border-radius:6px;cursor:pointer;font-size:14px;">Cancel</button>
           <button id="confirmYes" style="padding:8px 20px;background:#d32f2f;color:#fff;border:none;border-radius:6px;cursor:pointer;font-size:14px;">Delete</button>
         </div>
       </div>`;
+    // Set as text, not interpolated into the markup above — callers build
+    // these prompts out of record names ("Delete invoice X?"), which are
+    // user-entered values and must not be parsed as HTML.
+    overlay.querySelector('#confirmMsg').textContent = String(msg == null ? '' : msg);
     document.body.appendChild(overlay);
     overlay.querySelector('#confirmYes').onclick = () => { overlay.remove(); resolve(true); };
     overlay.querySelector('#confirmNo').onclick  = () => { overlay.remove(); resolve(false); };
@@ -1245,14 +1286,17 @@ function showYesNo(msg, title) {
       <div style="background:#fff;border-radius:12px;padding:28px 32px;max-width:380px;width:90%;box-shadow:0 8px 30px rgba(0,0,0,0.2);">
         <div style="display:flex;align-items:center;gap:12px;margin-bottom:16px;">
           <i class="fas fa-question-circle" style="color:#00796b;font-size:22px;"></i>
-          <h3 style="margin:0;color:#333;font-size:17px;">${title || 'Confirm'}</h3>
+          <h3 id="yesNoTitle" style="margin:0;color:#333;font-size:17px;"></h3>
         </div>
-        <p style="margin:0 0 24px;color:#666;font-size:14px;">${msg}</p>
+        <p id="yesNoMsg" style="margin:0 0 24px;color:#666;font-size:14px;white-space:pre-line;"></p>
         <div style="display:flex;gap:10px;justify-content:flex-end;">
           <button id="yesNoNo" style="padding:8px 20px;border:1px solid #ddd;background:#fff;border-radius:6px;cursor:pointer;font-size:14px;">No</button>
           <button id="yesNoYes" style="padding:8px 20px;background:#00796b;color:#fff;border:none;border-radius:6px;cursor:pointer;font-size:14px;">Yes</button>
         </div>
       </div>`;
+    // Text, not markup — same reasoning as showConfirm() above.
+    overlay.querySelector('#yesNoTitle').textContent = title || 'Confirm';
+    overlay.querySelector('#yesNoMsg').textContent = String(msg == null ? '' : msg);
     document.body.appendChild(overlay);
     overlay.querySelector('#yesNoYes').onclick = () => { overlay.remove(); resolve(true); };
     overlay.querySelector('#yesNoNo').onclick  = () => { overlay.remove(); resolve(false); };

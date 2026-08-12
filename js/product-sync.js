@@ -99,15 +99,21 @@ function isProductSyncStale(meta) {
 async function syncProductsIfNeeded(userId) {
   if (!userId) return;
 
-  let hasNoProducts = true;
-  try {
-    const { data } = await _supabase.from('products').select('id').eq('user_id', userId);
-    hasNoProducts = !data || data.length === 0;
-  } catch {
-    // Can't tell — fall through to the normal staleness/cooldown path
-    // rather than assuming empty and hammering the backend.
-    hasNoProducts = false;
-  }
+  // The try/catch this replaces did not do what its comment said. The
+  // query builder RESOLVES with { data: null, error } on a failure rather
+  // than throwing, so the catch never ran; `data` was null, hasNoProducts
+  // came out TRUE, and the function returned early — the exact "assume
+  // empty" outcome the comment said it was avoiding, silently disabling
+  // the background refresh for as long as the read kept failing.
+  // Checked inline rather than through readAll(), deliberately: this is a
+  // background probe on EVERY page load, and a toast here would be noise
+  // the user can neither act on nor connect to anything they did. The
+  // failure still has to be respected, just not announced — "can't tell"
+  // falls through to the normal staleness/cooldown path below rather than
+  // assuming the account is empty.
+  const probe = await _supabase.from('products').select('id').eq('user_id', userId);
+  if (probe.error) console.warn('[product-sync] could not check the product list:', probe.error);
+  const hasNoProducts = probe.error ? false : (probe.data || []).length === 0;
 
   // Zero products for this account — stay empty until the user
   // explicitly syncs. See the comment above for why this is no longer
@@ -150,18 +156,23 @@ async function syncProducts(userId) {
     });
     if (!res.ok) {
       const body = await res.json().catch(() => null);
-      const message = body?.error || ('HTTP ' + res.status);
+      // apiErrorFrom() (js/apiClient.js) — this used to read body.error
+      // as a plain STRING, which only worked because this one endpoint
+      // was answering off-contract. It now sends
+      // { error: { message, code } } like the rest of the API, and this
+      // reads it the same way every other call site does.
+      const apiError = apiErrorFrom(res, body);
       if (res.status === 503) {
         // This company hasn't configured its own Product API URL yet —
         // a normal, expected state, not a failure.
-        setProductSyncMeta({ lastSyncAt: getProductSyncMeta().lastSyncAt, status: 'not_configured', message });
+        setProductSyncMeta({ lastSyncAt: getProductSyncMeta().lastSyncAt, status: 'not_configured', message: apiError.message });
         return { ok: false, reason: 'not_configured' };
       }
-      throw new Error(message);
+      throw apiError;
     }
     const payload = await res.json();
     const remoteRaw = Array.isArray(payload) ? payload : (payload.products || payload.data || null);
-    if (!Array.isArray(remoteRaw)) throw new Error('Unexpected response shape from product sync endpoint');
+    if (!Array.isArray(remoteRaw)) throw { message: 'Unexpected response shape from the product sync endpoint.', status: 502, code: 'upstream_failed' };
 
     const result = await applyProductSync(userId, remoteRaw);
 
@@ -180,7 +191,10 @@ async function syncProducts(userId) {
       status: 'error',
       message: err?.message || 'Product sync failed'
     });
-    return { ok: false, reason: err?.message };
+    // `error` alongside `reason` so the caller can report this through
+    // handleApiError() and keep the status — see js/products.js's
+    // syncProductsNow(). `reason` stays for the status-bar text.
+    return { ok: false, reason: err?.message, error: err };
   }
 }
 
@@ -233,9 +247,20 @@ function productPayloadChanged(existing, incoming) {
 async function applyProductSync(userId, remoteRaw) {
   const mapped = remoteRaw.map(mapRemoteProduct);
 
-  const { data: existing } = await _supabase.from('products').select('*').eq('user_id', userId);
+  // Everything below decides insert-vs-update by looking a product up in
+  // this list. A failed read defaulting to an empty list would tell the
+  // sync that the account has NO products yet, and it would insert a
+  // fresh copy of the entire website catalogue alongside the existing
+  // one — duplicating every product, each with its own id, some already
+  // referenced by invoices. Thrown instead, and caught by syncProducts(),
+  // which leaves existing rows untouched on any failure.
+  const existingRead = await readAll([
+    _supabase.from('products').select('*').eq('user_id', userId)
+  ], 'Could not read your current products');
+  if (!existingRead) throw { message: 'Could not read your current products, so nothing was synced.', status: 0, code: 'network' };
+  const existing = existingRead[0];
   const existingByExternalId = {};
-  (existing || []).forEach(p => { if (p.external_id) existingByExternalId[p.external_id] = p; });
+  existing.forEach(p => { if (p.external_id) existingByExternalId[p.external_id] = p; });
 
   let inserted = 0, updated = 0, skippedInvalid = 0;
 

@@ -22,7 +22,10 @@ async function initVendorLedger() {
 }
 
 async function loadVendLedgerData(userId) {
-  const { data } = await _supabase.from('purchases').select('*').eq('user_id', userId);
+  const { data, error } = await _supabase.from('purchases').select('*').eq('user_id', userId);
+  // Reported and abandoned rather than rendered as an empty list — an
+  // empty table is indistinguishable from having no records at all.
+  if (error) { handleApiError(error, 'Could not load the vendor ledger'); return; }
   vlAllData = (data || [])
     .map(r => ({
       id: r.id, purchase_number: r.purchase_number, purchase_date: r.purchase_date,

@@ -22,23 +22,43 @@
 
 async function fetchInvoiceRecord(type, id) {
   const table = type === 'b2b' ? 'b2b_invoices' : 'b2c_invoices';
-  const { data } = await _supabase.from(table).select('*').eq('id', id).single();
-  if (!data) { showToast('Invoice not found.', 'error'); return null; }
+  // "Invoice not found" used to be shown for a FAILED read too, which
+  // sent people looking for an invoice that was never missing.
+  const data = await readMaybeOne(
+    _supabase.from(table).select('*').eq('id', id).single(),
+    'Could not load the invoice'
+  );
+  if (data === undefined) return null;                       // read failed, already reported
+  if (!data) { showToast('That invoice no longer exists.', 'warning'); return null; }
 
   // The invoice row itself (customer_name/phone/address/state, captured
   // directly on Invoice Entry) is the authoritative source now. Customer
   // Master is still consulted as a fallback for older rows saved before
   // those fields existed, and for email (not collected on the invoice
   // form itself).
-  const { data: custMatches } = await _supabase.from('customers').select('*').eq('user_id', data.user_id);
-  const customer = (custMatches || []).find(c =>
+  // Only a fallback for older rows, so a failed read here is not worth
+  // refusing to print over — the invoice's own captured fields still
+  // carry the customer. Reported, then treated as no match.
+  const custMatches = (await readAll(
+    [_supabase.from('customers').select('*').eq('user_id', data.user_id)],
+    'Could not check Customer Master for extra contact details'
+  ) || [[]])[0];
+  const customer = custMatches.find(c =>
     c.name.toLowerCase() === (data.customer_name || '').toLowerCase() &&
     (!data.gst_number || (c.gstin || '').toUpperCase() === (data.gst_number || '').toUpperCase())
-  ) || (custMatches || []).find(c => c.name.toLowerCase() === (data.customer_name || '').toLowerCase());
+  ) || custMatches.find(c => c.name.toLowerCase() === (data.customer_name || '').toLowerCase());
 
+  // A failed read here is NOT allowed to fall through: the caller treats
+  // a null `items` as "an old invoice with no line rows" and prints a
+  // single summary line instead. On a failed read that would hand the
+  // customer an invoice missing every line it actually has.
   let items = null;
-  const { data: itemRows } = await _supabase.from('invoice_items').select('*').eq('invoice_id', data.id).eq('invoice_type', type);
-  const activeItems = (itemRows || []).sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0));
+  const itemRead = await readAll(
+    [_supabase.from('invoice_items').select('*').eq('invoice_id', data.id).eq('invoice_type', type)],
+    'Could not load the invoice line items'
+  );
+  if (!itemRead) return null;
+  const activeItems = itemRead[0].sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0));
   if (activeItems.length) items = activeItems;
 
   return {

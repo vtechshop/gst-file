@@ -387,7 +387,7 @@ async function saveSalesReturnWithItems(headerBase, editId) {
     });
     return id;
   } catch (error) {
-    showToast('Error: ' + (error.message || 'save failed'), 'error');
+    handleApiError(error, 'Could not save the sales return');
     return false;
   }
 }
@@ -397,6 +397,6 @@ async function cascadeSalesReturnItemsDelete(id) {
   try {
     await apiFetch(`/sales_returns/${id}/cascade-delete`, { method: 'POST' });
   } catch (error) {
-    showToast('Error: ' + (error.message || 'cascade delete failed'), 'error');
+    handleApiError(error, 'Could not delete the sales return items');
   }
 }

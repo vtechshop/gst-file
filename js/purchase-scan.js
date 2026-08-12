@@ -51,7 +51,7 @@ async function handlePurchaseBillUpload(file) {
   } catch (err) {
     hideScanProgress();
     console.log(`[bill-scan] ${Date.now() - started}ms FAIL ${err.message || 'unknown'}`);
-    showToast(err.message || 'Could not read that bill.', 'error');
+    handleApiError(err, 'Could not read that bill');
   } finally {
     if (input) { input.disabled = false; input.value = ''; }   // let the same file be picked again
   }
@@ -74,11 +74,16 @@ async function sendBillForScan(file) {
       body: form
     });
   } catch {
-    throw new Error('Could not reach the server. Check your connection and try again.');
+    throw { message: 'Could not reach the server — check your connection and try again.', code: 'network', status: 0, networkError: true };
   }
 
   const body = await res.json().catch(() => null);
-  if (!res.ok) throw new Error((body && body.error && body.error.message) || `Bill analysis failed (${res.status}).`);
+  // apiErrorFrom() (js/apiClient.js) rather than a bare Error, so the
+  // status survives to the toast: bill scanning answers 503 when
+  // GEMINI_API_KEY isn't set, 502 when the upstream analysis fails and
+  // 401 on an expired session — three completely different things to
+  // tell the user, all previously flattened into one red message.
+  if (!res.ok) throw apiErrorFrom(res, body);
   assertScanShape(body);
   return body;
 }

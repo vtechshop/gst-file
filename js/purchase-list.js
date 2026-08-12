@@ -24,7 +24,10 @@ async function initPurchaseList() {
 }
 
 async function loadPurchaseList(userId) {
-  const { data } = await _supabase.from('purchases').select('*').eq('user_id', userId);
+  const { data, error } = await _supabase.from('purchases').select('*').eq('user_id', userId);
+  // Reported and abandoned rather than rendered as an empty list — an
+  // empty table is indistinguishable from having no records at all.
+  if (error) { handleApiError(error, 'Could not load the purchases'); return; }
   purchListAllData = (data || [])
     .sort((a, b) => (b.purchase_date || '').localeCompare(a.purchase_date || ''));
   purchListPage = 1;
@@ -168,6 +171,12 @@ async function refreshPurchPaymentModal() {
   if (!rec) return;
 
   const history = await loadPaymentsForInvoice('purchase', mppTarget);
+  // null means the ledger could not be READ (loadPaymentsForInvoice()),
+  // which is not the same as an invoice with no payments yet. Opening the
+  // dialog anyway would show "₹0 received" against a possibly part-paid
+  // invoice and invite the user to record a payment twice, so it does not
+  // open at all — handleApiError() has already said why.
+  if (!history) { closeMarkPurchPaymentModal?.(); return; }
   const paidSoFar = round2(history.reduce((s, p) => s + (+p.amount || 0), 0));
   const outstanding = round2(Math.max(0, (+rec.total_amount || 0) - paidSoFar));
 
@@ -203,7 +212,7 @@ async function submitPurchPayment() {
   const note = document.getElementById('mppNote')?.value;
 
   const result = await recordPayment('purchase', mppTarget, user.id, { amount, method, date, referenceNumber, note });
-  if (!result.ok) { showToast(result.reason || 'Could not record payment.', 'error'); return; }
+  if (!result.ok) { handleApiError(result.error, 'Could not record the payment'); return; }
 
   showToast('Payment recorded.', 'success');
   setPurchListValue('mppAmount', '');
@@ -220,7 +229,7 @@ async function removePurchPayment(paymentId) {
   const ok = await showConfirm('Remove this payment record? The purchase balance will be recalculated.');
   if (!ok) return;
   const result = await deletePayment(paymentId, 'purchase', mppTarget, user.id);
-  if (!result.ok) { showToast(result.reason || 'Could not remove payment.', 'error'); return; }
+  if (!result.ok) { handleApiError(result.error, 'Could not remove the payment'); return; }
   showToast('Payment removed.', 'success');
   await loadPurchaseList(user.id);
   await refreshPurchPaymentModal();
@@ -231,7 +240,7 @@ async function deletePurchaseFromList(id) {
   if (!ok) return;
   await cascadePurchaseItemsDelete('purchase', id); // items + stock reversal first
   const { error } = await _supabase.from('purchases').delete().eq('id', id);
-  if (error) { showToast('Error: ' + error.message, 'error'); return; }
+  if (error) { handleApiError(error, 'Could not delete the purchase'); return; }
   showToast('Purchase permanently deleted.', 'success');
   const user = await getCurrentUser();
   if (user) await loadPurchaseList(user.id);
