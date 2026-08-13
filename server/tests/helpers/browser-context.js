@@ -123,4 +123,57 @@ function makeRecordingSupabase(recorded) {
   return { from: builder };
 }
 
-module.exports = { createBrowserContext, makeRecordingSupabase };
+// A stand-in that actually HOLDS rows and actually APPLIES the filters,
+// unlike makeRecordingSupabase() above which records the query and always
+// answers empty.
+//
+// The filtering is the entire point. A stand-in that ignored .eq('user_id')
+// or .gte('invoice_date') would let a cross-company or cross-month test
+// pass while proving nothing at all — the exporter could be scoping
+// nothing and the assertion would still be green. Here the filters are
+// honoured, so "August rows were supplied and July's file does not contain
+// them" is a real result: the rows were present and were excluded.
+//
+// `tables` is { tableName: [row, ...] }. An unknown table answers empty,
+// which is what the real API does for a business with no such records.
+function makeDataSupabase(tables) {
+  function builder(table) {
+    const filters = { eq: {}, gte: {}, lte: {}, in: {} };
+    const run = () => {
+      let rows = (tables[table] || []).slice();
+      Object.entries(filters.eq).forEach(([f, v]) => {
+        rows = rows.filter(r => String(r[f]) === String(v));
+      });
+      Object.entries(filters.gte).forEach(([f, v]) => {
+        rows = rows.filter(r => r[f] !== undefined && r[f] !== null && String(r[f]) >= String(v));
+      });
+      Object.entries(filters.lte).forEach(([f, v]) => {
+        rows = rows.filter(r => r[f] !== undefined && r[f] !== null && String(r[f]) <= String(v));
+      });
+      Object.entries(filters.in).forEach(([f, vs]) => {
+        const set = new Set((vs || []).map(String));
+        rows = rows.filter(r => set.has(String(r[f])));
+      });
+      return rows;
+    };
+    const api = {
+      select() { return api; },
+      eq(f, v) { filters.eq[f] = v; return api; },
+      gte(f, v) { filters.gte[f] = v; return api; },
+      lte(f, v) { filters.lte[f] = v; return api; },
+      in(f, v) { filters.in[f] = v; return api; },
+      order() { return api; },
+      limit() { return api; },
+      single() {
+        const rows = run();
+        return Promise.resolve({ data: rows[0] || null, error: rows.length ? null : { code: 'PGRST116' } });
+      },
+      then(resolve, reject) { return Promise.resolve({ data: run(), error: null }).then(resolve, reject); },
+      catch(fn) { return Promise.resolve({ data: run(), error: null }).catch(fn); }
+    };
+    return api;
+  }
+  return { from: builder };
+}
+
+module.exports = { createBrowserContext, makeRecordingSupabase, makeDataSupabase };
