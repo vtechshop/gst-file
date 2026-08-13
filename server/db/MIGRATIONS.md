@@ -29,9 +29,33 @@ Run from `server/`.
 npm run migrate:status     # what is applied, what is pending. Changes nothing.
 npm run migrate            # apply every pending migration, in order
 npm run migrate:baseline -- --yes   # record pending migrations as applied WITHOUT running them
+
+# baseline everything EXCEPT one that this database does not actually have,
+# so `migrate` applies it for real afterwards:
+npm run migrate:baseline -- --yes --except migration_sales_return_perf
 ```
 
-All three exit non-zero on failure, so a deploy step can gate on them.
+All exit non-zero on failure, so a deploy step can gate on them.
+
+### `--except`
+
+Takes one or more migration ids. Accepted forms:
+
+```bash
+--except a              --except a b              --except=a,b
+```
+
+An excluded migration is **not recorded and not executed** — it simply stays
+pending. Unknown ids are rejected *before* anything is written, because a typo
+would otherwise baseline the very migration you meant to hold back. `--except`
+only applies to `baseline`; using it with `migrate` or `status` is an error
+rather than a silent no-op.
+
+**Why it exists.** Baseline asserts "this database already has these changes".
+That is true for most of a long-lived database's migrations and false for any
+that were skipped. Baselining a skipped one records it as done and it never runs
+again — the exact failure this runner was built to prevent. `--except` is how
+you tell the truth about a database that is *mostly* up to date.
 
 ## Migration order
 
@@ -159,9 +183,17 @@ they must be **baselined**, not executed:
 
 ```bash
 npm run migrate:status              # expect: all 20 pending
-npm run migrate:baseline -- --yes   # records them; runs nothing
-npm run migrate:status              # expect: 0 pending
+npm run migrate:baseline -- --yes --except migration_sales_return_perf
+npm run migrate                     # applies the one that was held back
+npm run migrate:status              # expect: 20 applied, 0 pending
 ```
+
+`migration_sales_return_perf` is excluded deliberately. A read-only check of
+production on 2026-08-13 found all four of its indexes absent — it is
+index-only, so it left no column trace and had never been run there. The other
+19 migrations' effects were each verified present. Baselining that one would
+have recorded four performance indexes as existing when they do not, and they
+would never have been created.
 
 Baseline asserts *"this database is already at this point"*. Only do it when you
 know that is true — hence the explicit `--yes`. It is the correct action for

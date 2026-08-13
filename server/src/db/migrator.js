@@ -159,10 +159,33 @@ async function recordApplied(client, m, ms, baselined) {
 // constraints under live traffic. Baselining asserts "this database is
 // already at this point" — which only an operator can know, hence the
 // explicit confirm flag on the CLI.
-async function run(pool, { mode = 'up', log = console.log, confirmBaseline = false } = {}) {
+async function run(pool, { mode = 'up', log = console.log, confirmBaseline = false, except = [] } = {}) {
   const plan = loadPlan();
   const client = await pool.connect();
-  const result = { mode, applied: [], pending: [], alreadyApplied: [], failed: null, drifted: [] };
+  const result = { mode, applied: [], pending: [], alreadyApplied: [], failed: null, drifted: [], excluded: [] };
+
+  // `except` is only meaningful when baselining. Silently ignoring it on
+  // `up` would be the worst outcome: someone typing
+  // `migrate --except <id>` expecting a migration to be skipped would
+  // watch it run anyway.
+  if (except.length && mode !== 'baseline') {
+    client.release();
+    throw new Error(`--except only applies to baseline; it cannot be used with "${mode}".`);
+  }
+
+  // An unknown id almost always means a typo, and a typo here silently
+  // baselines the migration the operator meant to hold back — the exact
+  // thing they were trying to prevent. Checked against the manifest
+  // before anything is written.
+  const known = new Set(plan.map(m => m.id));
+  const unknown = except.filter(id => !known.has(id));
+  if (unknown.length) {
+    client.release();
+    throw new Error(
+      `--except names ${unknown.length} migration(s) that do not exist: ${unknown.join(', ')}. ` +
+      `Use the migration id (the filename without .sql), e.g. ${plan[0].id}.`
+    );
+  }
 
   try {
     if (!(await acquireLock(client))) {
@@ -217,18 +240,31 @@ async function run(pool, { mode = 'up', log = console.log, confirmBaseline = fal
     }
 
     if (mode === 'baseline') {
+      // Held back deliberately: a migration whose effect is NOT in this
+      // database must stay pending so `migrate` applies it for real.
+      // Baselining it would record it as done and it would never run
+      // again — the failure this whole runner exists to prevent.
+      const toBaseline = pending.filter(m => !except.includes(m.id));
+      result.excluded = pending.filter(m => except.includes(m.id)).map(m => m.id);
+
       if (!confirmBaseline) {
         throw new Error(
-          `Refusing to baseline ${pending.length} migration(s) without confirmation. ` +
+          `Refusing to baseline ${toBaseline.length} migration(s) without confirmation. ` +
           'Baselining marks them applied WITHOUT running them — only do this on a database ' +
           'you know already has their schema. Re-run with --yes.'
         );
       }
-      for (const m of pending) {
+      for (const m of toBaseline) {
         await recordApplied(client, m, 0, true);
         result.applied.push(m.id);
         log(`  BASELINED  ${m.filename}  (recorded, not executed)`);
       }
+      for (const id of result.excluded) {
+        log(`  EXCLUDED   ${id}  (left pending — run "npm run migrate" to apply it)`);
+      }
+      // `pending` reflects what is still outstanding after this run, which
+      // for a baseline is exactly the excluded set.
+      result.pending = result.excluded.slice();
       return result;
     }
 
@@ -277,14 +313,32 @@ module.exports = { run, loadPlan, checksum, idOf, managesOwnTransaction, LOCK_KE
 if (require.main === module) {
   require('dotenv').config();
   const args = process.argv.slice(2);
-  const mode = args.find(a => !a.startsWith('--')) || 'up';
+
+  // Positional mode first, then flags. Parsed explicitly rather than with
+  // `find(a => !a.startsWith('--'))`, because --except takes bare values
+  // and that predicate would happily mistake one of them for the mode.
+  //
+  //   node src/db/migrator.js baseline --yes --except a --except b
+  //   node src/db/migrator.js baseline --yes --except a b
+  //   node src/db/migrator.js baseline --yes --except=a,b
+  const mode = (args[0] && !args[0].startsWith('--')) ? args[0] : 'up';
+  const except = [];
+  for (let i = args[0] === mode ? 1 : 0; i < args.length; i++) {
+    const a = args[i];
+    if (a.startsWith('--except=')) {
+      except.push(...a.slice('--except='.length).split(',').map(s => s.trim()).filter(Boolean));
+    } else if (a === '--except') {
+      while (i + 1 < args.length && !args[i + 1].startsWith('--')) except.push(args[++i]);
+    }
+  }
+
   if (!['up', 'status', 'baseline'].includes(mode)) {
     console.error(`Unknown mode "${mode}". Use: status | up | baseline`);
     process.exit(2);
   }
   const pool = require('../config/pool');
-  console.log(`\nmigrations: ${mode}`);
-  run(pool, { mode, confirmBaseline: args.includes('--yes') })
+  console.log(`\nmigrations: ${mode}${except.length ? `  (excluding ${except.join(', ')})` : ''}`);
+  run(pool, { mode, confirmBaseline: args.includes('--yes'), except })
     .then((r) => {
       if (mode === 'up' && r.applied.length) console.log(`\n  ${r.applied.length} migration(s) applied.`);
       console.log('');

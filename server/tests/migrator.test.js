@@ -270,3 +270,156 @@ test('the repository\'s own migration set is well-formed', async (t) => {
     assert.ok(own.includes('migration_payment_status_partial'));
   });
 });
+
+// ── Selective baseline (--except) ────────────────────
+//
+// Production has every migration's effect EXCEPT migration_sales_return_perf,
+// which is index-only and was never run there. Baselining it would record it
+// as applied and it would never run again, leaving four indexes permanently
+// missing and invisible. --except holds it back so `migrate` applies it for
+// real.
+const EXCEPT_DB = 'gst_migrator_except';
+const EXCEPT_URL = process.env.DATABASE_URL.replace(/\/[^/]*$/, '/' + EXCEPT_DB);
+
+async function freshExceptDatabase() {
+  await admin(`SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname='${EXCEPT_DB}'`);
+  await admin(`DROP DATABASE IF EXISTS ${EXCEPT_DB}`);
+  await admin(`CREATE DATABASE ${EXCEPT_DB}`);
+  return new Pool({ connectionString: EXCEPT_URL });
+}
+
+test('baseline --except', async (t) => {
+  await t.test('without --except, behaviour is unchanged', async () => {
+    const pool = await freshDatabase();
+    const r = runnerFor(fixtureDir({ '001_a.sql': OK_A, '002_b.sql': OK_B }));
+    const res = await r.run(pool, { mode: 'baseline', confirmBaseline: true, log: () => {} });
+    assert.deepStrictEqual(res.applied, ['001_a', '002_b']);
+    assert.deepStrictEqual(res.excluded, []);
+    assert.strictEqual((await pool.query("SELECT to_regclass('alpha') AS t")).rows[0].t, null, 'still never executes');
+    await pool.end();
+  });
+
+  await t.test('the excluded migration is neither recorded nor executed', async () => {
+    const pool = await freshDatabase();
+    const r = runnerFor(fixtureDir({ '001_a.sql': OK_A, '002_b.sql': OK_B }));
+    const res = await r.run(pool, { mode: 'baseline', confirmBaseline: true, except: ['002_b'], log: () => {} });
+    assert.deepStrictEqual(res.applied, ['001_a']);
+    assert.deepStrictEqual(res.excluded, ['002_b']);
+    assert.deepStrictEqual(res.pending, ['002_b']);
+    const ids = (await pool.query('SELECT id FROM schema_migrations')).rows.map(x => x.id);
+    assert.deepStrictEqual(ids, ['001_a'], 'excluded id must NOT be in schema_migrations');
+    assert.strictEqual((await pool.query("SELECT to_regclass('beta') AS t")).rows[0].t, null,
+      'baseline must never execute the excluded migration');
+    await pool.end();
+  });
+
+  await t.test('a later migrate applies only the excluded one', async () => {
+    const pool = await freshDatabase();
+    const r = runnerFor(fixtureDir({ '001_a.sql': OK_A, '002_b.sql': OK_B }));
+    await r.run(pool, { mode: 'baseline', confirmBaseline: true, except: ['002_b'], log: () => {} });
+    const up = await r.run(pool, { log: () => {} });
+    assert.deepStrictEqual(up.applied, ['002_b'], 'only the excluded migration runs');
+    assert.ok((await pool.query("SELECT to_regclass('beta') AS t")).rows[0].t, 'its DDL took effect');
+    assert.strictEqual((await pool.query("SELECT to_regclass('alpha') AS t")).rows[0].t, null,
+      'the baselined migration is still never executed');
+    const rows = (await pool.query('SELECT id, baselined FROM schema_migrations ORDER BY id')).rows;
+    assert.strictEqual(rows.length, 2);
+    assert.strictEqual(rows.find(x => x.id === '001_a').baselined, true);
+    assert.strictEqual(rows.find(x => x.id === '002_b').baselined, false, 'genuinely applied, not baselined');
+    const again = await r.run(pool, { log: () => {} });
+    assert.strictEqual(again.pending.length, 0, 'second run: nothing pending');
+    await pool.end();
+  });
+
+  await t.test('multiple --except values are supported', async () => {
+    const pool = await freshDatabase();
+    const r = runnerFor(fixtureDir({
+      '001_a.sql': OK_A, '002_b.sql': OK_B, '003_c.sql': 'CREATE TABLE IF NOT EXISTS delta (id int);'
+    }));
+    const res = await r.run(pool, { mode: 'baseline', confirmBaseline: true, except: ['001_a', '003_c'], log: () => {} });
+    assert.deepStrictEqual(res.applied, ['002_b']);
+    assert.deepStrictEqual(res.excluded.slice().sort(), ['001_a', '003_c']);
+    await pool.end();
+  });
+
+  await t.test('an unknown --except id is rejected before anything is written', async () => {
+    const pool = await freshDatabase();
+    const r = runnerFor(fixtureDir({ '001_a.sql': OK_A }));
+    await assert.rejects(
+      () => r.run(pool, { mode: 'baseline', confirmBaseline: true, except: ['migration_typo'], log: () => {} }),
+      /do not exist: migration_typo/);
+    assert.strictEqual((await pool.query("SELECT to_regclass('schema_migrations') AS t")).rows[0].t, null,
+      'rejected before the tracking table was even created');
+    await pool.end();
+  });
+
+  await t.test('--except is refused on modes other than baseline', async () => {
+    const pool = await freshDatabase();
+    const r = runnerFor(fixtureDir({ '001_a.sql': OK_A }));
+    await assert.rejects(() => r.run(pool, { except: ['001_a'], log: () => {} }), /only applies to baseline/);
+    await assert.rejects(() => r.run(pool, { mode: 'status', except: ['001_a'], log: () => {} }), /only applies to baseline/);
+    await pool.end();
+  });
+
+  await t.test('--except still requires --yes', async () => {
+    const pool = await freshDatabase();
+    const r = runnerFor(fixtureDir({ '001_a.sql': OK_A, '002_b.sql': OK_B }));
+    await assert.rejects(
+      () => r.run(pool, { mode: 'baseline', except: ['002_b'], log: () => {} }), /without confirmation/);
+    await pool.end();
+  });
+
+  await t.test('checksum verification still applies after a selective baseline', async () => {
+    const pool = await freshDatabase();
+    const dir = fixtureDir({ '001_a.sql': OK_A, '002_b.sql': OK_B });
+    await runnerFor(dir).run(pool, { mode: 'baseline', confirmBaseline: true, except: ['002_b'], log: () => {} });
+    fs.writeFileSync(path.join(dir, '001_a.sql'), OK_A + '\n-- edited\n', 'utf8');
+    await assert.rejects(() => runnerFor(dir).run(pool, { log: () => {} }), /changed after being applied/);
+    await pool.end();
+  });
+
+  // The real thing: the exact production scenario, on a disposable database
+  // built from the current schema.sql — which has every table and column but
+  // NOT the four indexes migration_sales_return_perf creates.
+  await t.test('the real 20-migration set, excluding migration_sales_return_perf', async () => {
+    const pool = await freshExceptDatabase();
+    await pool.query(fs.readFileSync(path.resolve(__dirname, '..', 'db', 'schema', 'schema.sql'), 'utf8'));
+
+    const PERF = ['idx_invoice_items_user', 'idx_sales_return_items_user',
+      'idx_sales_returns_user_date_desc', 'idx_sales_return_items_return_product'];
+    const indexes = async () => (await pool.query(
+      "SELECT indexname FROM pg_indexes WHERE schemaname='public'")).rows.map(r => r.indexname);
+
+    const before = await indexes();
+    for (const i of PERF) assert.ok(!before.includes(i), `${i} must be absent before (mirrors production)`);
+
+    const base = await migrator.run(pool, {
+      mode: 'baseline', confirmBaseline: true, except: ['migration_sales_return_perf'], log: () => {}
+    });
+    assert.strictEqual(base.applied.length, 19, `expected 19 baselined, got ${base.applied.length}`);
+    assert.deepStrictEqual(base.excluded, ['migration_sales_return_perf']);
+    assert.ok(!base.applied.includes('migration_sales_return_perf'));
+
+    const status = await migrator.run(pool, { mode: 'status', log: () => {} });
+    assert.strictEqual(status.alreadyApplied.length, 19);
+    assert.deepStrictEqual(status.pending, ['migration_sales_return_perf']);
+
+    const up = await migrator.run(pool, { log: () => {} });
+    assert.deepStrictEqual(up.applied, ['migration_sales_return_perf'], 'migrate applies exactly the held-back one');
+
+    const after = await indexes();
+    for (const i of PERF) assert.ok(after.includes(i), `${i} must exist after migrate`);
+
+    const final = await migrator.run(pool, { mode: 'status', log: () => {} });
+    assert.strictEqual(final.alreadyApplied.length, 20, 'all 20 recorded');
+    assert.strictEqual(final.pending.length, 0, 'zero pending');
+
+    const perfRow = (await pool.query(
+      "SELECT baselined FROM schema_migrations WHERE id='migration_sales_return_perf'")).rows[0];
+    assert.strictEqual(perfRow.baselined, false, 'it was genuinely applied, not baselined');
+
+    await pool.end();
+    await admin(`SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname='${EXCEPT_DB}'`);
+    await admin(`DROP DATABASE IF EXISTS ${EXCEPT_DB}`);
+  });
+});
