@@ -453,6 +453,12 @@ body {
 .form-control:focus { border-color: var(--primary); box-shadow: 0 0 0 3px rgba(0,121,107,0.1); }
 .form-control[readonly] { background: var(--bg); color: var(--text-muted); cursor: default; }
 .form-control.error { border-color: var(--danger); }
+/* Focusing an invalid field must not make it look valid again. Without
+   this, .form-control:focus above (same specificity, declared later)
+   repaints the border in the primary colour the moment the field is
+   focused — which is precisely when a form has just sent the user there
+   to fix it. */
+.form-control.error:focus { border-color: var(--danger); box-shadow: 0 0 0 3px rgba(211,47,47,0.12); }
 
 .form-hint { font-size: 11px; color: var(--text-muted); }
 .form-error { font-size: 11px; color: var(--danger); display: none; }

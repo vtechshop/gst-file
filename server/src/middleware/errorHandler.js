@@ -65,6 +65,17 @@ function asyncRoute(fn) {
   return (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
 }
 
+// A per-field validation map is only worth putting on the wire if it is
+// exactly that: a plain object whose every value is a non-empty string.
+// Anything else — an array, a nested object, an Error — is refused rather
+// than serialised, because the whole point of the envelope is that the
+// browser never receives a shape the server did not deliberately choose.
+function isFieldMap(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const keys = Object.keys(value);
+  return keys.length > 0 && keys.every(k => typeof value[k] === 'string' && value[k].trim());
+}
+
 // Postgres SQLSTATEs that are really the CLIENT's fault, not ours, and
 // so must not be reported as a 500 the user can only shrug at. Mapped to
 // a status + a message that says what to do about it.
@@ -141,7 +152,14 @@ function errorHandler(err, req, res, next) { // eslint-disable-line no-unused-va
   const code = (err && err.expose && typeof err.code === 'string' && !/^\d/.test(err.code))
     ? err.code
     : codeForStatus(status);
-  res.status(status).json({ error: { message, code, requestId } });
+  const body = { message, code, requestId };
+  // A per-field complaint map, when the thrower deliberately exposed one
+  // (see runValidate() in routes/generic.js). Only ever added to an
+  // `expose`d error and only when it is a plain object of strings, so an
+  // internal error can never leak structure here; every response that did
+  // not carry one is byte-identical to before.
+  if (err && err.expose && isFieldMap(err.fields)) body.fields = err.fields;
+  res.status(status).json({ error: body });
 }
 
 module.exports = { asyncRoute, errorHandler, AppError, codeForStatus };

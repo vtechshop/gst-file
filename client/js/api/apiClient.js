@@ -52,11 +52,25 @@ function apiErrorFrom(res, body) {
   const ra = res.headers && (res.headers.get('Retry-After') || res.headers.get('RateLimit-Reset'));
   if (ra && /^\d+$/.test(String(ra).trim())) retryAfter = parseInt(ra, 10);
 
+  // Per-field validation complaints, when the server sent them (see
+  // isFieldMap() in server/middleware/errorHandler.js). Re-checked here
+  // rather than trusted, for the same reason `raw` is: what answers a
+  // request is not always the API. Absent on every other failure, so a
+  // caller that does not look for it sees exactly what it always did.
+  const rawFields = fromServer.fields;
+  const fields = {};
+  if (rawFields && typeof rawFields === 'object' && !Array.isArray(rawFields)) {
+    Object.keys(rawFields).forEach(k => {
+      if (typeof rawFields[k] === 'string' && rawFields[k].trim()) fields[k] = rawFields[k];
+    });
+  }
+
   return {
     message,
     code: typeof fromServer.code === 'string' ? fromServer.code : '',
     requestId: typeof fromServer.requestId === 'string' ? fromServer.requestId : '',
     status: res.status,
+    ...(Object.keys(fields).length ? { fields } : {}),
     retryAfter
   };
 }

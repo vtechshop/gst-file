@@ -69,6 +69,83 @@ function validateCustomerPayload(payload) {
   return { valid: Object.keys(errors).length === 0, errors };
 }
 
+// Reduces a phone number as a person would write it to the ten digits it
+// actually is: separators removed, and the two prefixes that are not part
+// of the subscriber number dropped — a +91 country code and the single
+// leading 0 of an STD dial-out.
+//
+// This exists because the Business Profile form had NO phone rule until
+// now, so profiles were saved with whatever the user typed —
+// "+91 44 4000 1234", "98430 12345". Judging those strings by /^\d{10}$/
+// made every such profile permanently unsavable: the user reopens the
+// modal, changes something else entirely, and Save is refused over a
+// field they never touched.
+//
+// It is deliberately NOT a relaxation. The rule is still exactly ten
+// digits — "12345" and "98430123456" stay invalid. What changed is that
+// the check now looks at the number rather than at its punctuation.
+//
+// Scoped to profiles on purpose: validateCustomerPayload keeps the plain
+// /^\d{10}$/ it has always had, because Customer Master has enforced that
+// rule since its first write and its data was created under it.
+function normalizeIndianPhone(value) {
+  let digits = String(value == null ? '' : value).replace(/\D/g, '');
+  if (digits.length === 12 && digits.startsWith('91')) digits = digits.slice(2);
+  if (digits.length === 11 && digits.startsWith('0')) digits = digits.slice(1);
+  return digits;
+}
+
+// Business GST Profile — the same field rules the Business Profile form
+// applies in client/js/pages/profile.js, enforced again here so a caller
+// that reaches the API directly cannot store a blank business name or a
+// GSTIN that would later be rejected by the GST portal.
+//
+// Every rule fires only when its own field is actually part of the
+// payload. That is not laxity, it is the shape of this table: `profiles`
+// is written by four different forms and three of them legitimately send
+// a partial row — invoice numbering (invoice_* columns), Company Branding
+// (logo/seal/bank columns) and the invoice-entry auto-number toggle (one
+// boolean). Demanding business_name on every write would break all three.
+// Same lesson validateProductPayload() encodes for a PATCH that never
+// mentions hsn_code: a field the payload does not carry is a field the
+// payload is not changing.
+//
+// Requiredness of business_name + gstin therefore lives where it is
+// actually true — the Business Profile form, which sends both on every
+// save and blocks submission without them. What this function guarantees
+// is the stronger and more portable half: whatever value does arrive for
+// one of these columns is a valid one.
+function validateProfilePayload(payload) {
+  const errors = {};
+  const has = f => Object.prototype.hasOwnProperty.call(payload, f);
+  const str = f => (payload[f] == null ? '' : String(payload[f])).trim();
+
+  if (has('business_name') && !str('business_name')) {
+    errors.business_name = 'Business / Trade Name is required.';
+  }
+
+  if (has('gstin')) {
+    const gstin = str('gstin').toUpperCase();
+    if (!gstin) errors.gstin = 'GSTIN is required.';
+    else if (!validateGstin(gstin).valid) errors.gstin = 'Enter a valid 15-character GSTIN.';
+  }
+
+  // Optional fields: empty stays allowed, a value must be well-formed.
+  if (has('phone') && str('phone') && !isValidPhone(normalizeIndianPhone(str('phone')))) {
+    errors.phone = 'Phone number must be exactly 10 digits.';
+  }
+
+  if (has('email') && str('email') && !validator.isEmail(str('email'))) {
+    errors.email = 'Enter a valid email address.';
+  }
+
+  if (has('pan') && str('pan') && !PAN_FORMAT_REGEX.test(str('pan').toUpperCase())) {
+    errors.pan = 'PAN must be 10 characters, e.g. ABCDE1234F.';
+  }
+
+  return { valid: Object.keys(errors).length === 0, errors };
+}
+
 // GSTN accepts 4/6/8-digit HSN codes — same shape rule the frontend applies
 // in isValidHsnFormat() (js/utils.js).
 const HSN_FORMAT_REGEX = /^(\d{4}|\d{6}|\d{8})$/;
@@ -112,4 +189,7 @@ function validateProductPayload(payload, isInsert) {
   return { valid: Object.keys(errors).length === 0, errors };
 }
 
-module.exports = { validateGstin, isValidPhone, validateCustomerPayload, validateProductPayload };
+module.exports = {
+  validateGstin, isValidPhone, normalizeIndianPhone,
+  validateCustomerPayload, validateProductPayload, validateProfilePayload
+};

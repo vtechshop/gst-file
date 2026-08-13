@@ -23,7 +23,7 @@ const express = require('express');
 const pool = require('../config/pool');
 const { requireAuth } = require('../middleware/auth');
 const { asyncRoute } = require('../middleware/errorHandler');
-const { validateCustomerPayload, validateProductPayload } = require('../utils/validation');
+const { validateCustomerPayload, validateProductPayload, validateProfilePayload } = require('../utils/validation');
 
 function buildWhere(query, ownerColumn, userId, columns) {
   const clauses = [`${ownerColumn} = $1`];
@@ -132,6 +132,11 @@ function runValidate(validate, body, isInsert) {
   if (!result.valid) {
     const e = new Error(Object.values(result.errors).join(' '));
     e.status = 400; e.expose = true;
+    // The joined sentence stays the message (every existing caller reads
+    // that and nothing else). The map travels alongside it so a form can
+    // put each complaint under the field it belongs to instead of making
+    // the user work out which of three sentences was about which input.
+    e.fields = result.errors;
     throw e;
   }
 }
@@ -222,7 +227,8 @@ const TABLES = {
       // the invoice counters so invoice numbering is untouched.
       'document_series_sequences','document_series_formats',
       'created_at',
-      'hsn_digits_required','aggregate_turnover_band']
+      'hsn_digits_required','aggregate_turnover_band'],
+    validate: validateProfilePayload
   },
   customers: {
     columns: ['id','user_id','name','gstin','phone','email','address','state',

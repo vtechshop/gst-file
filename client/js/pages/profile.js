@@ -91,6 +91,9 @@ async function openProfileModal(isRequired = false) {
 
 function buildProfileModal(profile, isRequired) {
   document.getElementById('profileModalWrap')?.remove();
+  // A freshly-opened form has no history: nothing has been touched, so
+  // nothing is shown as wrong yet.
+  resetProfileValidationState();
 
   const wrap = document.createElement('div');
   wrap.id = 'profileModalWrap';
@@ -106,42 +109,55 @@ function buildProfileModal(profile, isRequired) {
       <div class="modal-body">
         ${isRequired ? `<div style="background:#fff3e0;border:1px solid #ffb300;border-radius:6px;padding:10px 14px;margin-bottom:16px;font-size:13px;color:#e65100;display:flex;gap:8px;align-items:flex-start;">
           <i class="fas fa-info-circle" style="margin-top:2px;"></i>
-          <span>உங்கள் business details பூர்த்தி பண்ணுங்கள். இவை உங்கள் reports மற்றும் print-ல் தெரியும்.</span>
+          <span>Please complete all required fields before saving your business profile. Fields marked with * are required.</span>
         </div>` : ''}
         <div class="form-grid cols-2" style="gap:14px;">
           <div class="form-group" style="grid-column:1/-1;">
-            <label>Business / Trade Name <span style="color:red;">*</span></label>
-            <input type="text" id="profBizName" class="form-control" value="${e(profile?.business_name)}">
+            <label for="profBizName">Business / Trade Name <span class="text-required">*</span></label>
+            <input type="text" id="profBizName" class="form-control" value="${e(profile?.business_name)}"
+                   oninput="onProfileFieldInput('profBizName')" onblur="markProfileFieldTouched('profBizName')" aria-describedby="profBizNameError">
+            <div id="profBizNameError" class="fs-11 text-danger d-none" style="margin-top:4px;"></div>
+            <div class="fs-11 text-muted" style="margin-top:3px;">Required</div>
           </div>
           <div class="form-group">
-            <label>Your GSTIN <span style="color:red;">*</span></label>
-            <input type="text" id="profGSTIN" class="form-control" value="${e(profile?.gstin)}" maxlength="15" style="text-transform:uppercase;letter-spacing:1px;">
+            <label for="profGSTIN">Your GSTIN <span class="text-required">*</span></label>
+            <input type="text" id="profGSTIN" class="form-control" value="${e(profile?.gstin)}" maxlength="15"
+                   style="text-transform:uppercase;letter-spacing:1px;"
+                   oninput="this.value=this.value.toUpperCase();onProfileFieldInput('profGSTIN')" onblur="markProfileFieldTouched('profGSTIN')" aria-describedby="profGSTINError">
+            <div id="profGSTINError" class="fs-11 text-danger d-none" style="margin-top:4px;"></div>
+            <div class="fs-11 text-muted" style="margin-top:3px;">Required</div>
           </div>
           <div class="form-group">
-            <label>PAN</label>
-            <input type="text" id="profPAN" class="form-control uppercase" maxlength="10" value="${e(profile?.pan)}">
+            <label for="profPAN">PAN</label>
+            <input type="text" id="profPAN" class="form-control uppercase" maxlength="10" value="${e(profile?.pan)}"
+                   oninput="onProfileFieldInput('profPAN')" onblur="markProfileFieldTouched('profPAN')" aria-describedby="profPANError">
+            <div id="profPANError" class="fs-11 text-danger d-none" style="margin-top:4px;"></div>
           </div>
           <div class="form-group">
-            <label>Phone Number</label>
-            <input type="tel" id="profPhone" class="form-control" value="${e(profile?.phone)}">
+            <label for="profPhone">Phone Number</label>
+            <input type="tel" id="profPhone" class="form-control" value="${e(profile?.phone)}"
+                   oninput="onProfileFieldInput('profPhone')" onblur="markProfileFieldTouched('profPhone')" aria-describedby="profPhoneError">
+            <div id="profPhoneError" class="fs-11 text-danger d-none" style="margin-top:4px;"></div>
           </div>
           <div class="form-group" style="grid-column:1/-1;">
-            <label>Business Address</label>
+            <label for="profAddress">Business Address</label>
             <textarea id="profAddress" class="form-control" rows="2">${e(profile?.address)}</textarea>
           </div>
           <div class="form-group">
-            <label>State</label>
+            <label for="profState">State</label>
             <select id="profState" class="form-control">
               <option value="">Select State</option>
               ${INDIAN_STATES.map(s=>`<option value="${s}"${profile?.state===s?' selected':''}>${s}</option>`).join('')}
             </select>
           </div>
           <div class="form-group">
-            <label>Email</label>
-            <input type="email" id="profEmail" class="form-control" value="${e(profile?.email)}">
+            <label for="profEmail">Email</label>
+            <input type="email" id="profEmail" class="form-control" value="${e(profile?.email)}"
+                   oninput="onProfileFieldInput('profEmail')" onblur="markProfileFieldTouched('profEmail')" aria-describedby="profEmailError">
+            <div id="profEmailError" class="fs-11 text-danger d-none" style="margin-top:4px;"></div>
           </div>
           <div class="form-group" style="grid-column:1/-1;">
-            <label>Website</label>
+            <label for="profWebsite">Website</label>
             <input type="text" id="profWebsite" class="form-control" value="${e(profile?.website)}">
           </div>
         </div>
@@ -781,11 +797,156 @@ function _brandUpload(label, hiddenId, previewId, currentValue, iconClass) {
   </div>`;
 }
 
+// The Business Profile form's field rules, in one place. Mirrors
+// validateProfilePayload() in server/utils/validation.js exactly, and
+// like the Customer Master form it defers the GSTIN rule itself to the
+// shared validateGstin() (js/utils.js) rather than re-deciding what a
+// GSTIN looks like — the 15-character length test this replaced would
+// happily have accepted fifteen spaces.
+//
+// Business / Trade Name and GSTIN are the only required fields, because
+// they are the only two this app has ever required: checkAndShowProfileSetup()
+// treats exactly that pair as "profile complete", and every other column
+// here is optional and has always saved empty. Optional means empty is
+// allowed — a rule fires only once the user has actually typed something.
+const PROFILE_FIELD_ERROR_IDS = {
+  business_name: 'profBizNameError',
+  gstin:         'profGSTINError',
+  pan:           'profPANError',
+  phone:         'profPhoneError',
+  email:         'profEmailError'
+};
+const PROFILE_FIELD_INPUT_IDS = {
+  business_name: 'profBizName',
+  gstin:         'profGSTIN',
+  pan:           'profPAN',
+  phone:         'profPhone',
+  email:         'profEmail'
+};
+// Order matters: it is the order the fields appear in the form, and so
+// the order "focus the first invalid one" has to walk them in.
+const PROFILE_FIELD_ORDER = ['business_name', 'gstin', 'pan', 'phone', 'email'];
+
+// Which fields have earned the right to show an error yet.
+//
+// A GSTIN is invalid for its first fourteen keystrokes, and on a first-run
+// modal every field starts empty — so validating everything on every input
+// would tell the user they had got it wrong before they had finished, or
+// even started, typing. A field speaks up once the user has left it, and
+// from then on re-checks as they type so a correction clears immediately.
+// Saving marks every field touched, because at that point the form has
+// been asserted complete and silence would be the wrong answer.
+let _profileTouchedFields = new Set();
+
+function resetProfileValidationState() { _profileTouchedFields = new Set(); }
+
+function markProfileFieldTouched(inputId) {
+  const field = PROFILE_FIELD_ORDER.find(f => PROFILE_FIELD_INPUT_IDS[f] === inputId);
+  if (field) _profileTouchedFields.add(field);
+  validateProfileForm();
+}
+
+// Typing only refreshes a complaint that is already on screen.
+function onProfileFieldInput(inputId) {
+  const field = PROFILE_FIELD_ORDER.find(f => PROFILE_FIELD_INPUT_IDS[f] === inputId);
+  if (field && _profileTouchedFields.has(field)) validateProfileForm();
+}
+
+// The ten digits a written phone number actually is: separators removed,
+// and the two prefixes that are not part of the subscriber number dropped
+// (a +91 country code, the single leading 0 of an STD dial-out). Mirrors
+// normalizeIndianPhone() in server/utils/validation.js.
+//
+// This form had no phone rule until now, so profiles hold whatever was
+// typed — "+91 44 4000 1234", "98430 12345". Judged by /^\d{10}$/ those
+// profiles could never be saved again, over a field the user need not
+// have touched. Still exactly ten digits; it is the punctuation that
+// stopped counting, not the rule that relaxed.
+function normalizeProfilePhone(value) {
+  let digits = String(value == null ? '' : value).replace(/\D/g, '');
+  if (digits.length === 12 && digits.startsWith('91')) digits = digits.slice(2);
+  if (digits.length === 11 && digits.startsWith('0')) digits = digits.slice(1);
+  return digits;
+}
+
+function getProfileFormErrors() {
+  const errors = {};
+  const v = id => document.getElementById(id)?.value?.trim() || '';
+
+  if (!v('profBizName')) errors.business_name = 'Business / Trade Name is required.';
+
+  const gstin = v('profGSTIN').toUpperCase();
+  if (!gstin) errors.gstin = 'GSTIN is required.';
+  else if (!validateGstin(gstin).valid) errors.gstin = 'Enter a valid 15-character GSTIN.';
+
+  const pan = v('profPAN').toUpperCase();
+  if (pan && !/^[A-Z]{5}[0-9]{4}[A-Z]$/.test(pan)) errors.pan = 'PAN must be 10 characters, e.g. ABCDE1234F.';
+
+  const phone = v('profPhone');
+  if (phone && !/^\d{10}$/.test(normalizeProfilePhone(phone))) errors.phone = 'Phone number must be exactly 10 digits.';
+
+  const email = v('profEmail');
+  if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) errors.email = 'Enter a valid email address.';
+
+  return errors;
+}
+
+// Writes each message under its own field and marks the input itself, so
+// the failure is never carried by colour alone: there is text under the
+// field, and aria-invalid tells a screen reader the same thing the red
+// border tells everyone else. Returns the error map so submitProfile()
+// can reuse this one result instead of computing it twice.
+function validateProfileForm(extraErrors) {
+  const errors = { ...getProfileFormErrors(), ...(extraErrors || {}) };
+  // A field the server complained about is by definition one the user has
+  // committed to, whatever they did or did not touch on the way there.
+  Object.keys(extraErrors || {}).forEach(f => _profileTouchedFields.add(f));
+
+  PROFILE_FIELD_ORDER.forEach(field => {
+    const el = document.getElementById(PROFILE_FIELD_ERROR_IDS[field]);
+    const input = document.getElementById(PROFILE_FIELD_INPUT_IDS[field]);
+    const message = _profileTouchedFields.has(field) ? errors[field] : '';
+    if (el) {
+      el.textContent = message || '';
+      el.classList.toggle('d-none', !message);
+    }
+    if (input) {
+      input.setAttribute('aria-invalid', message ? 'true' : 'false');
+      input.classList.toggle('error', !!message);
+    }
+  });
+
+  return errors;
+}
+
+function focusFirstInvalidProfileField(errors) {
+  const field = PROFILE_FIELD_ORDER.find(f => errors[f]);
+  if (!field) return;
+  const input = document.getElementById(PROFILE_FIELD_INPUT_IDS[field]);
+  if (input) input.focus();
+}
+
 async function submitProfile() {
+  // Validate before anything is sent. An invalid form never becomes a
+  // request, so the user is not made to wait on a round trip to be told
+  // something the page already knew.
+  PROFILE_FIELD_ORDER.forEach(f => _profileTouchedFields.add(f));
+  const errors = validateProfileForm();
+  if (Object.keys(errors).length > 0) {
+    focusFirstInvalidProfileField(errors);
+    // Say which of the two things is actually wrong. A badly-formatted
+    // optional field reported as "complete all required fields" sends the
+    // user to check the fields marked *, which are already filled in —
+    // the message has to name the problem the form actually found.
+    const missingRequired = !!(errors.business_name || errors.gstin);
+    showToast(missingRequired
+      ? 'Please complete all required fields before saving your business profile. Fields marked with * are required.'
+      : 'Please correct the highlighted fields before saving your business profile.', 'error');
+    return;
+  }
+
   const bizName = document.getElementById('profBizName')?.value?.trim();
   const gstin   = document.getElementById('profGSTIN')?.value?.trim().toUpperCase();
-  if (!bizName) { showToast('Business name is required!', 'error'); return; }
-  if (!gstin || gstin.length < 15) { showToast('GSTIN must be 15 characters!', 'error'); return; }
 
   const user = await getCurrentUser();
   if (!user) return;
@@ -799,7 +960,9 @@ async function submitProfile() {
   const { error } = await saveUserProfile(user.id, {
     business_name: bizName,
     gstin,
-    phone:   val('profPhone'),
+    // Stored as the ten digits, not as the user's punctuation, so a
+    // profile saved once stops depending on normalisation to load again.
+    phone:   normalizeProfilePhone(val('profPhone')),
     address: val('profAddress'),
     state:   document.getElementById('profState')?.value || '',
     email:   val('profEmail'),
@@ -824,9 +987,26 @@ async function submitProfile() {
     einvoice_applicable:    checked('profEinvoiceApplicable'),
     ewaybill_applicable:    checked('profEwaybillApplicable'),
     hsn_digits_required:    parseInt(document.getElementById('profHsnDigits')?.value, 10) || null
-  });
+  }, true); // this form reports its own outcome — see below
 
-  if (!error) closeProfileModal();
+  if (!error) {
+    showToast('Business profile saved successfully.', 'success');
+    closeProfileModal();
+    return;
+  }
+
+  // The save was refused. If the server said which fields it objected to,
+  // show its complaint under those fields — the backend is the authority
+  // on what it will store, and a rule it enforces that the form somehow
+  // let through should be visible in the same place as every other field
+  // error, not only as a toast. The modal deliberately stays open.
+  if (error.fields) {
+    const merged = validateProfileForm(error.fields);
+    focusFirstInvalidProfileField(merged);
+  }
+  // One toast, through the shared reporter, so this failure carries the
+  // same wording, status code and requestId as every other in the app.
+  handleApiError(error, 'Could not save your business profile');
 }
 
 // Says what the chosen registration actually files, because the choice

@@ -114,13 +114,20 @@ function gstr1ToUQC(unit, hsnCode) {
 // Copied verbatim from a Utility-generated return; neither value is
 // derived or guessed. "hash" really is the literal string "hash" in that
 // file. One constant each, so a future Utility revision is one edit.
-// Read out of the installed Offline Tool's own generator rather than off a
-// downloaded return: utility/common.js sets `var version = "GST3.2.4"` and
-// `var hash = "hash"` on every branch that builds the file. A return
-// carrying an older version is what the Portal means by "Download the
-// latest version of Offline tool to generate the JSON file" — the message
-// is about the generator, not the data.
-const GSTR1_VERSION = 'GST3.2.4';
+//
+// GST3.1.7 is set from evidence, not from the Offline Tool's own source.
+// Both were tried against the live Portal for the same July 2026 return:
+// the file declaring GST3.1.7 uploaded successfully, and the one declaring
+// GST3.2.4 was rejected. This constant was briefly changed to GST3.2.4 on
+// the reading that "Download the latest version of Offline tool to
+// generate the JSON file" meant the declared version was too old; the
+// upload result showed that reading was wrong, and it was reverted.
+//
+// So do not raise this to match a newer Offline Tool build without first
+// uploading a file that declares the new value and confirming the Portal
+// accepts it. What the Portal validates is the version it expects on the
+// wire, which is not necessarily the newest one in circulation.
+const GSTR1_VERSION = 'GST3.1.7';
 const GSTR1_HASH = 'hash';
 
 // ── Payload section registry ────────────────────────────────
