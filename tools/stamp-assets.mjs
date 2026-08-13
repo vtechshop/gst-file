@@ -23,7 +23,7 @@
 // Deliberately NOT a date. A date invites hand-editing to "today" and
 // says nothing about whether the assets actually changed; an integer that
 // only ever goes up cannot be mistaken for anything else.
-const ASSET_VERSION = '27';
+const ASSET_VERSION = '28';
 
 import fs from 'node:fs';
 import path from 'node:path';
@@ -36,7 +36,17 @@ const version = args.find(a => a !== '--check') || ASSET_VERSION;
 
 // Only local assets are touched. A CDN URL carries its own version in the
 // path and is not ours to rewrite.
-const LOCAL_ASSET = /((?:src|href)=")((?:js|css)\/[A-Za-z0-9._\/-]+\.(?:js|css))(\?v=[^"]*)?(")/g;
+// client/js/… and client/css/… since the frontend moved under client/,
+// plus shared/… — the one module both the browser and the server load
+// (see shared/sales-return-rules.js). Anything outside those roots is a
+// CDN URL and is not ours to rewrite.
+//
+// This pattern is load-bearing: if it stops matching a path, that file
+// silently loses its ?v= stamp and browsers keep serving the previous
+// copy — which is the exact failure described at the top of this file.
+// A move of client/ or shared/ has to be reflected here in the same
+// commit.
+const LOCAL_ASSET = /((?:src|href)=")((?:client\/(?:js|css)|shared)\/[A-Za-z0-9._\/-]+\.(?:js|css))(\?v=[^"]*)?(")/g;
 
 const htmlFiles = fs.readdirSync(root).filter(f => f.endsWith('.html')).sort();
 let changedFiles = 0, totalRefs = 0, alreadyCorrect = 0, rewritten = 0;

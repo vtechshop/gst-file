@@ -3,7 +3,7 @@
 --            b2b_invoices, b2c_invoices and purchases
 --
 -- Run once against an existing database:
---   psql "$DATABASE_URL" -f db/migration_payment_status_partial.sql
+--   psql "$DATABASE_URL" -f db/migrations/migration_payment_status_partial.sql
 --
 -- WHY: recording a PARTIAL payment appeared to do nothing — Invoice List
 -- kept showing Paid ₹0.00 / full Balance / UNPAID, while a FULL payment

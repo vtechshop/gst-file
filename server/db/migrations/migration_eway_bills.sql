@@ -2,7 +2,7 @@
 -- Migration: eway_bills — internal transport documents
 --
 -- Run once against an existing database:
---   psql "$DATABASE_URL" -f db/migration_eway_bills.sql
+--   psql "$DATABASE_URL" -f db/migrations/migration_eway_bills.sql
 --
 -- Adds the table behind the E-Way Bills module: one record per transport
 -- movement, linked to the invoice being shipped. Nothing existing is

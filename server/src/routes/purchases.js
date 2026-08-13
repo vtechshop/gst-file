@@ -15,7 +15,7 @@
 // Frontend call site: js/purchase-items.js's savePurchaseWithItems() /
 // cascadePurchaseItemsDelete().
 const express = require('express');
-const pool = require('../db/pool');
+const pool = require('../config/pool');
 const { requireAuth } = require('../middleware/auth');
 const { asyncRoute } = require('../middleware/errorHandler');
 const { TABLES } = require('./generic');

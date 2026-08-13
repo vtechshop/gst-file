@@ -52,7 +52,7 @@ Create the database and apply the schema (idempotent — safe to re-run):
 
 ```bash
 psql -U postgres -c "CREATE DATABASE gst_invoicing;"
-psql -U postgres -d gst_invoicing -f db/schema.sql
+psql -U postgres -d gst_invoicing -f db/schema/schema.sql
 ```
 
 Run it:
@@ -71,7 +71,7 @@ platform's environment-variables panel instead of shipping a `.env` file.
 
 ## Architecture
 
-- **`db/schema.sql`** — the authoritative Postgres schema (one consolidated
+- **`db/schema/schema.sql`** — the authoritative Postgres schema (one consolidated
   file; see its header comment for how it differs from the historical
   `../supabase-schema.sql`, kept in the repo root for reference).
 - **`db/pool.js`** — the one shared `pg` connection pool every query goes

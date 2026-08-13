@@ -6,9 +6,9 @@
 --   4. cdn_notes.state                (new column)      ef2baf2
 --
 -- Run once against an existing database:
---   psql "$DATABASE_URL" -f db/migration_payments_reference.sql
+--   psql "$DATABASE_URL" -f db/migrations/migration_payments_reference.sql
 --
--- WHY THIS FILE EXISTS (do not fold these into db/schema.sql and call it
+-- WHY THIS FILE EXISTS (do not fold these into db/schema/schema.sql and call it
 -- done): both releases made every change above *inside* schema.sql's
 -- `CREATE TABLE IF NOT EXISTS` blocks for tables that already existed —
 -- `payments` dates back to b6a9241, `purchase_returns` to
@@ -47,7 +47,7 @@
 BEGIN;
 
 -- ── 1. reference_number ───────────────────────────────
--- Nullable TEXT with no default, matching db/schema.sql exactly. Nullable
+-- Nullable TEXT with no default, matching db/schema/schema.sql exactly. Nullable
 -- is required: existing ledger rows predate the column and must stay
 -- valid, and routes/payments.js passes NULL when the user leaves the
 -- reference field blank.
@@ -91,7 +91,7 @@ ALTER TABLE IF EXISTS payments
 -- ── 3. purchase_returns.state ─────────────────────────
 -- Same defect, different table — release 8a09f3b's other half ("fix
 -- state dropdowns"). Nullable TEXT with no default, matching
--- db/schema.sql: existing purchase-return rows predate the column and
+-- db/schema/schema.sql: existing purchase-return rows predate the column and
 -- must stay valid. Deliberately NOT backfilled from vendors.state —
 -- inferring a historical return's place of supply from the vendor's
 -- current master record would be inventing GST data, and place of supply
@@ -114,7 +114,7 @@ ALTER TABLE IF EXISTS purchase_returns
 -- running this costs nothing if ef2baf2's one-liner was executed by hand,
 -- and fixes Credit/Debit Note saves (42703) if it never was.
 --
--- Nullable TEXT with no default, matching db/schema.sql. Not backfilled:
+-- Nullable TEXT with no default, matching db/schema/schema.sql. Not backfilled:
 -- state is the note's place of supply and drives the intrastate/interstate
 -- split, so inferring it for historical notes would be inventing GST data.
 ALTER TABLE IF EXISTS cdn_notes

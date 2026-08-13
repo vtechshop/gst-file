@@ -2,7 +2,7 @@
 -- GST Invoice & GSTR-1 Management System
 -- PostgreSQL schema for the Node.js + Express backend.
 --
--- Derived from ../../supabase-schema.sql (kept in the repo root as
+-- Derived from ../../../supabase-schema.sql (kept in the repo root as
 -- historical reference — this file is the new authoritative source).
 -- Differences from that file, all deliberate:
 --   - `users` replaces Supabase's `auth.users`; every user_id/profiles.id

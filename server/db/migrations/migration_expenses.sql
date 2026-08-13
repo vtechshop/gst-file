@@ -2,8 +2,8 @@
 -- Migration: Expense Module (expense_categories, expenses)
 --
 -- Run once against an existing database:
---   psql -U postgres -d gst_invoicing -f db/migration_expenses.sql
--- (Also folded into db/schema.sql so a fresh database gets these tables
+--   psql -U postgres -d gst_invoicing -f db/migrations/migration_expenses.sql
+-- (Also folded into db/schema/schema.sql so a fresh database gets these tables
 -- from the one consolidated CREATE TABLE pass.)
 -- =============================================
 

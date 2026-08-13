@@ -20,7 +20,7 @@
 // (values are always parameterized; only identifiers can't be, hence
 // the whitelist).
 const express = require('express');
-const pool = require('../db/pool');
+const pool = require('../config/pool');
 const { requireAuth } = require('../middleware/auth');
 const { asyncRoute } = require('../middleware/errorHandler');
 const { validateCustomerPayload, validateProductPayload } = require('../utils/validation');
@@ -204,7 +204,7 @@ function makeCrudRouter(table, { columns, insertable = true, readOnly = false, o
   return router;
 }
 
-// ── Per-table column allow-lists (must match server/db/schema.sql) ──
+// ── Per-table column allow-lists (must match server/db/schema/schema.sql) ──
 const TABLES = {
   profiles: {
     ownerColumn: 'id',
@@ -263,7 +263,7 @@ const TABLES = {
   },
   // ── Vouchers and self invoices (Phase 2, Module 4B-impl) ──
   //    Four separate domain tables, deliberately not one. See
-  //    db/migration_vouchers.sql.
+  //    db/migrations/migration_vouchers.sql.
   unregistered_suppliers: {
     columns: ['id','user_id','name','gstin','pan','phone','email','address','state',
       'rcm_category','notes','created_at','updated_at']
@@ -319,7 +319,7 @@ const TABLES = {
       'quantity','rate','total_value','gst_treatment','sort_order','created_at']
   },
   // ── Challans, revised invoices, job workers (Module 4C) ──
-  //    See db/migration_challans.sql for why the four challan variants
+  //    See db/migrations/migration_challans.sql for why the four challan variants
   //    share one table: one numbering series, so one uniqueness rule.
   job_workers: {
     columns: ['id','user_id','name','gstin','is_registered','address','city','state',

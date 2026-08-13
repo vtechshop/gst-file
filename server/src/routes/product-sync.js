@@ -13,7 +13,7 @@
 // value. PATCH /config only overwrites it when a new non-empty value
 // is sent, or clears it when clear_key is explicitly true.
 const express = require('express');
-const pool = require('../db/pool');
+const pool = require('../config/pool');
 const { requireAuth } = require('../middleware/auth');
 const { asyncRoute } = require('../middleware/errorHandler');
 

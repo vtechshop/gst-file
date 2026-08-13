@@ -2737,7 +2737,20 @@ async function exportGSTR1JSON() {
   // at all, or whether something reset it between the click and here.
   gstr1TracePeriod('exportGSTR1JSON', periodEl, periodFilter);
 
-  showToast('Validating GSTR-1 data…', 'success');
+  // The month is named in every message from here on. A GSTR-1 is filed
+  // for exactly one month, and the only thing standing between the user
+  // and filing the wrong one is the dropdown they set a moment ago —
+  // reading it back to them at each step is how a mis-selection gets
+  // noticed before the file is uploaded rather than after.
+  //
+  // Only when the selection actually names a month: 'current', 'fy' and
+  // the quarters are refused by gstr1FilingPeriod() a moment later, and
+  // "Validating GSTR-1 for current…" would be a confusing thing to say
+  // just before explaining that it is not a filing period at all.
+  const periodNamesMonth = GSTR1_MONTH_SELECTION.test(String(periodFilter || ''));
+  const forPeriod = periodNamesMonth ? ` for ${gstr1MonthLabel(periodFilter)}` : '';
+
+  showToast(`Validating GSTR-1${forPeriod}…`, 'success');
   const { payload, errors, context } = await buildGSTR1Payload(user.id, profile, periodFilter);
 
   // Before anything else: the state table must still cover every state the
@@ -2765,6 +2778,15 @@ async function exportGSTR1JSON() {
     return; // never write the file
   }
 
+  // Named from payload.fp, not from the dropdown: fp is re-derived from
+  // the invoices actually being written (see gstr1DeriveFilingMonth), and
+  // it is the value that goes into the filename. The two can only differ
+  // if the export was already blocked above, so on this line they agree —
+  // but quoting the one that is really on the file keeps the message true
+  // by construction rather than by coincidence.
+  const filedFor = gstr1MonthLabel(`${payload.fp.slice(2)}-${payload.fp.slice(0, 2)}`);
+
+  showToast(`Generating GSTR-1 JSON for ${filedFor}…`, 'success');
   const blob = new Blob([gstr1SerializePayload(payload)], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
@@ -2774,7 +2796,7 @@ async function exportGSTR1JSON() {
   a.click();
   document.body.removeChild(a);
   URL.revokeObjectURL(url);
-  showToast('GSTR-1 JSON validated and exported — ready to upload to the GST Portal.', 'success');
+  showToast(`GSTR-1 JSON for ${filedFor} generated successfully — ready to upload to the GST Portal.`, 'success');
   showGSTR1CoverageSummary(notes);
 }
 

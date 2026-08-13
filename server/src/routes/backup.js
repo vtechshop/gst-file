@@ -4,7 +4,7 @@
 // old client-side exportLocalBackup() already produced, now scoped per
 // user against Postgres instead of the whole browser's localStorage.
 const express = require('express');
-const pool = require('../db/pool');
+const pool = require('../config/pool');
 const { requireAuth } = require('../middleware/auth');
 const { asyncRoute } = require('../middleware/errorHandler');
 

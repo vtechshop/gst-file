@@ -20,7 +20,7 @@
 // to the server, and the alternative to THAT is trusting a table name
 // sent by a client, which is not an option.
 const express = require('express');
-const pool = require('../db/pool');
+const pool = require('../config/pool');
 const { requireAuth } = require('../middleware/auth');
 const { asyncRoute } = require('../middleware/errorHandler');
 const { applyInvoiceNumberFormat } = require('../utils/invoiceNumberFormat');

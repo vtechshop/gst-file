@@ -19,7 +19,7 @@
 // never reach SQL as anything but one of four known column names.
 const express = require('express');
 const multer = require('multer');
-const pool = require('../db/pool');
+const pool = require('../config/pool');
 const { requireAuth } = require('../middleware/auth');
 const { asyncRoute } = require('../middleware/errorHandler');
 

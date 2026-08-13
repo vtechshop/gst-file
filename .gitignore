@@ -11,6 +11,6 @@ npm-debug.log*
 # carry a real GSTIN and real customer data, and a sample one is noise in
 # the history either way. Produced locally, compared locally, kept local.
 # tools/gstr1-diff.mjs is the reusable part and IS tracked.
-tmp-gstr1/
+tmp/
 GSTR1_*.json
 *.gstr1.json

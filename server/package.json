@@ -2,10 +2,10 @@
   "name": "gst-billing-product-sync-backend",
   "version": "1.0.0",
   "description": "Secure server-side proxy: fetches the Product Master from the company website using a server-held API key, so that key never reaches the Billing System's browser JavaScript.",
-  "main": "index.js",
+  "main": "src/app.js",
   "scripts": {
-    "start": "node index.js",
-    "dev": "node --watch index.js"
+    "start": "node src/app.js",
+    "dev": "node --watch src/app.js"
   },
   "dependencies": {
     "bcryptjs": "^3.0.3",

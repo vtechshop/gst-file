@@ -2,8 +2,8 @@
 -- Migration: Sales Return Module (sales_returns, sales_return_items)
 --
 -- Run once against an existing database:
---   psql -U postgres -d gst_invoicing -f db/migration_sales_returns.sql
--- (Also folded into db/schema.sql so a fresh database gets these tables
+--   psql -U postgres -d gst_invoicing -f db/migrations/migration_sales_returns.sql
+-- (Also folded into db/schema/schema.sql so a fresh database gets these tables
 -- from the one consolidated CREATE TABLE pass.)
 --
 -- A sales return always references the original invoice it came from

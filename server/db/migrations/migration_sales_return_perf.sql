@@ -3,7 +3,7 @@
 -- Safe to re-run: every statement is IF NOT EXISTS, and an index that
 -- already exists under a different name simply costs a little disk.
 -- Run against production with:
---     psql "$DATABASE_URL" -f db/migration_sales_return_perf.sql
+--     psql "$DATABASE_URL" -f db/migrations/migration_sales_return_perf.sql
 --
 -- Nothing here changes a table definition or any data — indexes only.
 

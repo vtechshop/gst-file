@@ -4,7 +4,7 @@
 #
 # After it deploys:
 #   1. Open the gst-billing-backend service > Shell, and run:
-#        psql "$DATABASE_URL" -f db/schema.sql
+#        psql "$DATABASE_URL" -f db/schema/schema.sql
 #      (one-time — creates all tables; safe to re-run, every CREATE
 #      TABLE/INDEX is IF NOT EXISTS).
 #   2. Copy the service's https://<name>.onrender.com URL into

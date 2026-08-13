@@ -3,8 +3,8 @@
 -- purchase_returns, purchase_return_items)
 --
 -- Run once against an existing database:
---   psql -U postgres -d gst_invoicing -f db/migration_purchases.sql
--- (Also folded into db/schema.sql so a fresh database gets these tables
+--   psql -U postgres -d gst_invoicing -f db/migrations/migration_purchases.sql
+-- (Also folded into db/schema/schema.sql so a fresh database gets these tables
 -- from the one consolidated CREATE TABLE pass.)
 -- =============================================
 
@@ -145,7 +145,7 @@ CREATE TABLE IF NOT EXISTS purchase_return_items (
 CREATE INDEX IF NOT EXISTS idx_purchase_return_items_return ON purchase_return_items(return_id);
 
 -- ── updated_at triggers (update_updated_at() already exists, defined
---    in db/schema.sql) ─────────────────────────────────
+--    in db/schema/schema.sql) ─────────────────────────────────
 CREATE TRIGGER vendors_upd              BEFORE UPDATE ON vendors              FOR EACH ROW EXECUTE FUNCTION update_updated_at();
 CREATE TRIGGER purchases_upd            BEFORE UPDATE ON purchases            FOR EACH ROW EXECUTE FUNCTION update_updated_at();
 CREATE TRIGGER purchase_items_upd       BEFORE UPDATE ON purchase_items       FOR EACH ROW EXECUTE FUNCTION update_updated_at();

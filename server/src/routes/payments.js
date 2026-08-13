@@ -11,7 +11,7 @@
 // the next time a payment was added/removed on that same invoice. This
 // wraps both writes in one Postgres transaction so that can't happen.
 const express = require('express');
-const pool = require('../db/pool');
+const pool = require('../config/pool');
 const { requireAuth } = require('../middleware/auth');
 const { asyncRoute } = require('../middleware/errorHandler');
 
