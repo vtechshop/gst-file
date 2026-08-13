@@ -160,8 +160,45 @@ process.on('uncaughtException', (err) => {
   console.error('[uncaughtException]', err && err.stack ? err.stack : err);
 });
 
+// Reports schema drift at boot — it does NOT apply anything.
+//
+// Migrations run as their own deploy step (`npm run migrate`), never on
+// startup: this service is a single free-tier instance that spins down on
+// idle, so boot happens often and unattended, and a migration failing there
+// would take the API down in a restart loop with no operator watching. See
+// db/MIGRATIONS.md.
+//
+// But a silent drift is what caused three production incidents, so boot is
+// where it gets said out loud. Advisory only — the server still starts,
+// because refusing to boot would turn "some writes fail" into "nothing
+// works", and the operator needs the app up to diagnose it.
+function reportPendingMigrations() {
+  const { run } = require('./db/migrator');
+  const pool = require('./config/pool');
+  const lines = [];
+  run(pool, { mode: 'status', log: (l) => lines.push(l) })
+    .then((r) => {
+      if (r.pending.length) {
+        console.warn('  ' + '!'.repeat(64));
+        console.warn(`  !! ${r.pending.length} PENDING MIGRATION(S) — this database is behind the code`);
+        r.pending.forEach((id) => console.warn(`  !!   ${id}`));
+        console.warn('  !! Writes touching new columns will fail with 42703 until you run:');
+        console.warn('  !!   npm run migrate');
+        console.warn('  ' + '!'.repeat(64));
+      } else {
+        console.log('  Migrations: up to date');
+      }
+    })
+    .catch((err) => {
+      // Never fatal. A brand-new database has no schema_migrations table
+      // yet, and a permissions problem here must not stop the API serving.
+      console.warn(`  Migrations: could not be checked (${err.message})`);
+    });
+}
+
 app.listen(PORT, () => {
   console.log(`GST Billing backend listening on http://localhost:${PORT}`);
   console.log(`  Database: ${process.env.DATABASE_URL ? 'configured' : 'NOT CONFIGURED'}`);
   console.log(`  Allowed origins: ${ALLOWED_ORIGINS.join(', ')}`);
+  reportPendingMigrations();
 });

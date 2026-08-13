@@ -1,0 +1,39 @@
+{
+  "_comment": [
+    "Execution order for db/migrations. THIS FILE IS THE ORDER - not the filename sort.",
+    "Alphabetical order is provably wrong here: migration_exports_advances.sql creates",
+    "advance_adjustments, which has a foreign key to receipt_vouchers, created by",
+    "migration_vouchers.sql - and 'exports' sorts before 'vouchers'. Running them",
+    "alphabetically against a database that predates both fails with 42P01. That is not",
+    "hypothetical; it happened in production on 2026-08-12.",
+    "",
+    "The order below is the order the files were added to the repository, which is the",
+    "order they were written to be applied in.",
+    "",
+    "Adding a migration: create db/migrations/NNN_short_description.sql using the next",
+    "free number, and append its filename to the end of 'order'. The runner refuses to",
+    "start if the directory and this list disagree, so a file cannot be silently skipped."
+  ],
+  "order": [
+    "migration_purchases.sql",
+    "migration_expenses.sql",
+    "migration_sales_returns.sql",
+    "migration_payments_reference.sql",
+    "migration_payment_status_partial.sql",
+    "migration_eway_bills.sql",
+    "migration_sales_return_perf.sql",
+    "migration_invoice_series.sql",
+    "migration_invoice_series_log.sql",
+    "migration_invoice_series_formats.sql",
+    "migration_gst_registration.sql",
+    "migration_customer_gst_category.sql",
+    "migration_gst_treatment.sql",
+    "migration_product_gst_master.sql",
+    "migration_vouchers.sql",
+    "migration_challans.sql",
+    "migration_exports_advances.sql",
+    "migration_amendments.sql",
+    "migration_cess_ecom.sql",
+    "migration_diffpercent_rcm.sql"
+  ]
+}

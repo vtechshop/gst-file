@@ -5,7 +5,11 @@
   "main": "src/app.js",
   "scripts": {
     "start": "node src/app.js",
-    "dev": "node --watch src/app.js"
+    "dev": "node --watch src/app.js",
+    "test": "node --test",
+    "migrate": "node src/db/migrator.js up",
+    "migrate:status": "node src/db/migrator.js status",
+    "migrate:baseline": "node src/db/migrator.js baseline"
   },
   "dependencies": {
     "bcryptjs": "^3.0.3",
