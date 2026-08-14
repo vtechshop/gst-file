@@ -145,10 +145,18 @@ function buildProfileModal(profile, isRequired) {
           </div>
           <div class="form-group">
             <label for="profState">State</label>
-            <select id="profState" class="form-control">
+            <select id="profState" class="form-control" onchange="onProfStateChange()">
               <option value="">Select State</option>
               ${INDIAN_STATES.map(s=>`<option value="${s}"${profile?.state===s?' selected':''}>${s}</option>`).join('')}
             </select>
+          </div>
+          <div class="form-group">
+            <label for="profDistrict">District</label>
+            <input type="text" id="profDistrict" class="form-control" list="profDistrictList"
+                   value="${e(profile?.district)}" placeholder="Select State first" autocomplete="off"
+                   onchange="onProfDistrictChange()" aria-describedby="profDistrictError">
+            <datalist id="profDistrictList"></datalist>
+            <div id="profDistrictError" class="fs-11 text-danger d-none" style="margin-top:4px;"></div>
           </div>
           <div class="form-group">
             <label for="profEmail">Email</label>
@@ -272,6 +280,10 @@ function buildProfileModal(profile, isRequired) {
   lockBodyScroll();
   document.getElementById('profGSTIN').addEventListener('input', function() { this.value = this.value.toUpperCase(); });
   document.getElementById('profPAN').addEventListener('input', function() { this.value = this.value.toUpperCase(); });
+  // Seed the district list from the state the profile already has, so a
+  // returning user sees their own state's districts without touching the
+  // State dropdown first.
+  populateDistrictList('profDistrictList', document.getElementById('profState')?.value || '');
 }
 
 function closeProfileModal() {
@@ -926,6 +938,16 @@ function focusFirstInvalidProfileField(errors) {
   if (input) input.focus();
 }
 
+// Changing State refills the district list and drops a district that
+// belonged to the previous state, so a district cannot survive a switch
+// to a state it does not belong to.
+function onProfStateChange() {
+  syncDistrictField('profState', 'profDistrict', 'profDistrictList', 'profDistrictError');
+}
+function onProfDistrictChange() {
+  syncDistrictField('profState', 'profDistrict', 'profDistrictList', 'profDistrictError');
+}
+
 async function submitProfile() {
   // Validate before anything is sent. An invalid form never becomes a
   // request, so the user is not made to wait on a round trip to be told
@@ -942,6 +964,15 @@ async function submitProfile() {
     showToast(missingRequired
       ? 'Please complete all required fields before saving your business profile. Fields marked with * are required.'
       : 'Please correct the highlighted fields before saving your business profile.', 'error');
+    return;
+  }
+
+  // District against its own State. Checked here as well as on change,
+  // because a district can be typed straight in without the change
+  // handler ever firing.
+  if (!validateStateDistrict('profState', 'profDistrict', 'profDistrictError')) {
+    showToast('Select a district that belongs to the chosen state.', 'error');
+    document.getElementById('profDistrict')?.focus();
     return;
   }
 
@@ -964,7 +995,8 @@ async function submitProfile() {
     // profile saved once stops depending on normalisation to load again.
     phone:   normalizeProfilePhone(val('profPhone')),
     address: val('profAddress'),
-    state:   document.getElementById('profState')?.value || '',
+    state:    document.getElementById('profState')?.value || '',
+    district: val('profDistrict'),
     email:   val('profEmail'),
     pan:     val('profPAN', true),
     website: val('profWebsite'),

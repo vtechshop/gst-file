@@ -551,3 +551,27 @@ async function deleteJobWorker(id) {
 
 function round2(n) { return Math.round((parseFloat(n) || 0) * 100) / 100; }
 
+
+// ── Address District ────────────────────────────────
+// Changing the State refills the district list and drops a district that
+// belonged to the previous state. The State handler these are chained
+// after (supply-type detection) is untouched — District never feeds the
+// GST place-of-supply decision.
+function onDcFromStateChange() {
+  syncDistrictField('dcFromState', 'dcFromDistrict', 'dcFromDistrictList', 'dcFromDistrictError');
+}
+function onDcFromDistrictChange() {
+  syncDistrictField('dcFromState', 'dcFromDistrict', 'dcFromDistrictList', 'dcFromDistrictError');
+}
+function onDcToStateChange() {
+  syncDistrictField('dcToState', 'dcToDistrict', 'dcToDistrictList', 'dcToDistrictError');
+}
+function onDcToDistrictChange() {
+  syncDistrictField('dcToState', 'dcToDistrict', 'dcToDistrictList', 'dcToDistrictError');
+}
+function onJwStateChange() {
+  syncDistrictField('jwState', 'jwDistrict', 'jwDistrictList', 'jwDistrictError');
+}
+function onJwDistrictChange() {
+  syncDistrictField('jwState', 'jwDistrict', 'jwDistrictList', 'jwDistrictError');
+}

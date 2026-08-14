@@ -23,7 +23,9 @@ const express = require('express');
 const pool = require('../config/pool');
 const { requireAuth } = require('../middleware/auth');
 const { asyncRoute } = require('../middleware/errorHandler');
-const { validateCustomerPayload, validateProductPayload, validateProfilePayload } = require('../utils/validation');
+const {
+  validateCustomerPayload, validateProductPayload, validateProfilePayload, makeDistrictValidator
+} = require('../utils/validation');
 
 function buildWhere(query, ownerColumn, userId, columns) {
   const clauses = [`${ownerColumn} = $1`];
@@ -213,7 +215,7 @@ function makeCrudRouter(table, { columns, insertable = true, readOnly = false, o
 const TABLES = {
   profiles: {
     ownerColumn: 'id',
-    columns: ['id','name','email','gstin','business_name','phone','address','state',
+    columns: ['id','name','email','gstin','business_name','phone','address','state','district',
       'bank_name','bank_account_no','bank_ifsc','bank_branch','upi_id',
       'logo_base64','seal_base64','signature_base64','qr_base64','header_color',
       'footer_text','terms_conditions','pan','website',
@@ -231,9 +233,9 @@ const TABLES = {
     validate: validateProfilePayload
   },
   customers: {
-    columns: ['id','user_id','name','gstin','phone','email','address','state',
+    columns: ['id','user_id','name','gstin','phone','email','address','state','district',
       // Customer GST category (Phase 2, Module 2)
-      'gst_category','pan','country','place_of_supply','shipping_address','shipping_state',
+      'gst_category','pan','country','place_of_supply','shipping_address','shipping_state','shipping_district',
       'created_at','updated_at'],
     validate: validateCustomerPayload
   },
@@ -328,18 +330,20 @@ const TABLES = {
   //    See db/migrations/migration_challans.sql for why the four challan variants
   //    share one table: one numbering series, so one uniqueness rule.
   job_workers: {
-    columns: ['id','user_id','name','gstin','is_registered','address','city','state',
+    columns: ['id','user_id','name','gstin','is_registered','address','city','state','district',
       'state_code','pincode','phone','email','nature_of_work','customer_id','status',
-      'notes','created_at','updated_at']
+      'notes','created_at','updated_at'],
+    validate: makeDistrictValidator([['state', 'district']])
   },
   delivery_challans: {
     columns: ['id','user_id','document_type','document_number','document_date','document_series',
-      'status','job_worker_id','customer_id','party_name','party_gstin','from_address','from_state',
-      'to_address','to_state','place_of_supply','supply_type','purpose','reason',
+      'status','job_worker_id','customer_id','party_name','party_gstin','from_address','from_state','from_district',
+      'to_address','to_state','to_district','place_of_supply','supply_type','purpose','reason',
       'quantity_known_at_dispatch','approval_due_date','expected_return_date','returned_on',
       'transporter_name','transporter_id','vehicle_number','transport_mode','transport_distance',
       'lr_number','eway_bill_id','eway_bill_number','taxable_value','igst','cgst','sgst','cess',
-      'total_value','notes','cancelled_at','cancel_reason','created_at','updated_at']
+      'total_value','notes','cancelled_at','cancel_reason','created_at','updated_at'],
+    validate: makeDistrictValidator([['from_state', 'from_district'], ['to_state', 'to_district']])
   },
   delivery_challan_items: {
     columns: ['id','user_id','challan_id','product_id','product_name','hsn_code','unit','quantity',
@@ -386,7 +390,7 @@ const TABLES = {
       'ewb_number','ewb_date','valid_until','status','created_at','updated_at']
   },
   b2b_invoices: {
-    columns: ['id','user_id','gst_number','customer_name','phone','address','state',
+    columns: ['id','user_id','gst_number','customer_name','phone','address','state','district',
       'invoice_number','invoice_date','taxable_amount','gst_percentage','gst_amount',
       'total_amount','supply_type','igst','cgst','sgst','transport_required',
       'vehicle_number','transporter_name','transport_mode','transport_distance_km',
@@ -396,10 +400,11 @@ const TABLES = {
       'export_type','shipping_bill_number','shipping_bill_date','port_code',
       'cess_amount','ecom_gstin','ecom_supply_type',
       'sez_recipient_type','export_of','lut_number',
-      'differential_65']
+      'differential_65'],
+    validate: makeDistrictValidator([['state', 'district']])
   },
   b2c_invoices: {
-    columns: ['id','user_id','gst_number','customer_name','phone','address','state',
+    columns: ['id','user_id','gst_number','customer_name','phone','address','state','district',
       'invoice_number','taxable_amount','gst_percentage','gst_amount','total_amount',
       'supply_type','igst','cgst','sgst','invoice_date','transport_required',
       'vehicle_number','transporter_name','transport_mode','transport_distance_km',
@@ -409,7 +414,8 @@ const TABLES = {
       'export_type','shipping_bill_number','shipping_bill_date','port_code',
       'cess_amount','ecom_gstin','ecom_supply_type',
       'sez_recipient_type','export_of','lut_number',
-      'differential_65']
+      'differential_65'],
+    validate: makeDistrictValidator([['state', 'district']])
   },
   b2b_hsn: {
     // Legacy — no longer written to directly by normal invoice flow, but
@@ -437,14 +443,16 @@ const TABLES = {
       'sort_order','created_at','updated_at']
   },
   vendors: {
-    columns: ['id','user_id','name','gstin','phone','email','address','state',
-      'created_at','updated_at']
+    columns: ['id','user_id','name','gstin','phone','email','address','state','district',
+      'created_at','updated_at'],
+    validate: makeDistrictValidator([['state', 'district']])
   },
   purchases: {
-    columns: ['id','user_id','vendor_id','vendor_name','vendor_gstin','phone','address','state',
+    columns: ['id','user_id','vendor_id','vendor_name','vendor_gstin','phone','address','state','district',
       'purchase_number','purchase_date','taxable_amount','gst_percentage','gst_amount',
       'total_amount','supply_type','igst','cgst','sgst','payment_status','amount_paid',
-      'created_at','updated_at']
+      'created_at','updated_at'],
+    validate: makeDistrictValidator([['state', 'district']])
   },
   purchase_items: {
     columns: ['id','user_id','purchase_id','product_id','product_name','hsn_code','unit',
@@ -473,9 +481,10 @@ const TABLES = {
   },
   sales_returns: {
     columns: ['id','user_id','original_invoice_id','original_invoice_type','original_invoice_number',
-      'customer_name','customer_gstin','phone','address','state','return_number','return_date','reason',
+      'customer_name','customer_gstin','phone','address','state','district','return_number','return_date','reason',
       'taxable_amount','gst_percentage','gst_amount','total_amount','supply_type','igst','cgst','sgst',
-      'created_at','updated_at']
+      'created_at','updated_at'],
+    validate: makeDistrictValidator([['state', 'district']])
   },
   sales_return_items: {
     columns: ['id','user_id','return_id','product_id','product_name','hsn_code','unit',

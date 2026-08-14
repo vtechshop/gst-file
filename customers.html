@@ -6,6 +6,7 @@
   <title>Customer Master - GST Management System</title>
   <link rel="stylesheet" href="client/css/style.css?v=28">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
+  <script src="shared/india-districts.js?v=28"></script>
   <script src="client/js/api/apiClient.js?v=28"></script>
   <script src="client/js/api/backup.js?v=28"></script>
   <script src="client/js/core/config.js?v=28"></script>
@@ -115,10 +116,18 @@
             </div>
             <div class="form-group">
               <label for="custState">State <span class="text-required">*</span></label>
-              <select id="custState" class="form-control" onchange="validateCustomerForm()">
+              <select id="custState" class="form-control" onchange="onCustStateChange()">
                 <option value="">Select State</option>
               </select>
               <div id="custStateError" class="fs-11 text-danger d-none" style="margin-top:4px;"></div>
+            </div>
+            <div class="form-group">
+              <label for="custDistrict">District</label>
+              <input type="text" id="custDistrict" class="form-control" list="custDistrictList"
+                     placeholder="Select State first" autocomplete="off"
+                     onchange="onCustDistrictChange()" aria-describedby="custDistrictError">
+              <datalist id="custDistrictList"></datalist>
+              <div id="custDistrictError" class="fs-11 text-danger d-none" style="margin-top:4px;"></div>
             </div>
           </div>
           <div class="form-group mb-16">
@@ -155,9 +164,17 @@
             </div>
             <div class="form-group">
               <label for="custShipState">Ship-To State</label>
-              <select id="custShipState" class="form-control">
+              <select id="custShipState" class="form-control" onchange="onCustShipStateChange()">
                 <option value="">Same as billing</option>
               </select>
+            </div>
+            <div class="form-group">
+              <label for="custShipDistrict">Ship-To District</label>
+              <input type="text" id="custShipDistrict" class="form-control" list="custShipDistrictList"
+                     placeholder="Same as billing" autocomplete="off"
+                     onchange="onCustShipDistrictChange()" aria-describedby="custShipDistrictError">
+              <datalist id="custShipDistrictList"></datalist>
+              <div id="custShipDistrictError" class="fs-11 text-danger d-none" style="margin-top:4px;"></div>
             </div>
             <div class="form-group">
               <label for="custShipAddr">Ship-To Address</label>

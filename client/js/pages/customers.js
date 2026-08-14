@@ -17,6 +17,25 @@ function populateCustStateOptions() {
   sel.innerHTML = '<option value="">Select State</option>' + INDIAN_STATES.map(s => `<option value="${s}">${s}</option>`).join('');
 }
 
+// ── District, one per address ───────────────────────
+// Changing the State refills the district list and drops a district that
+// belonged to the previous state, so Tiruppur cannot survive a switch to
+// Kerala. Both addresses behave identically; Ship-To simply has its own
+// pair of fields.
+function onCustStateChange() {
+  syncDistrictField('custState', 'custDistrict', 'custDistrictList', 'custDistrictError');
+  validateCustomerForm();
+}
+function onCustDistrictChange() {
+  syncDistrictField('custState', 'custDistrict', 'custDistrictList', 'custDistrictError');
+}
+function onCustShipStateChange() {
+  syncDistrictField('custShipState', 'custShipDistrict', 'custShipDistrictList', 'custShipDistrictError');
+}
+function onCustShipDistrictChange() {
+  syncDistrictField('custShipState', 'custShipDistrict', 'custShipDistrictList', 'custShipDistrictError');
+}
+
 async function initCustomers() {
   const user = await requireAuth();
   if (!user) return;
@@ -107,6 +126,17 @@ async function saveCustomer() {
   const errors = validateCustomerForm();
   if (Object.keys(errors).length > 0) return;
 
+  // District against its own State, for both addresses. Checked here as
+  // well as on change because a district can be typed straight into the
+  // field without the change handler ever firing.
+  const billingOk = validateStateDistrict('custState', 'custDistrict', 'custDistrictError');
+  const shipOk    = validateStateDistrict('custShipState', 'custShipDistrict', 'custShipDistrictError');
+  if (!billingOk || !shipOk) {
+    showToast('Select a district that belongs to the chosen state.', 'error');
+    document.getElementById(billingOk ? 'custShipDistrict' : 'custDistrict')?.focus();
+    return;
+  }
+
   const name  = document.getElementById('custName')?.value?.trim();
   const gstin = document.getElementById('custGSTIN')?.value?.trim().toUpperCase();
   const phone = document.getElementById('custPhone')?.value?.trim();
@@ -115,6 +145,8 @@ async function saveCustomer() {
   const state = document.getElementById('custState')?.value;
 
   const payload = { user_id: user.id, name, gstin, phone, email, address: addr, state,
+    district:         document.getElementById('custDistrict')?.value?.trim() || '',
+    shipping_district: document.getElementById('custShipDistrict')?.value?.trim() || '',
     // GST classification (Phase 2, Module 2). Every field optional; a
     // customer saved without touching them is Registered — Regular,
     // which is exactly what every existing customer already is.
@@ -145,11 +177,13 @@ async function saveCustomer() {
 
 function resetCustomer() {
   ['custName','custGSTIN','custPhone','custEmail','custAddr',
-   'custPan','custCountry','custShipAddr'].forEach(id => {
+   'custPan','custCountry','custShipAddr','custDistrict','custShipDistrict'].forEach(id => {
     const el = document.getElementById(id); if (el) el.value = '';
   });
   const st = document.getElementById('custState'); if (st) st.value = '';
   ['custPos','custShipState'].forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
+  populateDistrictList('custDistrictList', '');
+  populateDistrictList('custShipDistrictList', '');
   setCustGstCategory(GST_CUSTOMER_CATEGORY_DEFAULT);
   custEditId = null;
   const title = document.getElementById('custFormTitle');
@@ -230,6 +264,12 @@ function editCustomer(id) {
   set('custPan', rec.pan); set('custCountry', rec.country);
   set('custPos', rec.place_of_supply); set('custShipState', rec.shipping_state);
   set('custShipAddr', rec.shipping_address);
+  // District after State, so the list is the right state's before the
+  // value lands in it. A record saved before District existed simply has
+  // none — the field stays blank and the record still saves.
+  set('custDistrict', rec.district); set('custShipDistrict', rec.shipping_district);
+  populateDistrictList('custDistrictList', rec.state || '');
+  populateDistrictList('custShipDistrictList', rec.shipping_state || '');
   document.getElementById('custFormTitle').textContent = 'Edit Customer';
   document.getElementById('custSaveBtn').innerHTML = '<i class="fas fa-save"></i> Update Customer';
   document.getElementById('custName').scrollIntoView({ behavior: 'smooth', block: 'center' });

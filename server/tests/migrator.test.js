@@ -381,7 +381,11 @@ test('baseline --except', async (t) => {
   // The real thing: the exact production scenario, on a disposable database
   // built from the current schema.sql — which has every table and column but
   // NOT the four indexes migration_sales_return_perf creates.
-  await t.test('the real 20-migration set, excluding migration_sales_return_perf', async () => {
+  // The expected count is read from the manifest rather than written here.
+  // Hardcoding it meant every new migration failed this test for no reason
+  // other than being new, which teaches the next person to edit the number
+  // instead of reading what broke.
+  await t.test('the real migration set, excluding migration_sales_return_perf', async () => {
     const pool = await freshExceptDatabase();
     await pool.query(fs.readFileSync(path.resolve(__dirname, '..', 'db', 'schema', 'schema.sql'), 'utf8'));
 
@@ -396,12 +400,15 @@ test('baseline --except', async (t) => {
     const base = await migrator.run(pool, {
       mode: 'baseline', confirmBaseline: true, except: ['migration_sales_return_perf'], log: () => {}
     });
-    assert.strictEqual(base.applied.length, 19, `expected 19 baselined, got ${base.applied.length}`);
+    // Everything in the manifest except the one deliberately held back.
+    const expectedBaselined = migrator.loadPlan().length - 1;
+    assert.strictEqual(base.applied.length, expectedBaselined,
+      `expected ${expectedBaselined} baselined, got ${base.applied.length}`);
     assert.deepStrictEqual(base.excluded, ['migration_sales_return_perf']);
     assert.ok(!base.applied.includes('migration_sales_return_perf'));
 
     const status = await migrator.run(pool, { mode: 'status', log: () => {} });
-    assert.strictEqual(status.alreadyApplied.length, 19);
+    assert.strictEqual(status.alreadyApplied.length, expectedBaselined);
     assert.deepStrictEqual(status.pending, ['migration_sales_return_perf']);
 
     const up = await migrator.run(pool, { log: () => {} });
@@ -411,7 +418,7 @@ test('baseline --except', async (t) => {
     for (const i of PERF) assert.ok(after.includes(i), `${i} must exist after migrate`);
 
     const final = await migrator.run(pool, { mode: 'status', log: () => {} });
-    assert.strictEqual(final.alreadyApplied.length, 20, 'all 20 recorded');
+    assert.strictEqual(final.alreadyApplied.length, expectedBaselined + 1, 'every migration recorded');
     assert.strictEqual(final.pending.length, 0, 'zero pending');
 
     const perfRow = (await pool.query(

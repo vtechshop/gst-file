@@ -1561,6 +1561,110 @@ const GST_STATE_SHORT_CODES = {
   'Jammu and Kashmir':'JK','Ladakh':'LA','Lakshadweep':'LD','Puducherry':'PY'
 };
 
+// ── Address District ────────────────────────────────
+// The district register itself lives in shared/india-districts.js, which
+// the server require()s too — these are the thin browser-side wrappers
+// that the forms call.
+//
+// Looked up at call time rather than captured at load time so this file
+// keeps working on the pages that do not collect an address and therefore
+// do not load the register at all. A page without it behaves as though
+// every district were acceptable, which is the same thing those pages do
+// today; it is never a silent rejection.
+function districtsForState(state) {
+  if (typeof IndiaDistricts === 'undefined') return [];
+  return IndiaDistricts.districtsForState(state);
+}
+
+function isValidStateDistrict(state, district) {
+  if (typeof IndiaDistricts === 'undefined') return true;
+  return IndiaDistricts.isValidStateDistrict(state, district);
+}
+
+// Fills a <datalist> with one state's districts. The field itself stays a
+// plain <input list="…">, which is how this application already does
+// type-to-filter (product, vendor and state pickers all do), so "Tiru"
+// narrows to Tiruppur with no component and no library.
+function populateDistrictList(datalistId, state) {
+  const list = document.getElementById(datalistId);
+  if (!list) return;
+  const districts = districtsForState(state);
+  list.innerHTML = districts.map(d => `<option value="${escHtmlAttr(d)}"></option>`).join('');
+}
+
+// Keeps one District field honest against its own State field.
+//
+// Called on State change and before save. When the State changes, a
+// district belonging to the previous state is CLEARED rather than left
+// sitting under a state it does not belong to — that is the one case
+// where rewriting the user's input is right, because the alternative is
+// storing Tiruppur under Kerala.
+//
+// A district that only differs in case is corrected to the register's own
+// spelling instead of being cleared, so typing "tiruppur" saves as
+// "Tiruppur" and does not read as a mismatch.
+//
+// Returns true when the pair is acceptable to save.
+function syncDistrictField(stateId, districtId, listId, errorId) {
+  const stateEl = document.getElementById(stateId);
+  const distEl = document.getElementById(districtId);
+  if (!stateEl || !distEl) return true;
+
+  const state = (stateEl.value || '').trim();
+  if (listId) populateDistrictList(listId, state);
+
+  const typed = (distEl.value || '').trim();
+  const showError = message => {
+    const el = errorId ? document.getElementById(errorId) : null;
+    if (el) {
+      el.textContent = message || '';
+      el.classList.toggle('d-none', !message);
+    }
+    distEl.setAttribute('aria-invalid', message ? 'true' : 'false');
+    distEl.classList.toggle('error', !!message);
+  };
+
+  if (!typed) { showError(''); return true; }
+
+  const canonical = typeof IndiaDistricts === 'undefined'
+    ? typed
+    : IndiaDistricts.canonicalDistrict(state, typed);
+
+  if (canonical) {
+    if (canonical !== typed) distEl.value = canonical;   // fix casing only
+    showError('');
+    return true;
+  }
+
+  // The district is not one of this state's. If a state is selected the
+  // pair is simply wrong and saving is blocked; with no state selected
+  // there is nothing to judge it against, so it is left alone.
+  if (!state) { showError(''); return true; }
+  distEl.value = '';
+  showError(`Select a district in ${state}.`);
+  return true;
+}
+
+// The gate a form calls immediately before saving. Unlike the live sync
+// above it never edits the field — it only reports, so a save is refused
+// on what the user can actually see.
+function validateStateDistrict(stateId, districtId, errorId) {
+  const stateEl = document.getElementById(stateId);
+  const distEl = document.getElementById(districtId);
+  if (!stateEl || !distEl) return true;
+  const state = (stateEl.value || '').trim();
+  const district = (distEl.value || '').trim();
+  const ok = isValidStateDistrict(state, district);
+  const el = errorId ? document.getElementById(errorId) : null;
+  if (el) {
+    el.textContent = ok ? '' : `${district} is not a district of ${state}.`;
+    el.classList.toggle('d-none', ok);
+  }
+  distEl.setAttribute('aria-invalid', ok ? 'false' : 'true');
+  distEl.classList.toggle('error', !ok);
+  return ok;
+}
+
 // Lookup is case- and punctuation-tolerant: records saved before the
 // State dropdown existed can hold free text like "TAMILNADU" or
 // "Jammu & Kashmir", and those should still show their code rather than

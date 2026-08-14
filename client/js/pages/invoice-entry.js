@@ -1153,3 +1153,15 @@ function restoreEcomFields(inv) {
   set('invEcomSupplyType', (inv && inv.ecom_supply_type) || 'through_operator');
   onEcomToggleChange();
 }
+
+// ── Address District ────────────────────────────────
+// Changing the State refills the district list and drops a district that
+// belonged to the previous state. The State handler these are chained
+// after (supply-type detection) is untouched — District never feeds the
+// GST place-of-supply decision.
+function onInvStateChange() {
+  syncDistrictField('invState', 'invDistrict', 'invDistrictList', 'invDistrictError');
+}
+function onInvDistrictChange() {
+  syncDistrictField('invState', 'invDistrict', 'invDistrictList', 'invDistrictError');
+}

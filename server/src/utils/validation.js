@@ -7,6 +7,10 @@
 // anything that reaches the API directly (Never rely only on frontend
 // validation).
 const validator = require('validator');
+// The SAME district master the browser loads — see shared/india-districts.js.
+// Not a port: one file, both runtimes, so the API can only accept a
+// State + District pair the dropdown could actually have produced.
+const { isValidStateDistrict } = require('../../../shared/india-districts');
 
 const GST_VALID_STATE_CODES = new Set([
   '01', '02', '03', '04', '05', '06', '07', '08', '09', '10',
@@ -45,6 +49,10 @@ function isValidPhone(value) {
   return /^\d{10}$/.test((value || '').trim());
 }
 
+// Customer Master carries two addresses — the billing one and Ship To —
+// so it has two State/District pairs to keep consistent.
+const CUSTOMER_DISTRICT_PAIRS = [['state', 'district'], ['shipping_state', 'shipping_district']];
+
 // Customer Master — Customer Name / Phone / State required; GSTIN and
 // Email optional but must be well-formed if provided.
 function validateCustomerPayload(payload) {
@@ -65,6 +73,8 @@ function validateCustomerPayload(payload) {
   if (gstin && !validateGstin(gstin).valid) errors.gstin = 'Invalid GSTIN.';
 
   if (email && !validator.isEmail(email)) errors.email = 'Invalid email address.';
+
+  Object.assign(errors, validateDistrictPairs(payload, CUSTOMER_DISTRICT_PAIRS));
 
   return { valid: Object.keys(errors).length === 0, errors };
 }
@@ -143,7 +153,55 @@ function validateProfilePayload(payload) {
     errors.pan = 'PAN must be 10 characters, e.g. ABCDE1234F.';
   }
 
+  Object.assign(errors, validateDistrictPairs(payload, [['state', 'district']]));
+
   return { valid: Object.keys(errors).length === 0, errors };
+}
+
+// A validate() for a table whose only field rule is the District/State
+// pair. Built rather than written out per table so adding District to
+// another entity is one line in the table registry, not another copy of
+// this function.
+function makeDistrictValidator(pairs) {
+  return function (payload) {
+    const errors = validateDistrictPairs(payload, pairs);
+    return { valid: Object.keys(errors).length === 0, errors };
+  };
+}
+
+// Address District, checked against the State on the same record.
+//
+// `pairs` names the columns to check, because the tables disagree about
+// what they call them: customers carries both state/district and
+// shipping_state/shipping_district, delivery_challans has from_ and to_,
+// and self_invoices calls its column supplier_state. Passing the pairs in
+// keeps that knowledge in the table registry (routes/generic.js) rather
+// than duplicating it here.
+//
+// Presence-based, exactly as validateProfilePayload is and for the same
+// reason: these rows are written by several forms, and a PATCH that never
+// mentions district is not changing it. A payload carrying a district but
+// no state reads the state it is being compared against from... nowhere,
+// so it cannot be judged — see the note in shared/india-districts.js about
+// why that passes rather than fails.
+function validateDistrictPairs(payload, pairs) {
+  const errors = {};
+  const has = f => Object.prototype.hasOwnProperty.call(payload, f);
+  const str = f => (payload[f] == null ? '' : String(payload[f])).trim();
+
+  pairs.forEach(([stateCol, districtCol]) => {
+    if (!has(districtCol)) return;          // not being written — not our business
+    const district = str(districtCol);
+    if (!district) return;                  // clearing or leaving blank is allowed
+    if (!has(stateCol)) return;             // no state in this payload to judge against
+    const state = str(stateCol);
+    if (!state) return;
+    if (!isValidStateDistrict(state, district)) {
+      errors[districtCol] = `${district} is not a district of ${state}.`;
+    }
+  });
+
+  return errors;
 }
 
 // GSTN accepts 4/6/8-digit HSN codes — same shape rule the frontend applies
@@ -191,5 +249,6 @@ function validateProductPayload(payload, isInsert) {
 
 module.exports = {
   validateGstin, isValidPhone, normalizeIndianPhone,
-  validateCustomerPayload, validateProductPayload, validateProfilePayload
+  validateCustomerPayload, validateProductPayload, validateProfilePayload,
+  validateDistrictPairs, makeDistrictValidator
 };

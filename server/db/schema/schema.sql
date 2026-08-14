@@ -40,6 +40,7 @@ CREATE TABLE IF NOT EXISTS profiles (
   phone TEXT,
   address TEXT,
   state TEXT,
+  district TEXT,
   bank_name TEXT,
   bank_account_no TEXT,
   bank_ifsc TEXT,
@@ -107,6 +108,7 @@ CREATE TABLE IF NOT EXISTS b2b_invoices (
   phone TEXT,
   address TEXT,
   state TEXT,
+  district TEXT,
   invoice_number TEXT NOT NULL,
   invoice_date DATE NOT NULL,
   taxable_amount DECIMAL(15,2) NOT NULL,
@@ -176,6 +178,7 @@ CREATE TABLE IF NOT EXISTS b2c_invoices (
   phone TEXT,
   address TEXT,
   state TEXT,
+  district TEXT,
   invoice_number TEXT,
   taxable_amount DECIMAL(15,2) NOT NULL,
   gst_percentage DECIMAL(5,2) NOT NULL,
@@ -319,6 +322,7 @@ CREATE TABLE IF NOT EXISTS customers (
   email TEXT,
   address TEXT,
   state TEXT,
+  district TEXT,
   created_at TIMESTAMPTZ DEFAULT NOW(),
   updated_at TIMESTAMPTZ DEFAULT NOW(),
   -- ── Customer GST category (Phase 2, Module 2) ──
@@ -330,7 +334,8 @@ CREATE TABLE IF NOT EXISTS customers (
   country TEXT,                    -- blank = India
   place_of_supply TEXT,            -- blank = derive as before
   shipping_address TEXT,           -- bill-to remains address/state above
-  shipping_state TEXT
+  shipping_state TEXT,
+  shipping_district TEXT
 );
 
 -- New indexes (customer_name, gst_number)
@@ -583,6 +588,7 @@ CREATE TABLE IF NOT EXISTS vendors (
   email TEXT,
   address TEXT,
   state TEXT,
+  district TEXT,
   created_at TIMESTAMPTZ DEFAULT NOW(),
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
@@ -600,6 +606,7 @@ CREATE TABLE IF NOT EXISTS purchases (
   phone TEXT,
   address TEXT,
   state TEXT,
+  district TEXT,
   purchase_number TEXT NOT NULL,
   purchase_date DATE NOT NULL,
   taxable_amount DECIMAL(15,2) NOT NULL,
@@ -754,6 +761,7 @@ CREATE TABLE IF NOT EXISTS sales_returns (
   phone TEXT,
   address TEXT,
   state TEXT,
+  district TEXT,
   return_number TEXT NOT NULL,
   return_date DATE NOT NULL,
   reason TEXT,
@@ -1038,6 +1046,7 @@ CREATE TABLE IF NOT EXISTS job_workers (
   address TEXT,
   city TEXT,
   state TEXT,
+  district TEXT,
   state_code TEXT,
   pincode TEXT,
   phone TEXT,
@@ -1081,8 +1090,10 @@ CREATE TABLE IF NOT EXISTS delivery_challans (
   -- Rule 55 requires the place of dispatch and the place of delivery.
   from_address TEXT,
   from_state TEXT,
+  from_district TEXT,
   to_address TEXT,
   to_state TEXT,
+  to_district TEXT,
   place_of_supply TEXT,
   supply_type TEXT NOT NULL DEFAULT 'intrastate',
 

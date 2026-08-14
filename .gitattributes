@@ -1,0 +1,17 @@
+# Migration files must check out with LF endings, always.
+#
+# The migration runner records a sha256 of each migration's bytes in
+# schema_migrations and refuses to apply anything when a recorded file no
+# longer hashes to what was stored — the guard that stops an already-applied
+# migration being edited underneath the database.
+#
+# On Windows, Git's autocrlf rewrites files to CRLF on checkout. That changes
+# the bytes without changing a single character of SQL, so every applied
+# migration reads as drifted and the runner blocks the next migration. It did
+# exactly that on 2026-08-14: all 20 applied migrations reported drift, none
+# had actually been edited, and the fix was to convert them back to LF.
+#
+# Pinning *.sql to LF makes the checkout byte-identical on every machine, so
+# the checksum means what it is supposed to mean: the SQL changed, not the
+# platform.
+*.sql text eol=lf

@@ -469,3 +469,15 @@ function resetPurchaseForm() {
   clearPurchaseFormFields();
   document.getElementById('purchVendorName')?.focus();
 }
+
+// ── Address District ────────────────────────────────
+// Changing the State refills the district list and drops a district that
+// belonged to the previous state. The State handler these are chained
+// after (supply-type detection) is untouched — District never feeds the
+// GST place-of-supply decision.
+function onPurchStateChange() {
+  syncDistrictField('purchState', 'purchDistrict', 'purchDistrictList', 'purchDistrictError');
+}
+function onPurchDistrictChange() {
+  syncDistrictField('purchState', 'purchDistrict', 'purchDistrictList', 'purchDistrictError');
+}

@@ -48,8 +48,14 @@ async function saveVendor() {
 
   if (!name) { showToast('Vendor name is required.', 'error'); return; }
   if (gstin && !validateGstin(gstin).valid) { showToast('GSTIN is invalid — correct it (or clear it) before saving.', 'error'); return; }
+  if (!validateStateDistrict('vendState', 'vendDistrict', 'vendDistrictError')) {
+    showToast('Select a district that belongs to the chosen state.', 'error');
+    document.getElementById('vendDistrict')?.focus();
+    return;
+  }
 
-  const payload = { user_id: user.id, name, gstin, phone, email, address: addr, state };
+  const payload = { user_id: user.id, name, gstin, phone, email, address: addr, state,
+    district: document.getElementById('vendDistrict')?.value?.trim() || '' };
 
   let error;
   if (vendEditId) {
@@ -67,11 +73,21 @@ async function saveVendor() {
   await loadVendors(user.id);
 }
 
+// Changing State refills the district list and drops a district from the
+// previous state — same behaviour as every other address form here.
+function onVendStateChange() {
+  syncDistrictField('vendState', 'vendDistrict', 'vendDistrictList', 'vendDistrictError');
+}
+function onVendDistrictChange() {
+  syncDistrictField('vendState', 'vendDistrict', 'vendDistrictList', 'vendDistrictError');
+}
+
 function resetVendor() {
-  ['vendName','vendGstin','vendPhone','vendEmail','vendAddr'].forEach(id => {
+  ['vendName','vendGstin','vendPhone','vendEmail','vendAddr','vendDistrict'].forEach(id => {
     const el = document.getElementById(id); if (el) el.value = '';
   });
   const st = document.getElementById('vendState'); if (st) st.value = '';
+  populateDistrictList('vendDistrictList', '');
   vendEditId = null;
   renderGstinStatusInto('vendGstinStatus', '');
   const title = document.getElementById('vendFormTitle');
@@ -146,6 +162,10 @@ function editVendor(id) {
   document.getElementById('vendEmail').value = rec.email || '';
   document.getElementById('vendAddr').value  = rec.address || '';
   document.getElementById('vendState').value = rec.state || '';
+  // District after State so the list belongs to the right state before the
+  // value lands in it. A vendor saved before District existed has none.
+  const vd = document.getElementById('vendDistrict'); if (vd) vd.value = rec.district || '';
+  populateDistrictList('vendDistrictList', rec.state || '');
   renderGstinStatusInto('vendGstinStatus', rec.gstin || '');
   document.getElementById('vendFormTitle').textContent = 'Edit Vendor';
   document.getElementById('vendSaveBtn').innerHTML = '<i class="fas fa-save"></i> Update Vendor';

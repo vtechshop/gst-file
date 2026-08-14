@@ -6,6 +6,7 @@
   <title>Vendor Master - GST Management System</title>
   <link rel="stylesheet" href="client/css/style.css?v=28">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
+  <script src="shared/india-districts.js?v=28"></script>
   <script src="client/js/api/apiClient.js?v=28"></script>
   <script src="client/js/api/backup.js?v=28"></script>
   <script src="client/js/core/config.js?v=28"></script>
@@ -112,9 +113,17 @@
             </div>
             <div class="form-group">
               <label for="vendState">State</label>
-              <select id="vendState" class="form-control">
+              <select id="vendState" class="form-control" onchange="onVendStateChange()">
                 <option value="">Select State</option>
               </select>
+            </div>
+            <div class="form-group">
+              <label for="vendDistrict">District</label>
+              <input type="text" id="vendDistrict" class="form-control" list="vendDistrictList"
+                     placeholder="Select State first" autocomplete="off"
+                     onchange="onVendDistrictChange()" aria-describedby="vendDistrictError">
+              <datalist id="vendDistrictList"></datalist>
+              <div id="vendDistrictError" class="fs-11 text-danger d-none" style="margin-top:4px;"></div>
             </div>
           </div>
           <div class="form-group mb-16">
