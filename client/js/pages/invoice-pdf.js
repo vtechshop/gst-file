@@ -228,6 +228,38 @@ function placeInk(ink, wantW, cx, topY) {
   };
 }
 
+// ── Bill To / Ship To, composed once for both renderers ────────────────
+// This file renders the same invoice two ways: buildInvoiceHTML() for the
+// on-screen preview and Print, buildInvoicePDFDoc() for the downloaded
+// PDF. They are separate on purpose — one is a web page, the other is a
+// vector document with millimetre positioning — but WHAT each section
+// says must not be. Composing the party blocks here is what stopped the
+// two drifting: the PDF had no Ship To section at all for as long as the
+// HTML had one, because adding it to one renderer never touched the other.
+//
+// Returns plain text. HTML escaping belongs to the HTML renderer; jsPDF
+// draws strings and would print the entities literally.
+function invoicePartyLines(inv) {
+  const bill = [
+    [inv.address, inv.state].filter(Boolean).join(', '),
+    inv.phone ? 'Phone: ' + inv.phone : '',
+    inv.gstin ? 'GSTIN: ' + inv.gstin : ''
+  ].filter(Boolean);
+
+  // Same address unless a separate one was recorded — stated plainly
+  // rather than left as an empty box the reader has to interpret.
+  const sameAddress = !inv.shipping_address;
+  const ship = sameAddress
+    ? bill.slice()
+    : [
+      [inv.shipping_address, inv.shipping_state || inv.state].filter(Boolean).join(', '),
+      inv.phone ? 'Phone: ' + inv.phone : '',
+      inv.gstin ? 'GSTIN: ' + inv.gstin : ''
+    ].filter(Boolean);
+
+  return { bill, ship, sameAddress };
+}
+
 function bankDetailLines(p) {
   if (!p) return [];
   return [
@@ -321,22 +353,44 @@ async function buildInvoicePDFDoc(inv) {
   metaWrapped.forEach((line, i) => doc.text(line, pw / 2 + 4, blockTop + i * 4.5));
   y = blockTop + Math.max(soldByWrapped.length, metaWrapped.length) * 4.5 + 5;
 
-  // ── Bill To ──
+  // ── Bill To / Ship To ──
+  // Two columns rather than one above the other: a tax invoice has to
+  // carry both, and stacking them cost roughly 25mm of height that the
+  // Terms block at the foot of the page needs.
+  const parties = invoicePartyLines(inv);
+  const partyColW = (R - L) / 2 - 4;
+  const shipX = L + (R - L) / 2 + 2;
+
   doc.setFontSize(9); doc.setFont('helvetica', 'bold'); doc.setTextColor(...accent);
   doc.text('BILL TO', L, y);
+  doc.text('SHIP TO', shipX, y);
   doc.line(L, y + 1.5, R, y + 1.5);
   y += 6;
-  doc.setFontSize(8.5); doc.setFont('helvetica', 'normal'); doc.setTextColor(40, 40, 40);
-  const custLines = [
-    inv.customer_name || '',
-    inv.gstin ? 'GSTIN: ' + inv.gstin : '',
-    [inv.address, inv.state].filter(Boolean).join(', '),
-    inv.phone ? 'Phone: ' + inv.phone : '',
-    inv.email || ''
-  ].filter(Boolean);
-  const custWrapped = wrapLines(doc, custLines, R - L);
-  custWrapped.forEach((line, i) => doc.text(line, L, y + i * 4.5, { maxWidth: R - L }));
-  y += custWrapped.length * 4.5 + 6;
+
+  doc.setFontSize(8.5); doc.setTextColor(40, 40, 40);
+  // The customer's name leads each block in bold, exactly as the preview
+  // shows it; the address lines follow in normal weight.
+  doc.setFont('helvetica', 'bold');
+  const custName = inv.customer_name || '';
+  doc.text(doc.splitTextToSize(custName, partyColW), L, y);
+  doc.text(doc.splitTextToSize(custName, partyColW), shipX, y);
+  const nameH = Math.max(
+    doc.splitTextToSize(custName, partyColW).length, 1) * 4.5;
+
+  doc.setFont('helvetica', 'normal');
+  const billWrapped = wrapLines(doc, parties.bill, partyColW);
+  const shipWrapped = wrapLines(doc, parties.ship, partyColW);
+  billWrapped.forEach((line, i) => doc.text(line, L, y + nameH + i * 4.5, { maxWidth: partyColW }));
+  shipWrapped.forEach((line, i) => doc.text(line, shipX, y + nameH + i * 4.5, { maxWidth: partyColW }));
+
+  let partyH = nameH + Math.max(billWrapped.length, shipWrapped.length) * 4.5;
+  if (parties.sameAddress) {
+    doc.setFont('helvetica', 'italic'); doc.setTextColor(120, 120, 120);
+    doc.text('Same as billing address', shipX, y + nameH + shipWrapped.length * 4.5);
+    doc.setFont('helvetica', 'normal'); doc.setTextColor(40, 40, 40);
+    partyH = Math.max(partyH, nameH + (shipWrapped.length + 1) * 4.5);
+  }
+  y += partyH + 5;
 
   // ── Item table — Product Name / HSN / Unit / Qty / Rate / GST% /
   // Taxable Value / CGST / SGST / IGST / Line Total, sourced directly
@@ -365,7 +419,7 @@ async function buildInvoicePDFDoc(inv) {
     margin: { left: L, right: L },
     styles: { cellPadding: 2.5, lineColor: [225, 225, 225] }
   });
-  y = doc.lastAutoTable.finalY + 8;
+  y = doc.lastAutoTable.finalY + 6;
 
   if (y > 220) { doc.addPage(); y = 20; }
 
@@ -377,6 +431,7 @@ async function buildInvoicePDFDoc(inv) {
   if (inv.igst > 0) totalsRows.push([`IGST (${inv.gst_percentage}%)`, formatNum(inv.igst)]);
   if (Math.abs(inv.round_off) >= 0.005) totalsRows.push(['Round Off', (inv.round_off >= 0 ? '+' : '') + formatNum(inv.round_off)]);
 
+  const totalsTop = y;
   doc.setFontSize(9); doc.setFont('helvetica', 'normal'); doc.setTextColor(60, 60, 60);
   totalsRows.forEach((r, i) => {
     doc.text(r[0], boxX, y + i * 5.5);
@@ -388,31 +443,39 @@ async function buildInvoicePDFDoc(inv) {
   doc.setFontSize(12); doc.setFont('helvetica', 'bold'); doc.setTextColor(...accent);
   doc.text('Grand Total', boxX, ruleY + 7);
   doc.text('Rs.' + formatNum(inv.total_amount), R, ruleY + 7, { align: 'right' });
-  y = ruleY + 16;
+
+  // ── Bank / UPI details ──
+  // In the left column, level with the totals. The totals are only 80mm
+  // wide and right-aligned, so everything to their left was empty while
+  // the bank block sat underneath and pushed the rest of the invoice down
+  // — about 20mm spent on nothing. Same reclamation as Terms beside the
+  // seal further down.
+  const bankLines = bankDetailLines(p);
+  let bankBottom = totalsTop;
+  if (bankLines.length) {
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(8.5); doc.setTextColor(...accent);
+    doc.text('Bank Details for Payment', L, totalsTop);
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(8); doc.setTextColor(60, 60, 60);
+    bankLines.forEach((l, i) => doc.text(l, L, totalsTop + 4.5 + i * 4, { maxWidth: boxX - 6 - L }));
+    bankBottom = totalsTop + 4.5 + bankLines.length * 4;
+  }
+
+  // Whichever column runs deeper decides where the next block starts.
+  y = Math.max(ruleY + 10, bankBottom + 3);
 
   // ── Amount in words + notes ──
   doc.setFontSize(9); doc.setFont('helvetica', 'normal'); doc.setTextColor(30, 30, 30);
   doc.text('Amount in Words:', L, y);
   doc.setFont('helvetica', 'bold');
   doc.text(numberToWordsINR(inv.total_amount), L, y + 5, { maxWidth: R - L });
-  y += 13;
+  y += 9;
 
   doc.setFont('helvetica', 'italic'); doc.setFontSize(8); doc.setTextColor(110, 110, 110);
   doc.text('* GST has been charged separately as shown above.', L, y);
   doc.text('Whether tax is payable under reverse charge: No', L, y + 4);
-  y += 12;
+  y += 9;
 
-  // ── Bank / UPI details ──
-  const bankLines = bankDetailLines(p);
-  if (bankLines.length) {
-    if (y > 250) { doc.addPage(); y = 20; }
-    doc.setFont('helvetica', 'bold'); doc.setFontSize(8.5); doc.setTextColor(...accent);
-    doc.text('Bank Details for Payment', L, y);
-    y += 4.5;
-    doc.setFont('helvetica', 'normal'); doc.setFontSize(8); doc.setTextColor(60, 60, 60);
-    bankLines.forEach((l, i) => doc.text(l, L, y + i * 4));
-    y += bankLines.length * 4 + 6;
-  }
+  // Bank details are drawn beside the totals above, not here.
 
   if (y > 250) { doc.addPage(); y = 20; }
 
@@ -481,27 +544,67 @@ async function buildInvoicePDFDoc(inv) {
   doc.line(sealCx - 22, authY - 3.5, sealCx + 22, authY - 3.5);
   doc.setFontSize(8); doc.setTextColor(120, 120, 120);
   doc.text('Authorized Signatory', sealCx, authY, { align: 'center' });
-  y = sealTop + seal.inkH + 11;
+  const signBlockBottom = sealTop + seal.inkH + 5;
+
+  // ── Terms & Conditions ──
+  // Set in the left column, alongside the seal rather than underneath it.
+  // The QR occupies roughly 30mm on the left and the stamp sits far right,
+  // which leaves the width between them empty for the height of the whole
+  // signature block — the blank band that used to sit at the foot of every
+  // invoice. Stacking Terms below that band instead is what pushed the
+  // block past the page and onto a second sheet.
+  //
+  // Left-aligned, because a paragraph of conditions is read, not admired;
+  // centring it made the ragged edges hard to follow.
+  const tcTop = sigBlockY + (qrSource ? 32 : 0);
+  const tcWidth = (sealCx - SEAL / 2 - 6) - L;
+  let tcBottom = tcTop;
+  if (p?.terms_conditions && tcWidth > 40) {
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(7.5); doc.setTextColor(...accent);
+    doc.text('Terms & Conditions', L, tcTop);
+    doc.setFont('helvetica', 'normal'); doc.setTextColor(100, 100, 100);
+    const tcCol = doc.splitTextToSize(p.terms_conditions, tcWidth);
+    doc.text(tcCol, L, tcTop + 4);
+    tcBottom = tcTop + 4 + tcCol.length * 3.4;
+  }
+
+  // Whichever of the two columns runs deeper decides where the footer
+  // starts, so neither can be drawn over.
+  y = Math.max(signBlockBottom, tcBottom + 4);
 
   // ── Footer: Terms & Conditions, footer text, computer-generated line, contact ──
-  if (y > 260) { doc.addPage(); y = 20; }
+  //
+  // Measured before it is drawn, so the decision to start a new page is
+  // made on what the block actually needs rather than on a guess. The old
+  // test was `y > 260`, a fixed guess that fired whenever the signature
+  // block ended low — pushing Terms onto a second page and leaving the
+  // bottom of page one empty, which is exactly the blank space that
+  // looked like a layout bug. Now a page is added only when the footer
+  // genuinely will not fit.
+  doc.setFontSize(7.5);
+  const footerLines = p?.footer_text ? doc.splitTextToSize(p.footer_text, R - L) : [];
+  const footerH =
+    6                                                   // rule + gap
+    + (footerLines.length ? footerLines.length * 3.6 + 5 : 0)
+    + 4 + 4;                                            // generated line + contact
+
+  // A4 is 297mm; the page number sits 8mm from the bottom, so the footer
+  // has to finish above that.
+  const PAGE_BOTTOM = doc.internal.pageSize.height - 12;
+  if (y + footerH > PAGE_BOTTOM) { doc.addPage(); y = 20; }
+  else {
+    // Everything fits. Push the block down so it sits at the foot of the
+    // page instead of leaving the gap underneath it — the invoice reads
+    // as one full page rather than one that stopped early.
+    y = Math.max(y, PAGE_BOTTOM - footerH);
+  }
+
   doc.setDrawColor(178, 223, 219);
   doc.line(L, y, R, y);
   y += 6;
 
-  if (p?.terms_conditions) {
-    doc.setFont('helvetica', 'bold'); doc.setFontSize(7.5); doc.setTextColor(...accent);
-    doc.text('Terms & Conditions', pw / 2, y, { align: 'center' });
-    y += 4;
-    doc.setFont('helvetica', 'normal'); doc.setFontSize(7.5); doc.setTextColor(100, 100, 100);
-    const tcLines = doc.splitTextToSize(p.terms_conditions, R - L);
-    doc.text(tcLines, pw / 2, y, { align: 'center' });
-    y += tcLines.length * 3.6 + 5;
-  }
-
-  if (p?.footer_text) {
+  if (footerLines.length) {
     doc.setFontSize(7.5); doc.setFont('helvetica', 'normal'); doc.setTextColor(100, 100, 100);
-    const footerLines = doc.splitTextToSize(p.footer_text, R - L);
     doc.text(footerLines, pw / 2, y, { align: 'center' });
     y += footerLines.length * 3.6 + 5;
   }
@@ -603,23 +706,12 @@ async function buildInvoiceHTML(inv, opts) {
     ? `<tr><td>Round Off</td><td class="r">${(inv.round_off >= 0 ? '+' : '') + formatNum(inv.round_off)}</td></tr>`
     : '';
 
-  const billLines = [
-    escHtml([inv.address, inv.state].filter(Boolean).join(', ')),
-    inv.phone ? 'Phone: ' + escHtml(inv.phone) : '',
-    inv.gstin ? 'GSTIN: ' + escHtml(inv.gstin) : ''
-  ].filter(Boolean);
-
-  // Same address unless a separate one was recorded — stated plainly
-  // rather than left as an empty box the reader has to interpret.
-  const sameAddress = !inv.shipping_address;
-  const shipLines = sameAddress
-    ? [escHtml([inv.address, inv.state].filter(Boolean).join(', ')),
-       inv.phone ? 'Phone: ' + escHtml(inv.phone) : '',
-       inv.gstin ? 'GSTIN: ' + escHtml(inv.gstin) : '',
-       '<i>Same as billing address</i>'].filter(Boolean)
-    : [escHtml([inv.shipping_address, inv.shipping_state || inv.state].filter(Boolean).join(', ')),
-       inv.phone ? 'Phone: ' + escHtml(inv.phone) : '',
-       inv.gstin ? 'GSTIN: ' + escHtml(inv.gstin) : ''].filter(Boolean);
+  // Composed by invoicePartyLines() so the PDF says the same thing — see
+  // the note there. Escaped here because that helper returns plain text.
+  const parties = invoicePartyLines(inv);
+  const billLines = parties.bill.map(escHtml);
+  const shipLines = parties.ship.map(escHtml)
+    .concat(parties.sameAddress ? ['<i>Same as billing address</i>'] : []);
 
   const sellerLines = [
     escHtml(p?.address), escHtml(p?.state),
