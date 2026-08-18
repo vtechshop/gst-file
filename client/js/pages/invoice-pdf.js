@@ -260,6 +260,35 @@ function invoicePartyLines(inv) {
   return { bill, ship, sameAddress };
 }
 
+// ── Terms & Conditions, as a table when they are written as one ────────
+// Business Profile stores terms as free text, and most companies write a
+// paragraph. This one writes a schedule — "Payment Term: 100% bank
+// transfer", "Warranty: One Year" — which reads as a table and is
+// unreadable as a run-on sentence.
+//
+// So the shape follows the writing rather than a new setting: a line
+// holding "Label: value" is a term with a value, and once at least two
+// lines look like that the whole block is laid out as a table. Anything
+// else stays a paragraph, exactly as before. Nothing to configure, and a
+// company that writes prose sees no change.
+//
+// A label with no value is kept, not dropped — "Delivery at:" with the
+// value still to be agreed is information the reader needs, and silently
+// removing rows would edit the company's terms.
+function parseTermsTable(text) {
+  const lines = String(text || '').split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+  if (lines.length < 2) return null;
+
+  const pairs = [];
+  for (const line of lines) {
+    // Split on the first colon only, so a value containing one survives.
+    const m = /^(.{1,40}?)\s*:\s*(.*)$/.exec(line);
+    if (!m) return null;                 // one prose line and it is not a table
+    pairs.push([m[1].trim(), m[2].trim()]);
+  }
+  return pairs.length >= 2 ? pairs : null;
+}
+
 function bankDetailLines(p) {
   if (!p) return [];
   return [
@@ -556,10 +585,17 @@ async function buildInvoicePDFDoc(inv) {
   //
   // Left-aligned, because a paragraph of conditions is read, not admired;
   // centring it made the ragged edges hard to follow.
+  const termsPairs = parseTermsTable(p?.terms_conditions);
   const tcTop = sigBlockY + (qrSource ? 32 : 0);
   const tcWidth = (sealCx - SEAL / 2 - 6) - L;
   let tcBottom = tcTop;
-  if (p?.terms_conditions && tcWidth > 40) {
+
+  if (p?.terms_conditions && !termsPairs && tcWidth > 40) {
+    // Prose: set in the left column, alongside the seal rather than
+    // underneath it. The QR takes about 30mm on the left and the stamp
+    // sits far right, leaving the width between them empty for the height
+    // of the signature block — the blank band that used to sit at the
+    // foot of every invoice.
     doc.setFont('helvetica', 'bold'); doc.setFontSize(7.5); doc.setTextColor(...accent);
     doc.text('Terms & Conditions', L, tcTop);
     doc.setFont('helvetica', 'normal'); doc.setTextColor(100, 100, 100);
@@ -568,9 +604,37 @@ async function buildInvoicePDFDoc(inv) {
     tcBottom = tcTop + 4 + tcCol.length * 3.4;
   }
 
-  // Whichever of the two columns runs deeper decides where the footer
-  // starts, so neither can be drawn over.
   y = Math.max(signBlockBottom, tcBottom + 4);
+
+  // A schedule of terms is drawn full width BELOW the signature, in the
+  // band that was blank, because a two-column table needs the width and
+  // reads as a table rather than as a note squeezed beside the stamp.
+  // Term and value are paired across the page the way the company writes
+  // them, two pairs to a row.
+  if (termsPairs) {
+    const rows = [];
+    for (let i = 0; i < termsPairs.length; i += 2) {
+      const a = termsPairs[i], b = termsPairs[i + 1];
+      rows.push([a[0], a[1], b ? b[0] : '', b ? b[1] : '']);
+    }
+    doc.autoTable({
+      startY: y + 1,
+      head: [[{ content: 'Terms & Condition', colSpan: 4, styles: { halign: 'center' } }]],
+      body: rows,
+      theme: 'grid',
+      margin: { left: L, right: pw - R },
+      styles: { fontSize: 6.8, cellPadding: 0.9, lineColor: [190, 190, 190], lineWidth: 0.1, textColor: [60, 60, 60] },
+      headStyles: { fillColor: accent, textColor: [255, 255, 255], fontSize: 7, fontStyle: 'bold', cellPadding: 1 },
+      // Labels bold so the schedule scans down the page, values normal.
+      columnStyles: {
+        0: { fontStyle: 'bold', cellWidth: (R - L) * 0.26 },
+        1: { cellWidth: (R - L) * 0.24 },
+        2: { fontStyle: 'bold', cellWidth: (R - L) * 0.26 },
+        3: { cellWidth: (R - L) * 0.24 }
+      }
+    });
+    y = doc.lastAutoTable.finalY + 2;
+  }
 
   // ── Footer: Terms & Conditions, footer text, computer-generated line, contact ──
   //
