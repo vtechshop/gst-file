@@ -25,6 +25,7 @@ const uploadRoutes = require('./routes/uploads');
 const productSyncRoutes = require('./routes/product-sync');
 const billScanRoutes = require('./routes/bill-scan');
 const invoiceScanRoutes = require('./routes/invoice-scan');
+const gstVerifyRoutes = require('./routes/gst-verify');
 const { mountGenericRoutes } = require('./routes/generic');
 const { errorHandler } = require('./middleware/errorHandler');
 
@@ -130,6 +131,10 @@ app.use('/api/bill-scan', billScanRoutes);
 // from. Shares the Gemini client, upload plumbing and sanitisers with
 // it; also cannot write to the database.
 app.use('/api/invoice-scan', invoiceScanRoutes);
+// GSTIN lookup against the public taxpayer register. Holds the Appyflow
+// secret server-side for the same reason bill-scan holds the Gemini key,
+// and like it cannot write to the database. requireAuth'd internally.
+app.use('/api/gst', gstVerifyRoutes);
 mountGenericRoutes(app);
 
 // Any /api/* path that no route above claimed. Without this Express

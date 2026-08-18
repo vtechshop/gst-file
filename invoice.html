@@ -167,8 +167,15 @@
           <div id="invB2BFields" class="form-grid cols-2 mb-16">
             <div class="form-group">
               <label for="invGstin">GST Number <span id="invGstinReqMark" class="fs-11 text-muted-sm">(Optional)</span></label>
-              <input type="text" id="invGstin" class="form-control uppercase" maxlength="15" oninput="onInvoiceGstinInput(this)" onblur="onInvoiceGstinBlur(this)">
+              <div class="d-flex gap-8">
+                <input type="text" id="invGstin" class="form-control uppercase" maxlength="15" oninput="onInvoiceGstinInput(this)" onblur="onInvoiceGstinBlur(this)">
+                <button type="button" id="invGstVerifyBtn" class="btn btn-secondary" onclick="verifyInvoiceGstin()"
+                        title="Fetch the registered name, address, state and district for this GSTIN">
+                  <i class="fas fa-cloud-arrow-down"></i> Fetch
+                </button>
+              </div>
               <div id="invGstinStatus" class="d-flex align-center gap-8 d-none" style="margin-top:6px;"></div>
+              <div id="invGstVerifyMsg" class="fs-11 d-none" style="margin-top:4px;"></div>
             </div>
             <div class="form-group">
               <label for="invState">State <span id="invStateReqMark" class="fs-11 text-muted-sm">(Optional)</span></label>

@@ -1165,3 +1165,119 @@ function onInvStateChange() {
 function onInvDistrictChange() {
   syncDistrictField('invState', 'invDistrict', 'invDistrictList', 'invDistrictError');
 }
+
+// ── GSTIN lookup against the public taxpayer register ──────────────────
+// The Appyflow call is made by our own backend (server/routes/gst-verify.js),
+// which holds the account secret. Nothing here knows or could learn it.
+//
+// This fills in what the register says; it does not decide anything. Supply
+// type is still worked out by detectSupplyType() from the two GSTINs, and
+// the State/District pair still goes through the same validation as a
+// hand-typed one — a fetched district is not trusted more than a typed one.
+let _invGstLookupInFlight = false;
+
+function setInvGstVerifyMsg(text, kind) {
+  const el = document.getElementById('invGstVerifyMsg');
+  if (!el) return;
+  el.textContent = text || '';
+  el.classList.toggle('d-none', !text);
+  el.classList.toggle('text-danger', kind === 'error');
+  el.classList.toggle('text-muted', kind !== 'error');
+}
+
+// Matches a Portal state name to the one this application stores. The
+// Portal writes the same names INDIAN_STATES does, but case and spacing
+// have been seen to differ, so the comparison is loosened just enough to
+// absorb that without accepting a different state.
+function matchIndianState(name) {
+  const want = String(name || '').trim().toLowerCase().replace(/\s+/g, ' ');
+  if (!want) return '';
+  return INDIAN_STATES.find(s => s.toLowerCase() === want)
+      || INDIAN_STATES.find(s => s.toLowerCase().replace(/\s+/g, '') === want.replace(/\s+/g, ''))
+      || '';
+}
+
+async function verifyInvoiceGstin() {
+  // One lookup at a time. Each one is a paid call, and a double-click
+  // must not become two.
+  if (_invGstLookupInFlight) return;
+
+  const el = document.getElementById('invGstin');
+  const gstin = (el?.value || '').trim().toUpperCase();
+  if (!validateGstin(gstin).valid) {
+    setInvGstVerifyMsg('Enter a valid 15-character GSTIN first.', 'error');
+    el?.focus();
+    return;
+  }
+
+  const btn = document.getElementById('invGstVerifyBtn');
+  const originalHtml = btn ? btn.innerHTML : '';
+  _invGstLookupInFlight = true;
+  if (btn) { btn.disabled = true; btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Fetching…'; }
+  setInvGstVerifyMsg('Looking up the GST register…', 'info');
+
+  try {
+    const res = await fetch(`${API_BASE_URL}/gst/verify`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + localStorage.getItem('gst_jwt') },
+      body: JSON.stringify({ gstin })
+    });
+    let body = null;
+    try { body = await res.json(); } catch { /* non-JSON error page */ }
+    if (!res.ok) {
+      // Nothing already on the form is touched when the lookup fails —
+      // the user's own typing is worth more than a failed request.
+      handleApiError(apiErrorFrom(res, body), 'GST verification failed');
+      setInvGstVerifyMsg(body?.error?.message || 'Could not verify that GSTIN.', 'error');
+      return;
+    }
+
+    const t = body && body.taxpayer;
+    if (!t) { setInvGstVerifyMsg('No details returned for that GSTIN.', 'error'); return; }
+
+    // Trade name is what a business is invoiced as; legal name is the
+    // fallback, because a proprietorship often has no separate trade name.
+    const name = (t.tradeName || t.legalName || '').trim();
+    if (name) setInvValue('invCustName', name);
+    setInvValue('invGstin', t.gstin || gstin);
+    if (t.address) { const a = document.getElementById('invAddress'); if (a) a.value = t.address; }
+
+    // State first, then District — the district list is filtered by the
+    // state, so setting them the other way round would offer the wrong
+    // list. Both then go through the ordinary validation.
+    const state = matchIndianState(t.state);
+    const stateEl = document.getElementById('invState');
+    if (state && stateEl) stateEl.value = state;
+    populateDistrictList('invDistrictList', state);
+    const distEl = document.getElementById('invDistrict');
+    if (distEl) {
+      const canonical = state ? canonicalDistrictFor(state, t.district) : '';
+      distEl.value = canonical || '';
+    }
+    syncDistrictField('invState', 'invDistrict', 'invDistrictList', 'invDistrictError');
+
+    // Untouched: supply type is still derived, never set from the lookup.
+    detectSupplyType();
+    updateGstinValidationStatus();
+
+    const cancelled = /cancel|suspend|inactive/i.test(t.status || '');
+    setInvGstVerifyMsg(
+      cancelled
+        ? `Fetched — but the GST portal reports this registration as "${t.status}".`
+        : `Fetched from the GST register${t.status ? ` — status: ${t.status}` : ''}.`,
+      cancelled ? 'error' : 'info');
+  } catch (err) {
+    handleApiError(err, 'GST verification failed');
+    setInvGstVerifyMsg('Could not reach the server. Check your connection and try again.', 'error');
+  } finally {
+    _invGstLookupInFlight = false;
+    if (btn) { btn.disabled = false; btn.innerHTML = originalHtml; }
+  }
+}
+
+// Thin wrapper so the lookup does not need to know how the district
+// register is exposed on the page.
+function canonicalDistrictFor(state, district) {
+  if (typeof IndiaDistricts === 'undefined') return String(district || '').trim();
+  return IndiaDistricts.canonicalDistrict(state, district) || '';
+}
