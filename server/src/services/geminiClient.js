@@ -61,7 +61,13 @@ const MODEL_ID_OK = /^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(GEMINI_MODEL);
 // dashboard field but obvious between pipes.
 console.log(`[gemini] model resolved to |${GEMINI_MODEL}|${MODEL_ID_OK ? '' : '  <-- INVALID FORMAT'}`);
 
+// Base allowance for a small document, and how much more each megabyte of
+// request buys. MAX caps the whole thing so a pathological upload cannot
+// hold a worker open indefinitely. Overridable, like the base value, so a
+// slow account can be tuned without a deploy.
 const GEMINI_TIMEOUT_MS = parseInt(process.env.GEMINI_TIMEOUT_MS) || 60000;
+const PER_MB_TIMEOUT_MS = parseInt(process.env.GEMINI_TIMEOUT_PER_MB_MS) || 45000;
+const MAX_TIMEOUT_MS = parseInt(process.env.GEMINI_TIMEOUT_MAX_MS) || 240000;
 
 // ── Retry policy ─────────────────────────────────────
 // Gemini sheds load under pressure with 429 (rate limited) and 503
@@ -195,6 +201,29 @@ async function extractDocument({ apiKey, model, prompt, schema, parts, timeoutMs
   // attempts — a retry must be the identical request, not a rebuilt one.
   const payload = JSON.stringify(body);
 
+  // How long Gemini is given, scaled to how much it was asked to read.
+  //
+  // A flat 60s was the whole bug: it is generous for a one-page photo and
+  // far too short for a multi-page PDF or a batch upload, which arrive here
+  // as one call carrying every page inline. The document that fails is
+  // precisely the one that needed the most time, and it was cut off and
+  // reported as "took too long — try a smaller file" when nothing was
+  // actually wrong with it.
+  //
+  // Raising the flat number instead would have made every small scan wait
+  // just as long before giving up. Scaling costs the fast documents nothing
+  // and gives the slow ones room.
+  //
+  // This is the only layer with a deadline. The upload returns a job id
+  // immediately and the browser polls, so no gateway — Render's, Vercel's
+  // or the browser's — is waiting on this request, and none of them can
+  // produce the 504. Only this timeout can, which is why it is the only one
+  // being changed.
+  const payloadMB = payload.length / (1024 * 1024);
+  const scaledMs = Math.round(GEMINI_TIMEOUT_MS + payloadMB * PER_MB_TIMEOUT_MS);
+  const budgetMs = timeoutMs || Math.min(scaledMs, MAX_TIMEOUT_MS);
+  console.log(`[${label}] payload ${payloadMB.toFixed(1)}MB, allowing ${Math.round(budgetMs / 1000)}s`);
+
   let upstream;
   let raw = '';
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
@@ -210,15 +239,25 @@ async function extractDocument({ apiKey, model, prompt, schema, parts, timeoutMs
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey },
         body: payload,
-        signal: AbortSignal.timeout(timeoutMs || GEMINI_TIMEOUT_MS)
+        signal: AbortSignal.timeout(budgetMs)
       });
     } catch (err) {
       // Not retried: the brief is to retry 429 and 503 only, and a
       // timeout has already consumed the caller's whole time budget.
       console.error(`[${label}] request failed:`, err.name, err.message);
+      // The two failures are told apart because the fixes differ: a timeout
+      // means the document was too much to read in the time allowed, an
+      // unreachable service means nothing was read at all. Reporting both
+      // as "try a smaller file" sent people to shrink a file that was never
+      // the problem.
       return err.name === 'TimeoutError'
-        ? fail(504, 'The document took too long to analyse. Try a smaller or clearer file.', 'timeout')
-        : fail(504, 'Could not reach the document analysis service.', 'unreachable');
+        ? fail(504,
+            `The document analysis service did not finish within ${Math.round(budgetMs / 1000)} seconds. ` +
+            'A very long or high-resolution document can exceed that — try fewer pages or a smaller file.',
+            'timeout')
+        : fail(504,
+            'Could not reach the document analysis service. It may be temporarily unavailable — try again in a moment.',
+            'unreachable');
     }
 
     if (upstream.ok) break;
