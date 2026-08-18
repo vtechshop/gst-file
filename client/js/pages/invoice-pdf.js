@@ -617,20 +617,46 @@ async function buildInvoicePDFDoc(inv) {
       const a = termsPairs[i], b = termsPairs[i + 1];
       rows.push([a[0], a[1], b ? b[0] : '', b ? b[1] : '']);
     }
+    // Styled to the company's own terms sheet rather than to the rest of
+    // this document: yellow ground, black rules, bold labels with the
+    // numbering written exactly as they number it. That sheet is the one
+    // the customer already knows, and matching the invoice's teal-and-grey
+    // house style here would have quietly redesigned a document the
+    // company treats as fixed.
+    const TERMS_YELLOW = [255, 255, 153];
     doc.autoTable({
       startY: y + 1,
-      head: [[{ content: 'Terms & Condition', colSpan: 4, styles: { halign: 'center' } }]],
+      head: [[{ content: 'Terms & condition', colSpan: 4 }]],
       body: rows,
       theme: 'grid',
       margin: { left: L, right: pw - R },
-      styles: { fontSize: 6.8, cellPadding: 0.9, lineColor: [190, 190, 190], lineWidth: 0.1, textColor: [60, 60, 60] },
-      headStyles: { fillColor: accent, textColor: [255, 255, 255], fontSize: 7, fontStyle: 'bold', cellPadding: 1 },
-      // Labels bold so the schedule scans down the page, values normal.
+      styles: {
+        fontSize: 7, cellPadding: 1,
+        fillColor: TERMS_YELLOW, textColor: [0, 0, 0],
+        lineColor: [0, 0, 0], lineWidth: 0.2,
+        valign: 'middle'
+      },
+      headStyles: {
+        fillColor: TERMS_YELLOW, textColor: [0, 0, 0],
+        fontSize: 8, fontStyle: 'bold', halign: 'center',
+        lineColor: [0, 0, 0], lineWidth: 0.2
+      },
+      // Label bold on the left of each half, value toward the right of it.
       columnStyles: {
-        0: { fontStyle: 'bold', cellWidth: (R - L) * 0.26 },
-        1: { cellWidth: (R - L) * 0.24 },
-        2: { fontStyle: 'bold', cellWidth: (R - L) * 0.26 },
-        3: { cellWidth: (R - L) * 0.24 }
+        0: { fontStyle: 'bold', halign: 'left',  cellWidth: (R - L) * 0.25 },
+        1: { fontStyle: 'normal', halign: 'right', cellWidth: (R - L) * 0.25 },
+        2: { fontStyle: 'bold', halign: 'left',  cellWidth: (R - L) * 0.25 },
+        3: { fontStyle: 'normal', halign: 'right', cellWidth: (R - L) * 0.25 }
+      },
+      // autoTable has no underline, so the title's rule is drawn on top of
+      // the header cell to match the reference sheet.
+      didDrawCell: data => {
+        if (data.section !== 'head') return;
+        const w = doc.getTextWidth('Terms & condition');
+        const cx = data.cell.x + data.cell.width / 2;
+        const ty = data.cell.y + data.cell.height - 1.6;
+        doc.setDrawColor(0, 0, 0); doc.setLineWidth(0.3);
+        doc.line(cx - w / 2, ty, cx + w / 2, ty);
       }
     });
     y = doc.lastAutoTable.finalY + 2;
