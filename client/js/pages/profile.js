@@ -382,6 +382,9 @@ async function openSettingsModal() {
   const noProfile = !profile?.business_name;
   const stats = typeof getStorageStats === 'function' ? await getStorageStats() : {};
   const productSyncConfig = await fetchProductSyncConfig();
+  // Remembered outside the markup so submitProductSyncSettings() can refuse
+  // to write a form that was rendered from a failed read.
+  _productSyncConfigUnavailable = !!productSyncConfig.unavailable;
 
   const wrap = document.createElement('div');
   wrap.id = 'settingsModalWrap';
@@ -542,9 +545,19 @@ async function openSettingsModal() {
         </div>
         <p class="text-muted-sm mb-14">Point this at your own company's product API so Sync Now pulls only your catalog &mdash; never another company's.</p>
 
+        ${productSyncConfig.unavailable ? `
+        <div class="fs-11" style="background:#fff3e0;border:1px solid #ffb300;border-radius:6px;padding:8px 12px;margin-bottom:12px;color:#e65100;">
+          <i class="fas fa-triangle-exclamation"></i>
+          Your saved Product Sync settings could not be read just now, so the boxes below are blank &mdash;
+          which is <b>not</b> the same as having none saved. Saving is disabled until they load, so an empty
+          box cannot overwrite a URL you already have. Close this and reopen it to retry.
+        </div>` : ''}
+
         <div class="form-group mb-14">
           <label for="pSyncApiUrl">Product API URL</label>
-          <input type="text" id="pSyncApiUrl" class="form-control" value="${e(productSyncConfig.product_api_url)}">
+          <input type="text" id="pSyncApiUrl" class="form-control" value="${e(productSyncConfig.product_api_url)}"
+                 placeholder="https://your-domain.com/api/catalog/products"
+                 ${productSyncConfig.unavailable ? 'disabled' : ''}>
         </div>
 
         <div class="form-group mb-14">
@@ -558,7 +571,8 @@ async function openSettingsModal() {
         </div>
 
         <div class="btn-group">
-          <button class="btn btn-primary btn-sm" onclick="submitProductSyncSettings()"><i class="fas fa-save"></i> Save Product Sync Settings</button>
+          <button class="btn btn-primary btn-sm" onclick="submitProductSyncSettings()"
+                  ${productSyncConfig.unavailable ? 'disabled' : ''}><i class="fas fa-save"></i> Save Product Sync Settings</button>
           ${productSyncConfig.has_key ? '<button class="btn btn-secondary btn-sm" onclick="clearProductSyncKey()"><i class="fas fa-times"></i> Remove Saved Key</button>' : ''}
         </div>
       </div>
@@ -1126,6 +1140,11 @@ async function submitCompanyBranding() {
   if (!error) showToast('Company branding saved — every invoice PDF will use it automatically.', 'success');
 }
 
+// True when the last settings read failed, so the Product Sync form on
+// screen is blank because nothing could be loaded — not because nothing is
+// configured. Guards the save; see submitProductSyncSettings().
+let _productSyncConfigUnavailable = false;
+
 // ── Product Sync config (server/routes/product-sync.js) ────────────
 // Deliberately NOT part of the generic profiles read/write path (see
 // submitCompanyBranding() above, which goes through saveUserProfile()) —
@@ -1181,6 +1200,19 @@ async function saveProductSyncConfig(body) {
 }
 
 async function submitProductSyncSettings() {
+  // Refuse to save a form that was never populated. fetchProductSyncConfig()
+  // returns unavailable:true when the read failed, and the form it renders
+  // is therefore blank — indistinguishable on screen from "nothing is
+  // configured". Saving that blank writes NULL over a URL the company had
+  // already set, and the first anyone knows of it is Sync Now reporting
+  // "not set up yet". The flag existed for exactly this and was never
+  // checked; the button is disabled too, but the guard belongs here, where
+  // the write actually happens.
+  if (_productSyncConfigUnavailable) {
+    showToast('Your Product Sync settings could not be loaded, so they cannot be saved yet. Close Settings and open it again.', 'error');
+    return;
+  }
+
   const product_api_url = document.getElementById('pSyncApiUrl')?.value?.trim() || '';
   const product_api_key = document.getElementById('pSyncApiKey')?.value?.trim() || '';
 
