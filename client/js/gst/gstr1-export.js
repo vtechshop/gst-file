@@ -355,7 +355,10 @@ function validateGSTR1Schema(payload, errors) {
     if (!gstr1RequireKeys(g, ['ctin', 'nt'], `cdnr[${i}]`, errors)) return;
     if (!Array.isArray(g.nt)) { errors.push(`Schema: cdnr[${i}].nt must be an array.`); return; }
     g.nt.forEach((n, j) => {
-      if (!gstr1RequireKeys(n, ['ntty', 'nt_num', 'nt_dt', 'pos', 'rchrg', 'val', 'itms'], `cdnr[${i}].nt[${j}]`, errors)) return;
+      // inv_typ is required here for the same reason it is on a b2b
+      // invoice. Its absence from this list is why the schema check
+      // reported PASS on a file the Portal refused.
+      if (!gstr1RequireKeys(n, ['ntty', 'nt_num', 'nt_dt', 'pos', 'rchrg', 'val', 'inv_typ', 'itms'], `cdnr[${i}].nt[${j}]`, errors)) return;
       gstr1ValidateItms(n.itms, `cdnr[${i}].nt[${j}].itms`, ['txval', 'rt', 'iamt', 'camt', 'samt', 'csamt'], errors);
     });
   });
@@ -2174,10 +2177,19 @@ async function buildGSTR1PayloadUnguarded(userId, profile, periodFilter) {
       if (noteEtin) entry.etin = noteEtin;
       const noteDiff = gstr1DiffPercentOf(note);
       if (noteDiff) entry.diff_percent = noteDiff;
-      // Written only when the note is not an ordinary domestic one, so a
-      // return containing only ordinary notes is byte-for-byte unchanged.
+      // Always written, including the ordinary domestic 'R'. It used to be
+      // omitted when it was 'R', to keep a return containing only ordinary
+      // notes byte-for-byte unchanged — but inv_typ is a mandatory field on
+      // a CDNR note, and leaving it out is what the Portal rejected.
+      //
+      // Proven by upload, not by reading: a file of b2b + b2cs + hsn +
+      // doc_issue was accepted (ref bf11e0ad, 19/08 11:58), adding b2cl was
+      // accepted (ref 6f7ed599, 12:07), and adding cdnr alone was refused
+      // at the upload gate (ref 4a091bb2, 12:10). b2b writes inv_typ on
+      // every invoice and passes; these notes were the only objects in the
+      // file missing it.
       const noteInvTyp = gstr1NoteInvTyp(note);
-      if (noteInvTyp !== 'R') entry.inv_typ = noteInvTyp;
+      entry.inv_typ = noteInvTyp;
       if (!cdnrGroups.has(gstin)) cdnrGroups.set(gstin, []);
       cdnrGroups.get(gstin).push(entry);
     } else {
