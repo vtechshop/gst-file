@@ -310,3 +310,82 @@ test('M. the generated return passes the app\'s schema and strict validators', a
       'the strict validator objected to the version — it must accept GST3.1.7');
   }
 });
+
+// ── N. Table 11B is written as "txpd", never "atadj" ───────────────
+//
+// The key was "atadj" until 19/08/2026. It got there from 96c808c, out of
+// the same reading of the installed Offline Tool that also set version to
+// GST3.2.4 — the Portal rejected that version, b3fe4bc put it back, and
+// the atadj half of the change was left behind.
+//
+// Settled against the live Portal with three uploads of one return:
+//   + "at"                          accepted  (ref bff59a63)
+//   + "atadj"                       REFUSED   (ref 925b681d)
+//   + "txpd", byte-identical otherwise, accepted (ref 57a4038d)
+// The section's contents were identical across the last two, so the name
+// was the whole defect. These tests exist so it cannot come back.
+const receiptVoucher = (over = {}) => ({
+  id: 'rv-1', user_id: US, document_number: 'RV-001', document_date: '2026-07-05',
+  party_name: 'An Advance Party', place_of_supply: 'Tamil Nadu', supply_type: 'intrastate',
+  advance_amount: 10000, gst_percentage: 18, igst: 0, cgst: 900, sgst: 900,
+  total_value: 11800, adjusted_amount: 0, status: 'issued', ...over
+});
+const advanceAdjustment = (over = {}) => ({
+  id: 'aa-1', user_id: US, receipt_voucher_id: 'rv-1', invoice_number: '138',
+  invoice_date: '2026-07-09', adjusted_on: '2026-07-09',
+  place_of_supply: 'Tamil Nadu', supply_type: 'intrastate', gst_percentage: 18,
+  adjusted_amount: 4000, igst: 0, cgst: 360, sgst: 360, ...over
+});
+const withAdvances = () => julyTables({
+  receipt_vouchers: [receiptVoucher()],
+  advance_adjustments: [advanceAdjustment()]
+});
+
+test('N1. Table 11B is emitted under "txpd"', async () => {
+  const p = await build(withAdvances());
+  assert.ok('txpd' in p, 'Table 11B must be written under the key "txpd"');
+  assert.ok(Array.isArray(p.txpd) && p.txpd.length, 'txpd must carry the adjustment rows');
+});
+
+test('N2. "atadj" never appears in the payload, at any depth', async () => {
+  const p = await build(withAdvances());
+  assert.ok(!('atadj' in p), 'the rejected key "atadj" must not be a root key');
+  assert.ok(!JSON.stringify(p).includes('atadj'),
+    'the string "atadj" must not appear anywhere in the written file');
+});
+
+test('N3. renaming the key changed no value in the section', async () => {
+  const p = await build(withAdvances());
+  // Round-tripped through JSON first: the payload is built inside the
+  // browser-context realm, so its objects carry that realm's prototype and
+  // deepStrictEqual would fail on identity alone. The round trip also
+  // compares what actually gets WRITTEN, which is the thing under test.
+  assert.deepStrictEqual(JSON.parse(JSON.stringify(p.txpd)), [{
+    pos: '33', sply_ty: 'INTRA',
+    itms: [{ rt: 18, ad_amt: 4000, iamt: 0, camt: 360, samt: 360, csamt: 0 }]
+  }], 'txpd values drifted — only the key was ever supposed to change');
+});
+
+test('N4. the "at" section is untouched by the rename', async () => {
+  const p = await build(withAdvances());
+  assert.ok('at' in p, 'Table 11A must still be written under "at"');
+  assert.deepStrictEqual(JSON.parse(JSON.stringify(p.at)), [{
+    pos: '33', sply_ty: 'INTRA',
+    itms: [{ rt: 18, ad_amt: 10000, iamt: 0, camt: 900, samt: 900, csamt: 0 }]
+  }], 'the accepted "at" section must not change');
+});
+
+test('N5. txpd sits between at and nil, as the registry orders it', async () => {
+  const p = await build(withAdvances());
+  const keys = Object.keys(p);
+  assert.ok(keys.indexOf('at') < keys.indexOf('txpd'),
+    'at must precede txpd, the order a Utility-written file uses');
+  assert.ok(keys.indexOf('txpd') < keys.indexOf('hsn'),
+    'txpd must precede hsn');
+});
+
+test('N6. a period with no adjustments omits txpd rather than writing []', async () => {
+  const p = await build(julyTables({ receipt_vouchers: [receiptVoucher()] }));
+  assert.ok('at' in p, 'the advances received still belong in the file');
+  assert.ok(!('txpd' in p), 'an empty txpd must be omitted, as every empty section is');
+});

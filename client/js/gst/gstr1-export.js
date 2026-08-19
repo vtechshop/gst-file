@@ -175,12 +175,19 @@ const GSTR1_SECTIONS = [
   // file it got before these existed.
   { key: 'exp',     kind: 'section', type: 'array',  label: 'Exports',                               emitWhenEmpty: false },
   { key: 'at',      kind: 'section', type: 'array',  label: 'Advances received',                     emitWhenEmpty: false },
-  // atadj, not txpd. The Offline Tool's generator writes "atadj" in every
-  // branch; txpd is only a legacy name it still accepts when READING a
-  // file (service/offline.js falls back to prevContent['txpd'] when atadj
-  // is absent). Writing the name the current generator writes is what the
-  // Portal is checking the file against.
-  { key: 'atadj',   kind: 'section', type: 'array',  label: 'Advances adjusted against invoices',    emitWhenEmpty: false },
+  // txpd, not atadj — settled by upload rather than by reading.
+  //
+  // This key was changed to "atadj" by 96c808c, from the same reading of
+  // the installed Offline Tool that also changed version to GST3.2.4.
+  // The Portal rejected GST3.2.4 and b3fe4bc put the version back; the
+  // atadj half of that change was never re-examined, and it was wrong too.
+  //
+  // Proven against the live Portal on 19/08/2026 with three uploads of the
+  // same return: + "at" accepted (ref bff59a63), + "atadj" refused at the
+  // upload gate (ref 925b681d), and the byte-identical file with only this
+  // key renamed to "txpd" accepted (ref 57a4038d). The section's contents
+  // never changed between the last two, so the name is the whole defect.
+  { key: 'txpd',    kind: 'section', type: 'array',  label: 'Advances adjusted against invoices',    emitWhenEmpty: false },
   { key: 'nil',     kind: 'section', type: 'object', label: 'Nil-rated / exempt / non-GST',          emitWhenEmpty: false,
     isEmpty: v => !(v && Array.isArray(v.inv) && v.inv.length) },
   // Split by supply channel, exactly as the Utility writes it. This was a
@@ -2474,14 +2481,16 @@ async function buildGSTR1PayloadUnguarded(userId, profile, periodFilter) {
     datedDocumentRows.filter(r => r.__documentType === 'receipt_voucher'),
     r => round2(r.advance_amount), r => r.place_of_supply, r => r.supply_type,
     errors, 'Receipt voucher');
-  const atadj = gstr1BuildAdvanceSection(
+  // Named txpd because the payload key is txpd — the shorthand below puts
+  // this variable's name straight into the JSON, so the two cannot drift.
+  const txpd = gstr1BuildAdvanceSection(
     advanceAdjustmentRows,
     r => round2(r.adjusted_amount), r => r.place_of_supply, r => r.supply_type,
     errors, 'Advance adjustment');
 
   const payload = assembleGSTR1Payload({
     gstin: businessGstin, fp, version: GSTR1_VERSION, hash: GSTR1_HASH,
-    b2b, b2ba, b2cl, b2cla, b2cs, cdnr, cdnur, exp, at, atadj, nil, hsn, doc_issue
+    b2b, b2ba, b2cl, b2cla, b2cs, cdnr, cdnur, exp, at, txpd, nil, hsn, doc_issue
   });
   return { payload, errors, context: { periodStart: start, periodEnd: end, salesReturnNettedTaxable, grandTotal } };
 }
@@ -2595,11 +2604,11 @@ function runFinalGSTR1Audit(payload, errors, context) {
   (reparsed.b2b || []).forEach(g => g.inv.forEach(i => checkPos(i.pos, `B2B invoice ${i.inum}`)));
   (reparsed.b2cl || []).forEach(g => checkPos(g.pos, `B2CL group`));
   (reparsed.b2cs || []).forEach(r => checkPos(r.pos, `B2CS bucket (rate ${r.rt}%)`));
-  // at/atadj were missing from this list, which is exactly why a state
-  // NAME reached the Portal in their pos: the audit that would have
-  // caught it was not looking at those two sections.
+  // The two advance sections were missing from this list, which is exactly
+  // why a state NAME reached the Portal in their pos: the audit that would
+  // have caught it was not looking at them.
   (reparsed.at || []).forEach(g => checkPos(g.pos, `AT group (advances received)`));
-  (reparsed.atadj || []).forEach(g => checkPos(g.pos, `ATADJ group (advances adjusted)`));
+  (reparsed.txpd || []).forEach(g => checkPos(g.pos, `TXPD group (advances adjusted)`));
 
   // 9. HSN validation — format, and no duplicate hsn+rate rows (the
   // bucket map construction already prevents this internally, but the
