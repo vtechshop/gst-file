@@ -268,19 +268,17 @@ function placeInk(ink, wantW, cx, topY) {
 // Nothing here ever clips — autoTable wraps. The cost of a bad width is an
 // extra line, never a lost digit.
 const INVOICE_ITEM_COLUMN_WEIGHTS = [
-  9,   // #
-  74,  // Product Name   — the only column that wraps
-  20,  // HSN            an 8-digit code
-  13,  // Unit
-  14,  // Qty
-  22,  // Rate
-  15,  // GST%
-  24,  // Taxable Value
-  20,  // CGST
-  20,  // SGST
-  20,  // IGST           sized like CGST/SGST: on an interstate invoice this
-       //                column carries the tax and those two carry "-"
-  22   // Total
+  9,    // #
+  100,  // Product Name   — the only column that wraps
+  22,   // HSN            an 8-digit code
+  16,   // Qty
+  24,   // Rate
+  16,   // GST%
+  22,   // CGST
+  22,   // SGST
+  22,   // IGST           sized like CGST/SGST: on an interstate invoice this
+        //                column carries the tax and those two carry "-"
+  24    // Total
 ];
 
 // Height of the closing block — totals/signature on the right, Amount in
@@ -296,7 +294,7 @@ function INVOICE_ITEM_COLUMN_STYLES(tableWidth) {
   });
   // Product name and line total stay bold, exactly as before.
   styles[1].fontStyle = 'bold';
-  styles[11].fontStyle = 'bold';
+  styles[9].fontStyle = 'bold';
   return styles;
 }
 
@@ -495,20 +493,20 @@ async function buildInvoicePDFDoc(inv) {
   // from the invoice's product line items (Product Master HSN/GST%/Unit) ──
   const pdfItemRows = inv.items
     ? inv.items.map((it, i) => [
-        String(i + 1), it.product_name, it.hsn_code || '-', it.unit || '-', formatNum(it.quantity), formatNum(it.rate),
-        it.gst_percentage + '%', formatNum(it.taxable_value),
+        String(i + 1), it.product_name, it.hsn_code || '-', formatNum(it.quantity), formatNum(it.rate),
+        it.gst_percentage + '%',
         it.cgst > 0 ? formatNum(it.cgst) : '-', it.sgst > 0 ? formatNum(it.sgst) : '-',
         it.igst > 0 ? formatNum(it.igst) : '-', formatNum(it.total_amount)
       ])
     : [[
-        '1', 'Taxable Supply', '-', '-', '1', formatNum(inv.taxable_amount),
-        inv.gst_percentage + '%', formatNum(inv.taxable_amount),
+        '1', 'Taxable Supply', '-', '1', formatNum(inv.taxable_amount),
+        inv.gst_percentage + '%',
         inv.cgst > 0 ? formatNum(inv.cgst) : '-', inv.sgst > 0 ? formatNum(inv.sgst) : '-',
         inv.igst > 0 ? formatNum(inv.igst) : '-', formatNum(inv.total_amount)
       ]];
   doc.autoTable({
     startY: y,
-    head: [['#', 'Product Name', 'HSN', 'Unit', 'Qty', 'Rate', 'GST%', 'Taxable Value', 'CGST', 'SGST', 'IGST', 'Total']],
+    head: [['#', 'Product Name', 'HSN', 'Qty', 'Rate', 'GST%', 'CGST', 'SGST', 'IGST', 'Total']],
     body: pdfItemRows,
     theme: 'grid',
     headStyles: { fillColor: [Math.min(accent[0]+224,255), Math.min(accent[1]+165,255), Math.min(accent[2]+177,255)], textColor: accent, fontStyle: 'bold', fontSize: 7.5, lineColor: [178, 223, 219] },
