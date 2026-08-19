@@ -239,6 +239,62 @@ function placeInk(ink, wantW, cx, topY) {
 //
 // Returns plain text. HTML escaping belongs to the HTML renderer; jsPDF
 // draws strings and would print the entities literally.
+// ── Item table column widths ────────────────────────────────
+// Every column is given an explicit width. Without one, autoTable sizes
+// columns from their content: a product name carrying a single long
+// unbroken token took 90mm of a 182mm table and squeezed the other eleven
+// columns to 6-10mm each, at which point headers like "Taxable Value"
+// broke into one letter per line and the invoice ran to two pages.
+//
+// Weights, not millimetres, so the row always fills exactly the printable
+// width it is handed — the same allocation survives a margin change or a
+// different page size, and the columns cannot drift apart from the header
+// because both come from this one table.
+//
+// The proportions, and the compromise in them. Portrait A4 leaves 182mm for
+// twelve columns, and 2.5mm of padding a side spends 60mm of that before a
+// character is drawn. Sizing all eleven fixed-content columns to their
+// widest real value needs about 167mm, which would leave Product Name 15mm
+// — narrow enough that it breaks words mid-syllable ("vegetabl / e cutting").
+//
+// So one column has to give, and the choice is deliberate: IGST. On an
+// interstate invoice with a five-figure tax it wraps to two lines, and on
+// every intrastate invoice it holds "-" and never wraps at all. In return
+// Product Name gets enough width to break on word boundaries. Measured, not
+// guessed: at weight 20 the names break as "vegetable / cutting / machine"
+// and IGST is the only numeric column that wraps; at 21 and above three more
+// numeric columns start wrapping too.
+//
+// Nothing here ever clips — autoTable wraps. The cost of a bad width is an
+// extra line, never a lost digit.
+const INVOICE_ITEM_COLUMN_WEIGHTS = [
+  9,   // #
+  20,  // Product Name   — the only column that wraps
+  18,  // HSN            an 8-digit code
+  12,  // Unit
+  11,  // Qty
+  18,  // Rate
+  15,  // GST%
+  18,  // Taxable Value
+  16,  // CGST
+  16,  // SGST
+  16,  // IGST           sized like CGST/SGST: on an interstate invoice this
+       //                column carries the tax and those two carry "-"
+  18   // Total
+];
+
+function INVOICE_ITEM_COLUMN_STYLES(tableWidth) {
+  const total = INVOICE_ITEM_COLUMN_WEIGHTS.reduce((a, b) => a + b, 0);
+  const styles = {};
+  INVOICE_ITEM_COLUMN_WEIGHTS.forEach((w, i) => {
+    styles[i] = { cellWidth: tableWidth * w / total };
+  });
+  // Product name and line total stay bold, exactly as before.
+  styles[1].fontStyle = 'bold';
+  styles[11].fontStyle = 'bold';
+  return styles;
+}
+
 function invoicePartyLines(inv) {
   const bill = [
     [inv.address, inv.state].filter(Boolean).join(', '),
@@ -444,7 +500,7 @@ async function buildInvoicePDFDoc(inv) {
     theme: 'grid',
     headStyles: { fillColor: [Math.min(accent[0]+224,255), Math.min(accent[1]+165,255), Math.min(accent[2]+177,255)], textColor: accent, fontStyle: 'bold', fontSize: 7.5, lineColor: [178, 223, 219] },
     bodyStyles: { fontSize: 8, textColor: [40, 40, 40] },
-    columnStyles: { 1: { fontStyle: 'bold' }, 11: { fontStyle: 'bold' } },
+    columnStyles: INVOICE_ITEM_COLUMN_STYLES(R - L),
     margin: { left: L, right: L },
     styles: { cellPadding: 2.5, lineColor: [225, 225, 225] }
   });
