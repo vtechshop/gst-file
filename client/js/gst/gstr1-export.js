@@ -850,14 +850,27 @@ function gstr1BuildAmendments(revisedRows, amendmentRows) {
 // Shape: [{ pos, sply_ty, itms: [{ rt, ad_amt, iamt, camt, samt, csamt }] }]
 // CORROBORATED against two independent schema references; no Utility
 // export containing an advance has been seen here.
-function gstr1BuildAdvanceSection(rows, amountOf, posOf, supplyTypeOf) {
+function gstr1BuildAdvanceSection(rows, amountOf, posOf, supplyTypeOf, errors, context) {
   const buckets = new Map();   // "pos|sply_ty|rate" -> row
   (rows || []).forEach(r => {
     if (String(r.status || '').trim().toLowerCase() === 'cancelled') return;
     const amount = round2(amountOf(r));
     if (!amount) return;                      // nothing to report
 
-    const pos = String(posOf(r) || '').trim();
+    // pos is a two-digit state code here, exactly as it is in every other
+    // section. receipt_vouchers.place_of_supply and
+    // advance_adjustments.place_of_supply hold a state NAME ("Tamil
+    // Nadu"), so it has to be converted: passing it through verbatim
+    // wrote "pos":"Tamil Nadu" into the file and the Portal rejected the
+    // upload. Every other pos in the same file was already a code, which
+    // is what made this one visible.
+    //
+    // A value that is already a valid code is kept as-is — getStateCode()
+    // only maps names, so "33" would otherwise come back as 99.
+    const rawPos = String(posOf(r) || '').trim();
+    const pos = GSTR1_VALID_POS_CODES.has(rawPos)
+      ? rawPos
+      : gstr1PosUnregistered(rawPos, errors, `${context} ${r.document_number || ''}`.trim());
     const inter = String(supplyTypeOf(r) || '').trim().toLowerCase() === 'interstate';
     const sply_ty = inter ? 'INTER' : 'INTRA';
     const rt = round2(r.gst_percentage);
@@ -2447,10 +2460,12 @@ async function buildGSTR1PayloadUnguarded(userId, profile, periodFilter) {
   // reported separately, in Table 13.
   const at = gstr1BuildAdvanceSection(
     datedDocumentRows.filter(r => r.__documentType === 'receipt_voucher'),
-    r => round2(r.advance_amount), r => r.place_of_supply, r => r.supply_type);
+    r => round2(r.advance_amount), r => r.place_of_supply, r => r.supply_type,
+    errors, 'Receipt voucher');
   const atadj = gstr1BuildAdvanceSection(
     advanceAdjustmentRows,
-    r => round2(r.adjusted_amount), r => r.place_of_supply, r => r.supply_type);
+    r => round2(r.adjusted_amount), r => r.place_of_supply, r => r.supply_type,
+    errors, 'Advance adjustment');
 
   const payload = assembleGSTR1Payload({
     gstin: businessGstin, fp, version: GSTR1_VERSION, hash: GSTR1_HASH,
@@ -2568,6 +2583,11 @@ function runFinalGSTR1Audit(payload, errors, context) {
   (reparsed.b2b || []).forEach(g => g.inv.forEach(i => checkPos(i.pos, `B2B invoice ${i.inum}`)));
   (reparsed.b2cl || []).forEach(g => checkPos(g.pos, `B2CL group`));
   (reparsed.b2cs || []).forEach(r => checkPos(r.pos, `B2CS bucket (rate ${r.rt}%)`));
+  // at/atadj were missing from this list, which is exactly why a state
+  // NAME reached the Portal in their pos: the audit that would have
+  // caught it was not looking at those two sections.
+  (reparsed.at || []).forEach(g => checkPos(g.pos, `AT group (advances received)`));
+  (reparsed.atadj || []).forEach(g => checkPos(g.pos, `ATADJ group (advances adjusted)`));
 
   // 9. HSN validation — format, and no duplicate hsn+rate rows (the
   // bucket map construction already prevents this internally, but the
