@@ -603,16 +603,43 @@ async function buildInvoicePDFDoc(inv) {
   // ── QR (left) + Seal + Signature (right) ──
   const qrSource = qrCustomData || await generateQRDataUrl(`Invoice: ${inv.invoice_number}\nDate: ${formatDate(inv.invoice_date)}\nAmount: Rs.${formatNum(inv.total_amount)}`, p?.header_color);
   const qrIsCustom = !!qrCustomData;
-  // The QR closes the LEFT column, under the notes. The seal and signature
-  // close the RIGHT column, under the totals — so neither waits on the other.
-  let sigBlockY = totalsBottom;
+  // Stamp size, and how much HEIGHT to hold for it. A business with a seal
+  // gets the full 26mm, unchanged. A business with none was getting 26mm of
+  // empty paper. With a signature but no seal the signature draws at half the
+  // box, so 18mm still holds it; with neither, 14mm leaves a normal signing
+  // gap between the company name and the ruled line.
+  //
+  // Only the height varies — inkW stays SEAL, because the signature's width
+  // is taken from it and narrowing that would shrink the signature itself.
+  // Declared here because the bottom band below needs the block's height.
+  const SEAL = 26;                       // mm across the visible stamp
+  const sealReserveH = sealData ? SEAL : (signatureData ? 18 : 14);
+
+  // Both sit in the SAME bottom band: QR hard left, seal and signature hard
+  // right, just above the footer — where a printed bill carries them.
+  //
+  // The band is bottom-aligned rather than left to float up under whichever
+  // column happened to finish higher. `Math.max` against the flowing position
+  // is what keeps that safe: on a long invoice the content above already
+  // reaches past the band, the band gives way to it, and nothing is pushed
+  // onto another page. Only the two blocks move — totals, Amount in Words,
+  // the notes, the table, the header and the footer all stay where they are.
+  const QR_BLOCK_H = 28;                       // 24mm code + its caption
+  const SIG_BLOCK_H = 6 + sealReserveH + 5;    // gap + stamp reserve + caption
+  // Room kept for the footer: its rule, two lines and the gap above them.
+  const FOOTER_RESERVE = 18;
+  const bandTop = doc.internal.pageSize.height - 12 - FOOTER_RESERVE
+                - Math.max(QR_BLOCK_H, SIG_BLOCK_H);
+
+  const qrY = Math.max(ly, bandTop);
+  let sigBlockY = Math.max(totalsBottom, bandTop);
   let leftBottom = ly;
   if (qrSource) {
     try {
-      doc.addImage(qrSource, 'PNG', L, ly, 24, 24);
+      doc.addImage(qrSource, 'PNG', L, qrY, 24, 24);
       doc.setFontSize(7); doc.setTextColor(...accent); doc.setFont('helvetica', 'normal');
-      doc.text(qrIsCustom ? 'Scan QR' : 'Scan to verify invoice', L, ly + 28);
-      leftBottom = ly + 30;
+      doc.text(qrIsCustom ? 'Scan QR' : 'Scan to verify invoice', L, qrY + 28);
+      leftBottom = qrY + 30;
     } catch {}
   }
 
@@ -628,7 +655,6 @@ async function buildInvoicePDFDoc(inv) {
   // stamp a reader sees, not of the PNG it came in.
   const [sealInk, sigInk] = await Promise.all([inkBoundsOf(sealData), inkBoundsOf(signatureData)]);
 
-  const SEAL = 26;                       // mm across the visible stamp
   const sealCx = R - 5 - SEAL / 2;       // centre, held clear of the margin
   const sealTop = sigBlockY + 6;         // top of the stamp; "For ..." sits above
 
@@ -636,20 +662,6 @@ async function buildInvoicePDFDoc(inv) {
   // tall does not overshoot the space reserved for it.
   const sb = sealInk || { w: 1, h: 1, imgW: 1, imgH: 1 };
   const sealWantW = SEAL * sb.w / Math.max(sb.w, sb.h * (sb.imgH / sb.imgW));
-  // How much HEIGHT to hold for the stamp. A business with a seal gets the
-  // full 26mm, unchanged. A business with none was getting 26mm of empty
-  // paper: nothing is drawn in it, and on a 210mm landscape page that reserve
-  // was the difference between a five-item invoice fitting on one page and
-  // its footer spilling onto a second.
-  //
-  // With a signature but no seal the signature is drawn at half the box, so
-  // 18mm still holds it with room to breathe. With neither, 14mm leaves a
-  // normal signing space between the company name and the ruled line — the
-  // gap a hand-signed invoice needs, and no more.
-  //
-  // Only the height moves. inkW stays SEAL because the signature's width is
-  // taken from it, and narrowing that would shrink the signature itself.
-  const sealReserveH = sealData ? SEAL : (signatureData ? 18 : 14);
   const seal = sealData ? placeInk(sealInk, sealWantW, sealCx, sealTop)
                         : { inkW: SEAL, inkH: sealReserveH };
 
@@ -698,7 +710,10 @@ async function buildInvoicePDFDoc(inv) {
   const termsPairs = parseTermsTable(p?.terms_conditions);
   // Continues the LEFT column, under the QR — the QR is no longer level with
   // the seal, so its position is what this follows, not the signature's.
-  const tcTop = leftBottom + 2;
+  // Follows the notes in the left column. It no longer follows the QR: the QR
+  // has moved to the foot of the page, and anything anchored below it would
+  // land in the footer.
+  const tcTop = ly + 2;
   const tcWidth = (sealCx - SEAL / 2 - 6) - L;
   let tcBottom = tcTop;
 
