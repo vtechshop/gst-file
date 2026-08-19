@@ -1,0 +1,276 @@
+{
+  "gstin": "33AAAAA0000A1Z9",
+  "fp": "072026",
+  "version": "GST3.1.7",
+  "hash": "hash",
+  "b2b": [
+    {
+      "ctin": "33BBBBB1111B1ZU",
+      "inv": [
+        {
+          "idt": "02-07-2026",
+          "inum": "D-001",
+          "inv_typ": "R",
+          "itms": [
+            {
+              "itm_det": {
+                "camt": 900,
+                "csamt": 0,
+                "iamt": 0,
+                "rt": 18,
+                "samt": 900,
+                "txval": 10000
+              },
+              "num": 1
+            }
+          ],
+          "pos": "33",
+          "rchrg": "N",
+          "val": 11800
+        }
+      ]
+    }
+  ],
+  "b2cl": [
+    {
+      "inv": [
+        {
+          "idt": "12-07-2026",
+          "inum": "D-003",
+          "itms": [
+            {
+              "itm_det": {
+                "csamt": 0,
+                "iamt": 54000,
+                "rt": 18,
+                "txval": 300000
+              },
+              "num": 1
+            }
+          ],
+          "val": 354000
+        }
+      ],
+      "pos": "29"
+    }
+  ],
+  "b2cs": [
+    {
+      "camt": 450,
+      "csamt": 0,
+      "iamt": 0,
+      "pos": "33",
+      "rt": 18,
+      "samt": 450,
+      "sply_ty": "INTRA",
+      "txval": 5000,
+      "typ": "OE"
+    }
+  ],
+  "cdnr": [
+    {
+      "ctin": "33BBBBB1111B1ZU",
+      "nt": [
+        {
+          "inv_typ": "R",
+          "itms": [
+            {
+              "itm_det": {
+                "camt": 90,
+                "csamt": 0,
+                "iamt": 0,
+                "rt": 18,
+                "samt": 90,
+                "txval": 1000
+              },
+              "num": 1
+            }
+          ],
+          "nt_dt": "20-07-2026",
+          "nt_num": "DN-001",
+          "ntty": "C",
+          "pos": "33",
+          "rchrg": "N",
+          "val": 1180
+        }
+      ]
+    }
+  ],
+  "cdnur": [
+    {
+      "itms": [
+        {
+          "itm_det": {
+            "csamt": 0,
+            "iamt": 360,
+            "rt": 18,
+            "txval": 2000
+          },
+          "num": 1
+        }
+      ],
+      "nt_dt": "21-07-2026",
+      "nt_num": "DN-002",
+      "ntty": "C",
+      "pos": "29",
+      "typ": "B2CL",
+      "val": 2360
+    }
+  ],
+  "exp": [
+    {
+      "exp_typ": "WPAY",
+      "inv": [
+        {
+          "idt": "10-07-2026",
+          "inum": "D-002",
+          "itms": [
+            {
+              "csamt": 0,
+              "iamt": 3600,
+              "rt": 18,
+              "txval": 20000
+            }
+          ],
+          "sbdt": "11-07-2026",
+          "sbnum": "9000001",
+          "sbpcode": "INMAA1",
+          "val": 23600
+        }
+      ]
+    }
+  ],
+  "at": [
+    {
+      "itms": [
+        {
+          "ad_amt": 8000,
+          "camt": 720,
+          "csamt": 0,
+          "iamt": 0,
+          "rt": 18,
+          "samt": 720
+        }
+      ],
+      "pos": "33",
+      "sply_ty": "INTRA"
+    }
+  ],
+  "txpd": [
+    {
+      "itms": [
+        {
+          "ad_amt": 3000,
+          "camt": 270,
+          "csamt": 0,
+          "iamt": 0,
+          "rt": 18,
+          "samt": 270
+        }
+      ],
+      "pos": "33",
+      "sply_ty": "INTRA"
+    }
+  ],
+  "nil": {
+    "inv": [
+      {
+        "expt_amt": 7000,
+        "ngsup_amt": 0,
+        "nil_amt": 0,
+        "sply_ty": "INTRAB2C"
+      }
+    ]
+  },
+  "hsn": {
+    "hsn_b2b": [
+      {
+        "camt": 0,
+        "csamt": 0,
+        "desc": "Dummy Product",
+        "hsn_sc": "84386000",
+        "iamt": 3600,
+        "num": 1,
+        "qty": 2,
+        "rt": 18,
+        "samt": 0,
+        "txval": 20000,
+        "uqc": "NOS"
+      },
+      {
+        "camt": 900,
+        "csamt": 0,
+        "desc": "Dummy Product",
+        "hsn_sc": "84388090",
+        "iamt": 0,
+        "num": 2,
+        "qty": 1,
+        "rt": 18,
+        "samt": 900,
+        "txval": 10000,
+        "uqc": "NOS"
+      }
+    ],
+    "hsn_b2c": [
+      {
+        "camt": 450,
+        "csamt": 0,
+        "desc": "Dummy Product",
+        "hsn_sc": "84388090",
+        "iamt": 54000,
+        "num": 1,
+        "qty": 4,
+        "rt": 18,
+        "samt": 450,
+        "txval": 305000,
+        "uqc": "NOS"
+      }
+    ]
+  },
+  "doc_issue": {
+    "doc_det": [
+      {
+        "doc_num": 1,
+        "doc_typ": "Invoices for outward supply",
+        "docs": [
+          {
+            "cancel": 0,
+            "from": "D-001",
+            "net_issue": 5,
+            "num": 1,
+            "to": "D-005",
+            "totnum": 5
+          }
+        ]
+      },
+      {
+        "doc_num": 5,
+        "doc_typ": "Credit Note",
+        "docs": [
+          {
+            "cancel": 0,
+            "from": "DN-001",
+            "net_issue": 2,
+            "num": 1,
+            "to": "DN-002",
+            "totnum": 2
+          }
+        ]
+      },
+      {
+        "doc_num": 6,
+        "doc_typ": "Receipt Voucher",
+        "docs": [
+          {
+            "cancel": 0,
+            "from": "RV-001",
+            "net_issue": 1,
+            "num": 1,
+            "to": "RV-001",
+            "totnum": 1
+          }
+        ]
+      }
+    ]
+  }
+}
