@@ -269,19 +269,24 @@ function placeInk(ink, wantW, cx, topY) {
 // extra line, never a lost digit.
 const INVOICE_ITEM_COLUMN_WEIGHTS = [
   9,   // #
-  20,  // Product Name   — the only column that wraps
-  18,  // HSN            an 8-digit code
-  12,  // Unit
-  11,  // Qty
-  18,  // Rate
+  74,  // Product Name   — the only column that wraps
+  20,  // HSN            an 8-digit code
+  13,  // Unit
+  14,  // Qty
+  22,  // Rate
   15,  // GST%
-  18,  // Taxable Value
-  16,  // CGST
-  16,  // SGST
-  16,  // IGST           sized like CGST/SGST: on an interstate invoice this
+  24,  // Taxable Value
+  20,  // CGST
+  20,  // SGST
+  20,  // IGST           sized like CGST/SGST: on an interstate invoice this
        //                column carries the tax and those two carry "-"
-  18   // Total
+  22   // Total
 ];
+
+// Height of the closing block — totals/signature on the right, Amount in
+// Words/notes/QR on the left, whichever column runs deeper. Measured from a
+// rendered invoice, not estimated.
+const INVOICE_CLOSING_BLOCK_MM = 62;
 
 function INVOICE_ITEM_COLUMN_STYLES(tableWidth) {
   const total = INVOICE_ITEM_COLUMN_WEIGHTS.reduce((a, b) => a + b, 0);
@@ -369,7 +374,10 @@ async function buildInvoicePDFDoc(inv) {
   const p = (typeof getCachedProfile === 'function') ? getCachedProfile() : null;
   const accent = hexToRgb(p?.header_color);
   const { jsPDF } = window.jspdf;
-  const doc = new jsPDF({ unit: 'mm', format: 'a4' });
+  // Landscape. The item table carries twelve columns; portrait gave them
+  // 182mm between them, landscape gives 269mm, which is what lets Product
+  // Name be wide enough that ordinary names stop wrapping at all.
+  const doc = new jsPDF({ unit: 'mm', format: 'a4', orientation: 'landscape' });
   const pw = doc.internal.pageSize.width;
   const L = 14, R = pw - 14;
 
@@ -407,15 +415,31 @@ async function buildInvoicePDFDoc(inv) {
 
   let y = 34;
 
-  // ── Sold By / Order & Invoice Details ──
+  // ── Sold By / Invoice Details / Bill To / Ship To — ONE band ──
+  //
+  // Four columns across the landscape width instead of two bands stacked.
+  // Portrait had 182mm and could hold only two at a time, so the parties sat
+  // underneath the seller and the pair cost about 45mm of height. Landscape
+  // has 269mm and fits all four on one line, the way a printed bill sets
+  // them. The ~22mm that reclaims is what keeps an ordinary invoice on one
+  // page: without it the footer alone spilled onto a second sheet.
+  //
+  // Every block keeps its own content and heading — nothing is dropped or
+  // abbreviated, only placed side by side.
+  const parties = invoicePartyLines(inv);
+  const PART_GAP = 6;
+  const partColW = (R - L - PART_GAP * 3) / 4;
+  const partX = [0, 1, 2, 3].map(i => L + i * (partColW + PART_GAP));
+
   doc.setFontSize(9); doc.setFont('helvetica', 'bold'); doc.setTextColor(...accent);
-  doc.text('SOLD BY', L, y);
-  doc.text('ORDER & INVOICE DETAILS', pw / 2 + 4, y);
+  doc.text('SOLD BY', partX[0], y);
+  doc.text('ORDER & INVOICE DETAILS', partX[1], y);
+  doc.text('BILL TO', partX[2], y);
+  doc.text('SHIP TO', partX[3], y);
   doc.setDrawColor(178, 223, 219);
   doc.line(L, y + 1.5, R, y + 1.5);
   y += 6;
 
-  doc.setFontSize(8.5); doc.setFont('helvetica', 'normal'); doc.setTextColor(40, 40, 40);
   const soldByLines = [
     p?.business_name || '',
     p?.address || '',
@@ -430,52 +454,41 @@ async function buildInvoicePDFDoc(inv) {
     'Type: ' + (inv.type === 'b2b' ? 'B2B (Registered)' : 'B2C (Unregistered)'),
     'Reverse Charge: No'
   ];
-  const colWidth = (pw / 2) - 4 - L - 4;
-  const soldByWrapped = wrapLines(doc, soldByLines, colWidth);
-  const metaWrapped = wrapLines(doc, metaLines, R - (pw / 2 + 4));
-  const blockTop = y;
-  soldByWrapped.forEach((line, i) => doc.text(line, L, blockTop + i * 4.5, { maxWidth: colWidth }));
-  metaWrapped.forEach((line, i) => doc.text(line, pw / 2 + 4, blockTop + i * 4.5));
-  y = blockTop + Math.max(soldByWrapped.length, metaWrapped.length) * 4.5 + 5;
 
-  // ── Bill To / Ship To ──
-  // Two columns rather than one above the other: a tax invoice has to
-  // carry both, and stacking them cost roughly 25mm of height that the
-  // Terms block at the foot of the page needs.
-  const parties = invoicePartyLines(inv);
-  const partyColW = (R - L) / 2 - 4;
-  const shipX = L + (R - L) / 2 + 2;
-
-  doc.setFontSize(9); doc.setFont('helvetica', 'bold'); doc.setTextColor(...accent);
-  doc.text('BILL TO', L, y);
-  doc.text('SHIP TO', shipX, y);
-  doc.line(L, y + 1.5, R, y + 1.5);
-  y += 6;
-
-  doc.setFontSize(8.5); doc.setTextColor(40, 40, 40);
-  // The customer's name leads each block in bold, exactly as the preview
-  // shows it; the address lines follow in normal weight.
-  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(8.5); doc.setFont('helvetica', 'normal'); doc.setTextColor(40, 40, 40);
+  const soldByWrapped = wrapLines(doc, soldByLines, partColW);
+  const metaWrapped = wrapLines(doc, metaLines, partColW);
   const custName = inv.customer_name || '';
-  doc.text(doc.splitTextToSize(custName, partyColW), L, y);
-  doc.text(doc.splitTextToSize(custName, partyColW), shipX, y);
-  const nameH = Math.max(
-    doc.splitTextToSize(custName, partyColW).length, 1) * 4.5;
+  const nameLines = doc.splitTextToSize(custName, partColW);
+  const billWrapped = wrapLines(doc, parties.bill, partColW);
+  const shipWrapped = wrapLines(doc, parties.ship, partColW);
 
+  const partTop = y;
+  soldByWrapped.forEach((line, i) => doc.text(line, partX[0], partTop + i * 4.5, { maxWidth: partColW }));
+  metaWrapped.forEach((line, i) => doc.text(line, partX[1], partTop + i * 4.5, { maxWidth: partColW }));
+
+  // The customer's name leads each party column in bold, as before.
+  doc.setFont('helvetica', 'bold');
+  doc.text(nameLines, partX[2], partTop);
+  doc.text(nameLines, partX[3], partTop);
   doc.setFont('helvetica', 'normal');
-  const billWrapped = wrapLines(doc, parties.bill, partyColW);
-  const shipWrapped = wrapLines(doc, parties.ship, partyColW);
-  billWrapped.forEach((line, i) => doc.text(line, L, y + nameH + i * 4.5, { maxWidth: partyColW }));
-  shipWrapped.forEach((line, i) => doc.text(line, shipX, y + nameH + i * 4.5, { maxWidth: partyColW }));
+  const nameH = nameLines.length * 4.5;
+  billWrapped.forEach((line, i) => doc.text(line, partX[2], partTop + nameH + i * 4.5, { maxWidth: partColW }));
+  shipWrapped.forEach((line, i) => doc.text(line, partX[3], partTop + nameH + i * 4.5, { maxWidth: partColW }));
 
-  let partyH = nameH + Math.max(billWrapped.length, shipWrapped.length) * 4.5;
+  let partyRows = nameLines.length + Math.max(billWrapped.length, shipWrapped.length);
   if (parties.sameAddress) {
     doc.setFont('helvetica', 'italic'); doc.setTextColor(120, 120, 120);
-    doc.text('Same as billing address', shipX, y + nameH + shipWrapped.length * 4.5);
+    doc.text('Same as billing address', partX[3], partTop + nameH + shipWrapped.length * 4.5);
     doc.setFont('helvetica', 'normal'); doc.setTextColor(40, 40, 40);
-    partyH = Math.max(partyH, nameH + (shipWrapped.length + 1) * 4.5);
+    partyRows = Math.max(partyRows, nameLines.length + shipWrapped.length + 1);
   }
-  y += partyH + 5;
+
+  // The deepest of the four columns decides where the item table starts.
+  // 3mm of clearance rather than 5: on a 210mm page the closing block leaves
+  // a five-item invoice about 3mm short of the footer, and this is plain
+  // whitespace rather than anything a reader is looking at.
+  y = partTop + Math.max(soldByWrapped.length, metaWrapped.length, partyRows) * 4.5 + 3;
 
   // ── Item table — Product Name / HSN / Unit / Qty / Rate / GST% /
   // Taxable Value / CGST / SGST / IGST / Line Total, sourced directly
@@ -504,9 +517,16 @@ async function buildInvoicePDFDoc(inv) {
     margin: { left: L, right: L },
     styles: { cellPadding: 2.5, lineColor: [225, 225, 225] }
   });
-  y = doc.lastAutoTable.finalY + 6;
+  // 4mm rather than 6, for the same reason as the party band above.
+  y = doc.lastAutoTable.finalY + 4;
 
-  if (y > 220) { doc.addPage(); y = 20; }
+  // Room for the whole closing block, measured from what it actually draws:
+  // the right column runs totals 24.5mm then the seal/signature 37mm, the
+  // left runs Amount in Words and notes 18mm then the QR 30mm, and the two
+  // run side by side — so the block is about 62mm, not the 88.5mm it cost
+  // when they were stacked. Written against the page's own height so it
+  // means the same thing on either orientation.
+  if (y + INVOICE_CLOSING_BLOCK_MM > doc.internal.pageSize.height - 16) { doc.addPage(); y = 20; }
 
   // ── Totals (right-aligned, ruled Grand Total — no filled box) ──
   const boxW = 80, boxX = R - boxW;
@@ -516,7 +536,7 @@ async function buildInvoicePDFDoc(inv) {
   if (inv.igst > 0) totalsRows.push([`IGST (${inv.gst_percentage}%)`, formatNum(inv.igst)]);
   if (Math.abs(inv.round_off) >= 0.005) totalsRows.push(['Round Off', (inv.round_off >= 0 ? '+' : '') + formatNum(inv.round_off)]);
 
-  const totalsTop = y;
+  const totalsTop = y, closeTop = y;
   doc.setFontSize(9); doc.setFont('helvetica', 'normal'); doc.setTextColor(60, 60, 60);
   totalsRows.forEach((r, i) => {
     doc.text(r[0], boxX, y + i * 5.5);
@@ -545,34 +565,54 @@ async function buildInvoicePDFDoc(inv) {
     bankBottom = totalsTop + 4.5 + bankLines.length * 4;
   }
 
-  // Whichever column runs deeper decides where the next block starts.
-  y = Math.max(ruleY + 10, bankBottom + 3);
+  // Where the totals column ends. The signature goes under it, in the same
+  // right-hand column, rather than under the whole invoice.
+  const totalsBottom = ruleY + 10;
 
-  // ── Amount in words + notes ──
+  // ── Amount in words + notes — LEFT column, level with the totals ──
+  //
+  // These used to sit under the totals, across the full width, and on a
+  // landscape page that was the difference between one page and two: the
+  // closing block measured 88.5mm of a 210mm page, and a three-item invoice
+  // pushed the totals, QR and signature onto a second sheet with 76mm of
+  // blank paper left behind on the first.
+  //
+  // The totals are 80mm wide and hard against the right margin, so the
+  // 180mm to their left was empty. Amount in Words, the GST notes and the QR
+  // now run down that empty column while the totals and signature run down
+  // the right — the same two-column close a printed bill uses, and the same
+  // reclamation the bank details above and the Terms beside the seal below
+  // already do. The block goes from 88.5mm to about 61mm and the ordinary
+  // invoice fits on one page again.
+  let ly = Math.max(bankBottom + 3, closeTop);
   doc.setFontSize(9); doc.setFont('helvetica', 'normal'); doc.setTextColor(30, 30, 30);
-  doc.text('Amount in Words:', L, y);
+  doc.text('Amount in Words:', L, ly);
   doc.setFont('helvetica', 'bold');
-  doc.text(numberToWordsINR(inv.total_amount), L, y + 5, { maxWidth: R - L });
-  y += 9;
+  // Held clear of the totals column so a long amount cannot run under it.
+  doc.text(numberToWordsINR(inv.total_amount), L, ly + 5, { maxWidth: boxX - 6 - L });
+  ly += 9;
 
   doc.setFont('helvetica', 'italic'); doc.setFontSize(8); doc.setTextColor(110, 110, 110);
-  doc.text('* GST has been charged separately as shown above.', L, y);
-  doc.text('Whether tax is payable under reverse charge: No', L, y + 4);
-  y += 9;
+  doc.text('* GST has been charged separately as shown above.', L, ly);
+  doc.text('Whether tax is payable under reverse charge: No', L, ly + 4);
+  ly += 9;
 
-  // Bank details are drawn beside the totals above, not here.
-
-  if (y > 250) { doc.addPage(); y = 20; }
+  // The left column continues into the QR below; the right column continues
+  // into the seal and signature. `y` is settled once both have been drawn.
 
   // ── QR (left) + Seal + Signature (right) ──
   const qrSource = qrCustomData || await generateQRDataUrl(`Invoice: ${inv.invoice_number}\nDate: ${formatDate(inv.invoice_date)}\nAmount: Rs.${formatNum(inv.total_amount)}`, p?.header_color);
   const qrIsCustom = !!qrCustomData;
-  let sigBlockY = y;
+  // The QR closes the LEFT column, under the notes. The seal and signature
+  // close the RIGHT column, under the totals — so neither waits on the other.
+  let sigBlockY = totalsBottom;
+  let leftBottom = ly;
   if (qrSource) {
     try {
-      doc.addImage(qrSource, 'PNG', L, y, 24, 24);
+      doc.addImage(qrSource, 'PNG', L, ly, 24, 24);
       doc.setFontSize(7); doc.setTextColor(...accent); doc.setFont('helvetica', 'normal');
-      doc.text(qrIsCustom ? 'Scan QR' : 'Scan to verify invoice', L, y + 28);
+      doc.text(qrIsCustom ? 'Scan QR' : 'Scan to verify invoice', L, ly + 28);
+      leftBottom = ly + 30;
     } catch {}
   }
 
@@ -596,8 +636,22 @@ async function buildInvoicePDFDoc(inv) {
   // tall does not overshoot the space reserved for it.
   const sb = sealInk || { w: 1, h: 1, imgW: 1, imgH: 1 };
   const sealWantW = SEAL * sb.w / Math.max(sb.w, sb.h * (sb.imgH / sb.imgW));
+  // How much HEIGHT to hold for the stamp. A business with a seal gets the
+  // full 26mm, unchanged. A business with none was getting 26mm of empty
+  // paper: nothing is drawn in it, and on a 210mm landscape page that reserve
+  // was the difference between a five-item invoice fitting on one page and
+  // its footer spilling onto a second.
+  //
+  // With a signature but no seal the signature is drawn at half the box, so
+  // 18mm still holds it with room to breathe. With neither, 14mm leaves a
+  // normal signing space between the company name and the ruled line — the
+  // gap a hand-signed invoice needs, and no more.
+  //
+  // Only the height moves. inkW stays SEAL because the signature's width is
+  // taken from it, and narrowing that would shrink the signature itself.
+  const sealReserveH = sealData ? SEAL : (signatureData ? 18 : 14);
   const seal = sealData ? placeInk(sealInk, sealWantW, sealCx, sealTop)
-                        : { inkW: SEAL, inkH: SEAL };   // no seal: the space is still reserved
+                        : { inkW: SEAL, inkH: sealReserveH };
 
   doc.setFont('helvetica', 'normal'); doc.setFontSize(9.5); doc.setTextColor(30, 30, 30);
   doc.text('For ' + (p?.business_name || 'Us'), sealCx, sealTop - 1.8, { align: 'center' });
@@ -642,7 +696,9 @@ async function buildInvoicePDFDoc(inv) {
   // Left-aligned, because a paragraph of conditions is read, not admired;
   // centring it made the ragged edges hard to follow.
   const termsPairs = parseTermsTable(p?.terms_conditions);
-  const tcTop = sigBlockY + (qrSource ? 32 : 0);
+  // Continues the LEFT column, under the QR — the QR is no longer level with
+  // the seal, so its position is what this follows, not the signature's.
+  const tcTop = leftBottom + 2;
   const tcWidth = (sealCx - SEAL / 2 - 6) - L;
   let tcBottom = tcTop;
 
