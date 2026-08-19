@@ -244,7 +244,24 @@ async function extractDocument({ apiKey, model, prompt, schema, parts, timeoutMs
     } catch (err) {
       // Not retried: the brief is to retry 429 and 503 only, and a
       // timeout has already consumed the caller's whole time budget.
-      console.error(`[${label}] request failed:`, err.name, err.message);
+      // err.cause is what separates the three failures that all reach this
+      // branch and otherwise look identical in the log:
+      //
+      //   TimeoutError, no cause          the abort fired while genuinely
+      //                                   waiting on Google — the request
+      //                                   was accepted and never answered
+      //   TypeError, cause ENOTFOUND      DNS
+      //   TypeError, cause ECONNREFUSED   refused
+      //   cause UND_ERR_CONNECT_TIMEOUT   the connection itself stalled
+      //
+      // Only the four named fields are read. The error object is
+      // deliberately NOT stringified: undici hangs the request — headers
+      // and all — off some causes, and that carries the API key.
+      const c = err.cause || {};
+      console.error(
+        `[${label}] request failed: name=${err.name} message=${err.message} ` +
+        `cause_name=${c.name || ''} cause_code=${c.code || ''} cause_message=${c.message || ''}`
+      );
       // The two failures are told apart because the fixes differ: a timeout
       // means the document was too much to read in the time allowed, an
       // unreachable service means nothing was read at all. Reporting both
