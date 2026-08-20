@@ -354,4 +354,10 @@ function onCustGstCategoryChange() {
   note.textContent = text;
   // Country only means anything for an overseas recipient.
   document.getElementById('custCountryGroup')?.classList.toggle('d-none', value !== 'export');
+  // Indian states stop being selectable for an export recipient. The stored
+  // State is NOT emptied here: Customer Master requires a State to save
+  // (client getCustomerFormErrors() and server validateCustomerPayload()),
+  // so clearing it would make an export customer impossible to save.
+  syncExportStateDistrict(gstIsExportCategory(value),
+    'custState', 'custDistrict', 'custDistrictList', 'custDistrictError', false);
 }

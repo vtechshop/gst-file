@@ -955,6 +955,60 @@ function gstIsSezCategory(value) {
   return v === 'sez_unit' || v === 'sez_developer';
 }
 
+// ── Export (overseas): State/District stop applying ─────────
+// An overseas recipient has no Indian place of supply, so offering the 36
+// India State/UT names offers something that cannot be right — Karnataka
+// is not where an export goes. The pair is disabled and reads "Not
+// Applicable" rather than being hidden, so the form keeps its shape and it
+// is visible WHY the fields cannot be filled.
+//
+// Only State/District are touched. The Export (overseas) category itself,
+// every other field, and everything a domestic category does are unchanged.
+function gstIsExportCategory(value) {
+  return gstCustomerCategory({ gst_category: value }) === 'export';
+}
+
+// `clearState` is caller-controlled because the two forms differ: Invoice
+// Entry's State is optional and safe to empty, whereas Customer Master
+// requires a State to save at all.
+function syncExportStateDistrict(isExport, stateId, districtId, listId, errorId, clearState) {
+  const stateEl = document.getElementById(stateId);
+  const distEl = document.getElementById(districtId);
+  if (!stateEl || !distEl) return;
+
+  // The empty-value entry is the dropdown's own placeholder; retitling it
+  // avoids adding a fake state to the list that could ever be submitted.
+  const placeholder = stateEl.querySelector('option[value=""]');
+  if (placeholder && placeholder.dataset.domesticLabel === undefined) {
+    placeholder.dataset.domesticLabel = placeholder.textContent;
+  }
+  if (distEl.dataset.domesticPlaceholder === undefined) {
+    distEl.dataset.domesticPlaceholder = distEl.getAttribute('placeholder') || '';
+  }
+
+  if (isExport) {
+    if (clearState) stateEl.value = '';
+    if (placeholder) placeholder.textContent = 'Not Applicable';
+    stateEl.disabled = true;
+    distEl.value = '';
+    distEl.disabled = true;
+    distEl.setAttribute('placeholder', 'Not Applicable');
+    if (listId) populateDistrictList(listId, '');
+    const err = errorId ? document.getElementById(errorId) : null;
+    if (err) { err.textContent = ''; err.classList.add('d-none'); }
+    distEl.classList.remove('error');
+    distEl.setAttribute('aria-invalid', 'false');
+  } else {
+    if (placeholder) placeholder.textContent = placeholder.dataset.domesticLabel;
+    stateEl.disabled = false;
+    distEl.disabled = false;
+    distEl.setAttribute('placeholder', distEl.dataset.domesticPlaceholder);
+    // Hands the pair back to the ordinary rule: the district list is the
+    // selected state's again, exactly as before.
+    if (listId) syncDistrictField(stateId, districtId, listId, errorId);
+  }
+}
+
 // The inv_typ a B2B-table invoice carries.
 //
 //   R      regular registered supply

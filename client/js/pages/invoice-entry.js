@@ -358,6 +358,10 @@ function onInvGstCategoryChange() {
   }
   note.textContent = text;
   note.style.color = gstIsSezCategory(value) ? 'var(--primary)' : '';
+  // State here is optional, so an Indian state left over from a domestic
+  // category is cleared outright when the category becomes an export.
+  syncExportStateDistrict(gstIsExportCategory(value),
+    'invState', 'invDistrict', 'invDistrictList', 'invDistrictError', true);
 }
 
 // Carries the category across from a customer the user picked. Never
