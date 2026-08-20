@@ -10,7 +10,7 @@ const validator = require('validator');
 // The SAME district master the browser loads — see shared/india-districts.js.
 // Not a port: one file, both runtimes, so the API can only accept a
 // State + District pair the dropdown could actually have produced.
-const { isValidStateDistrict } = require('../../../shared/india-districts');
+const { isValidStateDistrict } = require('../../shared/india-districts');
 
 const GST_VALID_STATE_CODES = new Set([
   '01', '02', '03', '04', '05', '06', '07', '08', '09', '10',

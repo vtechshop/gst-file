@@ -21,7 +21,7 @@ const { applyStockDelta } = require('./invoices');
 // The SAME rule file the browser loads — see shared/sales-return-rules.js.
 // Requiring it rather than restating the arithmetic is what guarantees the
 // limit the user was shown is the limit actually enforced here.
-const { validateReturnQty } = require('../../../shared/sales-return-rules');
+const { validateReturnQty } = require('../../shared/sales-return-rules');
 
 const router = express.Router();
 router.use(requireAuth);
