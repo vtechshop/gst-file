@@ -7,7 +7,13 @@
 // js/apiClient.js must be loaded before this script on every page.
 // =============================================
 const IS_LOCAL_DEV = ['localhost', '127.0.0.1'].includes(location.hostname);
-const API_BASE_URL = IS_LOCAL_DEV ? 'http://localhost:4000/api' : 'https://gst-file.onrender.com/api';
+// Vercel keeps calling the Render API, exactly as it does today. Anywhere
+// else in production — Hostinger, where one process serves both — the API
+// is same-origin, so a relative base is right and there is no CORS hop.
+const IS_VERCEL = location.hostname.endsWith('vercel.app');
+const API_BASE_URL = IS_LOCAL_DEV ? 'http://localhost:4000/api'
+  : IS_VERCEL ? 'https://gst-file.onrender.com/api'
+  : '/api';
 
 const _supabase = new ApiClient();
 
@@ -38,5 +44,7 @@ const FEATURE_FLAGS = {
 // Same local-dev/production split as API_BASE_URL above — sync stays
 // gracefully inert (status "Not Configured") until WEBSITE_PRODUCT_API_URL
 // is actually set on the backend, zero network calls either way.
-const PRODUCT_SYNC_BACKEND_URL = IS_LOCAL_DEV ? 'http://localhost:4000/api/product-sync' : 'https://gst-file.onrender.com/api/product-sync';
+const PRODUCT_SYNC_BACKEND_URL = IS_LOCAL_DEV ? 'http://localhost:4000/api/product-sync'
+  : IS_VERCEL ? 'https://gst-file.onrender.com/api/product-sync'
+  : '/api/product-sync';
 const IS_PRODUCT_SYNC_CONFIGURED = PRODUCT_SYNC_BACKEND_URL !== 'YOUR_PRODUCT_SYNC_BACKEND_URL' && !!PRODUCT_SYNC_BACKEND_URL;

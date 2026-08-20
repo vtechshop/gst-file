@@ -9,6 +9,7 @@
 // =============================================
 
 require('dotenv').config();
+const path = require('path');
 const express = require('express');
 const cors = require('cors');
 const compression = require('compression');
@@ -136,6 +137,31 @@ app.use('/api/invoice-scan', invoiceScanRoutes);
 // and like it cannot write to the database. requireAuth'd internally.
 app.use('/api/gst', gstVerifyRoutes);
 mountGenericRoutes(app);
+
+// ── Frontend, only where it is deployed beside the API ───
+//
+// Vercel serves the frontend today and Render serves only the API, so this
+// is off unless SERVE_CLIENT=1 — both keep behaving exactly as they do now.
+// Hostinger runs one process for both, and sets the flag.
+//
+// An explicit allow-list, NOT express.static on the repository root: the
+// root also holds server/ (source and .env) and .git, and a blanket mount
+// would publish all of it over HTTP. Only the three things the browser
+// actually loads are served — the page files, client/ and shared/.
+//
+// Every href and src in the HTML is relative (no leading slash), so the
+// pages need no change to be served from here.
+if (process.env.SERVE_CLIENT === '1') {
+  const CLIENT_ROOT = path.resolve(__dirname, '..', '..');
+  app.use('/client', express.static(path.join(CLIENT_ROOT, 'client')));
+  app.use('/shared', express.static(path.join(CLIENT_ROOT, 'shared')));
+  // Root-level pages only: a bare "/" is index.html, and the pattern admits
+  // nothing but a plain lowercase filename, so it cannot be walked upwards
+  // into another directory.
+  app.get(/^\/([a-z0-9-]+\.html)?$/i, (req, res) => {
+    res.sendFile(path.join(CLIENT_ROOT, req.params[0] || 'index.html'));
+  });
+}
 
 // Any /api/* path that no route above claimed. Without this Express
 // falls through to its own HTML 404 page, which the browser's
