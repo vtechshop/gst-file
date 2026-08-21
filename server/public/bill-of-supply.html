@@ -1,0 +1,201 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Bill of Supply - GST Management System</title>
+  <link rel="stylesheet" href="client/css/style.css?v=28">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
+  <script src="shared/india-districts.js?v=28"></script>
+  <script src="client/js/api/apiClient.js?v=28"></script>
+  <script src="client/js/api/backup.js?v=28"></script>
+  <script src="client/js/core/config.js?v=28"></script>
+  <script src="client/js/api/product-sync.js?v=28"></script>
+  <script src="client/js/core/auth.js?v=28"></script>
+  <script src="client/js/utilities/utils.js?v=28"></script>
+  <script src="client/js/core/search.js?v=28"></script>
+  <script src="client/js/pages/profile.js?v=28"></script>
+  <script src="client/js/pages/bill-of-supply.js?v=28"></script>
+
+</head>
+<body>
+<div class="app-layout">
+
+  <aside class="sidebar">
+    <a class="sidebar-brand" href="dashboard.html">
+      <div class="brand-icon"><i class="fas fa-file-invoice-dollar"></i></div>
+      <span>GST Invoice<br>Management</span>
+    </a>
+    <nav class="sidebar-menu">
+      <div class="menu-section">Main</div>
+      <a href="dashboard.html" class="menu-item"><i class="fas fa-tachometer-alt"></i> Dashboard</a>
+      <div class="menu-section">Invoices / Sales</div>
+      <a href="invoice.html" class="menu-item"><i class="fas fa-plus-circle"></i> New Invoice</a>
+      <a href="invoice-list.html" class="menu-item"><i class="fas fa-list-alt"></i> Invoice List</a>
+      <a href="cdnotes.html" class="menu-item"><i class="fas fa-file-minus"></i> Credit / Debit Notes</a>
+      <a href="sales-returns.html" class="menu-item"><i class="fas fa-rotate-left"></i> Sales Returns</a>
+      <a href="bill-of-supply.html" class="menu-item active"><i class="fas fa-file-invoice"></i> Bill of Supply</a>
+      <a href="revised-invoice.html" class="menu-item"><i class="fas fa-file-pen"></i> Revised Invoice</a>
+      <a href="advances.html" class="menu-item"><i class="fas fa-hand-holding-dollar"></i> Advances</a>
+      <a href="vouchers.html" class="menu-item"><i class="fas fa-receipt"></i> Vouchers</a>
+      <a href="challans.html" class="menu-item"><i class="fas fa-file-signature"></i> Delivery Challans</a>
+      <a href="amendments.html" class="menu-item"><i class="fas fa-pen-to-square"></i> Amendments</a>
+      <div class="menu-section">Purchases</div>
+      <a href="vendors.html" class="menu-item"><i class="fas fa-truck"></i> Vendors</a>
+      <a href="vendor-ledger.html" class="menu-item"><i class="fas fa-book"></i> Vendor Ledger</a>
+      <a href="purchases.html" class="menu-item"><i class="fas fa-cart-plus"></i> New Purchase</a>
+      <a href="purchase-list.html" class="menu-item"><i class="fas fa-boxes"></i> Purchase List</a>
+      <a href="purchase-returns.html" class="menu-item"><i class="fas fa-undo"></i> Purchase Returns</a>
+      <div class="menu-section">GST / Special</div>
+      <a href="eway-bills.html" class="menu-item"><i class="fas fa-truck-fast"></i> E-Way Bills</a>
+      <a href="challans.html#job-workers" class="menu-item"><i class="fas fa-industry"></i> Job Workers</a>
+      <div class="menu-section">HSN</div>
+      <a href="hsn.html#b2b" class="menu-item"><i class="fas fa-barcode"></i> B2B HSN</a>
+      <a href="hsn.html#b2c" class="menu-item"><i class="fas fa-tags"></i> B2C HSN</a>
+      <div class="menu-section">Masters</div>
+      <a href="customers.html" class="menu-item"><i class="fas fa-address-book"></i> Customers</a>
+      <a href="customer-ledger.html" class="menu-item"><i class="fas fa-book"></i> Customer Ledger</a>
+      <a href="products.html" class="menu-item"><i class="fas fa-box"></i> Products</a>
+      <div class="menu-section">Expenses</div>
+      <a href="expenses.html" class="menu-item"><i class="fas fa-receipt"></i> Expenses</a>
+      <div class="menu-section">Reports</div>
+      <a href="reports.html" class="menu-item"><i class="fas fa-chart-bar"></i> Reports &amp; Export</a>
+      <a href="gstr3b.html" class="menu-item"><i class="fas fa-calculator"></i> GSTR-3B Summary</a>
+      <a href="document-register.html" class="menu-item"><i class="fas fa-book-open"></i> Document Register</a>
+      <div class="menu-section">Settings</div>
+      <a href="#" class="menu-item" onclick="openProfileModal();return false;"><i class="fas fa-building"></i> Business Profile</a>
+    </nav>
+    <div class="sidebar-user">
+      <div class="user-avatar"><i class="fas fa-user"></i></div>
+      <div class="user-info" onclick="openSettingsModal()" title="Click to open settings">
+        <div class="user-name" id="navUserName">User</div>
+        <div class="user-role">GST Manager</div>
+      </div>
+      <button type="button" class="btn-logout btn-settings" onclick="openSettingsModal()" title="Settings"><i class="fas fa-cog"></i></button>
+      <button type="button" class="btn-logout" id="logoutBtn" title="Logout"><i class="fas fa-sign-out-alt"></i></button>
+    </div>
+  </aside>
+
+  <div class="main-content">
+    <div class="top-bar">
+      <button type="button" class="menu-toggle" id="menuToggle" aria-label="Toggle sidebar menu"><i class="fas fa-bars"></i></button>
+      <span class="page-title"><i class="fas fa-file-invoice"></i>Bill of Supply</span>
+      <button type="button" class="btn btn-secondary btn-sm btn-icon ml-auto" onclick="openGlobalSearch()" title="Search everywhere (Ctrl+K)" aria-label="Global search"><i class="fas fa-search"></i></button>
+    </div>
+
+    <div class="content">
+      <p class="text-muted-sm mb-16"><i class="fas fa-info-circle"></i>
+        Rule 49. Issued <b>instead of</b> a tax invoice by a composition dealer or by anyone
+        supplying exempt, nil-rated or non-GST goods. No tax is charged, so there is none to
+        enter. It is reported in GSTR-1 <b>Table 8</b> and never in B2B, B2CL or B2CS.</p>
+
+      <div class="card mb-20">
+        <div class="card-header"><span class="card-title"><i class="fas fa-file-invoice"></i> New Bill of Supply</span></div>
+        <div class="card-body">
+          <div class="alert alert-info mb-16" id="bosRegistryBox"></div>
+          <div class="form-row">
+            <div class="form-group">
+              <label for="bosNumber">Number *</label>
+              <div class="d-flex gap-8">
+                <input type="text" id="bosNumber" class="form-control" placeholder="BOS-00001">
+                <button type="button" class="btn btn-secondary btn-sm" onclick="bosAutoNumber()"><i class="fas fa-wand-magic-sparkles"></i> Auto</button>
+              </div>
+              <div class="form-error" id="bosNumberError"></div>
+            </div>
+            <div class="form-group">
+              <label for="bosDate">Date *</label>
+              <input type="date" id="bosDate" class="form-control">
+              <div class="form-error" id="bosDateError"></div>
+            </div>
+            <div class="form-group">
+              <label for="bosNature">Nature of supply *</label>
+              <select id="bosNature" class="form-control"></select>
+              <small class="text-muted">Decides which Table 8 column it lands in.</small>
+            </div>
+          </div>
+          <div class="form-row">
+            <div class="form-group">
+              <label for="bosCustomer">Issued to</label>
+              <select id="bosCustomer" class="form-control"></select>
+            </div>
+            <div class="form-group">
+              <label for="bosPartyName">Or type the name</label>
+              <input type="text" id="bosPartyName" class="form-control">
+              <div class="form-error" id="bosPartyError"></div>
+            </div>
+            <div class="form-group">
+              <label for="bosPlaceOfSupply">Place of supply</label>
+              <input type="text" id="bosPlaceOfSupply" class="form-control" placeholder="State code">
+            </div>
+            <div class="form-group">
+              <label for="bosSupplyType">Supply type</label>
+              <select id="bosSupplyType" class="form-control">
+                <option value="intrastate">Intra-state</option>
+                <option value="interstate">Inter-state</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="table-responsive">
+            <table class="table table-sm">
+              <thead><tr>
+                <th>Description</th><th class="w-110">HSN</th><th class="w-90">UQC</th>
+                <th class="w-100 text-right">Quantity</th><th class="w-110 text-right">Rate</th>
+                <th class="text-right">Value</th>
+              </tr></thead>
+              <tbody id="bosItemsBody"></tbody>
+            </table>
+          </div>
+          <div class="form-error" id="bosItemsError"></div>
+          <div class="d-flex justify-between align-center mt-8 flex-wrap gap-10">
+            <button type="button" class="btn btn-secondary btn-sm" onclick="bosAddItem()"><i class="fas fa-plus"></i> Add Line</button>
+            <div class="fs-14">Total: <b id="bosTotal">0.00</b>
+              <small class="text-muted d-block">No tax is charged on a bill of supply.</small></div>
+          </div>
+
+          <div class="form-row mt-12">
+            <div class="form-group">
+              <label for="bosReason">Reason / notification</label>
+              <input type="text" id="bosReason" class="form-control" placeholder="e.g. composition scheme">
+            </div>
+            <div class="form-group">
+              <label for="bosNotes">Notes</label>
+              <input type="text" id="bosNotes" class="form-control">
+            </div>
+            <div class="form-group">
+              <label for="bosPartyGstin">Customer GSTIN (if any)</label>
+              <input type="text" id="bosPartyGstin" class="form-control">
+            </div>
+          </div>
+
+          <div class="d-flex gap-10 mt-16">
+            <button type="button" class="btn btn-primary" onclick="saveBillOfSupply()"><i class="fas fa-save"></i> Save</button>
+            <button type="button" class="btn btn-secondary" onclick="resetBillOfSupplyForm()"><i class="fas fa-rotate-left"></i> Reset</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-header"><span class="card-title"><i class="fas fa-list"></i> Bills of Supply</span></div>
+        <div class="card-body">
+          <div class="table-responsive">
+            <table class="table">
+              <thead><tr><th>Number</th><th>Date</th><th>Issued to</th><th>Nature</th>
+                <th class="text-right">Value</th><th class="text-center w-140">Status</th></tr></thead>
+              <tbody id="bosListBody"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <datalist id="bosProductList"></datalist>
+
+    </div>
+  </div>
+</div>
+
+<script>
+document.addEventListener('DOMContentLoaded', () => { initBillOfSupply(); });
+</script>
+</body>
+</html>

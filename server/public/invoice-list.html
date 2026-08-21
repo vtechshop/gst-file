@@ -1,0 +1,305 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Invoice List - GST Management System</title>
+  <link rel="stylesheet" href="client/css/style.css?v=28">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.31/jspdf.plugin.autotable.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/qrcode@1.4.4/build/qrcode.min.js"></script>
+  <script src="shared/india-districts.js?v=28"></script>
+  <script src="client/js/api/apiClient.js?v=28"></script>
+  <script src="client/js/api/backup.js?v=28"></script>
+  <script src="client/js/core/config.js?v=28"></script>
+  <script src="client/js/api/product-sync.js?v=28"></script>
+  <script src="client/js/core/auth.js?v=28"></script>
+  <script src="client/js/utilities/utils.js?v=28"></script>
+  <script src="client/js/core/search.js?v=28"></script>
+  <script src="client/js/pages/profile.js?v=28"></script>
+  <script src="client/js/pages/products.js?v=28"></script>
+  <script src="client/js/pages/invoice-items.js?v=28"></script>
+  <script src="client/js/pages/invoice-pdf.js?v=28"></script>
+  <script src="client/js/pages/payments.js?v=28"></script>
+  <script src="client/js/pages/invoice-list.js?v=28"></script>
+  <script src="client/js/pages/invoice-series-migration.js?v=28"></script>
+</head>
+<body>
+<div class="app-layout">
+
+  <!-- Sidebar -->
+  <aside class="sidebar">
+    <a class="sidebar-brand" href="dashboard.html">
+      <div class="brand-icon"><i class="fas fa-file-invoice-dollar"></i></div>
+      <span>GST Invoice<br>Management</span>
+    </a>
+    <nav class="sidebar-menu">
+      <div class="menu-section">Main</div>
+      <a href="dashboard.html" class="menu-item"><i class="fas fa-tachometer-alt"></i> Dashboard</a>
+      <div class="menu-section">Invoices / Sales</div>
+      <a href="invoice.html" class="menu-item"><i class="fas fa-plus-circle"></i> New Invoice</a>
+      <a href="invoice-list.html" class="menu-item active"><i class="fas fa-list-alt"></i> Invoice List</a>
+      <a href="cdnotes.html" class="menu-item"><i class="fas fa-file-minus"></i> Credit / Debit Notes</a>
+      <a href="sales-returns.html" class="menu-item"><i class="fas fa-rotate-left"></i> Sales Returns</a>
+      <a href="bill-of-supply.html" class="menu-item"><i class="fas fa-file-invoice"></i> Bill of Supply</a>
+      <a href="revised-invoice.html" class="menu-item"><i class="fas fa-file-pen"></i> Revised Invoice</a>
+      <a href="advances.html" class="menu-item"><i class="fas fa-hand-holding-dollar"></i> Advances</a>
+      <a href="vouchers.html" class="menu-item"><i class="fas fa-receipt"></i> Vouchers</a>
+      <a href="challans.html" class="menu-item"><i class="fas fa-file-signature"></i> Delivery Challans</a>
+      <a href="amendments.html" class="menu-item"><i class="fas fa-pen-to-square"></i> Amendments</a>
+      <div class="menu-section">Purchases</div>
+      <a href="vendors.html" class="menu-item"><i class="fas fa-truck"></i> Vendors</a>
+      <a href="vendor-ledger.html" class="menu-item"><i class="fas fa-book"></i> Vendor Ledger</a>
+      <a href="purchases.html" class="menu-item"><i class="fas fa-cart-plus"></i> New Purchase</a>
+      <a href="purchase-list.html" class="menu-item"><i class="fas fa-boxes"></i> Purchase List</a>
+      <a href="purchase-returns.html" class="menu-item"><i class="fas fa-undo"></i> Purchase Returns</a>
+      <div class="menu-section">GST / Special</div>
+      <a href="eway-bills.html" class="menu-item"><i class="fas fa-truck-fast"></i> E-Way Bills</a>
+      <a href="challans.html#job-workers" class="menu-item"><i class="fas fa-industry"></i> Job Workers</a>
+      <div class="menu-section">HSN</div>
+      <a href="hsn.html#b2b" class="menu-item"><i class="fas fa-barcode"></i> B2B HSN</a>
+      <a href="hsn.html#b2c" class="menu-item"><i class="fas fa-tags"></i> B2C HSN</a>
+      <div class="menu-section">Masters</div>
+      <a href="customers.html" class="menu-item"><i class="fas fa-address-book"></i> Customers</a>
+      <a href="customer-ledger.html" class="menu-item"><i class="fas fa-book"></i> Customer Ledger</a>
+      <a href="products.html" class="menu-item"><i class="fas fa-box"></i> Products</a>
+      <div class="menu-section">Expenses</div>
+      <a href="expenses.html" class="menu-item"><i class="fas fa-receipt"></i> Expenses</a>
+      <div class="menu-section">Reports</div>
+      <a href="reports.html" class="menu-item"><i class="fas fa-chart-bar"></i> Reports &amp; Export</a>
+      <a href="gstr3b.html" class="menu-item"><i class="fas fa-calculator"></i> GSTR-3B Summary</a>
+      <a href="document-register.html" class="menu-item"><i class="fas fa-book-open"></i> Document Register</a>
+      <div class="menu-section">Settings</div>
+      <a href="#" class="menu-item" onclick="openProfileModal();return false;"><i class="fas fa-building"></i> Business Profile</a>
+    </nav>
+    <div class="sidebar-user">
+      <div class="user-avatar"><i class="fas fa-user"></i></div>
+      <div class="user-info" onclick="openSettingsModal()" title="Click to open settings">
+        <div class="user-name" id="navUserName">User</div>
+        <div class="user-role">GST Manager</div>
+      </div>
+      <button type="button" class="btn-logout btn-settings" onclick="openSettingsModal()" title="Settings"><i class="fas fa-cog"></i></button>
+      <button type="button" class="btn-logout" id="logoutBtn" title="Logout"><i class="fas fa-sign-out-alt"></i></button>
+    </div>
+  </aside>
+
+  <div class="main-content">
+    <div class="top-bar">
+      <button type="button" class="menu-toggle" id="menuToggle" aria-label="Toggle sidebar menu"><i class="fas fa-bars"></i></button>
+      <span class="page-title"><i class="fas fa-list-alt"></i>Invoice List</span>
+      <div class="ml-auto d-flex gap-10">
+        <button type="button" class="btn btn-secondary btn-sm btn-icon" onclick="openGlobalSearch()" title="Search everywhere (Ctrl+K)" aria-label="Global search"><i class="fas fa-search"></i></button>
+        <a href="invoice.html" class="btn btn-primary btn-sm"><i class="fas fa-plus"></i> New Invoice</a>
+      </div>
+    </div>
+
+    <div class="content">
+      <p class="text-muted-sm mb-16"><i class="fas fa-info-circle"></i> Every invoice you've saved, B2B and B2C together. Use <a href="invoice.html">New Invoice</a> to add one — this list is for viewing, editing, duplicating, printing, and sharing invoices you've already entered.</p>
+
+      <div class="card">
+        <div class="card-header">
+          <span class="card-title"><i class="fas fa-list"></i> All Invoices</span>
+          <div class="d-flex gap-10 flex-wrap">
+            <div class="search-input-wrap w-220">
+              <i class="fas fa-search"></i>
+              <input type="text" id="invListSearch" class="form-control" aria-label="Search invoices">
+            </div>
+            <select id="invListStateFilter" class="form-control w-130" onchange="applyInvoiceListFilters()" aria-label="Filter by state"><option value="">All States</option></select>
+            <select id="invListMonthFilter" class="form-control w-130" onchange="applyInvoiceListFilters()" aria-label="Filter by month"></select>
+            <select id="invListYearFilter" class="form-control w-100" onchange="applyInvoiceListFilters()" aria-label="Filter by year"></select>
+            <select id="invListTypeFilter" class="form-control w-130" onchange="applyInvoiceListFilters()" aria-label="Filter by type">
+              <option value="">All Types</option>
+              <option value="b2b">B2B</option>
+              <option value="b2c">B2C</option>
+            </select>
+            <!-- Options are built from the series actually in use — see
+                 populateInvoiceListSourceFilter() — so a channel added
+                 later is filterable the day its first invoice is saved. -->
+            <select id="invListSourceFilter" class="form-control w-150" onchange="applyInvoiceListFilters()" aria-label="Filter by invoice source">
+              <option value="">All Sources</option>
+            </select>
+            <!-- Ordering, not filtering: it re-sorts the whole list, so it
+                 has its own handler rather than applyInvoiceListFilters(). -->
+            <select id="invListSortOrder" class="form-control w-220" onchange="onInvoiceListSortChange()" aria-label="Sort by invoice number">
+              <option value="desc" selected>Invoice Number (Newest First)</option>
+              <option value="asc">Invoice Number (Oldest First)</option>
+            </select>
+            <!-- One-time administrative tool: corrects which numbering
+                 series a range of already-saved invoices belongs to. -->
+            <button type="button" class="btn btn-secondary btn-sm text-nowrap" onclick="openSeriesMigrationModal()" title="Bulk-correct the Invoice Source of existing invoices"><i class="fas fa-layer-group"></i> Series Migration</button>
+          </div>
+        </div>
+        <div class="card-body p-0">
+          <div class="table-wrapper">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th>#</th><th>Invoice No</th><th>Source</th><th>Date</th><th>Customer</th><th>Type</th><th>State</th>
+                  <th>Total</th><th>Paid</th><th>Balance</th><th>Payment</th><th>Actions</th>
+                </tr>
+              </thead>
+              <tbody id="invListTableBody">
+                <tr><td colspan="10" class="empty-state"><i class="fas fa-spinner fa-spin table-loading-icon"></i>Loading...</td></tr>
+              </tbody>
+              <tfoot id="invListTableTotal"></tfoot>
+            </table>
+          </div>
+          <div class="table-pagination-row">
+            <div id="invListPagination" class="pagination"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+document.addEventListener('DOMContentLoaded', () => {
+  initInvoiceList();
+});
+</script>
+
+<!-- View Invoice Modal -->
+<div class="modal-overlay" id="viewInvoiceModal">
+  <div class="modal modal-lg">
+    <div class="modal-header">
+      <span class="modal-title"><i class="fas fa-eye"></i> Invoice Preview</span>
+      <button type="button" class="modal-close" onclick="closeViewInvoiceModal()" aria-label="Close"><i class="fas fa-times"></i></button>
+    </div>
+    <div class="modal-body" style="padding:0;">
+      <iframe id="viewInvoiceFrame" style="width:100%;height:70vh;border:0;display:block;"></iframe>
+    </div>
+  </div>
+</div>
+
+<!-- Invoice Series Migration Modal -->
+<!-- A one-time correction tool. It writes invoice_source and nothing
+     else: no invoice number, date, customer, product, HSN row, tax
+     figure or total is touched, so Reports do not move and the only
+     change to a return is which range each invoice appears under in
+     GSTR-1's Documents Issued table. -->
+<div class="modal-overlay" id="seriesMigrationModal">
+  <div class="modal modal-lg">
+    <div class="modal-header">
+      <span class="modal-title"><i class="fas fa-layer-group"></i> Invoice Series Migration</span>
+      <button type="button" class="modal-close" onclick="closeSeriesMigrationModal()" aria-label="Close"><i class="fas fa-times"></i></button>
+    </div>
+    <div class="modal-body">
+      <p class="text-muted-sm mb-16">
+        Moves a range of existing invoices into a different numbering series.
+        Only the Invoice Source changes &mdash; invoice numbers, dates, customers,
+        products, GST and totals are left exactly as they are. Reports are unaffected;
+        the only difference is that GSTR-1 reports each series under its own
+        Documents Issued range.
+      </p>
+
+      <div class="form-grid cols-3 mb-16">
+        <div class="form-group">
+          <label for="smFrom">Invoice Number From</label>
+          <input type="text" id="smFrom" class="form-control" placeholder="4">
+        </div>
+        <div class="form-group">
+          <label for="smTo">Invoice Number To</label>
+          <input type="text" id="smTo" class="form-control" placeholder="25">
+        </div>
+        <div class="form-group">
+          <label for="smSource">Invoice Source</label>
+          <select id="smSource" class="form-control" onchange="onSeriesMigrationTargetChange()"></select>
+        </div>
+      </div>
+      <div class="form-group mb-16 d-none" id="smSourceOtherGroup">
+        <label for="smSourceOther">New series name</label>
+        <input type="text" id="smSourceOther" class="form-control" placeholder="amazon">
+        <span class="fs-11 text-muted-sm">Any name works &mdash; a series does not have to exist yet.</span>
+      </div>
+
+      <div class="btn-group mb-20">
+        <button type="button" class="btn btn-secondary" onclick="previewSeriesMigration()"><i class="fas fa-eye"></i> Preview</button>
+      </div>
+
+      <div id="smResult"></div>
+
+      <div class="btn-group mt-16 d-none" id="smApplyRow">
+        <button type="button" class="btn btn-primary" id="smApplyBtn" onclick="applySeriesMigration()"><i class="fas fa-check"></i> Update</button>
+      </div>
+
+      <div class="section-title mb-14 mt-20">Migration History</div>
+      <div id="smHistory"><p class="text-muted-sm">No migrations recorded yet.</p></div>
+    </div>
+  </div>
+</div>
+
+<!-- Receive Payment Modal -->
+<div class="modal-overlay" id="markPaymentModal">
+  <div class="modal">
+    <div class="modal-header">
+      <span class="modal-title"><i class="fas fa-rupee-sign"></i> Payment &mdash; <span id="mpInvoiceLabel"></span></span>
+      <button type="button" class="modal-close" onclick="closeMarkPaymentModal()" aria-label="Close"><i class="fas fa-times"></i></button>
+    </div>
+    <div class="modal-body">
+      <div class="calc-box mb-16">
+        <div class="calc-row"><span class="label">Invoice Total</span><span class="value" id="mpInvoiceTotal">&#8377;0.00</span></div>
+        <div class="calc-row"><span class="label">Received So Far</span><span class="value" id="mpReceivedSoFar">&#8377;0.00</span></div>
+        <div class="calc-row total"><span class="label">Outstanding Balance</span><span class="value" id="mpOutstanding">&#8377;0.00</span></div>
+      </div>
+
+      <div class="section-title mb-14">Receive Payment</div>
+      <div class="form-grid cols-2 mb-16">
+        <div class="form-group">
+          <label for="mpAmount">Amount (&#8377;)</label>
+          <input type="number" id="mpAmount" class="form-control" min="0" step="0.01">
+        </div>
+        <div class="form-group">
+          <label for="mpMethod">Payment Method</label>
+          <select id="mpMethod" class="form-control">
+            <option value="cash">Cash</option>
+            <option value="upi">UPI</option>
+            <option value="bank_transfer">Bank Transfer</option>
+            <option value="cheque">Cheque</option>
+            <option value="card">Card</option>
+            <option value="other">Other</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label for="mpDate">Date</label>
+          <input type="date" id="mpDate" class="form-control">
+        </div>
+        <div class="form-group">
+          <label for="mpReference">Reference Number <span class="fs-11 text-muted-sm">(Optional)</span></label>
+          <input type="text" id="mpReference" class="form-control">
+        </div>
+        <div class="form-group">
+          <label for="mpNote">Note</label>
+          <input type="text" id="mpNote" class="form-control">
+        </div>
+      </div>
+      <!-- Shown only when a save fails; the modal stays open so the entry
+           can be corrected and retried. -->
+      <div id="mpError" class="form-error mb-16" role="alert"></div>
+      <div class="btn-group mb-20">
+        <button type="button" class="btn btn-primary" onclick="submitReceivePayment()"><i class="fas fa-check"></i> Receive Payment</button>
+      </div>
+
+      <div class="section-title mb-14">Payment History</div>
+      <div id="mpHistoryList"><p class="text-muted-sm">No payments recorded yet.</p></div>
+    </div>
+  </div>
+</div>
+
+<!-- Global Search Modal -->
+<div class="modal-overlay" id="globalSearchModal">
+  <div class="modal modal-lg">
+    <div class="modal-header">
+      <span class="modal-title"><i class="fas fa-search"></i> Search Everywhere</span>
+      <button type="button" class="modal-close" onclick="closeGlobalSearch()" aria-label="Close"><i class="fas fa-times"></i></button>
+    </div>
+    <div class="modal-body">
+      <input type="text" id="globalSearchInput" class="form-control mb-16" oninput="onGlobalSearchInput(this.value)" aria-label="Global search input">
+      <div id="globalSearchResults"><p class="text-muted-sm">Type at least 2 characters&hellip;</p></div>
+    </div>
+  </div>
+</div>
+
+</body>
+</html>

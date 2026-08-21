@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="refresh" content="0; url=invoice.html">
+  <title>Redirecting... - GST Management System</title>
+  <link rel="stylesheet" href="client/css/style.css?v=28">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
+</head>
+<body>
+<!--
+  B2B and B2C invoice entry are now one page: invoice.html classifies
+  automatically from whether a GST Number is entered. This page is kept
+  as a redirect (not deleted) so any existing bookmark or link still
+  lands somewhere valid.
+-->
+<div style="display:flex;align-items:center;justify-content:center;min-height:100vh;font-family:Arial,Helvetica,sans-serif;">
+  <div style="text-align:center;color:#555;">
+    <i class="fas fa-spinner fa-spin" style="font-size:28px;color:#00796b;"></i>
+    <p style="margin-top:14px;">Redirecting to <a href="invoice.html">New Invoice</a>&hellip;</p>
+  </div>
+</div>
+<script>window.location.replace('invoice.html');</script>
+</body>
+</html>

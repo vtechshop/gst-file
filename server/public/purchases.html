@@ -1,0 +1,292 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>New Purchase - GST Management System</title>
+  <link rel="stylesheet" href="client/css/style.css?v=28">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
+  <script src="shared/india-districts.js?v=28"></script>
+  <script src="client/js/api/apiClient.js?v=28"></script>
+  <script src="client/js/api/backup.js?v=28"></script>
+  <script src="client/js/core/config.js?v=28"></script>
+  <script src="client/js/api/product-sync.js?v=28"></script>
+  <script src="client/js/core/auth.js?v=28"></script>
+  <script src="client/js/utilities/utils.js?v=28"></script>
+  <script src="client/js/core/search.js?v=28"></script>
+  <script src="client/js/pages/profile.js?v=28"></script>
+  <script src="client/js/pages/products.js?v=28"></script>
+  <script src="client/js/pages/payments.js?v=28"></script>
+  <script src="client/js/pages/purchase-items.js?v=28"></script>
+  <script src="client/js/pages/purchase-entry.js?v=28"></script>
+  <!-- Bill scanner. Uploads to /api/bill-scan, which calls Gemini with a
+       server-held key; no OCR library is loaded in the browser at all. -->
+  <script src="client/js/pages/purchase-scan.js?v=28"></script>
+</head>
+<body>
+<div class="app-layout">
+
+  <aside class="sidebar">
+    <a class="sidebar-brand" href="dashboard.html">
+      <div class="brand-icon"><i class="fas fa-file-invoice-dollar"></i></div>
+      <span>GST Invoice<br>Management</span>
+    </a>
+    <nav class="sidebar-menu">
+      <div class="menu-section">Main</div>
+      <a href="dashboard.html" class="menu-item"><i class="fas fa-tachometer-alt"></i> Dashboard</a>
+      <div class="menu-section">Invoices / Sales</div>
+      <a href="invoice.html" class="menu-item"><i class="fas fa-plus-circle"></i> New Invoice</a>
+      <a href="invoice-list.html" class="menu-item"><i class="fas fa-list-alt"></i> Invoice List</a>
+      <a href="cdnotes.html" class="menu-item"><i class="fas fa-file-minus"></i> Credit / Debit Notes</a>
+      <a href="sales-returns.html" class="menu-item"><i class="fas fa-rotate-left"></i> Sales Returns</a>
+      <a href="bill-of-supply.html" class="menu-item"><i class="fas fa-file-invoice"></i> Bill of Supply</a>
+      <a href="revised-invoice.html" class="menu-item"><i class="fas fa-file-pen"></i> Revised Invoice</a>
+      <a href="advances.html" class="menu-item"><i class="fas fa-hand-holding-dollar"></i> Advances</a>
+      <a href="vouchers.html" class="menu-item"><i class="fas fa-receipt"></i> Vouchers</a>
+      <a href="challans.html" class="menu-item"><i class="fas fa-file-signature"></i> Delivery Challans</a>
+      <a href="amendments.html" class="menu-item"><i class="fas fa-pen-to-square"></i> Amendments</a>
+      <div class="menu-section">Purchases</div>
+      <a href="vendors.html" class="menu-item"><i class="fas fa-truck"></i> Vendors</a>
+      <a href="vendor-ledger.html" class="menu-item"><i class="fas fa-book"></i> Vendor Ledger</a>
+      <a href="purchases.html" class="menu-item active"><i class="fas fa-cart-plus"></i> New Purchase</a>
+      <a href="purchase-list.html" class="menu-item"><i class="fas fa-boxes"></i> Purchase List</a>
+      <a href="purchase-returns.html" class="menu-item"><i class="fas fa-undo"></i> Purchase Returns</a>
+      <div class="menu-section">GST / Special</div>
+      <a href="eway-bills.html" class="menu-item"><i class="fas fa-truck-fast"></i> E-Way Bills</a>
+      <a href="challans.html#job-workers" class="menu-item"><i class="fas fa-industry"></i> Job Workers</a>
+      <div class="menu-section">HSN</div>
+      <a href="hsn.html#b2b" class="menu-item"><i class="fas fa-barcode"></i> B2B HSN</a>
+      <a href="hsn.html#b2c" class="menu-item"><i class="fas fa-tags"></i> B2C HSN</a>
+      <div class="menu-section">Masters</div>
+      <a href="customers.html" class="menu-item"><i class="fas fa-address-book"></i> Customers</a>
+      <a href="customer-ledger.html" class="menu-item"><i class="fas fa-book"></i> Customer Ledger</a>
+      <a href="products.html" class="menu-item"><i class="fas fa-box"></i> Products</a>
+      <div class="menu-section">Expenses</div>
+      <a href="expenses.html" class="menu-item"><i class="fas fa-receipt"></i> Expenses</a>
+      <div class="menu-section">Reports</div>
+      <a href="reports.html" class="menu-item"><i class="fas fa-chart-bar"></i> Reports &amp; Export</a>
+      <a href="gstr3b.html" class="menu-item"><i class="fas fa-calculator"></i> GSTR-3B Summary</a>
+      <a href="document-register.html" class="menu-item"><i class="fas fa-book-open"></i> Document Register</a>
+      <div class="menu-section">Settings</div>
+      <a href="#" class="menu-item" onclick="openProfileModal();return false;"><i class="fas fa-building"></i> Business Profile</a>
+    </nav>
+    <div class="sidebar-user">
+      <div class="user-avatar"><i class="fas fa-user"></i></div>
+      <div class="user-info" onclick="openSettingsModal()" title="Click to open settings">
+        <div class="user-name" id="navUserName">User</div>
+        <div class="user-role">GST Manager</div>
+      </div>
+      <button type="button" class="btn-logout btn-settings" onclick="openSettingsModal()" title="Settings"><i class="fas fa-cog"></i></button>
+      <button type="button" class="btn-logout" id="logoutBtn" title="Logout"><i class="fas fa-sign-out-alt"></i></button>
+    </div>
+  </aside>
+
+  <div class="main-content">
+    <div class="top-bar">
+      <button type="button" class="menu-toggle" id="menuToggle" aria-label="Toggle sidebar menu"><i class="fas fa-bars"></i></button>
+      <span class="page-title"><i class="fas fa-cart-plus"></i><span id="purchPageTitle">New Purchase</span></span>
+      <button type="button" class="btn btn-secondary btn-sm btn-icon ml-auto" onclick="openGlobalSearch()" title="Search everywhere (Ctrl+K)" aria-label="Global search"><i class="fas fa-search"></i></button>
+    </div>
+
+    <div class="content">
+
+      <!-- Optional bill scanner. Entirely additive: ignore it and Purchase
+           Entry behaves exactly as before. Extraction only ever proposes
+           values — the existing Save Purchase button remains the sole way
+           anything reaches the database. -->
+      <div class="card mb-20">
+        <div class="card-body d-flex align-center gap-10 flex-wrap">
+          <label class="btn btn-secondary btn-sm" style="cursor:pointer;margin-bottom:0;">
+            <i class="fas fa-file-arrow-up"></i> Upload Purchase Bill
+            <input type="file" id="purchBillInput" accept=".pdf,.jpg,.jpeg,.png" class="file-input-hidden"
+                   onchange="handlePurchaseBillUpload(this.files[0])" aria-label="Upload purchase bill">
+          </label>
+          <span class="fs-12 text-muted-sm">PDF, JPG or PNG &middot; read automatically, nothing is saved until you press Save Purchase &middot; optional &mdash; you can still type everything by hand</span>
+        </div>
+      </div>
+      <div id="purchOcrProgress" class="d-none"></div>
+      <div id="purchOcrReview" class="d-none"></div>
+
+      <div class="card mb-20">
+        <div class="card-body">
+
+          <!-- Vendor -->
+          <div class="section-title mb-14">Vendor Details</div>
+          <datalist id="purchVendorDatalist"></datalist>
+          <div class="form-grid cols-2 mb-16">
+            <div class="form-group">
+              <label for="purchVendorName">Vendor Name <span class="text-required">*</span></label>
+              <div class="d-flex gap-8">
+                <input type="text" id="purchVendorName" class="form-control" list="purchVendorDatalist" oninput="onPurchVendorInput()" autocomplete="off">
+                <button type="button" class="btn btn-secondary btn-sm text-nowrap" onclick="saveVendorFromPurchaseForm()" title="Save to Vendor Master"><i class="fas fa-user-plus"></i></button>
+              </div>
+            </div>
+            <div class="form-group">
+              <label for="purchPhone">Phone</label>
+              <input type="text" id="purchPhone" class="form-control">
+            </div>
+          </div>
+
+          <div class="form-grid cols-2 mb-16">
+            <div class="form-group">
+              <label for="purchGstin">Vendor GSTIN <span class="fs-11 text-muted-sm">(Optional)</span></label>
+              <input type="text" id="purchGstin" class="form-control uppercase" maxlength="15" oninput="onPurchGstinInput(this)" onblur="onPurchGstinBlur()">
+              <div id="purchGstinStatus" class="d-flex align-center gap-8 d-none" style="margin-top:6px;"></div>
+            </div>
+            <div class="form-group">
+              <label for="purchState">State</label>
+              <select id="purchState" class="form-control" onchange="detectPurchSupplyType();onPurchStateChange()"><option value="">Select State</option></select>
+            </div>
+            <div class="form-group">
+              <label for="purchDistrict">District</label>
+              <input type="text" id="purchDistrict" class="form-control" list="purchDistrictList"
+                     placeholder="Select State first" autocomplete="off"
+                     onchange="onPurchDistrictChange()" aria-describedby="purchDistrictError">
+              <datalist id="purchDistrictList"></datalist>
+              <div id="purchDistrictError" class="fs-11 text-danger d-none" style="margin-top:4px;"></div>
+            </div>
+          </div>
+
+          <div class="form-group mb-16">
+            <label for="purchAddress">Address</label>
+            <input type="text" id="purchAddress" class="form-control">
+          </div>
+
+          <!-- Shown inline (never as a popup) only while the typed vendor name
+               isn't in Vendor Master. Either button dismisses it and the
+               purchase carries on unchanged — see updatePurchVendorPrompt()
+               in js/purchase-entry.js. -->
+          <div class="banner-warning mb-16 d-none" id="purchNewVendorPanel">
+            <div><i class="fas fa-user-plus"></i>This vendor does not exist in Vendor Master.</div>
+            <div class="mb-10">Do you want to save this vendor for future purchases?</div>
+            <div class="d-flex gap-10">
+              <button type="button" class="btn btn-primary btn-sm" id="purchSaveVendorBtn" onclick="saveNewVendorFromPrompt()"><i class="fas fa-save"></i> Save Vendor</button>
+              <button type="button" class="btn btn-secondary btn-sm" onclick="skipNewVendorPrompt()">Skip</button>
+            </div>
+          </div>
+
+          <!-- Purchase Info -->
+          <div class="section-title mb-14">Purchase Information</div>
+          <div class="form-grid cols-3 mb-16">
+            <div class="form-group">
+              <label for="purchNum">Purchase Number <span class="text-required">*</span></label>
+              <input type="text" id="purchNum" class="form-control">
+            </div>
+            <div class="form-group">
+              <label for="purchDate">Purchase Date <span class="text-required">*</span></label>
+              <input type="date" id="purchDate" class="form-control">
+            </div>
+            <div class="form-group">
+              <label>Supply Type <span class="fs-11 text-muted-sm">(auto-detected)</span></label>
+              <div class="form-control" style="background:var(--bg);cursor:default;display:flex;align-items:center;">
+                <span id="purchSupplyBadge" class="badge badge-green">Intrastate</span>
+              </div>
+              <input type="hidden" id="purchSupply" value="intrastate">
+            </div>
+          </div>
+
+          <!-- Products -->
+          <div id="purchItemsSection"></div>
+
+          <!-- Payment -->
+          <div class="section-title mb-14 mt-20">Payment to Vendor</div>
+          <div class="form-grid cols-2 mb-16" id="purchPaymentEditableFields">
+            <div class="form-group">
+              <label for="purchPaymentStatus">Payment Status</label>
+              <select id="purchPaymentStatus" class="form-control" onchange="onPurchPaymentStatusChange()">
+                <option value="unpaid" selected>Unpaid</option>
+                <option value="paid">Paid in Full</option>
+                <option value="partial">Partially Paid</option>
+              </select>
+            </div>
+            <div class="form-group inv-collapsible collapsed" id="purchPaymentAmountGroup">
+              <label for="purchPaymentAmount">Amount Paid (&#8377;)</label>
+              <input type="number" id="purchPaymentAmount" class="form-control" min="0" step="0.01"
+                     oninput="renderPurchPaymentPreview()" disabled
+                     aria-describedby="purchPaymentAmountError">
+              <p class="text-danger fs-12 d-none" id="purchPaymentAmountError" role="alert"></p>
+            </div>
+          </div>
+          <div class="form-grid cols-2 mb-16 inv-collapsible collapsed" id="purchPaymentDetailGroup">
+            <div class="form-group">
+              <label for="purchPaymentDate">Payment Date</label>
+              <input type="date" id="purchPaymentDate" class="form-control" disabled>
+            </div>
+            <div class="form-group">
+              <label for="purchPaymentMode">Payment Mode</label>
+              <select id="purchPaymentMode" class="form-control" disabled>
+                <option value="cash">Cash</option>
+                <option value="upi">UPI</option>
+                <option value="bank_transfer">Bank Transfer</option>
+                <option value="cheque">Cheque</option>
+                <option value="card">Card</option>
+                <option value="other">Other</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label for="purchPaymentReference">Reference Number <span class="fs-11 text-muted-sm">(Optional)</span></label>
+              <input type="text" id="purchPaymentReference" class="form-control" disabled>
+            </div>
+            <div class="form-group">
+              <label for="purchPaymentNote">Notes <span class="fs-11 text-muted-sm">(Optional)</span></label>
+              <input type="text" id="purchPaymentNote" class="form-control" disabled>
+            </div>
+          </div>
+          <!-- Live payment preview — identical to Invoice Entry's, driven by the
+               same shared helpers in js/payments.js. Read-only and deliberately
+               NOT a second source of truth: every number comes from the same
+               computePurchRollups() total the Grand Total box above shows, and
+               the wording mirrors what savePurchase() will record in the
+               payments ledger. Reuses .calc-box/.badge so it needs no CSS of
+               its own. See renderPurchPaymentPreview(). -->
+          <div class="calc-box mb-16" id="purchPaymentPreview">
+            <div class="calc-row">
+              <span class="label">Grand Total</span>
+              <span class="value"><input type="text" id="purchPreviewTotal" class="form-control calc-input-sm" readonly tabindex="-1" aria-label="Grand Total"></span>
+            </div>
+            <div class="calc-row">
+              <span class="label">Amount Paid</span>
+              <span class="value"><input type="text" id="purchPreviewReceived" class="form-control calc-input-sm" readonly tabindex="-1" aria-label="Amount Paid"></span>
+            </div>
+            <div class="calc-row total">
+              <span class="label">Remaining Balance</span>
+              <span class="value"><input type="text" id="purchPreviewBalance" class="form-control calc-input-total" readonly tabindex="-1" aria-label="Remaining Balance"></span>
+            </div>
+            <div class="calc-row">
+              <span class="label">Status</span>
+              <span class="value" id="purchPreviewStatus" aria-live="polite"></span>
+            </div>
+          </div>
+          <p class="text-muted-sm fs-12 mb-16 d-none" id="purchPaymentEditNote">Payment status: <b id="purchPaymentEditStatusText">Unpaid</b>. Record further payments from <a href="purchase-list.html">Purchase List</a>.</p>
+
+          <!-- Save -->
+          <div class="btn-group">
+            <button type="button" class="btn btn-primary" id="purchSaveBtn" onclick="savePurchase()"><i class="fas fa-save"></i> Save Purchase</button>
+            <button type="button" class="btn btn-secondary" onclick="resetPurchaseForm()"><i class="fas fa-redo"></i> Reset</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+document.addEventListener('DOMContentLoaded', initPurchaseEntry);
+</script>
+
+<!-- Global Search Modal -->
+<div class="modal-overlay" id="globalSearchModal">
+  <div class="modal modal-lg">
+    <div class="modal-header">
+      <span class="modal-title"><i class="fas fa-search"></i> Search Everywhere</span>
+      <button type="button" class="modal-close" onclick="closeGlobalSearch()" aria-label="Close"><i class="fas fa-times"></i></button>
+    </div>
+    <div class="modal-body">
+      <input type="text" id="globalSearchInput" class="form-control mb-16" oninput="onGlobalSearchInput(this.value)" aria-label="Global search input">
+      <div id="globalSearchResults"><p class="text-muted-sm">Type at least 2 characters&hellip;</p></div>
+    </div>
+  </div>
+</div>
+
+</body>
+</html>

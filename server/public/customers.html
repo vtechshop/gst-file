@@ -1,0 +1,269 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Customer Master - GST Management System</title>
+  <link rel="stylesheet" href="client/css/style.css?v=28">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
+  <script src="shared/india-districts.js?v=28"></script>
+  <script src="client/js/api/apiClient.js?v=28"></script>
+  <script src="client/js/api/backup.js?v=28"></script>
+  <script src="client/js/core/config.js?v=28"></script>
+  <script src="client/js/api/product-sync.js?v=28"></script>
+  <script src="client/js/core/auth.js?v=28"></script>
+  <script src="client/js/utilities/utils.js?v=28"></script>
+  <script src="client/js/core/search.js?v=28"></script>
+  <script src="client/js/pages/profile.js?v=28"></script>
+  <script src="client/js/pages/payments.js?v=28"></script>
+  <script src="client/js/pages/customers.js?v=28"></script>
+</head>
+<body>
+<div class="app-layout">
+
+  <aside class="sidebar">
+    <a class="sidebar-brand" href="dashboard.html">
+      <div class="brand-icon"><i class="fas fa-file-invoice-dollar"></i></div>
+      <span>GST Invoice<br>Management</span>
+    </a>
+    <nav class="sidebar-menu">
+      <div class="menu-section">Main</div>
+      <a href="dashboard.html" class="menu-item"><i class="fas fa-tachometer-alt"></i> Dashboard</a>
+      <div class="menu-section">Invoices / Sales</div>
+      <a href="invoice.html" class="menu-item"><i class="fas fa-plus-circle"></i> New Invoice</a>
+      <a href="invoice-list.html" class="menu-item"><i class="fas fa-list-alt"></i> Invoice List</a>
+      <a href="cdnotes.html" class="menu-item"><i class="fas fa-file-minus"></i> Credit / Debit Notes</a>
+      <a href="sales-returns.html" class="menu-item"><i class="fas fa-rotate-left"></i> Sales Returns</a>
+      <a href="bill-of-supply.html" class="menu-item"><i class="fas fa-file-invoice"></i> Bill of Supply</a>
+      <a href="revised-invoice.html" class="menu-item"><i class="fas fa-file-pen"></i> Revised Invoice</a>
+      <a href="advances.html" class="menu-item"><i class="fas fa-hand-holding-dollar"></i> Advances</a>
+      <a href="vouchers.html" class="menu-item"><i class="fas fa-receipt"></i> Vouchers</a>
+      <a href="challans.html" class="menu-item"><i class="fas fa-file-signature"></i> Delivery Challans</a>
+      <a href="amendments.html" class="menu-item"><i class="fas fa-pen-to-square"></i> Amendments</a>
+      <div class="menu-section">Purchases</div>
+      <a href="vendors.html" class="menu-item"><i class="fas fa-truck"></i> Vendors</a>
+      <a href="vendor-ledger.html" class="menu-item"><i class="fas fa-book"></i> Vendor Ledger</a>
+      <a href="purchases.html" class="menu-item"><i class="fas fa-cart-plus"></i> New Purchase</a>
+      <a href="purchase-list.html" class="menu-item"><i class="fas fa-boxes"></i> Purchase List</a>
+      <a href="purchase-returns.html" class="menu-item"><i class="fas fa-undo"></i> Purchase Returns</a>
+      <div class="menu-section">GST / Special</div>
+      <a href="eway-bills.html" class="menu-item"><i class="fas fa-truck-fast"></i> E-Way Bills</a>
+      <a href="challans.html#job-workers" class="menu-item"><i class="fas fa-industry"></i> Job Workers</a>
+      <div class="menu-section">HSN</div>
+      <a href="hsn.html#b2b" class="menu-item"><i class="fas fa-barcode"></i> B2B HSN</a>
+      <a href="hsn.html#b2c" class="menu-item"><i class="fas fa-tags"></i> B2C HSN</a>
+      <div class="menu-section">Masters</div>
+      <a href="customers.html" class="menu-item active"><i class="fas fa-address-book"></i> Customers</a>
+      <a href="customer-ledger.html" class="menu-item"><i class="fas fa-book"></i> Customer Ledger</a>
+      <a href="products.html" class="menu-item"><i class="fas fa-box"></i> Products</a>
+      <div class="menu-section">Expenses</div>
+      <a href="expenses.html" class="menu-item"><i class="fas fa-receipt"></i> Expenses</a>
+      <div class="menu-section">Reports</div>
+      <a href="reports.html" class="menu-item"><i class="fas fa-chart-bar"></i> Reports &amp; Export</a>
+      <a href="gstr3b.html" class="menu-item"><i class="fas fa-calculator"></i> GSTR-3B Summary</a>
+      <a href="document-register.html" class="menu-item"><i class="fas fa-book-open"></i> Document Register</a>
+      <div class="menu-section">Settings</div>
+      <a href="#" class="menu-item" onclick="openProfileModal();return false;"><i class="fas fa-building"></i> Business Profile</a>
+    </nav>
+    <div class="sidebar-user">
+      <div class="user-avatar"><i class="fas fa-user"></i></div>
+      <div class="user-info" onclick="openSettingsModal()" title="Click to open settings">
+        <div class="user-name" id="navUserName">User</div>
+        <div class="user-role">GST Manager</div>
+      </div>
+      <button type="button" class="btn-logout btn-settings" onclick="openSettingsModal()" title="Settings"><i class="fas fa-cog"></i></button>
+      <button type="button" class="btn-logout" id="logoutBtn" title="Logout"><i class="fas fa-sign-out-alt"></i></button>
+    </div>
+  </aside>
+
+  <div class="main-content">
+    <div class="top-bar">
+      <button type="button" class="menu-toggle" id="menuToggle" aria-label="Toggle sidebar menu"><i class="fas fa-bars"></i></button>
+      <span class="page-title"><i class="fas fa-address-book"></i>Customer Master</span>
+      <button type="button" class="btn btn-secondary btn-sm btn-icon ml-auto" onclick="openGlobalSearch()" title="Search everywhere (Ctrl+K)" aria-label="Global search"><i class="fas fa-search"></i></button>
+    </div>
+
+    <div class="content">
+
+      <!-- Add / Edit Form -->
+      <div class="card mb-20">
+        <div class="card-header">
+          <span class="card-title"><i class="fas fa-plus-circle"></i> <span id="custFormTitle">Add Customer</span></span>
+        </div>
+        <div class="card-body">
+          <div class="form-grid cols-2 mb-16">
+            <div class="form-group">
+              <label for="custName">Customer Name <span class="text-required">*</span></label>
+              <input type="text" id="custName" class="form-control" oninput="validateCustomerForm()">
+              <div id="custNameError" class="fs-11 text-danger d-none" style="margin-top:4px;"></div>
+            </div>
+            <div class="form-group">
+              <label for="custGSTIN">GSTIN</label>
+              <input type="text" id="custGSTIN" class="form-control uppercase" maxlength="15" oninput="this.value=this.value.toUpperCase();validateCustomerForm()">
+              <div id="custGSTINError" class="fs-11 text-danger d-none" style="margin-top:4px;"></div>
+            </div>
+          </div>
+          <div class="form-grid cols-3 mb-16">
+            <div class="form-group">
+              <label for="custPhone">Phone <span class="text-required">*</span></label>
+              <input type="tel" id="custPhone" class="form-control" maxlength="10" oninput="validateCustomerForm()">
+              <div id="custPhoneError" class="fs-11 text-danger d-none" style="margin-top:4px;"></div>
+            </div>
+            <div class="form-group">
+              <label for="custEmail">Email</label>
+              <input type="email" id="custEmail" class="form-control" oninput="validateCustomerForm()">
+              <div id="custEmailError" class="fs-11 text-danger d-none" style="margin-top:4px;"></div>
+            </div>
+            <div class="form-group">
+              <label for="custState">State <span class="text-required">*</span></label>
+              <select id="custState" class="form-control" onchange="onCustStateChange()">
+                <option value="">Select State</option>
+              </select>
+              <div id="custStateError" class="fs-11 text-danger d-none" style="margin-top:4px;"></div>
+            </div>
+            <div class="form-group">
+              <label for="custDistrict">District</label>
+              <input type="text" id="custDistrict" class="form-control" list="custDistrictList"
+                     placeholder="Select State first" autocomplete="off"
+                     onchange="onCustDistrictChange()" aria-describedby="custDistrictError">
+              <datalist id="custDistrictList"></datalist>
+              <div id="custDistrictError" class="fs-11 text-danger d-none" style="margin-top:4px;"></div>
+            </div>
+          </div>
+          <div class="form-group mb-16">
+            <label for="custAddr">Billing Address</label>
+            <textarea id="custAddr" class="form-control" rows="2"></textarea>
+          </div>
+
+          <!-- GST classification. Decides which GSTR-1 table a supply to
+               this customer is filed in. Every existing customer is
+               Registered — Regular, which is what they have always been
+               reported as. -->
+          <div class="form-grid cols-3 mb-16">
+            <div class="form-group">
+              <label for="custGstCategory">GST Category</label>
+              <select id="custGstCategory" class="form-control" onchange="onCustGstCategoryChange()"></select>
+              <span class="fs-11 text-muted-sm" id="custGstCategoryNote"></span>
+            </div>
+            <div class="form-group">
+              <label for="custPan">PAN</label>
+              <input type="text" id="custPan" class="form-control uppercase" maxlength="10">
+            </div>
+            <div class="form-group" id="custCountryGroup">
+              <label for="custCountry">Country</label>
+              <input type="text" id="custCountry" class="form-control" placeholder="India">
+            </div>
+          </div>
+          <div class="form-grid cols-3 mb-16">
+            <div class="form-group">
+              <label for="custPos">Place of Supply Override</label>
+              <select id="custPos" class="form-control">
+                <option value="">Derive from GSTIN / State</option>
+              </select>
+              <span class="fs-11 text-muted-sm">Only when the supply is made somewhere other than the billing state.</span>
+            </div>
+            <div class="form-group">
+              <label for="custShipState">Ship-To State</label>
+              <select id="custShipState" class="form-control" onchange="onCustShipStateChange()">
+                <option value="">Same as billing</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label for="custShipDistrict">Ship-To District</label>
+              <input type="text" id="custShipDistrict" class="form-control" list="custShipDistrictList"
+                     placeholder="Same as billing" autocomplete="off"
+                     onchange="onCustShipDistrictChange()" aria-describedby="custShipDistrictError">
+              <datalist id="custShipDistrictList"></datalist>
+              <div id="custShipDistrictError" class="fs-11 text-danger d-none" style="margin-top:4px;"></div>
+            </div>
+            <div class="form-group">
+              <label for="custShipAddr">Ship-To Address</label>
+              <textarea id="custShipAddr" class="form-control" rows="1" placeholder="Same as billing"></textarea>
+            </div>
+          </div>
+          <div class="btn-group">
+            <button type="button" class="btn btn-primary" id="custSaveBtn" onclick="saveCustomer()"><i class="fas fa-save"></i> Save Customer</button>
+            <button type="button" class="btn btn-secondary" onclick="resetCustomer()"><i class="fas fa-redo"></i> Reset</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Customer Outstanding Summary -->
+      <div class="card mb-20">
+        <div class="card-header">
+          <span class="card-title"><i class="fas fa-hourglass-half"></i> Customer Outstanding Summary</span>
+        </div>
+        <div class="card-body p-0">
+          <div class="table-wrapper">
+            <table class="data-table">
+              <thead>
+                <tr><th>Customer</th><th class="text-center">Invoices</th><th class="text-right">Total Billed</th><th class="text-right">Total Received</th><th class="text-right">Returned</th><th class="text-right">Outstanding</th></tr>
+              </thead>
+              <tbody id="custOutstandingBody">
+                <tr><td colspan="6" class="empty-state"><i class="fas fa-spinner fa-spin table-loading-icon"></i>Loading...</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <!-- Customer List -->
+      <div class="card">
+        <div class="card-header">
+          <span class="card-title"><i class="fas fa-list"></i> Customer List</span>
+          <div class="d-flex gap-10">
+            <div class="search-input-wrap w-240">
+              <i class="fas fa-search"></i>
+              <input type="text" id="custSearch" class="form-control" aria-label="Search customers">
+            </div>
+          </div>
+        </div>
+        <div class="card-body p-0">
+          <div class="table-wrapper">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th>#</th>
+                  <th>Customer Name</th>
+                  <th>GSTIN</th>
+                  <th>Phone</th>
+                  <th>Email</th>
+                  <th>State</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody id="custTableBody">
+                <tr><td colspan="7" class="empty-state"><i class="fas fa-spinner fa-spin table-loading-icon"></i>Loading...</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="table-pagination-row">
+            <div id="custPagination" class="pagination"></div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+</div>
+
+<script>
+document.addEventListener('DOMContentLoaded', initCustomers);
+</script>
+
+<!-- Global Search Modal -->
+<div class="modal-overlay" id="globalSearchModal">
+  <div class="modal modal-lg">
+    <div class="modal-header">
+      <span class="modal-title"><i class="fas fa-search"></i> Search Everywhere</span>
+      <button type="button" class="modal-close" onclick="closeGlobalSearch()" aria-label="Close"><i class="fas fa-times"></i></button>
+    </div>
+    <div class="modal-body">
+      <input type="text" id="globalSearchInput" class="form-control mb-16" oninput="onGlobalSearchInput(this.value)" aria-label="Global search input">
+      <div id="globalSearchResults"><p class="text-muted-sm">Type at least 2 characters&hellip;</p></div>
+    </div>
+  </div>
+</div>
+
+</body>
+</html>

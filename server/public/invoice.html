@@ -1,0 +1,519 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>New Invoice - GST Management System</title>
+  <link rel="stylesheet" href="client/css/style.css?v=28">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.31/jspdf.plugin.autotable.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/qrcode@1.4.4/build/qrcode.min.js"></script>
+  <script src="shared/india-districts.js?v=28"></script>
+  <script src="client/js/api/apiClient.js?v=28"></script>
+  <script src="client/js/api/backup.js?v=28"></script>
+  <script src="client/js/core/config.js?v=28"></script>
+  <script src="client/js/api/product-sync.js?v=28"></script>
+  <script src="client/js/core/auth.js?v=28"></script>
+  <script src="client/js/utilities/utils.js?v=28"></script>
+  <script src="client/js/core/search.js?v=28"></script>
+  <script src="client/js/pages/profile.js?v=28"></script>
+  <script src="client/js/pages/products.js?v=28"></script>
+  <script src="client/js/core/drafts.js?v=28"></script>
+  <script src="client/js/pages/invoice-items.js?v=28"></script>
+  <script src="client/js/pages/invoice-pdf.js?v=28"></script>
+  <script src="client/js/pages/payments.js?v=28"></script>
+  <script src="client/js/pages/invoice-entry.js?v=28"></script>
+  <!-- Invoice scanner. Uploads to /api/invoice-scan, which calls Gemini
+       with a server-held key; no OCR library is loaded in the browser. -->
+  <script src="client/js/pages/invoice-scan.js?v=28"></script>
+</head>
+<body>
+<div class="app-layout">
+
+  <!-- Sidebar -->
+  <aside class="sidebar">
+    <a class="sidebar-brand" href="dashboard.html">
+      <div class="brand-icon"><i class="fas fa-file-invoice-dollar"></i></div>
+      <span>GST Invoice<br>Management</span>
+    </a>
+    <nav class="sidebar-menu">
+      <div class="menu-section">Main</div>
+      <a href="dashboard.html" class="menu-item"><i class="fas fa-tachometer-alt"></i> Dashboard</a>
+      <div class="menu-section">Invoices / Sales</div>
+      <a href="invoice.html" class="menu-item active"><i class="fas fa-plus-circle"></i> New Invoice</a>
+      <a href="invoice-list.html" class="menu-item"><i class="fas fa-list-alt"></i> Invoice List</a>
+      <a href="cdnotes.html" class="menu-item"><i class="fas fa-file-minus"></i> Credit / Debit Notes</a>
+      <a href="sales-returns.html" class="menu-item"><i class="fas fa-rotate-left"></i> Sales Returns</a>
+      <a href="bill-of-supply.html" class="menu-item"><i class="fas fa-file-invoice"></i> Bill of Supply</a>
+      <a href="revised-invoice.html" class="menu-item"><i class="fas fa-file-pen"></i> Revised Invoice</a>
+      <a href="advances.html" class="menu-item"><i class="fas fa-hand-holding-dollar"></i> Advances</a>
+      <a href="vouchers.html" class="menu-item"><i class="fas fa-receipt"></i> Vouchers</a>
+      <a href="challans.html" class="menu-item"><i class="fas fa-file-signature"></i> Delivery Challans</a>
+      <a href="amendments.html" class="menu-item"><i class="fas fa-pen-to-square"></i> Amendments</a>
+      <div class="menu-section">Purchases</div>
+      <a href="vendors.html" class="menu-item"><i class="fas fa-truck"></i> Vendors</a>
+      <a href="vendor-ledger.html" class="menu-item"><i class="fas fa-book"></i> Vendor Ledger</a>
+      <a href="purchases.html" class="menu-item"><i class="fas fa-cart-plus"></i> New Purchase</a>
+      <a href="purchase-list.html" class="menu-item"><i class="fas fa-boxes"></i> Purchase List</a>
+      <a href="purchase-returns.html" class="menu-item"><i class="fas fa-undo"></i> Purchase Returns</a>
+      <div class="menu-section">GST / Special</div>
+      <a href="eway-bills.html" class="menu-item"><i class="fas fa-truck-fast"></i> E-Way Bills</a>
+      <a href="challans.html#job-workers" class="menu-item"><i class="fas fa-industry"></i> Job Workers</a>
+      <div class="menu-section">HSN</div>
+      <a href="hsn.html#b2b" class="menu-item"><i class="fas fa-barcode"></i> B2B HSN</a>
+      <a href="hsn.html#b2c" class="menu-item"><i class="fas fa-tags"></i> B2C HSN</a>
+      <div class="menu-section">Masters</div>
+      <a href="customers.html" class="menu-item"><i class="fas fa-address-book"></i> Customers</a>
+      <a href="customer-ledger.html" class="menu-item"><i class="fas fa-book"></i> Customer Ledger</a>
+      <a href="products.html" class="menu-item"><i class="fas fa-box"></i> Products</a>
+      <div class="menu-section">Expenses</div>
+      <a href="expenses.html" class="menu-item"><i class="fas fa-receipt"></i> Expenses</a>
+      <div class="menu-section">Reports</div>
+      <a href="reports.html" class="menu-item"><i class="fas fa-chart-bar"></i> Reports &amp; Export</a>
+      <a href="gstr3b.html" class="menu-item"><i class="fas fa-calculator"></i> GSTR-3B Summary</a>
+      <a href="document-register.html" class="menu-item"><i class="fas fa-book-open"></i> Document Register</a>
+      <div class="menu-section">Settings</div>
+      <a href="#" class="menu-item" onclick="openProfileModal();return false;"><i class="fas fa-building"></i> Business Profile</a>
+    </nav>
+    <div class="sidebar-user">
+      <div class="user-avatar"><i class="fas fa-user"></i></div>
+      <div class="user-info" onclick="openSettingsModal()" title="Click to open settings">
+        <div class="user-name" id="navUserName">User</div>
+        <div class="user-role">GST Manager</div>
+      </div>
+      <button type="button" class="btn-logout btn-settings" onclick="openSettingsModal()" title="Settings"><i class="fas fa-cog"></i></button>
+      <button type="button" class="btn-logout" id="logoutBtn" title="Logout"><i class="fas fa-sign-out-alt"></i></button>
+    </div>
+  </aside>
+
+  <div class="main-content">
+    <div class="top-bar">
+      <button type="button" class="menu-toggle" id="menuToggle" aria-label="Toggle sidebar menu"><i class="fas fa-bars"></i></button>
+      <span class="page-title"><i class="fas fa-plus-circle"></i><span id="invPageTitle">New Invoice</span></span>
+      <div class="ml-auto d-flex gap-10">
+        <span id="invClassifyBadge" class="badge badge-green" style="font-size:12px;">B2C</span>
+        <button type="button" class="btn btn-secondary btn-sm btn-icon" onclick="openGlobalSearch()" title="Search everywhere (Ctrl+K)" aria-label="Global search"><i class="fas fa-search"></i></button>
+      </div>
+    </div>
+
+    <div class="content">
+
+      <!-- Optional invoice scanner. Entirely additive: ignore it and
+           Invoice Entry behaves exactly as before. Extraction only ever
+           proposes values — the existing Save Invoice button remains the
+           sole way anything reaches the database. -->
+      <div class="card mb-20">
+        <div class="card-body d-flex align-center gap-10 flex-wrap">
+          <label class="btn btn-secondary btn-sm" style="cursor:pointer;margin-bottom:0;">
+            <i class="fas fa-file-arrow-up"></i> Upload Customer Invoice
+            <input type="file" id="invScanInput" accept=".pdf,.jpg,.jpeg,.png,.csv,.xlsx,.xls" multiple
+                   class="file-input-hidden" onchange="handleInvoiceScanUpload(this.files)"
+                   aria-label="Upload customer invoice">
+          </label>
+          <span class="fs-12 text-muted-sm">PDF, JPG, PNG, CSV or Excel &middot; a file may hold several invoices &mdash; you pick which to import &middot; nothing is saved until you press Save Invoice</span>
+        </div>
+      </div>
+      <div id="invScanProgress" class="d-none"></div>
+      <div id="invScanReview" class="d-none"></div>
+
+      <div class="card mb-20">
+        <div class="card-body">
+          <div id="invDraftBanner"></div>
+
+          <!-- Invoice Type -->
+          <div class="form-group mb-16">
+            <label>Invoice Type</label>
+            <div class="segmented-toggle" role="radiogroup" aria-label="Invoice Type">
+              <label class="segmented-option seg-b2b" id="invTypeB2BOption">
+                <input type="radio" name="invType" id="invTypeB2B" value="b2b" onchange="onInvoiceTypeToggle()">
+                <span>B2B</span>
+              </label>
+              <label class="segmented-option seg-b2c" id="invTypeB2COption">
+                <input type="radio" name="invType" id="invTypeB2C" value="b2c" checked onchange="onInvoiceTypeToggle()">
+                <span>B2C</span>
+              </label>
+            </div>
+          </div>
+
+          <!-- Mode banner — the visible, always-on indicator of which
+               form is active; also swaps color/text the instant the
+               toggle above changes. -->
+          <div id="invModeHeader" class="inv-mode-header inv-mode-b2c">
+            <i class="fas fa-users" id="invModeHeaderIcon"></i> <span id="invModeHeaderText">B2C &mdash; Walk-in / Retail Sale</span>
+          </div>
+
+          <!-- Customer -->
+          <div class="section-title mb-14">Customer Details</div>
+          <datalist id="customerDatalist"></datalist>
+          <div class="form-grid cols-2 mb-16">
+            <div class="form-group">
+              <label for="invCustName">Customer Name</label>
+              <div class="d-flex gap-8">
+                <input type="text" id="invCustName" class="form-control" list="customerDatalist" oninput="onInvoiceCustomerInput()" onfocus="onInvCustNameFocus(this)" onmousedown="onInvCustNameMouseDown(event, this)" autocomplete="off">
+                <button type="button" class="btn btn-secondary btn-sm text-nowrap" onclick="saveCustomerFromInvoiceForm()" title="Save to Customer Master"><i class="fas fa-user-plus"></i></button>
+              </div>
+            </div>
+            <div class="form-group">
+              <label for="invPhone">Phone</label>
+              <input type="text" id="invPhone" class="form-control">
+            </div>
+          </div>
+
+          <!-- GST Number + State are always visible in both modes now —
+               only their required/optional-ness changes with the toggle
+               (see syncInvoiceTypeUI() in js/invoice-entry.js). B2C can
+               optionally carry a GST Number and still save as B2C. -->
+          <div id="invB2BFields" class="form-grid cols-2 mb-16">
+            <div class="form-group">
+              <label for="invGstin">GST Number <span id="invGstinReqMark" class="fs-11 text-muted-sm">(Optional)</span></label>
+              <div class="d-flex gap-8">
+                <input type="text" id="invGstin" class="form-control uppercase" maxlength="15" oninput="onInvoiceGstinInput(this)" onblur="onInvoiceGstinBlur(this)">
+                <button type="button" id="invGstVerifyBtn" class="btn btn-secondary" onclick="verifyInvoiceGstin()"
+                        title="Fetch the registered name, address, state and district for this GSTIN">
+                  <i class="fas fa-cloud-arrow-down"></i> Fetch
+                </button>
+              </div>
+              <div id="invGstinStatus" class="d-flex align-center gap-8 d-none" style="margin-top:6px;"></div>
+              <div id="invGstVerifyMsg" class="fs-11 d-none" style="margin-top:4px;"></div>
+            </div>
+            <div class="form-group">
+              <label for="invState">State <span id="invStateReqMark" class="fs-11 text-muted-sm">(Optional)</span></label>
+              <select id="invState" class="form-control" onchange="detectSupplyType();onInvStateChange()"><option value="">Select State</option></select>
+            </div>
+            <div class="form-group">
+              <label for="invDistrict">District</label>
+              <input type="text" id="invDistrict" class="form-control" list="invDistrictList"
+                     placeholder="Select State first" autocomplete="off"
+                     onchange="onInvDistrictChange()" aria-describedby="invDistrictError">
+              <datalist id="invDistrictList"></datalist>
+              <div id="invDistrictError" class="fs-11 text-danger d-none" style="margin-top:4px;"></div>
+            </div>
+          </div>
+
+          <div class="form-group mb-16">
+            <label for="invAddress">Address</label>
+            <input type="text" id="invAddress" class="form-control">
+          </div>
+
+          <!-- Invoice Info -->
+          <div class="section-title mb-14">Invoice Information</div>
+          <div class="form-grid cols-3 mb-16">
+            <div class="form-group">
+              <div class="d-flex align-center gap-10">
+                <label for="invNum">Invoice Number <span class="text-required">*</span></label>
+                <span class="fs-11 fw-600 text-muted-sm">Auto:</span>
+                <label class="inv-toggle" title="Toggle auto invoice number">
+                  <input type="checkbox" id="autoInvToggle" onchange="onAutoToggleChange()" aria-label="Toggle auto invoice number">
+                  <span class="inv-toggle-track"><span class="inv-toggle-thumb"></span></span>
+                </label>
+                <span id="autoInvLabel" class="fs-11 fw-700 text-gray-mid">OFF</span>
+                <a href="javascript:void(0)" class="fs-11 text-muted-sm" onclick="openSettingsModal()" title="Configure the auto-numbering format"><i class="fas fa-cog"></i> Format</a>
+              </div>
+              <div class="d-flex gap-8">
+                <input type="text" id="invNum" class="form-control">
+                <button type="button" class="btn btn-secondary btn-sm text-nowrap" onclick="getCurrentUser().then(u=>generateInvoiceNo(u?.id,true))" title="Generate Now"><i class="fas fa-magic"></i></button>
+              </div>
+            </div>
+            <div class="form-group">
+              <!-- Which numbering book this invoice comes out of. Each
+                   series counts on its own, so the shop reaching 170 does
+                   not push the website's next number past 5. -->
+              <label for="invSource">Invoice Source</label>
+              <select id="invSource" class="form-control" onchange="onInvoiceSourceChange()">
+                <option value="offline">Offline / Shop</option>
+                <option value="online">Online / Website</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label for="invDate">Invoice Date <span class="text-required">*</span></label>
+              <input type="date" id="invDate" class="form-control">
+            </div>
+            <div class="form-group">
+              <!-- Which GSTR-1 table this supply belongs in. Filled from
+                   the customer when one is picked, and stored on the
+                   invoice so a filed return cannot change later because
+                   the customer master was edited. -->
+              <label class="d-flex align-center gap-8" style="cursor:pointer;margin-bottom:6px;">
+                <input type="checkbox" id="invReverseCharge">
+                <span class="fs-12">Reverse Charge &mdash; tax payable by the recipient</span>
+              </label>
+              <label for="invGstCategory">GST Category</label>
+              <select id="invGstCategory" class="form-control" onchange="onInvGstCategoryChange()"></select>
+              <span class="fs-11 text-muted-sm" id="invGstCategoryNote"></span>
+            </div>
+            <div class="form-group">
+              <label>Supply Type <span class="fs-11 text-muted-sm">(auto-detected)</span></label>
+              <div class="form-control" style="background:var(--bg);cursor:default;display:flex;align-items:center;">
+                <span id="invSupplyBadge" class="badge badge-green">Intrastate</span>
+              </div>
+              <input type="hidden" id="invSupply" value="intrastate">
+            </div>
+          </div>
+
+          <!-- Products -->
+          <div id="itemsSection"></div>
+
+          <!-- Transport (optional) -->
+          <div class="section-title mb-14 mt-20 d-flex align-center gap-14">
+            <span>Transport</span>
+            <label class="inv-toggle" title="Enable transport details">
+              <input type="checkbox" id="transportToggle" onchange="onTransportToggleChange()" aria-label="Transport Required">
+              <span class="inv-toggle-track"><span class="inv-toggle-thumb"></span></span>
+            </label>
+            <span id="transportToggleLabel" class="fs-12 fw-700 text-gray-mid">Not Required</span>
+          </div>
+          <div class="d-flex align-center gap-10 mb-8 mt-8">
+            <label class="inv-toggle" title="Export invoice">
+              <input type="checkbox" id="exportToggle" onchange="onExportToggleChange()" aria-label="Export Invoice">
+              <span class="inv-toggle-track"><span class="inv-toggle-thumb"></span></span>
+            </label>
+            <span class="fs-12 fw-700">Export Invoice</span>
+            <span id="exportToggleLabel" class="fs-12 fw-700 text-gray-mid">No</span>
+            <small class="text-muted">Reported in GSTR-1 Table 6A, not in B2B / B2CL / B2CS.</small>
+          </div>
+          <div class="d-flex align-center gap-10 mb-8">
+            <label class="d-flex align-center gap-8 mb-0" style="cursor:pointer;">
+              <input type="checkbox" id="invDifferential65">
+              <span class="fs-12 fw-700">Leased vehicle at 65% rate</span>
+            </label>
+            <small class="text-muted">Bought and leased before 1 July 2017 &mdash; reported as <b>diff_percent 0.65</b>.</small>
+          </div>
+          <div id="exportFields" class="form-grid cols-4 mb-16 d-none">
+            <div class="form-group">
+              <label for="invExportType">Export Type *</label>
+              <select id="invExportType" class="form-control">
+                <option value="WPAY">WPAY &mdash; with payment of IGST</option>
+                <option value="WOPAY">WOPAY &mdash; under LUT / bond, no IGST</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label for="invPortCode">Port Code</label>
+              <input type="text" id="invPortCode" class="form-control uppercase" placeholder="INMAA1">
+            </div>
+            <div class="form-group">
+              <label for="invShippingBillNo">Shipping Bill No.</label>
+              <input type="text" id="invShippingBillNo" class="form-control">
+            </div>
+            <div class="form-group">
+              <label for="invShippingBillDate">Shipping Bill Date</label>
+              <input type="date" id="invShippingBillDate" class="form-control">
+            </div>
+            <div class="form-group">
+              <label for="invExportOf">Export of</label>
+              <select id="invExportOf" class="form-control">
+                <option value="goods">Goods</option>
+                <option value="services">Services &mdash; no shipping bill</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label for="invSezRecipient">SEZ recipient (if SEZ)</label>
+              <select id="invSezRecipient" class="form-control">
+                <option value="">&mdash; not an SEZ supply &mdash;</option>
+                <option value="unit">SEZ unit</option>
+                <option value="developer">SEZ developer</option>
+              </select>
+            </div>
+          </div>
+          <div class="d-flex align-center gap-10 mb-8">
+            <label class="inv-toggle" title="Supplied through an e-commerce operator">
+              <input type="checkbox" id="ecomToggle" onchange="onEcomToggleChange()" aria-label="Through an e-commerce operator">
+              <span class="inv-toggle-track"><span class="inv-toggle-thumb"></span></span>
+            </label>
+            <span class="fs-12 fw-700">Through an e-commerce operator</span>
+            <span id="ecomToggleLabel" class="fs-12 fw-700 text-gray-mid">No</span>
+          </div>
+          <div id="ecomFields" class="form-grid cols-3 mb-16 d-none">
+            <div class="form-group">
+              <label for="invEcomGstin">Operator GSTIN</label>
+              <input type="text" id="invEcomGstin" class="form-control uppercase" placeholder="Operator's GSTIN"
+                oninput="uppercaseKeepCursor(this)">
+              <small class="text-muted">Reported as <b>etin</b> against this supply.</small>
+            </div>
+            <div class="form-group">
+              <label for="invEcomSupplyType">Who pays the tax</label>
+              <select id="invEcomSupplyType" class="form-control">
+                <option value="through_operator">I do &mdash; operator only collects TCS</option>
+                <option value="section_9_5">The operator does &mdash; section 9(5)</option>
+              </select>
+              <small class="text-muted">Section 9(5) supplies belong in GSTR-1 Tables 14/15, which are
+                <b>not yet written to the JSON</b> &mdash; their shape is unverified. The data is stored.</small>
+            </div>
+          </div>
+          <div id="transportFields" class="form-grid cols-3 mb-16 d-none">
+            <div class="form-group">
+              <label for="invVehicleNo">Vehicle Number</label>
+              <input type="text" id="invVehicleNo" class="form-control uppercase" oninput="uppercaseKeepCursor(this)">
+            </div>
+            <div class="form-group">
+              <label for="invTransporter">Transporter Name</label>
+              <input type="text" id="invTransporter" class="form-control">
+            </div>
+            <div class="form-group">
+              <label for="invTransportMode">Transport Mode</label>
+              <select id="invTransportMode" class="form-control">
+                <option value="">Select</option>
+                <option value="road">Road</option>
+                <option value="rail">Rail</option>
+                <option value="air">Air</option>
+                <option value="ship">Ship</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label for="invDistance">Distance (km)</label>
+              <input type="number" id="invDistance" class="form-control" min="0" step="1">
+            </div>
+            <div class="form-group">
+              <label for="invLrNumber">LR Number</label>
+              <input type="text" id="invLrNumber" class="form-control">
+            </div>
+            <div class="form-group">
+              <label for="invLrDate">LR Date</label>
+              <input type="date" id="invLrDate" class="form-control">
+            </div>
+            <div class="form-group">
+              <label for="invTransporterGstin">Transporter GSTIN</label>
+              <input type="text" id="invTransporterGstin" class="form-control uppercase" maxlength="15" oninput="this.value=this.value.toUpperCase()">
+            </div>
+            <div class="form-group">
+              <label for="invVehicleType">Vehicle Type</label>
+              <select id="invVehicleType" class="form-control">
+                <option value="">Select</option>
+                <option value="regular">Regular</option>
+                <option value="over_dimensional_cargo">Over Dimensional Cargo</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label for="invDispatchFrom">Dispatch From</label>
+              <input type="text" id="invDispatchFrom" class="form-control">
+            </div>
+            <div class="form-group">
+              <label for="invDispatchTo">Dispatch To</label>
+              <input type="text" id="invDispatchTo" class="form-control">
+            </div>
+          </div>
+
+          <!-- Payment -->
+          <div class="section-title mb-14 mt-20">Payment</div>
+          <div class="form-grid cols-2 mb-16" id="invPaymentEditableFields">
+            <div class="form-group">
+              <label for="invPaymentStatus">Payment Status</label>
+              <select id="invPaymentStatus" class="form-control" onchange="onInvPaymentStatusChange()">
+                <!-- New invoices default to Paid in Full: most sales are
+                     settled at the counter, so this is the common case.
+                     Options and their values are unchanged, and this
+                     default applies to new invoices only — opening an
+                     existing one hides this select entirely and shows
+                     the stored status instead (loadInvoiceForEdit). -->
+                <option value="unpaid">Unpaid</option>
+                <option value="paid" selected>Paid in Full</option>
+                <option value="partial">Partially Paid</option>
+              </select>
+            </div>
+            <div class="form-group inv-collapsible collapsed" id="invPaymentAmountGroup">
+              <label for="invPaymentAmount">Amount Received (&#8377;)</label>
+              <input type="number" id="invPaymentAmount" class="form-control" min="0" step="0.01"
+                     oninput="renderInvPaymentPreview()" disabled
+                     aria-describedby="invPaymentAmountError">
+              <p class="text-danger fs-12 d-none" id="invPaymentAmountError" role="alert"></p>
+            </div>
+          </div>
+          <div class="form-grid cols-2 mb-16 inv-collapsible collapsed" id="invPaymentDetailGroup">
+            <div class="form-group">
+              <label for="invPaymentDate">Payment Date</label>
+              <input type="date" id="invPaymentDate" class="form-control" disabled>
+            </div>
+            <div class="form-group">
+              <label for="invPaymentMode">Payment Mode</label>
+              <select id="invPaymentMode" class="form-control" disabled>
+                <option value="cash">Cash</option>
+                <option value="upi">UPI</option>
+                <option value="bank_transfer">Bank Transfer</option>
+                <option value="cheque">Cheque</option>
+                <option value="card">Card</option>
+                <option value="other">Other</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label for="invPaymentReference">Reference Number <span class="fs-11 text-muted-sm">(Optional)</span></label>
+              <input type="text" id="invPaymentReference" class="form-control" disabled>
+            </div>
+            <div class="form-group">
+              <label for="invPaymentNote">Notes <span class="fs-11 text-muted-sm">(Optional)</span></label>
+              <input type="text" id="invPaymentNote" class="form-control" disabled>
+            </div>
+          </div>
+          <!-- Live payment preview — read-only, and deliberately NOT a second
+               source of truth: every number here comes from the same
+               computeInvoiceRollups() total the Grand Total box above shows,
+               and the wording mirrors exactly what saveInvoice() will record
+               in the payments ledger. Reuses .calc-box/.badge so it needs no
+               CSS of its own. See renderInvPaymentPreview(). -->
+          <div class="calc-box mb-16" id="invPaymentPreview">
+            <div class="calc-row">
+              <span class="label">Grand Total</span>
+              <span class="value"><input type="text" id="invPreviewTotal" class="form-control calc-input-sm" readonly tabindex="-1" aria-label="Grand Total"></span>
+            </div>
+            <div class="calc-row">
+              <span class="label">Amount Received</span>
+              <span class="value"><input type="text" id="invPreviewReceived" class="form-control calc-input-sm" readonly tabindex="-1" aria-label="Amount Received"></span>
+            </div>
+            <div class="calc-row total">
+              <span class="label">Remaining Balance</span>
+              <span class="value"><input type="text" id="invPreviewBalance" class="form-control calc-input-total" readonly tabindex="-1" aria-label="Remaining Balance"></span>
+            </div>
+            <div class="calc-row">
+              <span class="label">Status</span>
+              <span class="value" id="invPreviewStatus" aria-live="polite"></span>
+            </div>
+          </div>
+          <p class="text-muted-sm fs-12 mb-16 d-none" id="invPaymentEditNote">Payment status: <b id="invPaymentEditStatusText">Unpaid</b>. Record further payments from <a href="invoice-list.html">Invoice List</a>.</p>
+
+          <!-- Save -->
+          <div class="btn-group">
+            <button type="button" class="btn btn-primary" id="invSaveBtn" onclick="saveInvoice()"><i class="fas fa-save"></i> Save Invoice</button>
+            <button type="button" class="btn btn-secondary" onclick="resetInvoiceForm()"><i class="fas fa-redo"></i> Reset</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Post-save action panel -->
+      <div class="card mb-20 d-none" id="invSavedPanel">
+        <div class="card-body">
+          <div class="banner-success mb-16">
+            <i class="fas fa-check-circle"></i>
+            <div class="banner-text"><b>Invoice saved.</b> <span id="invSavedSummary"></span></div>
+          </div>
+          <div class="btn-group">
+            <button type="button" class="btn btn-danger" id="invActionPdf"><i class="fas fa-file-pdf"></i> Download PDF</button>
+            <button type="button" class="btn btn-secondary" id="invActionPrint"><i class="fas fa-print"></i> Print</button>
+            <button type="button" class="btn btn-success" id="invActionWhatsApp"><i class="fab fa-whatsapp"></i> Share via WhatsApp</button>
+            <button type="button" class="btn btn-info btn-info-alt" id="invActionEmail"><i class="fas fa-envelope"></i> Email PDF</button>
+            <button type="button" class="btn btn-primary" onclick="resetInvoiceForm()"><i class="fas fa-plus"></i> New Invoice</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+document.addEventListener('DOMContentLoaded', initInvoiceEntry);
+</script>
+
+<!-- Global Search Modal -->
+<div class="modal-overlay" id="globalSearchModal">
+  <div class="modal modal-lg">
+    <div class="modal-header">
+      <span class="modal-title"><i class="fas fa-search"></i> Search Everywhere</span>
+      <button type="button" class="modal-close" onclick="closeGlobalSearch()" aria-label="Close"><i class="fas fa-times"></i></button>
+    </div>
+    <div class="modal-body">
+      <input type="text" id="globalSearchInput" class="form-control mb-16" oninput="onGlobalSearchInput(this.value)" aria-label="Global search input">
+      <div id="globalSearchResults"><p class="text-muted-sm">Type at least 2 characters&hellip;</p></div>
+    </div>
+  </div>
+</div>
+
+</body>
+</html>

@@ -1,0 +1,2874 @@
+// =============================================
+// GSTR-1 JSON Export — GST Portal Compliance Engine
+// =============================================
+// Replaces the old exportGSTR1JSON() in js/export.js, which had several
+// real, confirmed defects (see the accompanying report — not guesses):
+//   - POS for B2B was derived from supply_type + the BUSINESS's own state
+//     instead of the customer's GSTIN, and produced an invalid/blank POS
+//     for every single interstate B2B invoice.
+//   - The HSN section was built from repB2BHSN/repB2CHSN, which mix ALL-
+//     TIME invoice items with the period-filtered B2B/B2C invoice list —
+//     so HSN totals could never reconcile against B2B+B2C totals for any
+//     period except "since the beginning of time."
+//   - Every money figure came from the invoice header's cached columns,
+//     never recomputed from line items — a corrupted/hand-edited cached
+//     total (or an invoice with items at several different GST rates)
+//     would export silently wrong.
+//   - No B2CL section existed at all — large unregistered inter-state
+//     invoices were always folded into the state-rate B2CS bucket.
+//   - No CDNR/CDNUR section existed — Credit/Debit Notes never appeared
+//     in the filing at all.
+//   - `fp` (filing period) was always "the current calendar month",
+//     regardless of which period was actually selected/exported.
+//   - UQC was hardcoded to 'NOS' for every single HSN row.
+//   - Nothing was validated before the file downloaded.
+//
+// This file fixes the generator itself — every export recomputes from
+// source data and is validated before a single byte is written to disk.
+//
+// Two-phase validation, per the compliance brief:
+//   1. Structural/format checks happen inline while the payload is being
+//      assembled (GSTIN, POS, HSN, invoice number, date, non-negative
+//      values) — each failure is pushed onto a shared `errors` array with
+//      enough context to fix it.
+//   2. runFinalGSTR1Audit() is a separate pass, run only after the whole
+//      payload exists, that re-derives every total independently and
+//      cross-checks it against the payload — the actual reconciliation
+//      step. Anything wrong here means the two halves of the generator
+//      itself disagree, which should never happen; it exists as a
+//      standing guardrail so a future code change can't silently break
+//      the invariant without the export refusing to run.
+//
+// If either phase finds anything, the JSON is never written — a modal
+// lists every failure and the download is aborted, exactly as asked.
+
+// ── Statutory constants ─────────────────────────────────────
+// Fixed by law, not derived from any invoice — kept as one named
+// constant (never inlined into the logic below) so it's one place to
+// update if CBIC revises it, not a magic number buried in a comparison.
+// Value as of the CBIC notification in effect at the time this was
+// written (₹1,00,000 for B2C inter-state invoices to go to B2CL instead
+// of B2CS) — confirm against the current notification before relying on
+// this for an actual filing; thresholds like this do get revised.
+const GSTR1_B2CL_THRESHOLD = 100000;
+
+// One rounding-tolerance constant for every "do these two independently
+// computed money figures agree" check in this file (was previously two
+// different unnamed magic numbers — 0.02 on the cached-total checks,
+// 0.05 on the final-audit checks — with no reason for the two figures
+// to differ). ₹0.05 comfortably absorbs legitimate per-line round2()
+// noise across several summed items without masking a real mismatch.
+const GSTR1_RECONCILE_TOLERANCE = 0.05;
+
+// Server-side `in_<column>` filters (server/routes/generic.js) are still
+// passed as one query-string value — chunking the id list keeps any
+// single request's URL comfortably under typical server/proxy length
+// limits even for a filing period with several thousand invoices,
+// without falling back to one request per invoice (real N+1).
+const GSTR1_ID_CHUNK_SIZE = 300;
+
+// UQC (Unit Quantity Code) — maps the bare unit text this app stores on
+// invoice_items.unit (see COMMON_UNITS in js/utils.js) to the code a
+// return carries.
+//
+// Bare codes, not the compound "NOS-NUMBERS" form this used to emit. A
+// GSTR-1 written by the official Offline Utility carries "NOS" and "NA"
+// (see the reference file: hsn_b2b rows use "NOS", the service row with
+// qty 0 uses "NA"), so the compound form was wrong in every row we ever
+// produced.
+const GSTR1_UQC_MAP = {
+  'PCS': 'PCS', 'NOS': 'NOS', 'KG': 'KGS', 'LTR': 'LTR', 'MTR': 'MTR',
+  'BOX': 'BOX', 'SET': 'SET', 'PAIR': 'PRS', 'DOZ': 'DOZ',
+  'BAG': 'BAG', 'BTL': 'BTL'
+  // 'HRS' (hours) is deliberately unmapped: a service carries no unit of
+  // measure, and the reference file uses "NA" for exactly that case.
+};
+
+// "NA" is what the official Utility writes on a SERVICE line — its
+// reference return carries uqc "NA" against HSN 998719 with qty 0. It is
+// not a general fallback: the Portal rejected our return with
+// "The UQC entered is not valid" (RET191353) on four goods lines that
+// carried it, because a physical good has a unit of measure and NA says
+// it has none.
+const GSTR1_UQC_SERVICE = 'NA';
+
+// Services live in HSN chapter 99. That is where the reference file's own
+// NA line sits (998719), which is the only evidence available here for
+// when NA is accepted.
+function gstr1IsServiceHsn(hsnCode) {
+  return /^99/.test(String(hsnCode || '').trim());
+}
+
+// The UQC for a line, or null when it cannot be determined. Null is not a
+// value to export — the caller refuses the export and names the product,
+// because inventing a unit for someone else's goods is a guess about
+// what they sold, and the Portal will reject the wrong one anyway.
+function gstr1ToUQC(unit, hsnCode) {
+  const key = (unit || '').trim().toUpperCase();
+  if (GSTR1_UQC_MAP[key]) return GSTR1_UQC_MAP[key];
+  if (gstr1IsServiceHsn(hsnCode)) return GSTR1_UQC_SERVICE;
+  return null;
+}
+
+// ── Root metadata written by the official Offline Utility ───
+// Copied verbatim from a Utility-generated return; neither value is
+// derived or guessed. "hash" really is the literal string "hash" in that
+// file. One constant each, so a future Utility revision is one edit.
+//
+// GST3.1.7 is set from evidence, not from the Offline Tool's own source.
+// Both were tried against the live Portal for the same July 2026 return:
+// the file declaring GST3.1.7 uploaded successfully, and the one declaring
+// GST3.2.4 was rejected. This constant was briefly changed to GST3.2.4 on
+// the reading that "Download the latest version of Offline tool to
+// generate the JSON file" meant the declared version was too old; the
+// upload result showed that reading was wrong, and it was reverted.
+//
+// So do not raise this to match a newer Offline Tool build without first
+// uploading a file that declares the new value and confirming the Portal
+// accepts it. What the Portal validates is the version it expects on the
+// wire, which is not necessarily the newest one in circulation.
+const GSTR1_VERSION = 'GST3.1.7';
+const GSTR1_HASH = 'hash';
+
+// ── Payload section registry ────────────────────────────────
+// The single declaration of what a payload from this generator contains.
+// Adding a section means adding one entry here and a builder that fills
+// it — the assembler, the schema validator and the final audit all read
+// this table and need no edit of their own. It replaces a top-level key
+// list that was hardcoded inside the audit, where any new section was
+// rejected as an "unexpected key" by the very check meant to protect the
+// payload.
+//
+// emitWhenEmpty records what this generator does with a section that has
+// nothing in it. All of them are now FALSE: a return written by the
+// official Offline Utility contains only the sections that have data —
+// its b2cl, cdnr and cdnur keys are absent, not empty arrays. We used to
+// write "b2cl":[] and the like on every export.
+//
+// Key order below is the order the Utility writes: identity, then
+// metadata, then sections.
+const GSTR1_SECTIONS = [
+  { key: 'gstin',   kind: 'header',  type: 'string' },
+  { key: 'fp',      kind: 'header',  type: 'string' },
+  { key: 'version', kind: 'header',  type: 'string' },
+  { key: 'hash',    kind: 'header',  type: 'string' },
+  { key: 'b2b',     kind: 'section', type: 'array',  label: 'B2B — registered supplies',            emitWhenEmpty: false },
+  // Amendment sections, fed by revised invoices. Off by default — see
+  // GSTR1_EMIT_AMENDMENTS below for why. While it is off these stay empty
+  // and, like every other section, an empty one is not written at all, so
+  // the file is byte-for-byte what it was before they existed.
+  { key: 'b2ba',    kind: 'section', type: 'array',  label: 'B2BA — amended B2B invoices',           emitWhenEmpty: false },
+  { key: 'b2cl',    kind: 'section', type: 'array',  label: 'B2CL — large inter-state B2C',          emitWhenEmpty: false },
+  { key: 'b2cla',   kind: 'section', type: 'array',  label: 'B2CLA — amended large inter-state B2C', emitWhenEmpty: false },
+  { key: 'b2cs',    kind: 'section', type: 'array',  label: 'B2CS — small B2C, state+rate summary',  emitWhenEmpty: false },
+  { key: 'cdnr',    kind: 'section', type: 'array',  label: 'CDNR — notes to registered customers',  emitWhenEmpty: false },
+  { key: 'cdnur',   kind: 'section', type: 'array',  label: 'CDNUR — notes to unregistered',         emitWhenEmpty: false },
+  // Nil-rated, exempt and non-GST supplies. Placed here because that is
+  // where it sits in the return's own order — after the credit/debit
+  // notes and before the HSN summary. emitWhenEmpty is false like every
+  // other section, so a business that classifies nothing gets no nil key
+  // at all and its file is unchanged.
+  // Exports (Table 6A) and advances (11A / 11B). Placed after the credit
+  // and debit notes and before the nil-rated summary, which is where a
+  // Utility-written file carries them. Empty ones are omitted like every
+  // other section, so a business with no exports and no advances gets the
+  // file it got before these existed.
+  { key: 'exp',     kind: 'section', type: 'array',  label: 'Exports',                               emitWhenEmpty: false },
+  { key: 'at',      kind: 'section', type: 'array',  label: 'Advances received',                     emitWhenEmpty: false },
+  // txpd, not atadj — settled by upload rather than by reading.
+  //
+  // This key was changed to "atadj" by 96c808c, from the same reading of
+  // the installed Offline Tool that also changed version to GST3.2.4.
+  // The Portal rejected GST3.2.4 and b3fe4bc put the version back; the
+  // atadj half of that change was never re-examined, and it was wrong too.
+  //
+  // Proven against the live Portal on 19/08/2026 with three uploads of the
+  // same return: + "at" accepted (ref bff59a63), + "atadj" refused at the
+  // upload gate (ref 925b681d), and the byte-identical file with only this
+  // key renamed to "txpd" accepted (ref 57a4038d). The section's contents
+  // never changed between the last two, so the name is the whole defect.
+  { key: 'txpd',    kind: 'section', type: 'array',  label: 'Advances adjusted against invoices',    emitWhenEmpty: false },
+  { key: 'nil',     kind: 'section', type: 'object', label: 'Nil-rated / exempt / non-GST',          emitWhenEmpty: false,
+    isEmpty: v => !(v && Array.isArray(v.inv) && v.inv.length) },
+  // Split by supply channel, exactly as the Utility writes it. This was a
+  // single combined data[] array under a key the schema has no place for.
+  { key: 'hsn',     kind: 'section', type: 'object', label: 'HSN summary',                           emitWhenEmpty: false,
+    isEmpty: v => !(v && ((v.hsn_b2b && v.hsn_b2b.length) || (v.hsn_b2c && v.hsn_b2c.length))) },
+  { key: 'doc_issue', kind: 'section', type: 'object', label: 'Documents issued',                    emitWhenEmpty: false,
+    isEmpty: v => !(v && Array.isArray(v.doc_det) && v.doc_det.length) }
+];
+
+// Sections this generator does not produce, and why. Every one is
+// reported at export time so what is absent from the file is stated
+// rather than left for the Portal to discover.
+//
+// These are omissions of DATA, not of schema: the application has no
+// model for any of them, so there is nothing to serialise. None is
+// emitted as an empty stub — a stub asserts "there were none of these
+// this period", which this codebase cannot know. Whether a given filing
+// requires any of them is a question for the Portal, not for this file.
+const GSTR1_UNPRODUCED_SECTIONS = [
+  { key: 'amendments', label: 'Amendments to earlier periods', reason: 'the data is captured against every revised invoice, but the b2csa shape is contradicted between the sources available here, so emission stays off until a Utility export settles it' }
+];
+
+// An export is an invoice with a shipping bill against it. WPAY means the
+// IGST was paid and will be reclaimed; WOPAY means it went out under a LUT
+// or bond with no IGST charged.
+const GSTR1_EXPORT_TYPES = ['WPAY', 'WOPAY'];
+
+// Supplies made THROUGH an e-commerce operator carry the operator's GSTIN
+// as `etin`, which is part of the b2b and b2cs shapes already in use. It
+// is written only when there is one, so an ordinary supply is unchanged.
+//
+// Section 9(5) supplies — where the OPERATOR pays the tax rather than the
+// supplier — are reported in GSTR-1 Tables 14 and 15. Those two tables are
+// NOT emitted: no schema reference available here gives their shape, and a
+// section written to a guessed shape risks the whole return. The data is
+// captured and shown in the UI so nothing is lost, and turning emission on
+// later needs no re-entry. Marked UNVERIFIED.
+const GSTR1_ECOM_SUPPLY_TYPES = ['through_operator', 'section_9_5'];
+
+// A vehicle bought and leased before 1 July 2017 attracts GST at 65% of
+// the applicable rate. GSTR-1 carries that as `diff_percent`, whose only
+// accepted value is 0.65 — which is why the document stores a yes/no and
+// the number lives here. The field is optional, so it is written only for
+// a document that actually claims it and every other document is
+// unchanged.
+const GSTR1_DIFF_PERCENT = 0.65;
+function gstr1DiffPercentOf(doc) {
+  return (doc && doc.differential_65) ? GSTR1_DIFF_PERCENT : null;
+}
+
+// A credit or debit note inherits the nature of the supply it reverses.
+// Reversing an SEZ supply as though it were an ordinary domestic one
+// overstates domestic turnover and understates the SEZ figures.
+//
+// For a note to a REGISTERED customer this maps to cdnr's inv_typ, which
+// is the same enum b2b already uses and is therefore already validated
+// here. It is written only when the note is NOT ordinary, so every note
+// already issued produces exactly the JSON it produced before.
+const GSTR1_NOTE_INV_TYP = {
+  regular: 'R', sezwp: 'SEWP', sezwop: 'SEWOP', de: 'DE'
+};
+function gstr1NoteInvTyp(note) {
+  return GSTR1_NOTE_INV_TYP[String((note && note.supply_nature) || 'regular').trim()] || 'R';
+}
+
+// For a note to an UNREGISTERED customer the equivalent is cdnur's `typ`.
+// Every source available here shows only one value of that enum, B2CL, so
+// the others are guesses and a guessed enum is a rejected return.
+//
+// OFF: an export or SEZ note keeps being written as B2CL, which is what
+// this generator has always done, and the export reports it so the figure
+// can be corrected on the portal rather than discovered there. The nature
+// is captured and shown regardless, so switching this on later needs no
+// re-entry. Marked UNVERIFIED.
+let GSTR1_EMIT_CDNUR_TYPES = false;  // same reason
+const GSTR1_CDNUR_TYP = {
+  regular: 'B2CL', expwp: 'EXPWP', expwop: 'EXPWOP',
+  sezwp: 'SEZWP', sezwop: 'SEZWOP', de: 'DE'
+};
+function gstr1CdnurTyp(note) {
+  const nature = String((note && note.supply_nature) || 'regular').trim();
+  if (!GSTR1_EMIT_CDNUR_TYPES) return 'B2CL';
+  return GSTR1_CDNUR_TYP[nature] || 'B2CL';
+}
+function gstr1EcomGstinOf(inv) {
+  const g = String((inv && inv.ecom_gstin) || '').trim().toUpperCase();
+  return g && validateGstin(g).valid ? g : null;
+}
+function gstr1ExportTypeOf(inv) {
+  const t = String((inv && inv.export_type) || '').trim().toUpperCase();
+  return GSTR1_EXPORT_TYPES.includes(t) ? t : null;
+}
+
+const GSTR1_SECTION_KEYS = GSTR1_SECTIONS.map(s => s.key);
+const gstr1Section = key => GSTR1_SECTIONS.find(s => s.key === key);
+function gstr1SectionIsEmpty(spec, value) {
+  if (spec.isEmpty) return spec.isEmpty(value);
+  return Array.isArray(value) ? value.length === 0 : !value;
+}
+
+// Assembles the payload in registry order from a { key: value } map, so
+// key order in the written file follows the table above rather than the
+// order the builders happen to finish in.
+function assembleGSTR1Payload(parts) {
+  const payload = {};
+  GSTR1_SECTIONS.forEach(spec => {
+    const value = parts[spec.key];
+    if (spec.kind === 'section' && !spec.emitWhenEmpty && gstr1SectionIsEmpty(spec, value)) return;
+    payload[spec.key] = value;
+  });
+  return payload;
+}
+
+// ── Schema validation, run before the file is written ───────
+// Checks the payload against the registry: every declared key present,
+// every value the declared type, nothing present that was never
+// declared. The row-shape checks below assert the contract each builder
+// in this file is written to produce — they catch a builder that has
+// drifted from the shape the rest of the file assumes. They are NOT a
+// transcription of GSTN's published schema, which this codebase does not
+// have; no field is required here that this generator does not already
+// set, and none is invented.
+function gstr1RequireKeys(obj, keys, where, errors) {
+  if (!obj || typeof obj !== 'object') { errors.push(`Schema: ${where} is not an object.`); return false; }
+  const missing = keys.filter(k => obj[k] === undefined || obj[k] === null);
+  if (missing.length) errors.push(`Schema: ${where} is missing ${missing.map(k => `"${k}"`).join(', ')}.`);
+  return !missing.length;
+}
+
+function validateGSTR1Schema(payload, errors) {
+  if (!payload || typeof payload !== 'object') { errors.push('Schema: payload is not an object.'); return; }
+
+  GSTR1_SECTIONS.forEach(spec => {
+    const value = payload[spec.key];
+    const omittedLegitimately = spec.kind === 'section' && !spec.emitWhenEmpty && value === undefined;
+    if (value === undefined) {
+      if (!omittedLegitimately) errors.push(`Schema: mandatory key "${spec.key}"${spec.label ? ` (${spec.label})` : ''} is missing from the payload.`);
+      return;
+    }
+    const actual = Array.isArray(value) ? 'array' : typeof value;
+    if (actual !== spec.type) errors.push(`Schema: "${spec.key}" must be ${spec.type}, got ${actual}.`);
+  });
+
+  // Unknown keys are derived from the registry, never from a second list
+  // that has to be kept in step with it.
+  Object.keys(payload)
+    .filter(k => !GSTR1_SECTION_KEYS.includes(k))
+    .forEach(k => errors.push(`Schema: "${k}" is not a declared section — add it to GSTR1_SECTIONS if it belongs in the payload.`));
+
+  // Row shapes, per the builders in this file.
+  const asRows = v => Array.isArray(v) ? v : [];
+  asRows(payload.b2b).forEach((g, i) => {
+    if (!gstr1RequireKeys(g, ['ctin', 'inv'], `b2b[${i}]`, errors)) return;
+    if (!Array.isArray(g.inv)) { errors.push(`Schema: b2b[${i}].inv must be an array.`); return; }
+    g.inv.forEach((inv, j) => {
+      if (!gstr1RequireKeys(inv, ['inum', 'idt', 'val', 'pos', 'rchrg', 'inv_typ', 'itms'], `b2b[${i}].inv[${j}]`, errors)) return;
+      gstr1ValidateItms(inv.itms, `b2b[${i}].inv[${j}].itms`, ['txval', 'rt', 'iamt', 'camt', 'samt', 'csamt'], errors);
+    });
+  });
+  asRows(payload.b2cl).forEach((g, i) => {
+    if (!gstr1RequireKeys(g, ['pos', 'inv'], `b2cl[${i}]`, errors)) return;
+    if (!Array.isArray(g.inv)) { errors.push(`Schema: b2cl[${i}].inv must be an array.`); return; }
+    g.inv.forEach((inv, j) => {
+      if (!gstr1RequireKeys(inv, ['inum', 'idt', 'val', 'itms'], `b2cl[${i}].inv[${j}]`, errors)) return;
+      gstr1ValidateItms(inv.itms, `b2cl[${i}].inv[${j}].itms`, ['txval', 'rt', 'iamt', 'csamt'], errors);
+    });
+  });
+  asRows(payload.b2cs).forEach((r, i) =>
+    gstr1RequireKeys(r, ['sply_ty', 'pos', 'typ', 'rt', 'txval', 'iamt', 'camt', 'samt', 'csamt'], `b2cs[${i}]`, errors));
+  asRows(payload.cdnr).forEach((g, i) => {
+    if (!gstr1RequireKeys(g, ['ctin', 'nt'], `cdnr[${i}]`, errors)) return;
+    if (!Array.isArray(g.nt)) { errors.push(`Schema: cdnr[${i}].nt must be an array.`); return; }
+    g.nt.forEach((n, j) => {
+      // inv_typ is required here for the same reason it is on a b2b
+      // invoice. Its absence from this list is why the schema check
+      // reported PASS on a file the Portal refused.
+      if (!gstr1RequireKeys(n, ['ntty', 'nt_num', 'nt_dt', 'pos', 'rchrg', 'val', 'inv_typ', 'itms'], `cdnr[${i}].nt[${j}]`, errors)) return;
+      gstr1ValidateItms(n.itms, `cdnr[${i}].nt[${j}].itms`, ['txval', 'rt', 'iamt', 'camt', 'samt', 'csamt'], errors);
+    });
+  });
+  asRows(payload.cdnur).forEach((n, i) => {
+    if (!gstr1RequireKeys(n, ['typ', 'ntty', 'nt_num', 'nt_dt', 'pos', 'val', 'itms'], `cdnur[${i}]`, errors)) return;
+    gstr1ValidateItms(n.itms, `cdnur[${i}].itms`, ['txval', 'rt', 'iamt', 'csamt'], errors);
+  });
+  if (payload.nil) {
+    if (!Array.isArray(payload.nil.inv)) errors.push('Schema: nil.inv must be an array.');
+    else payload.nil.inv.forEach((r, i) => {
+      if (!gstr1RequireKeys(r, ['sply_ty', 'expt_amt', 'nil_amt', 'ngsup_amt'], `nil.inv[${i}]`, errors)) return;
+      if (!GSTR1_NIL_SPLY_TY.has(r.sply_ty)) {
+        errors.push(`Schema: nil.inv[${i}].sply_ty is "${r.sply_ty}" — expected one of ${[...GSTR1_NIL_SPLY_TY].join(', ')}.`);
+      }
+      ['expt_amt', 'nil_amt', 'ngsup_amt'].forEach(f => {
+        if (typeof r[f] !== 'number' || !Number.isFinite(r[f])) {
+          errors.push(`Schema: nil.inv[${i}].${f} must be a number, got ${JSON.stringify(r[f])}.`);
+        }
+      });
+    });
+  }
+  if (payload.hsn) {
+    const known = ['hsn_b2b', 'hsn_b2c'];
+    Object.keys(payload.hsn).filter(k => !known.includes(k)).forEach(k =>
+      errors.push(`Schema: hsn.${k} is not a recognised HSN array — the summary is split into hsn_b2b and hsn_b2c.`));
+    known.forEach(k => {
+      if (payload.hsn[k] === undefined) return;
+      if (!Array.isArray(payload.hsn[k])) { errors.push(`Schema: hsn.${k} must be an array.`); return; }
+      payload.hsn[k].forEach((r, i) =>
+        gstr1RequireKeys(r, ['num', 'hsn_sc', 'desc', 'uqc', 'qty', 'txval', 'rt', 'iamt', 'camt', 'samt', 'csamt'], `hsn.${k}[${i}]`, errors));
+    });
+  }
+  if (payload.doc_issue) {
+    if (!Array.isArray(payload.doc_issue.doc_det)) {
+      errors.push('Schema: doc_issue.doc_det must be an array.');
+    } else {
+      payload.doc_issue.doc_det.forEach((d, i) => {
+        if (!gstr1RequireKeys(d, ['doc_num', 'doc_typ', 'docs'], `doc_issue.doc_det[${i}]`, errors)) return;
+        if (!Array.isArray(d.docs)) { errors.push(`Schema: doc_issue.doc_det[${i}].docs must be an array.`); return; }
+        d.docs.forEach((x, j) =>
+          gstr1RequireKeys(x, ['num', 'from', 'to', 'totnum', 'cancel', 'net_issue'], `doc_issue.doc_det[${i}].docs[${j}]`, errors));
+      });
+    }
+  }
+}
+
+function gstr1ValidateItms(itms, where, detKeys, errors) {
+  if (!Array.isArray(itms)) { errors.push(`Schema: ${where} must be an array.`); return; }
+  if (!itms.length) { errors.push(`Schema: ${where} is empty — every invoice/note needs at least one rate line.`); return; }
+  itms.forEach((it, k) => {
+    if (!gstr1RequireKeys(it, ['num', 'itm_det'], `${where}[${k}]`, errors)) return;
+    if (gstr1RequireKeys(it.itm_det, detKeys, `${where}[${k}].itm_det`, errors)) {
+      detKeys.forEach(f => {
+        if (typeof it.itm_det[f] !== 'number' || !isFinite(it.itm_det[f])) {
+          errors.push(`Schema: ${where}[${k}].itm_det.${f} must be a finite number, got ${JSON.stringify(it.itm_det[f])}.`);
+        }
+      });
+    }
+  });
+}
+
+// ── Validation error record ─────────────────────────────────
+// A validation failure is only useful if the person reading it can act on
+// it, which means naming the document, the line, the field, what is there
+// now, what belongs there, and what to do. Errors used to be one prose
+// sentence each; the same information is now carried in fields so the
+// report can lay it out and so tests can assert on a field rather than on
+// a sentence.
+//
+// Plain strings are still accepted anywhere an error is collected — the
+// schema checks raise those, since they describe a JSON path rather than
+// a document — and are normalised on the way out.
+function gstr1Err({ invoice, customer, product, field, current, expected, fix, message }) {
+  return { invoice, customer, product, field, current, expected, fix, message, __gstr1Err: true };
+}
+
+// One-line rendering, for the console and for anything that wants text.
+function gstr1ErrorText(e) {
+  if (typeof e === 'string') return e;
+  if (!e || !e.__gstr1Err) return String(e);
+  const where = [e.invoice && `Invoice ${e.invoice}`, e.customer && `customer ${e.customer}`, e.product && `item "${e.product}"`]
+    .filter(Boolean).join(', ');
+  const what = e.message || `${e.field}: ${JSON.stringify(e.current)} — expected ${e.expected}`;
+  return [where, what, e.fix && `Fix: ${e.fix}`].filter(Boolean).join(' — ');
+}
+
+// ── Lookup tables the generator validates its own output against ──
+// Every UQC this generator can emit. Derived from GSTR1_UQC_MAP rather
+// than written out again, so the emitter and the validator cannot
+// disagree about what is emittable. Whether GSTN's master list matches
+// this set is NOT something this codebase can settle — the check here is
+// that nothing outside our own map ever reaches the file.
+const GSTR1_EMITTABLE_UQC = new Set([...Object.values(GSTR1_UQC_MAP), GSTR1_UQC_SERVICE]);
+
+// The values this generator itself produces for these fields. Asserted so
+// a future edit cannot introduce a third value silently; they are our
+// emitted vocabulary, not a transcription of GSTN's.
+// R regular, SEWP SEZ with payment of IGST, SEWOP SEZ without payment,
+// DE deemed export. Which one an invoice carries is decided by
+// gstr1InvTypFor() in js/utils.js from the invoice's own category and
+// its own tax. An invoice with no category is 'R', which is every
+// invoice raised before categories existed.
+const GSTR1_EMITTED_INV_TYP = new Set(['R', 'SEWP', 'SEWOP', 'DE']);
+// 'Y' when tax on the supply is payable by the recipient. Was the
+// literal 'N' on every invoice this application had ever produced, which
+// meant a reverse-charge supply was filed as an ordinary one.
+const GSTR1_EMITTED_RCHRG = new Set(['N', 'Y']);
+const GSTR1_EMITTED_NTTY = new Set(['C', 'D']);        // credit / debit note
+const GSTR1_EMITTED_SPLY_TY = new Set(['INTER', 'INTRA']);
+// Table 8's own breakdown: inter/intra crossed with B2B/B2C. A different
+// vocabulary from cdnur's INTER/INTRA above, which is why it is its own
+// set rather than a reuse.
+const GSTR1_NIL_SPLY_TY = new Set(['INTRB2B', 'INTRB2C', 'INTRAB2B', 'INTRAB2C']);
+const GSTR1_EMITTED_B2CS_TYP = new Set(['OE']);
+const GSTR1_EMITTED_CDNUR_TYP = new Set(['B2CL']);
+
+// ── Strict pre-export validation ────────────────────────────
+// Runs over the assembled payload and refuses anything that cannot be a
+// correct return. It checks values this generator is responsible for
+// producing — nothing here asserts a rule that could not be derived from
+// this codebase, and no field is required that the generator does not
+// already set.
+function gstr1CheckMoney(value, field, where, errors, { allowNegative = false } = {}) {
+  if (typeof value !== 'number' || !isFinite(value)) {
+    errors.push(gstr1Err({ field: `${where}.${field}`, current: value, expected: 'a finite number',
+      fix: 'This is produced by the generator, not entered by hand — report it if you see it.' }));
+    return false;
+  }
+  if (!allowNegative && value < 0) {
+    errors.push(gstr1Err({ field: `${where}.${field}`, current: value, expected: 'zero or more',
+      fix: 'A negative amount in a return usually means a credit note was recorded as an invoice.' }));
+    return false;
+  }
+  if (round2(value) !== value) {
+    errors.push(gstr1Err({ field: `${where}.${field}`, current: value, expected: 'at most 2 decimal places',
+      fix: 'Rounding is applied by the generator — report it if you see it.' }));
+    return false;
+  }
+  return true;
+}
+
+// The tax split must agree with the supply type: an intra-state supply
+// carries CGST+SGST and no IGST, an inter-state supply the reverse. This
+// is the shape calcGST() produces (js/utils.js), so a payload that breaks
+// it means something downstream has rewritten the figures.
+function gstr1CheckTaxSplit(det, splyTy, where, errors) {
+  const inter = splyTy === 'INTER';
+  if (inter && (det.camt || det.samt)) {
+    errors.push(gstr1Err({ field: `${where}`, current: `CGST ${det.camt}, SGST ${det.samt}`,
+      expected: 'CGST and SGST both zero on an inter-state supply',
+      fix: 'Check the invoice\'s Interstate/Intrastate setting against the place of supply.' }));
+  }
+  if (!inter && det.iamt) {
+    errors.push(gstr1Err({ field: `${where}`, current: `IGST ${det.iamt}`,
+      expected: 'IGST zero on an intra-state supply',
+      fix: 'Check the invoice\'s Interstate/Intrastate setting against the place of supply.' }));
+  }
+}
+
+function validateGSTR1Strict(payload, errors) {
+  if (!payload) return;
+
+  // Filer identity and period.
+  const filer = validateGstin(payload.gstin);
+  if (!filer.valid) {
+    errors.push(gstr1Err({ field: 'gstin', current: payload.gstin, expected: 'a valid 15-character GSTIN',
+      message: `Filer GSTIN is invalid (${filer.reason}).`, fix: 'Correct it in Business Profile.' }));
+  }
+  if (!/^(0[1-9]|1[0-2])\d{4}$/.test(payload.fp || '')) {
+    errors.push(gstr1Err({ field: 'fp', current: payload.fp, expected: 'MMYYYY, e.g. 072026',
+      fix: 'Select a single calendar month on the Reports page.' }));
+  }
+  if (payload.version !== GSTR1_VERSION) {
+    errors.push(gstr1Err({ field: 'version', current: payload.version, expected: GSTR1_VERSION,
+      fix: 'Generator-set value — report it if you see it.' }));
+  }
+  if (payload.hash !== GSTR1_HASH) {
+    errors.push(gstr1Err({ field: 'hash', current: payload.hash, expected: GSTR1_HASH,
+      fix: 'Generator-set value — report it if you see it.' }));
+  }
+
+  const checkItms = (itms, where, splyTy, invoice, customer) => {
+    (itms || []).forEach((it, k) => {
+      const d = it.itm_det || {};
+      const at = `${where}.itms[${k}].itm_det`;
+      ['txval', 'iamt', 'camt', 'samt', 'csamt'].forEach(f => {
+        if (d[f] !== undefined) gstr1CheckMoney(d[f], f, at, errors);
+      });
+      if (typeof d.rt !== 'number' || !isFinite(d.rt) || d.rt < 0) {
+        errors.push(gstr1Err({ invoice, customer, field: `${at}.rt`, current: d.rt,
+          expected: 'a GST rate of zero or more', fix: 'Set a GST % on the product or the invoice line.' }));
+      }
+      if (splyTy) gstr1CheckTaxSplit(d, splyTy, at, errors);
+    });
+  };
+
+  (payload.b2b || []).forEach((g, i) => {
+    if (!validateGstin(g.ctin).valid) {
+      errors.push(gstr1Err({ customer: g.ctin, field: `b2b[${i}].ctin`, current: g.ctin,
+        expected: 'a valid 15-character GSTIN', fix: 'Correct the customer\'s GST Number on the invoice.' }));
+    }
+    (g.inv || []).forEach((inv, j) => {
+      const where = `b2b[${i}].inv[${j}]`;
+      if (!gstr1InvoiceNumberOk(inv.inum)) {
+        errors.push(gstr1Err({ invoice: inv.inum, customer: g.ctin, field: `${where}.inum`, current: inv.inum,
+          expected: 'up to 16 characters, letters/digits/hyphen/slash only',
+          fix: 'Renumber the invoice on the Invoice List.' }));
+      }
+      if (!gstr1DateOk(inv.idt)) {
+        errors.push(gstr1Err({ invoice: inv.inum, customer: g.ctin, field: `${where}.idt`, current: inv.idt,
+          expected: 'DD-MM-YYYY', fix: 'Re-save the invoice with a valid date.' }));
+      }
+      if (!GSTR1_VALID_POS_CODES.has(inv.pos)) {
+        errors.push(gstr1Err({ invoice: inv.inum, customer: g.ctin, field: `${where}.pos`, current: inv.pos,
+          expected: 'a state code derived from the customer GSTIN',
+          fix: 'Correct the customer\'s GST Number — the first two digits are the place of supply.' }));
+      }
+      if (!GSTR1_EMITTED_INV_TYP.has(inv.inv_typ)) {
+        errors.push(gstr1Err({ invoice: inv.inum, field: `${where}.inv_typ`, current: inv.inv_typ,
+          expected: [...GSTR1_EMITTED_INV_TYP].join(' or '), fix: 'Generator-set value — report it if you see it.' }));
+      }
+      if (!GSTR1_EMITTED_RCHRG.has(inv.rchrg)) {
+        errors.push(gstr1Err({ invoice: inv.inum, field: `${where}.rchrg`, current: inv.rchrg,
+          expected: [...GSTR1_EMITTED_RCHRG].join(' or '), fix: 'Generator-set value — report it if you see it.' }));
+      }
+      gstr1CheckMoney(inv.val, 'val', where, errors);
+      checkItms(inv.itms, where, inv.pos === payload.gstin.slice(0, 2) ? 'INTRA' : 'INTER', inv.inum, g.ctin);
+    });
+  });
+
+  (payload.b2cl || []).forEach((g, i) => {
+    if (!GSTR1_VALID_POS_CODES.has(g.pos)) {
+      errors.push(gstr1Err({ field: `b2cl[${i}].pos`, current: g.pos, expected: 'a recognised state code',
+        fix: 'Set the customer\'s State on the invoice.' }));
+    }
+    (g.inv || []).forEach((inv, j) => {
+      const where = `b2cl[${i}].inv[${j}]`;
+      if (!gstr1DateOk(inv.idt)) {
+        errors.push(gstr1Err({ invoice: inv.inum, field: `${where}.idt`, current: inv.idt,
+          expected: 'DD-MM-YYYY', fix: 'Re-save the invoice with a valid date.' }));
+      }
+      gstr1CheckMoney(inv.val, 'val', where, errors);
+      checkItms(inv.itms, where, 'INTER', inv.inum);
+    });
+  });
+
+  (payload.b2cs || []).forEach((r, i) => {
+    const where = `b2cs[${i}]`;
+    if (!GSTR1_EMITTED_SPLY_TY.has(r.sply_ty)) {
+      errors.push(gstr1Err({ field: `${where}.sply_ty`, current: r.sply_ty,
+        expected: [...GSTR1_EMITTED_SPLY_TY].join(' or '), fix: 'Generator-set value — report it if you see it.' }));
+    }
+    if (!GSTR1_EMITTED_B2CS_TYP.has(r.typ)) {
+      errors.push(gstr1Err({ field: `${where}.typ`, current: r.typ,
+        expected: [...GSTR1_EMITTED_B2CS_TYP].join(' or '), fix: 'Generator-set value — report it if you see it.' }));
+    }
+    if (!GSTR1_VALID_POS_CODES.has(r.pos)) {
+      errors.push(gstr1Err({ field: `${where}.pos`, current: r.pos, expected: 'a recognised state code',
+        fix: 'Set the customer\'s State on the invoices in this bucket.' }));
+    }
+    ['txval', 'iamt', 'camt', 'samt', 'csamt'].forEach(f => gstr1CheckMoney(r[f], f, where, errors));
+    gstr1CheckTaxSplit(r, r.sply_ty, where, errors);
+  });
+
+  (payload.cdnr || []).forEach((g, i) => {
+    if (!validateGstin(g.ctin).valid) {
+      errors.push(gstr1Err({ customer: g.ctin, field: `cdnr[${i}].ctin`, current: g.ctin,
+        expected: 'a valid 15-character GSTIN', fix: 'Correct the GST Number on the credit/debit note.' }));
+    }
+    (g.nt || []).forEach((n, j) => {
+      const where = `cdnr[${i}].nt[${j}]`;
+      if (!GSTR1_EMITTED_NTTY.has(n.ntty)) {
+        errors.push(gstr1Err({ invoice: n.nt_num, field: `${where}.ntty`, current: n.ntty,
+          expected: [...GSTR1_EMITTED_NTTY].join(' or '), fix: 'Set the note type to Credit or Debit.' }));
+      }
+      if (!gstr1DateOk(n.nt_dt)) {
+        errors.push(gstr1Err({ invoice: n.nt_num, field: `${where}.nt_dt`, current: n.nt_dt,
+          expected: 'DD-MM-YYYY', fix: 'Re-save the note with a valid date.' }));
+      }
+      gstr1CheckMoney(n.val, 'val', where, errors);
+      checkItms(n.itms, where, n.pos === payload.gstin.slice(0, 2) ? 'INTRA' : 'INTER', n.nt_num, g.ctin);
+    });
+  });
+
+  (payload.cdnur || []).forEach((n, i) => {
+    const where = `cdnur[${i}]`;
+    if (!GSTR1_EMITTED_CDNUR_TYP.has(n.typ)) {
+      errors.push(gstr1Err({ invoice: n.nt_num, field: `${where}.typ`, current: n.typ,
+        expected: [...GSTR1_EMITTED_CDNUR_TYP].join(' or '), fix: 'Generator-set value — report it if you see it.' }));
+    }
+    if (!GSTR1_EMITTED_NTTY.has(n.ntty)) {
+      errors.push(gstr1Err({ invoice: n.nt_num, field: `${where}.ntty`, current: n.ntty,
+        expected: [...GSTR1_EMITTED_NTTY].join(' or '), fix: 'Set the note type to Credit or Debit.' }));
+    }
+    if (!gstr1DateOk(n.nt_dt)) {
+      errors.push(gstr1Err({ invoice: n.nt_num, field: `${where}.nt_dt`, current: n.nt_dt,
+        expected: 'DD-MM-YYYY', fix: 'Re-save the note with a valid date.' }));
+    }
+    gstr1CheckMoney(n.val, 'val', where, errors);
+    checkItms(n.itms, where, 'INTER', n.nt_num);
+  });
+
+  const hsnRowsToCheck = [];
+  ['hsn_b2b', 'hsn_b2c'].forEach(k => ((payload.hsn && payload.hsn[k]) || [])
+    .forEach((r, i) => hsnRowsToCheck.push([r, `hsn.${k}[${i}]`])));
+  hsnRowsToCheck.forEach(([r, where]) => {
+    if (!gstr1HsnFormatOk(r.hsn_sc)) {
+      errors.push(gstr1Err({ product: r.desc, field: `${where}.hsn_sc`, current: r.hsn_sc,
+        expected: 'a 4, 6 or 8 digit HSN code', fix: 'Set a valid HSN code on the product.' }));
+    }
+    if (!GSTR1_EMITTABLE_UQC.has(r.uqc)) {
+      errors.push(gstr1Err({ product: r.desc, field: `${where}.uqc`, current: r.uqc,
+        expected: `one of ${[...GSTR1_EMITTABLE_UQC].join(', ')}`,
+        fix: 'Set the product\'s unit to one this app maps to a UQC.' }));
+    } else if (r.uqc === GSTR1_UQC_SERVICE && !gstr1IsServiceHsn(r.hsn_sc)) {
+      // Exactly what the Portal refused: RET191353, "The UQC entered is
+      // not valid", on goods lines carrying NA.
+      errors.push(gstr1Err({ product: r.desc, field: `${where}.uqc`, current: 'NA',
+        expected: `a real unit for HSN ${r.hsn_sc} — NA is only for services (HSN 99xx)`,
+        message: 'A physical good is being reported with no unit of measure.',
+        fix: 'Set the product\'s Unit and re-save the invoices that use it.' }));
+    }
+    // Zero is legitimate: a Utility-written return carries qty 0 on a
+    // service line (uqc "NA"), which has no unit of measure to count.
+    // Negative is not.
+    if (typeof r.qty !== 'number' || !isFinite(r.qty) || r.qty < 0) {
+      errors.push(gstr1Err({ product: r.desc, field: `${where}.qty`, current: r.qty,
+        expected: 'a quantity of zero or more',
+        fix: 'A negative quantity here means sales returns exceeded sales for this HSN in the period.' }));
+    }
+    ['txval', 'iamt', 'camt', 'samt', 'csamt'].forEach(f => gstr1CheckMoney(r[f], f, where, errors));
+  });
+}
+
+// ── Invoice series ──────────────────────────────────────────
+// Which numbering book an invoice came from. A business can run several
+// at once: the shop counter issuing 138, 139, 140 while the website
+// issues 4, 5, 6. Both are outward supplies and belong in the same
+// return, but each keeps its own numbering.
+//
+// An invoice with no source is part of the shop series — every invoice
+// saved before series existed is one, which is what it was.
+//
+// Never restricted to a known list: a business that starts selling
+// through another channel gets that series reported without a change
+// here.
+const GSTR1_DEFAULT_SERIES = 'offline';
+function gstr1InvoiceSeries(inv) {
+  const s = String((inv && inv.invoice_source) || '').trim().toLowerCase();
+  return s || GSTR1_DEFAULT_SERIES;
+}
+
+// For messages only — the JSON carries no series name.
+function gstr1SeriesLabel(series) {
+  if (series === 'offline') return 'Offline / Shop';
+  if (series === 'online') return 'Online / Website';
+  return series;
+}
+
+// Table 13's row for a document type, read from the registry in
+// js/utils.js. Kept as a thin forwarder in this file for the same reason
+// gstr1CompareInvoiceNumbers is: the exporter names one function, and
+// the definition lives where every page can reach it.
+//
+// Falls back to row 1 only if the registry is somehow unreachable, so a
+// return can still be produced rather than failing on a lookup — row 1
+// is the row this generator has always written and is the one value
+// proven against a Utility-written file.
+function gstr1Table13RowFor(documentTypeKey) {
+  if (typeof gstTable13RowFor === 'function') {
+    const row = gstTable13RowFor(documentTypeKey);
+    if (row) return row;
+  }
+  return { docNum: 1, docTyp: 'Invoices for outward supply', keys: ['tax_invoice'] };
+}
+
+// ── Vouchers and self invoices in Table 13 ──────────
+// Which domain table each document type's rows live in, taken from the
+// registry rather than listed here — a type gains a table by having one,
+// not by being named in this file.
+// The tables Table 13 already gets its rows from by another route, and
+// so must not be read twice: the invoice tables build row 1 above, and
+// credit/debit notes have no Table 13 builder yet.
+//
+// An explicit set rather than a substring test — matching on "invoices"
+// silently swallowed self_invoices, whose name contains it, and dropped
+// row 2 from the return without any error to show for it.
+const GSTR1_TABLE13_HANDLED_ELSEWHERE = new Set([
+  'b2b_invoices / b2c_invoices', 'cdn_notes', 'purchases', 'eway_bills'
+]);
+
+// Whether a revised invoice is written into the amendment sections as
+// well as Table 13.
+//
+// OFF, deliberately, and this is the honest reason: the b2ba and b2cla
+// field names below are corroborated by two independent third-party
+// schema references that agree with each other, but no GST Offline
+// Utility export containing an amendment row has been seen here. Worse,
+// those same two sources DISAGREE about b2csa — one nests an itms[]
+// array, the other is flat — which is exactly the kind of difference that
+// makes a return fail on upload. Writing a section whose shape cannot be
+// confirmed into a live return risks a rejected filing to gain nothing
+// that Table 13 does not already report.
+//
+// So the data is captured in full, the builder below is written and
+// tested, and this switch turns it on. Everything needed to flip it is a
+// revised invoice's original number, original date and original period,
+// all of which are stored. Nothing needs re-entering.
+//
+// Consequence while off, stated plainly: a revised invoice appears in
+// Table 13 row 3 and nowhere else in the JSON.
+let GSTR1_EMIT_AMENDMENTS = false;   // let, not const: a flag that cannot be flipped is not a flag
+
+// Builds b2ba and b2cla from revised invoices. A revised invoice under
+// Rule 53(1) points at exactly one original invoice, which is what the
+// amendment sections need: oinum and oidt identify what is being
+// replaced, inum and idt the document replacing it.
+//
+// B2CL applies to inter-state supplies to unregistered persons above the
+// threshold, so a revised invoice with no counterparty GSTIN goes there
+// and one with a GSTIN goes to b2ba.
+function gstr1BuildAmendments(revisedRows, amendmentRows) {
+  const b2ba = [], b2cla = [];
+  if (!GSTR1_EMIT_AMENDMENTS) return { b2ba, b2cla };
+
+  // Two things feed the amendment sections and they arrive in different
+  // shapes: a revised invoice under Rule 53(1), and an amendment recorded
+  // against an already-filed return. Both say the same thing — here is a
+  // document, here is what it should have said — so both are reduced to
+  // that shape before either is grouped.
+  const fromAmendment = (amendmentRows || [])
+    .filter(a => a.section === 'b2b' || a.section === 'b2cl')
+    .filter(a => String(a.status || '').toLowerCase() !== 'cancelled')
+    .map(a => ({
+      status: a.status,
+      party_gstin: a.party_gstin,
+      original_invoice_number: a.original_number,
+      original_invoice_date: a.original_date,
+      document_number: a.revised_number || a.original_number,
+      document_date: a.revised_date || a.original_date,
+      place_of_supply: a.place_of_supply,
+      taxable_amount: a.taxable_amount, gst_percentage: a.gst_percentage,
+      igst: a.igst, cgst: a.cgst, sgst: a.sgst, cess: a.cess,
+      total_amount: a.total_amount, inv_typ: a.inv_typ, reverse_charge: a.reverse_charge
+    }));
+
+  const byCtin = new Map(), byPos = new Map();
+  [...(revisedRows || []), ...fromAmendment].forEach(r => {
+    if (String(r.status || '').toLowerCase() === 'cancelled') return;
+    const txval = round2(r.taxable_amount);
+    const rt = round2(r.gst_percentage);
+    const inv = {
+      oinum: String(r.original_invoice_number || ''),
+      oidt: formatDateDDMMYYYY(r.original_invoice_date),
+      inum: String(r.document_number || ''),
+      idt: formatDateDDMMYYYY(r.document_date),
+      val: round2(r.total_amount),
+      itms: [{ num: 1, itm_det: {
+        txval, rt,
+        iamt: round2(r.igst), camt: round2(r.cgst),
+        samt: round2(r.sgst), csamt: round2(r.cess)
+      } }]
+    };
+    const ctin = String(r.party_gstin || '').trim().toUpperCase();
+    if (ctin) {
+      inv.pos = gstr1PosRegistered(ctin);
+      inv.rchrg = r.reverse_charge ? 'Y' : 'N';
+      inv.inv_typ = r.inv_typ || 'R';
+      if (!byCtin.has(ctin)) byCtin.set(ctin, []);
+      byCtin.get(ctin).push(inv);
+    } else {
+      const pos = getStateCode(r.place_of_supply || '');
+      if (!byPos.has(pos)) byPos.set(pos, []);
+      byPos.get(pos).push(inv);
+    }
+  });
+
+  [...byCtin.entries()].sort((a, b) => a[0].localeCompare(b[0]))
+    .forEach(([ctin, inv]) => b2ba.push({ ctin, inv }));
+  [...byPos.entries()].sort((a, b) => a[0].localeCompare(b[0]))
+    .forEach(([pos, inv]) => b2cla.push({ pos, inv }));
+  return { b2ba, b2cla };
+}
+
+// Tables 11A and 11B have the same shape, so they have one builder.
+//
+// 11A is tax paid on advances received where the supply has not yet been
+// invoiced; 11B is that same tax being backed out as the invoices are
+// raised. Both are summaries by place of supply and rate — the individual
+// documents are reported in Table 13, not here.
+//
+// Shape: [{ pos, sply_ty, itms: [{ rt, ad_amt, iamt, camt, samt, csamt }] }]
+// CORROBORATED against two independent schema references; no Utility
+// export containing an advance has been seen here.
+function gstr1BuildAdvanceSection(rows, amountOf, posOf, supplyTypeOf, errors, context) {
+  const buckets = new Map();   // "pos|sply_ty|rate" -> row
+  (rows || []).forEach(r => {
+    if (String(r.status || '').trim().toLowerCase() === 'cancelled') return;
+    const amount = round2(amountOf(r));
+    if (!amount) return;                      // nothing to report
+
+    // pos is a two-digit state code here, exactly as it is in every other
+    // section. receipt_vouchers.place_of_supply and
+    // advance_adjustments.place_of_supply hold a state NAME ("Tamil
+    // Nadu"), so it has to be converted: passing it through verbatim
+    // wrote "pos":"Tamil Nadu" into the file and the Portal rejected the
+    // upload. Every other pos in the same file was already a code, which
+    // is what made this one visible.
+    //
+    // A value that is already a valid code is kept as-is — getStateCode()
+    // only maps names, so "33" would otherwise come back as 99.
+    const rawPos = String(posOf(r) || '').trim();
+    const pos = GSTR1_VALID_POS_CODES.has(rawPos)
+      ? rawPos
+      : gstr1PosUnregistered(rawPos, errors, `${context} ${r.document_number || ''}`.trim());
+    const inter = String(supplyTypeOf(r) || '').trim().toLowerCase() === 'interstate';
+    const sply_ty = inter ? 'INTER' : 'INTRA';
+    const rt = round2(r.gst_percentage);
+    const key = `${pos}|${sply_ty}|${rt}`;
+    if (!buckets.has(key)) {
+      buckets.set(key, { pos, sply_ty, rt, ad_amt: 0, iamt: 0, camt: 0, samt: 0, csamt: 0 });
+    }
+    const b = buckets.get(key);
+    b.ad_amt = round2(b.ad_amt + amount);
+    b.iamt = round2(b.iamt + round2(r.igst));
+    b.camt = round2(b.camt + round2(r.cgst));
+    b.samt = round2(b.samt + round2(r.sgst));
+    b.csamt = round2(b.csamt + round2(r.cess));
+  });
+
+  // Grouped by place of supply and supply type, each carrying its rates.
+  const byPos = new Map();
+  [...buckets.values()]
+    .sort((a, b) => a.pos.localeCompare(b.pos) || a.sply_ty.localeCompare(b.sply_ty) || a.rt - b.rt)
+    .forEach(b => {
+      const k = `${b.pos}|${b.sply_ty}`;
+      if (!byPos.has(k)) byPos.set(k, { pos: b.pos, sply_ty: b.sply_ty, itms: [] });
+      byPos.get(k).itms.push({
+        rt: b.rt, ad_amt: b.ad_amt, iamt: b.iamt, camt: b.camt, samt: b.samt, csamt: b.csamt
+      });
+    });
+  return [...byPos.values()];
+}
+
+// Advance adjustments are their own dated rows rather than a running
+// total on the receipt voucher, because Table 11B asks which advances
+// were adjusted IN THIS PERIOD and a running total cannot answer that.
+// Amendments recorded against an already-filed return. Fetched by the
+// period they are being made IN, which is the return being built — an
+// amendment made in July to a June invoice belongs in July's return.
+async function gstr1FetchAmendments(userId, fp) {
+  if (!fp) return [];
+  const [rows] = await gstr1Read([
+    _supabase.from('gst_amendments').select('*').eq('user_id', userId).eq('amendment_period', fp)
+  ], 'amendments for this period');
+  return rows;
+}
+
+async function gstr1FetchAdvanceAdjustments(userId, start, end) {
+  const [rows] = await gstr1Read([
+    _supabase.from('advance_adjustments').select('*').eq('user_id', userId)
+      .gte('adjusted_on', start).lte('adjusted_on', end)
+  ], 'advance adjustments');
+  return rows;
+}
+
+function gstr1DocumentSources() {
+  if (typeof GST_DOCUMENT_TYPES === 'undefined') return [];
+  return GST_DOCUMENT_TYPES
+    .filter(d => d.enabled && d.docNum !== null && d.storage
+                 && !GSTR1_TABLE13_HANDLED_ELSEWHERE.has(d.storage))
+    .map(d => ({ documentType: d.key, table: d.storage }));
+}
+
+// Reads every document in the period that reports its own Table 13 row.
+//
+// Most types have a table to themselves, but not all: the four delivery
+// challan variants share one, because the registry gives them one
+// numbering series and a number must be unique across all four. So a row
+// is allowed to name its own document type, and when it does that is what
+// it counts as. Nothing here knows which types those are — a future type
+// that shares a table with another works the same way, and a type that
+// owns its table outright is unaffected.
+//
+// Each table is read once no matter how many types point at it.
+async function gstr1FetchDocuments(userId, start, end) {
+  const sources = gstr1DocumentSources();
+  if (!sources.length) return [];
+
+  const byTable = new Map();
+  sources.forEach(src => {
+    if (!byTable.has(src.table)) byTable.set(src.table, []);
+    byTable.get(src.table).push(src.documentType);
+  });
+  const tables = [...byTable.keys()];
+
+  const results = await gstr1Read(
+    tables.map(table => _supabase.from(table).select('*').eq('user_id', userId)
+      .gte('document_date', start).lte('document_date', end)),
+    'the documents issued in this period'
+  );
+
+  const out = [];
+  results.forEach((rows, i) => {
+    const wanted = byTable.get(tables[i]);
+    rows.forEach(row => {
+      // A row that names its type is taken at its word, but only if that
+      // type actually reads this table — otherwise a stray value could
+      // move a document into someone else's Table 13 row.
+      const declared = String(row.document_type || '').trim();
+      const type = wanted.includes(declared) ? declared : (wanted.length === 1 ? wanted[0] : null);
+      if (type) out.push({ ...row, __documentType: type });
+    });
+  });
+  return out;
+}
+
+// One docs[] entry per (document type, numbering book, number shape),
+// with cancelled documents counted rather than dropped.
+//
+// totnum is every document the book issued, cancelled ones included —
+// the number WAS issued, which is why Table 13 has a separate cancel
+// column instead of simply omitting them. net_issue is what remains.
+function gstr1DocumentRanges(rows) {
+  const groups = new Map();
+  (rows || []).forEach(r => {
+    const num = r.document_number;
+    if (!num) return;
+    const series = String(r.document_series || r.__documentType || '').trim().toLowerCase();
+    const shape = gstr1NumberShape(num);
+    const key = JSON.stringify([r.__documentType, series, shape]);
+    if (!groups.has(key)) groups.set(key, { documentType: r.__documentType, series, shape, numbers: [], cancelled: 0 });
+    const g = groups.get(key);
+    g.numbers.push(String(num));
+    if (String(r.status || '').trim().toLowerCase() === 'cancelled') g.cancelled++;
+  });
+
+  const byType = new Map();
+  [...groups.values()]
+    .sort((a, b) => a.documentType.localeCompare(b.documentType)
+                 || a.series.localeCompare(b.series)
+                 || a.shape.localeCompare(b.shape))
+    .forEach(g => {
+      const sorted = [...g.numbers].sort(gstr1CompareInvoiceNumbers);
+      if (!byType.has(g.documentType)) byType.set(g.documentType, { documentType: g.documentType, docs: [] });
+      byType.get(g.documentType).docs.push({
+        num: byType.get(g.documentType).docs.length + 1,
+        from: sorted[0],
+        to: sorted[sorted.length - 1],
+        totnum: sorted.length,
+        cancel: g.cancelled,
+        net_issue: sorted.length - g.cancelled
+      });
+    });
+  return [...byType.values()];
+}
+
+// The shape of an invoice number with its digits removed: "138" -> "#",
+// "W-00005" -> "W-#", "INV-2026-001" -> "INV-#-#".
+function gstr1NumberShape(num) {
+  return String(num || '').replace(/\d+/g, '#');
+}
+
+// Orders invoice numbers the way a numbering series runs rather than the
+// way text sorts. The rule itself lives in js/utils.js, which every page
+// that touches invoice numbers loads — the on-screen list, the migration
+// tool and this filing all have to agree on which invoice is first.
+function gstr1CompareInvoiceNumbers(a, b) {
+  return compareInvoiceNumbers(a, b);
+}
+
+// An invoice's val in a Utility-written return is the taxable value plus
+// tax rounded to the nearest rupee — every one of the 49 invoices in the
+// reference file is a whole number, including the ones whose components
+// do not add up to one (txval+tax 9945.04 -> val 9945, 7286.5 -> 7287,
+// 530.49 -> 530). The line-level txval and tax figures keep their paise;
+// only this invoice-level total rounds.
+//
+// This does not change any invoice: total_amount in the database, the
+// printed invoice and every calculation are untouched. It changes how the
+// total is written into the return, which is what the reference proves.
+function gstr1InvoiceVal(total) {
+  return Math.round(total);
+}
+
+// ── Filing period ───────────────────────────────────────────
+// fp is MMYYYY and comes from the month the user selected, by string
+// rearrangement, with no Date object and no reference to the clock.
+//
+// It used to be derived as new Date(startOfSelectedMonth).getMonth(). A
+// date-only string parses as UTC while getMonth() reads local time, so on
+// any machine behind UTC that returns the PREVIOUS month — selecting July
+// would have filed 062026. It is right in IST only by accident of the
+// offset, which is not something a filing should depend on.
+//
+// A relative selection is refused rather than resolved. "Current Month",
+// a quarter and a financial year are all reasonable things to look at on
+// the Reports page, but none of them names the month being filed, and
+// resolving "current" against the clock is exactly how a return for July
+// ends up stamped August.
+const GSTR1_MONTH_SELECTION = /^(\d{4})-(0[1-9]|1[0-2])$/;
+
+// "2026-07" -> "July 2026", for messages. Built from string parts, never
+// through a Date: a date-only string parses as UTC and reads back a day
+// earlier west of UTC.
+const GSTR1_MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June',
+  'July', 'August', 'September', 'October', 'November', 'December'];
+function gstr1MonthLabel(ym) {
+  const m = GSTR1_MONTH_SELECTION.exec(String(ym || ''));
+  return m ? `${GSTR1_MONTH_NAMES[+m[2] - 1]} ${m[1]}` : String(ym || '');
+}
+
+// Waits for the period dropdown to hold its options before anything reads
+// it.
+//
+// The control ships empty in reports.html and is filled from the database
+// after the page loads. A select with no options reports value "" and
+// selectedIndex -1, which is indistinguishable from a deliberate empty
+// choice — the export used to say "(nothing selected)" while the user was
+// looking at July 2026 in that very control a moment later.
+//
+// Two waits, because the gap has two parts. reportPeriodsReady is the
+// promise js/reports.js publishes while it fetches the months, but it is
+// only assigned after initReports has awaited requireAuth() — a network
+// call, during which the page is painted and the button is clickable. So
+// an empty control is also waited on directly, bounded, for the stretch
+// before that promise exists.
+const GSTR1_PERIOD_WAIT_MS = 15000;
+
+async function gstr1AwaitPeriodOptions() {
+  const el = () => document.getElementById('reportMonth');
+  const empty = () => { const e = el(); return e && e.options.length === 0; };
+  if (!empty() && (typeof reportPeriodsReady === 'undefined' || !reportPeriodsReady)) return;
+
+  showToast('Reading your filing periods…', 'success');
+  const deadline = Date.now() + GSTR1_PERIOD_WAIT_MS;
+  while (empty() && Date.now() < deadline) await new Promise(r => setTimeout(r, 50));
+  if (typeof reportPeriodsReady !== 'undefined' && reportPeriodsReady) {
+    try { await reportPeriodsReady; }
+    catch (e) { /* populateMonthFilter reports its own failure */ }
+  }
+}
+
+// Reports what the exporter actually read for the business's own
+// identity, every run, before any validation.
+//
+// Not opt-in, unlike the period trace below. When this went wrong the
+// file came out with an empty gstin and place of supply 99 while the
+// Business Profile screen showed the correct GSTIN and Tamil Nadu, and
+// there was no way to tell from the outside which of the two the
+// exporter had seen. One line in the console settles it.
+//
+// stateCode is listed because it is the value people go looking for, and
+// the answer is that no such field exists: the code is derived from the
+// GSTIN's first two digits, falling back to the state name only when the
+// GSTIN is unusable — and getStateCode('') is the sole source of 99.
+function gstr1TraceProfile(profile, businessGstin, businessState, check) {
+  const derivedFrom = check.valid ? 'GSTIN characters 1-2' : `getStateCode(${JSON.stringify(businessState)})`;
+  const code = check.valid ? businessGstin.slice(0, 2) : getStateCode(businessState);
+  const loaded = !!profile;
+  console.info(
+    `[GSTR-1 profile] gstin=${JSON.stringify(businessGstin)} ` +
+    `state=${JSON.stringify(businessState)} stateCode=${JSON.stringify(code)} ` +
+    `(from ${derivedFrom}) profileLoaded=${loaded}` +
+    (loaded ? '' : ' — the profile was never read; an empty state yields 99'));
+  let verbose = false;
+  try { verbose = (typeof window !== 'undefined' && window.GSTR1_TRACE_PROFILE)
+    || localStorage.getItem('gst_trace_profile') === '1'; } catch (e) { /* storage blocked */ }
+  if (!verbose && loaded && check.valid) return;
+  console.info(
+    `[GSTR-1 profile trace]\n` +
+    `  getCachedProfile() returned : ${loaded ? Object.keys(profile).length + ' fields' : String(profile)}\n` +
+    `  businessProfile.gstin       : ${JSON.stringify(profile?.gstin ?? null)}\n` +
+    `  businessProfile.state       : ${JSON.stringify(profile?.state ?? null)}\n` +
+    `  businessProfile.stateCode   : (no such field — derived, see below)\n` +
+    `  myGSTIN     (businessGstin) : ${JSON.stringify(businessGstin)} ` +
+    `${check.valid ? '(valid)' : `(INVALID: ${check.reason})`}\n` +
+    `  myStateCode (businessStateCode) : ${JSON.stringify(code)} from ${derivedFrom}\n`);
+}
+
+// Reports what the period control actually held at the moment it was
+// read. Off unless asked for: set localStorage gst_trace_period = '1' (or
+// window.GSTR1_TRACE_PERIOD = true) in the console and export again.
+function gstr1TracePeriod(where, el, value) {
+  let on = false;
+  try { on = (typeof window !== 'undefined' && window.GSTR1_TRACE_PERIOD)
+    || localStorage.getItem('gst_trace_period') === '1'; } catch (e) { /* storage blocked */ }
+  if (!on) return;
+  const opts = el ? [...el.options].map((o, i) =>
+    `${i === el.selectedIndex ? '>' : ' '} ${JSON.stringify(o.value)} = ${JSON.stringify(o.text)}`) : [];
+  console.info(
+    `[GSTR-1 period trace] ${where}\n` +
+    `  element #reportMonth found : ${!!el}\n` +
+    `  selected dropdown value    : ${JSON.stringify(value)}\n` +
+    `  selected dropdown text     : ${JSON.stringify(el?.options?.[el.selectedIndex]?.text ?? null)}\n` +
+    `  selectedIndex              : ${el ? el.selectedIndex : 'n/a'}\n` +
+    `  options present            : ${opts.length}\n` +
+    (opts.length ? opts.join('\n') + '\n' : ''));
+}
+
+// The months that could be filed, so a rejection can say what the user
+// could have picked instead of only what they did.
+//
+// Read from the list the Reports page discovered in the stored data
+// (reportAvailableMonths in js/reports.js) rather than from the dropdown.
+// Reading the dropdown to describe the dropdown is circular: if it ever
+// failed to render, the message would report no months available while
+// the data plainly had some. The dropdown is only a fallback, for a page
+// that has the control but not the reports script.
+function gstr1AvailableMonths() {
+  if (typeof reportAvailableMonths !== 'undefined' && Array.isArray(reportAvailableMonths) && reportAvailableMonths.length) {
+    return reportAvailableMonths.map(m => m.label);
+  }
+  const el = typeof document !== 'undefined' ? document.getElementById('reportMonth') : null;
+  if (!el) return [];
+  return [...el.options].filter(o => GSTR1_MONTH_SELECTION.test(o.value)).map(o => o.text);
+}
+
+// The month the invoices themselves belong to.
+//
+// A return may only cover one month, so a set of invoices spanning two is
+// refused rather than stamped with whichever month happened to be picked.
+// An empty set returns no month at all: there is nothing to derive from,
+// and a month with no invoices is still a month that can be filed as a
+// nil return, so the caller falls back to the selected period there.
+function gstr1DeriveFilingMonth(invoices) {
+  const months = new Set();
+  (invoices || []).forEach(inv => {
+    const d = String(inv.invoice_date || '');
+    if (/^\d{4}-(0[1-9]|1[0-2])/.test(d)) months.add(d.slice(0, 7));
+  });
+
+  if (months.size > 1) {
+    const spread = [...months].sort();
+    return { error: gstr1Err({
+      field: 'Return Period',
+      current: spread.map(gstr1MonthLabel).join(', '),
+      expected: 'invoices from a single month',
+      message: 'GSTR-1 export can contain only one filing month.',
+      fix: `The invoices selected span ${spread.length} months. Choose one month from the period dropdown and generate the return again.`
+    }) };
+  }
+  return { month: months.size === 1 ? [...months][0] : null };
+}
+
+function gstr1FilingPeriod(selection) {
+  const raw = String(selection == null ? '' : selection).trim();
+  const m = GSTR1_MONTH_SELECTION.exec(raw);
+  if (m) return { fp: m[2] + m[1] };          // "2026-07" -> "072026"
+
+  // Naming the months on offer turns "pick a month" into something the
+  // user can act on without going to look, and makes the empty case —
+  // no month has any data — visible instead of silent.
+  const months = gstr1AvailableMonths();
+  const fix = months.length
+    ? `Choose one of these from the period dropdown, then generate the return again: ${months.join(', ')}.`
+    : 'The period dropdown is not offering any month, which means no invoice, purchase, expense, return or note is stored in any month yet. Save an invoice for the month you are filing, then try again.';
+  return { error: gstr1Err({
+    field: 'Return Period',
+    current: raw || '(nothing selected)',
+    expected: months.length ? `one of: ${months.join(', ')}` : 'a specific month, e.g. "July 2026"',
+    message: 'GSTR-1 is filed for one named month, and the period selected on the Reports page does not name one.',
+    fix
+  }) };
+}
+
+function gstr1InvoiceNumberOk(num) {
+  // GSTN's own offline-utility validation: max 16 chars, letters/digits/-//
+  return /^[A-Za-z0-9\-\/]{1,16}$/.test(num || '');
+}
+function gstr1HsnFormatOk(hsn) {
+  // Digits only, 4/6/8-digit tiers (the exact tier required depends on
+  // the filer's aggregate turnover, which this app doesn't track — so
+  // this checks the code is *a* valid HSN shape, not which tier applies
+  // to this specific business).
+  return /^(\d{4}|\d{6}|\d{8})$/.test((hsn || '').trim());
+}
+function gstr1DateOk(ddmmyyyy) {
+  return /^\d{2}-\d{2}-\d{4}$/.test(ddmmyyyy || '');
+}
+
+// A corrupted/hand-edited invoice_items.taxable_value would previously
+// flow straight through — gstr1RecomputeItem() only re-derives the TAX
+// portion (igst/cgst/sgst) from taxable_value, it never re-derives
+// taxable_value itself. This closes that gap by recomputing it from the
+// same quantity/rate/discount_percentage formula js/invoice-items.js's
+// recalcItemRow() uses at entry time (round2(qty*rate*(1-discount/100))
+// — see that file), so a tampered taxable_value with unchanged
+// quantity/rate is caught here instead of silently exported. Only
+// applies to live invoice_items rows — a legacy pre-line-item invoice's
+// pseudo-item (built in gstr1ItemsForInvoice from a b2b_hsn/b2c_hsn row)
+// carries no rate/discount_percentage of its own to recompute from, so
+// there is nothing to cross-check there.
+function gstr1CheckItemTaxable(item, errCtx, errors, who = {}) {
+  if (item.rate === undefined || item.discount_percentage === undefined) return; // legacy pseudo-item, nothing to cross-check
+  const expected = lineTaxableValue(item.quantity, item.rate, item.discount_percentage);
+  const actual = round2(+item.taxable_value || 0);
+  if (Math.abs(expected - actual) > GSTR1_RECONCILE_TOLERANCE) {
+    errors.push(gstr1Err({
+      invoice: who.invoice, customer: who.customer, product: item.product_name,
+      field: 'Taxable Value', current: `₹${actual}`,
+      expected: `₹${expected} (quantity × rate × (1 − discount%))`,
+      message: `${errCtx}: the stored taxable value does not match this line's own quantity, rate and discount.`,
+      fix: 'Open the invoice and save it again to recompute the line.'
+    }));
+  }
+}
+
+// ── Recompute every money figure from line items — never trust the
+// cached header row. Each item's own tax is re-derived from
+// taxable_value/gst_percentage/supply_type via the exact same calcGST()
+// every other part of the app already uses (js/utils.js) — a corrupted
+// or hand-edited cached item.gst_amount/igst/cgst/sgst can't silently
+// flow into the filing either. ──
+function gstr1RecomputeItem(item, supplyType) {
+  const taxable = round2(+item.taxable_value || 0);
+  const rate = +item.gst_percentage || 0;
+  const calc = calcGST(taxable, rate, supplyType);
+  // Compensation cess is charged on the taxable value, not on the GST,
+  // and it is recomputed here for the same reason the GST is: a stored
+  // figure that disagrees with its own line is the thing this generator
+  // exists to catch. The rate is preferred; a line that carries only an
+  // amount (raised before the rate was stored) keeps that amount.
+  const cessRate = +item.cess_rate || 0;
+  const cess = cessRate ? round2(taxable * cessRate / 100) : round2(+item.cess_amount || 0);
+  return { taxable, rate, igst: calc.igst, cgst: calc.cgst, sgst: calc.sgst,
+           gstAmount: calc.gstAmount, cess, cessRate };
+}
+
+// Recomputes an invoice's totals from its items, AND groups them by GST
+// rate — a single invoice can legitimately carry several rate slabs
+// (multiple products at different rates), which the old generator
+// collapsed into one itms[0] using whatever rate happened to sit on the
+// header row.
+// ── Does a stored invoice total agree with its own line items? ──────
+// This app rounds an invoice to the whole rupee. computeInvoiceRollups()
+// in js/invoice-items.js — and the same three lines in purchase-items.js
+// and sales-return-items.js — build the total as:
+//
+//   rawTotal   = taxable + gst
+//   grandTotal = Math.round(rawTotal)      <- stored as total_amount
+//   roundOff   = grandTotal - rawTotal     <- shown, never stored
+//
+// Round Off is derived, not a column: there is no round_off anywhere in
+// the schema. So a legitimate invoice can differ from taxable + gst by up
+// to half a rupee, and comparing the two directly rejected every invoice
+// that rounded by more than the 0.05 tolerance — ₹46,610 + ₹8,389.80
+// rounds to ₹55,000 and was refused over the resulting ₹0.20.
+//
+// Both shapes are accepted: a total stored rounded (every invoice this
+// app writes today) and a total stored unrounded (anything older, or
+// imported, that kept the exact sum). Anything else is a real mismatch.
+function gstr1TotalMatches(storedTotal, rawTotal) {
+  const stored = round2(+storedTotal || 0);
+  const raw = round2(rawTotal);
+  return Math.abs(stored - raw) <= GSTR1_RECONCILE_TOLERANCE
+      || Math.abs(stored - Math.round(raw)) <= GSTR1_RECONCILE_TOLERANCE;
+}
+
+// The four figures that explain a mismatch, so the message is the audit
+// rather than a prompt to go and do one.
+function gstr1TotalMismatch(inv, rawTotal) {
+  const stored = round2(+inv.total_amount || 0);
+  const raw = round2(rawTotal);
+  const roundOff = round2(Math.round(raw) - raw);
+  return gstr1Err({
+    invoice: inv.invoice_number, customer: inv.customer_name,
+    field: 'Invoice Total',
+    current: `stored ₹${stored}`,
+    expected: `₹${Math.round(raw)} — line items give ₹${raw}, round off ${roundOff >= 0 ? '+' : ''}₹${roundOff}`,
+    message: `Stored total ₹${stored} differs from the line items by ₹${round2(stored - raw)}, which is more than a rounding adjustment can explain.`,
+    fix: 'Open the invoice and save it again to rebuild its total from the lines.'
+  });
+}
+
+function gstr1RecomputeInvoice(items, supplyType) {
+  let taxable = 0, igst = 0, cgst = 0, sgst = 0, cess = 0;
+  const byRate = new Map();
+  items.forEach(it => {
+    const r = gstr1RecomputeItem(it, supplyType);
+    taxable = round2(taxable + r.taxable); igst = round2(igst + r.igst);
+    cgst = round2(cgst + r.cgst); sgst = round2(sgst + r.sgst);
+    cess = round2(cess + r.cess);
+    if (!byRate.has(r.rate)) byRate.set(r.rate, { rate: r.rate, taxable: 0, igst: 0, cgst: 0, sgst: 0, cess: 0 });
+    const b = byRate.get(r.rate);
+    b.taxable = round2(b.taxable + r.taxable); b.igst = round2(b.igst + r.igst);
+    b.cgst = round2(b.cgst + r.cgst); b.sgst = round2(b.sgst + r.sgst);
+    b.cess = round2(b.cess + r.cess);
+  });
+  const gstAmount = round2(igst + cgst + sgst);
+  // Cess is part of what the invoice is worth, so it belongs in the total
+  // that `val` is derived from and that the stored total is checked
+  // against. An invoice with no cess totals exactly as it did before.
+  return { taxable, igst, cgst, sgst, cess, gstAmount,
+           total: round2(taxable + gstAmount + cess), byRate: [...byRate.values()] };
+}
+
+// A pre-line-item invoice (created before item-level tracking existed)
+// has nothing in invoice_items — its only surviving breakdown is the
+// matching b2b_hsn/b2c_hsn legacy row(s), linked via source_invoice_id/
+// source_invoice_type. Reshaped to look like an invoice_items row so
+// gstr1RecomputeInvoice() can treat both uniformly instead of needing a
+// second code path.
+function gstr1ItemsForInvoice(inv, type, itemsByInvoice, legacyHsnRows) {
+  const live = itemsByInvoice[type + ':' + inv.id];
+  if (live && live.length) return live;
+  return legacyHsnRows
+    .filter(r => r.source_invoice_id === inv.id && r.source_invoice_type === type)
+    .map(r => ({ hsn_code: r.hsn_code, product_name: r.product_name, unit: null, quantity: +r.quantity || 0, taxable_value: +r.taxable_value || 0, gst_percentage: +r.gst_percentage || 0 }));
+}
+
+// ── POS (Place of Supply) — the one rule that determines everything
+// else about how an invoice is classified in the filing. ──
+// Registered customer: POS = first two digits of the CUSTOMER's own
+// GSTIN — never derived indirectly from supply_type or the business's
+// own state (that was the root cause of the old B2B POS bug).
+function gstr1PosRegistered(customerGstin) {
+  return (customerGstin || '').toUpperCase().slice(0, 2);
+}
+// Unregistered customer: POS = the customer's state code. 99 is reserved
+// for genuine export/SEZ (no such concept exists anywhere in this app
+// today) — never used as a silent fallback for an unrecognized/blank
+// state, which getStateCode() on its own would otherwise do.
+function gstr1PosUnregistered(customerState, errors, context) {
+  const code = getStateCode(customerState);
+  if (code === '99' && (customerState || '').trim()) {
+    errors.push(gstr1Err({ field: 'Customer State', current: customerState, expected: 'one of the states in the State dropdown', message: `${context}: customer state is not a recognised Indian state/UT, so no place of supply can be derived.`, fix: 'Open the invoice and re-pick the State from the dropdown.' }));
+  } else if (code === '99') {
+    errors.push(gstr1Err({ field: 'Customer State', current: '(blank)', expected: 'one of the states in the State dropdown', message: `${context}: customer state is missing, so no place of supply can be derived.`, fix: 'Open the invoice and set the State.' }));
+  }
+  return code;
+}
+
+// ── Product master audit, run before anything is assembled ──────────
+//
+// The per-line checks further down catch the same faults, but they stop
+// at the first bad line of an invoice and report it as one invoice's
+// problem. A bad product is not one invoice's problem — it is wrong on
+// every invoice that ever used it, and fixing it once fixes all of them.
+// This pass groups by product, names every invoice affected, and reports
+// every fault on every product before a single row is built.
+//
+// What can be checked here, and what cannot:
+//   - that an HSN is present and is a 4/6/8 digit code: yes
+//   - that the code is the RIGHT one for the goods: no. That is a tax
+//     classification, there is no official HSN list in this codebase, and
+//     the Portal is the only authority (it answers RET191349).
+// ── Reads behind a return ──────────────────────────────────────────
+// Every read that feeds a GSTR-1 goes through gstr1Read(). It exists
+// because the alternative — `(res.data || [])` — turns a FAILED read
+// into an empty array, and an empty array here is not "nothing to
+// report", it is a section of the return silently going missing: no B2B
+// invoices, no credit notes, no HSN summary, filed as though the period
+// genuinely had none. A return is either built from complete data or not
+// built at all, so a failure is thrown rather than defaulted, caught
+// once in buildGSTR1Payload(), and reported as a blocking error like any
+// other validation failure.
+function gstr1ReadError(context, error) {
+  const e = new Error('gstr1-read-failed');
+  e.__gstr1Read = true;
+  e.context = context;
+  e.apiError = error || null;
+  return e;
+}
+
+async function gstr1Read(queries, context) {
+  const results = await Promise.all(queries);
+  const failed = results.find(r => r && r.error);
+  if (failed) throw gstr1ReadError(context, failed.error);
+  return results.map(r => (r && r.data) || []);
+}
+
+async function gstr1FetchProductsForLines(userId, items) {
+  const ids = [...new Set(items.map(i => i.product_id).filter(Boolean))];
+  if (!ids.length) return {};
+  const chunks = [];
+  for (let i = 0; i < ids.length; i += GSTR1_ID_CHUNK_SIZE) chunks.push(ids.slice(i, i + GSTR1_ID_CHUNK_SIZE));
+  const rows = await gstr1Read(
+    chunks.map(c => _supabase.from('products').select('*').eq('user_id', userId).in('id', c)),
+    'the product master'
+  );
+  const byId = {};
+  rows.flat().forEach(p => { byId[p.id] = p; });
+  return byId;
+}
+
+function gstr1AuditProducts(lines, productsById, errors) {
+  // Grouped by the product the line came from, falling back to its name
+  // for a line typed in freehand or whose product has since been deleted.
+  const groups = new Map();
+  lines.forEach(l => {
+    const key = l.product_id || ('name:' + (l.item.product_name || '').trim().toLowerCase());
+    // Through the effective view, so a unit or HSN corrected in the
+    // Product Master is what the audit checks — not the synced value the
+    // correction exists to replace.
+    if (!groups.has(key)) groups.set(key, { name: l.item.product_name, invoices: new Set(), item: l.item, product: productEffective(productsById[l.product_id]) || null });
+    groups.get(key).invoices.add(l.invoiceNumber);
+  });
+
+  groups.forEach(g => {
+    const invoices = [...g.invoices].sort(gstr1CompareInvoiceNumbers);
+    const where = invoices.length === 1 ? `invoice ${invoices[0]}`
+      : `${invoices.length} invoices: ${invoices.slice(0, 6).join(', ')}${invoices.length > 6 ? `, +${invoices.length - 6} more` : ''}`;
+    const hsn = String(g.item.hsn_code || '').trim();
+    const unit = String(g.item.unit || '').trim();
+    const rate = g.item.gst_percentage;
+    const fault = (field, current, expected, fix, message) => errors.push(gstr1Err({
+      invoice: invoices.join(', '), product: g.name, field, current, expected, fix,
+      message: message || `${g.name} — used on ${where}.`
+    }));
+
+    // 1 + 2. HSN present, and a shape a return can carry.
+    if (!hsn) {
+      fault('HSN Code', '(not set)', 'a 4, 6 or 8 digit HSN code',
+        'Open the product and set its HSN code, then re-save the invoices that use it.');
+    } else if (!gstr1HsnFormatOk(hsn)) {
+      fault('HSN Code', hsn, 'a 4, 6 or 8 digit code, digits only',
+        'Correct the HSN code on the product, then re-save the invoices that use it.');
+    }
+
+    const isService = gstr1IsServiceHsn(hsn);
+
+    // 3 + 4. Unit present, and one that maps to a UQC.
+    // 7 + 8. NA belongs to services only — the Portal refused it on goods
+    // with RET191353, and the official return uses it on a service line.
+    if (!isService) {
+      if (!unit) {
+        fault('Unit', '(not set)', `one of ${Object.keys(GSTR1_UQC_MAP).join(', ')}`,
+          'Open the product and set its Unit, then re-save the invoices that use it.',
+          `${g.name} is a physical good (HSN ${hsn || 'not set'}) with no unit, so the return would report it as NA — used on ${where}.`);
+      } else if (!GSTR1_UQC_MAP[unit.toUpperCase()]) {
+        fault('Unit', unit, `one of ${Object.keys(GSTR1_UQC_MAP).join(', ')}`,
+          'Change the product\'s Unit to one of those, then re-save the invoices that use it.');
+      }
+    }
+
+    // 5. A rate has to be a real number. Zero is legitimate — an exempt or
+    // nil-rated supply is reported at 0% — so only a missing or nonsense
+    // rate is a fault.
+    if (rate === null || rate === undefined || !isFinite(+rate) || +rate < 0) {
+      fault('GST Rate', rate === null || rate === undefined ? '(not set)' : String(rate),
+        'a GST percentage of zero or more',
+        'Set the GST % on the product, then re-save the invoices that use it.');
+    }
+
+    // 6. The product's own Goods/Service flag against what its HSN says.
+    // Chapter 99 is services; anything else is goods. They disagreeing is
+    // how a service ends up demanding a unit, or a good ends up as NA.
+    if (g.product && g.product.type) {
+      const saysService = g.product.type === 'service';
+      if (hsn && saysService !== isService) {
+        fault('Product Type', `${g.product.type}, but HSN ${hsn} is ${isService ? 'a service code' : 'a goods code'}`,
+          isService ? 'type "service" for an HSN in chapter 99' : 'type "goods" for an HSN outside chapter 99',
+          'Correct either the product type or its HSN code so the two agree, then re-save the invoices that use it.');
+      }
+    }
+  });
+}
+
+// ── Build the full payload. Every validation failure is appended to
+// `errors` with enough context (invoice number, table, row) to act on —
+// the payload is still fully built even when invalid so the caller can
+// show every problem at once instead of stopping at the first one. ──
+// Wraps the generator so a failed read (gstr1Read() above) comes out as a
+// blocking validation error rather than an exception that escapes into
+// the click handler. The caller already refuses to export when `errors`
+// is non-empty, so this needs no separate path — a return that could not
+// read its own data is simply a return that does not pass validation.
+async function buildGSTR1Payload(userId, profile, periodFilter) {
+  try {
+    return await buildGSTR1PayloadUnguarded(userId, profile, periodFilter);
+  } catch (e) {
+    if (!e || !e.__gstr1Read) throw e;
+    const status = e.apiError && e.apiError.status;
+    return {
+      errors: [gstr1Err({
+        field: 'Data',
+        message: `Could not read ${e.context} — the return was not built.`,
+        current: status ? `the request failed (${status})` : 'the request failed',
+        expected: 'every invoice, note, line item and document in the period',
+        fix: 'This is not a problem with your data. Check your connection, reload the page and export again — '
+           + 'a return built from a partial read would understate what you owe.'
+      })]
+    };
+  }
+}
+
+async function buildGSTR1PayloadUnguarded(userId, profile, periodFilter) {
+  const errors = [];
+
+  // The filing period is settled first, from the selection alone. If it
+  // does not name a month there is no return to build, so nothing is
+  // fetched and nothing is assembled.
+  const period = gstr1FilingPeriod(periodFilter);
+  gstr1TracePeriod(`buildGSTR1Payload received ${JSON.stringify(periodFilter)} -> fp ${JSON.stringify(period.fp ?? null)}`,
+    typeof document !== 'undefined' ? document.getElementById('reportMonth') : null, periodFilter);
+  if (period.error) { errors.push(period.error); return { errors }; }
+  // Only a candidate at this point. The invoices decide — see the
+  // derivation right after they are fetched.
+  let fp = period.fp;
+
+  // The invoices to include come from the same selection, so the window
+  // queried and the period stamped on the file cannot disagree.
+  const { start, end } = getReportDateRange(periodFilter);
+
+  const businessGstin = (profile?.gstin || '').toUpperCase();
+  const businessState = profile?.state || '';
+  const businessGstinCheck = validateGstin(businessGstin);
+
+  // Printed on every run, before any validation, because "your GSTIN is
+  // invalid (empty)" is the same message whether the profile is blank or
+  // simply was not loaded — and those need completely different fixes.
+  // The values below say which it is without anyone having to guess.
+  gstr1TraceProfile(profile, businessGstin, businessState, businessGstinCheck);
+
+  if (!businessGstinCheck.valid) {
+    // A profile that never arrived is not a profile that is wrong. Saying
+    // "correct it in Business Profile" when the field is already correct
+    // sends someone to check something that was never the problem.
+    const notLoaded = !profile || (!profile.gstin && !profile.state);
+    errors.push(notLoaded
+      ? gstr1Err({ field: 'Business Profile', current: 'not loaded', expected: 'your business GSTIN and state',
+          message: 'The Business Profile could not be read, so the return has no GSTIN and no state of registration.',
+          fix: 'Reload the Reports page and export again. If it keeps happening, check that the server is reachable — the profile is stored there, not in the browser.' })
+      : gstr1Err({ field: 'Business Profile GSTIN', current: businessGstin, expected: 'a valid 15-character GSTIN',
+          message: `Your own GSTIN is invalid (${businessGstinCheck.reason}).`,
+          fix: 'Correct it in Business Profile, then generate the return again.' }));
+  }
+  // The business's own GSTIN, once validated, is the single authoritative
+  // source for "which state is this registration in" — never the
+  // separately-typed Business Profile State text field, which can drift
+  // out of sync with the GSTIN (the same class of bug the earlier
+  // Interstate/Intrastate entry-form fix addressed for the customer
+  // side: a free-text state field silently overriding a more
+  // authoritative GSTIN-derived one). Only falls back to the text field
+  // when the GSTIN itself is invalid — at which point export is already
+  // blocked by the check above, so this fallback only matters for
+  // producing a sane (not necessarily final) POS-agreement message.
+  const businessStateCode = businessGstinCheck.valid ? businessGstin.slice(0, 2) : getStateCode(businessState);
+
+  const todayISO = toISO(new Date());
+
+  // Round 1: everything that can be scoped by its own date column.
+  // gstr1Read() rather than a raw Promise.all whose results are then
+  // read as `(res.data || [])` — see its definition for why a defaulted
+  // empty array is the most dangerous thing this file could do.
+  const [b2bData, b2cData, cdnNotes, salesReturns, srItemsAllRows] = await gstr1Read([
+    _supabase.from('b2b_invoices').select('*').eq('user_id', userId).gte('invoice_date', start).lte('invoice_date', end),
+    _supabase.from('b2c_invoices').select('*').eq('user_id', userId).gte('invoice_date', start).lte('invoice_date', end),
+    _supabase.from('cdn_notes').select('*').eq('user_id', userId).gte('note_date', start).lte('note_date', end),
+    _supabase.from('sales_returns').select('*').eq('user_id', userId).gte('return_date', start).lte('return_date', end),
+    _supabase.from('sales_return_items').select('*').eq('user_id', userId)
+  ], 'the invoices, credit/debit notes and sales returns for this period');
+
+  // Vouchers and self invoices (Table 13), advance adjustments and
+  // amendments. Each throws through gstr1Read() on a failed read too, so
+  // a business with none still gets an empty array and an unchanged file
+  // while a business whose read FAILED gets no file at all.
+  const [documentRows, advanceAdjustmentRows, amendmentRows] = await Promise.all([
+    gstr1FetchDocuments(userId, start, end),
+    gstr1FetchAdvanceAdjustments(userId, start, end),
+    gstr1FetchAmendments(userId, gstr1FilingPeriod(periodFilter).fp)
+  ]);
+
+  // ── The filing period, decided by the invoices actually going into the
+  // file ──────────────────────────────────────────────────────────────
+  // The selection above chose which invoices to fetch; these invoices now
+  // choose the period stamped on them. A return whose fp disagrees with
+  // its own contents is rejected by the Portal as a period mismatch, and
+  // no UI value — a dropdown, a default, the clock — outranks the dates
+  // on the documents being filed.
+  const derivedMonth = gstr1DeriveFilingMonth([...b2bData, ...b2cData]);
+  if (derivedMonth.error) { errors.push(derivedMonth.error); return { errors }; }
+
+  if (derivedMonth.month) {
+    const derived = derivedMonth.month;
+    const derivedFp = gstr1FilingPeriod(derived).fp;
+    // A disagreement here means the invoices fetched are not the ones the
+    // selected window asked for, which is a fault in the query rather than
+    // in the user's choice. The invoices win, and it is reported.
+    if (derivedFp !== fp) {
+      errors.push(gstr1Err({
+        field: 'Return Period',
+        current: `${fp} (from the selected period)`,
+        expected: `${derivedFp} (from the invoices being exported)`,
+        message: 'The period selected and the invoices fetched for it do not agree.',
+        fix: 'Reload the Reports page and select the month again. If it persists, report it — the two should never differ.'
+      }));
+    }
+    fp = derivedFp;
+  }
+  // No invoices at all leaves fp as the selected month, so a nil return
+  // for a month with nothing in it can still be filed. There is no
+  // invoice date to derive from, and refusing would make an empty month
+  // impossible to file rather than merely empty.
+  const srItemsAll = srItemsAllRows;
+
+  // Round 2: invoice_items and the legacy HSN tables have no date column
+  // of their own (items belong to an invoice, not a day) — the old
+  // generator fetched ALL of them for the user, every export, forever,
+  // regardless of period (a real scaling problem: a business with years
+  // of history would re-download its entire item history on every
+  // single month's filing). Scoped here instead to exactly this
+  // period's invoice ids via the ids already known from round 1, chunked
+  // to keep any one request's URL length safe even for a filing period
+  // with several thousand invoices.
+  const periodInvoiceIds = [...b2bData.map(r => r.id), ...b2cData.map(r => r.id)];
+  const chunk = (arr, size) => { const out = []; for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size)); return out; };
+  const idChunks = chunk(periodInvoiceIds, GSTR1_ID_CHUNK_SIZE);
+
+  // One flat gstr1Read() across all three tables' chunks: a single failed
+  // chunk anywhere in here would otherwise drop part of the line items or
+  // the HSN summary — the return would still build, and the HSN totals
+  // would silently disagree with the invoices they are supposed to add up
+  // to.
+  const itemChunkCount = idChunks.length;
+  const readChunks = await gstr1Read([
+    ...idChunks.map(ids => _supabase.from('invoice_items').select('*').eq('user_id', userId).in('invoice_id', ids)),
+    ...idChunks.map(ids => _supabase.from('b2b_hsn').select('*').eq('user_id', userId).in('source_invoice_id', ids)),
+    ...idChunks.map(ids => _supabase.from('b2c_hsn').select('*').eq('user_id', userId).in('source_invoice_id', ids))
+  ], 'the invoice line items and HSN rows for this period');
+  const allItems = readChunks.slice(0, itemChunkCount).flat();
+  const legacyHsnRows = readChunks.slice(itemChunkCount).flat();
+
+  const itemsByInvoice = {};
+  allItems.forEach(r => {
+    const key = r.invoice_type + ':' + r.invoice_id;
+    (itemsByInvoice[key] = itemsByInvoice[key] || []).push(r);
+  });
+  const srItemsByReturn = {};
+  srItemsAll.forEach(r => { (srItemsByReturn[r.return_id] = srItemsByReturn[r.return_id] || []).push(r); });
+
+  // ── Product master audit ──
+  // Runs before anything is assembled: a product that cannot be reported
+  // is worth knowing about in full, across every invoice that uses it,
+  // rather than one invoice at a time as the rows are built.
+  const invoiceNumberById = {};
+  b2bData.forEach(i => { invoiceNumberById['b2b:' + i.id] = i.invoice_number; });
+  b2cData.forEach(i => { invoiceNumberById['b2c:' + i.id] = i.invoice_number || `B2C-${String(i.id).slice(0, 8)}`; });
+
+  const auditLines = allItems.map(it => ({
+    item: it,
+    product_id: it.product_id,
+    invoiceNumber: invoiceNumberById[it.invoice_type + ':' + it.invoice_id]
+  })).filter(l => l.invoiceNumber !== undefined);   // items of invoices outside this period
+
+  const productsById = await gstr1FetchProductsForLines(userId, allItems);
+  const productErrorsBefore = errors.length;
+  gstr1AuditProducts(auditLines, productsById, errors);
+  // Nothing is generated while a product cannot be reported correctly.
+  if (errors.length > productErrorsBefore) return { errors };
+
+  // Duplicate invoice number check, per series.
+  //
+  // b2b_invoices and b2c_invoices share a numbering book WITHIN a series,
+  // so a number appearing twice in one series is real data corruption.
+  // Across series it is not: a shop counter and a website each keep their
+  // own book, and both may legitimately hold a 5.
+  const seenInvNums = new Map();
+  [...b2bData.map(r => ({ ...r, __kind: 'B2B' })), ...b2cData.map(r => ({ ...r, __kind: 'B2C' }))].forEach(inv => {
+    const num = (inv.invoice_number || '').toUpperCase();
+    if (!num) return;
+    const key = JSON.stringify([gstr1InvoiceSeries(inv), num]);
+    if (seenInvNums.has(key)) errors.push(gstr1Err({ invoice: inv.invoice_number, customer: inv.customer_name, field: 'Invoice Number', current: `used twice in the ${gstr1SeriesLabel(gstr1InvoiceSeries(inv))} series (${seenInvNums.get(key)} and ${inv.__kind})`, expected: 'a number used by only one invoice in its own series', fix: 'Renumber one of the two invoices from the Invoice List.' }));
+    else seenInvNums.set(key, inv.__kind);
+  });
+
+  // The HSN summary is reported per supply channel: hsn_b2b and hsn_b2c
+  // are separate arrays in a Utility-written return, so the buckets are
+  // kept apart from the moment a line is counted rather than being split
+  // afterwards (a line already knows which invoice it came from; the
+  // combined totals do not).
+  // Exports are grouped by export type, because that is how Table 6A is
+  // written: one entry per WPAY/WOPAY, each holding its own invoices.
+  const expGroups = new Map();   // 'WPAY' | 'WOPAY' -> inv[]
+
+  // An export invoice is still an invoice: it is counted in the HSN
+  // summary and its number is still reported in Table 13. What changes is
+  // only which supply section it lands in — Table 6A instead of B2B, B2CL
+  // or B2CS — because an export is not a domestic supply.
+  function collectExport(inv, recomputed, idt, expType) {
+    const entry = {
+      inum: inv.invoice_number || `EXP-${String(inv.id).slice(0, 8)}`,
+      idt,
+      val: gstr1InvoiceVal(recomputed.total),
+      // Flat item rows, not the num/itm_det pairs B2B uses. Both schema
+      // references available here agree on that for this section.
+      itms: recomputed.byRate.map(b => ({
+        txval: b.taxable, rt: b.rate, iamt: b.igst, csamt: round2(b.cess || 0)
+      }))
+    };
+    // The shipping bill may not exist yet when the return is filed, so
+    // these are written only when they are actually known — an empty
+    // string is not a shipping bill number.
+    const sbnum = String(inv.shipping_bill_number || '').trim();
+    const sbdt = String(inv.shipping_bill_date || '').trim();
+    const sbpcode = String(inv.port_code || '').trim();
+    if (sbpcode) entry.sbpcode = sbpcode;
+    if (sbnum) entry.sbnum = sbnum;
+    if (sbdt) entry.sbdt = formatDateDDMMYYYY(sbdt);
+
+    // Exported under a LUT means no IGST may be charged; exported on
+    // payment means some must be. Either way round is a filing that will
+    // not reconcile, so it is caught here rather than at the Portal.
+    const tax = recomputed.igst + recomputed.cgst + recomputed.sgst;
+    if (expType === 'WOPAY' && tax > 0) {
+      errors.push(gstr1Err({ invoice: inv.invoice_number, customer: inv.customer_name,
+        field: 'Export Type', current: `WOPAY with ${tax} tax charged`,
+        expected: 'no tax on an export under LUT or bond',
+        message: 'This invoice is marked exported without payment of IGST, but it charges tax.',
+        fix: 'Either remove the tax, or change the export type to WPAY.' }));
+    }
+    if (expType === 'WPAY' && tax === 0) {
+      errors.push(gstr1Err({ invoice: inv.invoice_number, customer: inv.customer_name,
+        field: 'Export Type', current: 'WPAY with no tax charged',
+        expected: 'IGST charged on an export made on payment of tax',
+        message: 'This invoice is marked exported on payment of IGST, but no tax is charged.',
+        fix: 'Either charge IGST, or change the export type to WOPAY if it went out under a LUT.' }));
+    }
+
+    if (!expGroups.has(expType)) expGroups.set(expType, []);
+    expGroups.get(expType).push(entry);
+  }
+
+  const hsnDigitsRequired = parseInt(profile && profile.hsn_digits_required, 10) || 0;
+  const hsnBuckets = { b2b: new Map(), b2c: new Map() }; // "hsncode|rate" -> row
+  function addToHsn(channel, hsnCode, desc, uqc, qty, r, errCtx) {
+    if (!gstr1HsnFormatOk(hsnCode)) { errors.push(gstr1Err({ field: 'HSN Code', current: hsnCode, expected: 'a 4, 6 or 8 digit code', message: `${errCtx}: HSN code is not valid.`, fix: 'Set a valid HSN code on the product, then re-save the invoice.' })); return; }
+    // Table 12 requires a minimum number of HSN digits, set by turnover.
+    // The requirement is stated on the Business Profile rather than worked
+    // out here, because the threshold moves by notification. When it has
+    // not been stated, nothing is enforced — which is exactly how every
+    // return behaved before this check existed.
+    if (hsnDigitsRequired && String(hsnCode).replace(/\D/g, '').length < hsnDigitsRequired) {
+      errors.push(gstr1Err({ field: 'HSN Code', current: hsnCode,
+        expected: `at least ${hsnDigitsRequired} digits`,
+        message: `${errCtx}: this HSN code is shorter than the ${hsnDigitsRequired} digits your Business Profile says you must report.`,
+        fix: `Set a ${hsnDigitsRequired}-digit HSN on the product, or correct the setting in Business Profile if it is wrong.` }));
+      return;
+    }
+    const buckets = hsnBuckets[channel];
+    const key = hsnCode + '|' + r.rate;
+    if (!buckets.has(key)) buckets.set(key, { hsn_sc: hsnCode, desc: desc || '', uqc, qty: 0, taxable: 0, igst: 0, cgst: 0, sgst: 0, cess: 0 });
+    const b = buckets.get(key);
+    // GSTN's schema allows exactly one row per HSN+rate — different
+    // units genuinely selling under the same HSN+rate can't become two
+    // rows (that would itself be a duplicate-HSN-row rejection) or be
+    // silently summed together (a combined "8 units" of 5kg + 3pcs is
+    // meaningless). Flagged for a human to resolve rather than guessed.
+    if (b.uqc !== GSTR1_UQC_SERVICE && uqc !== GSTR1_UQC_SERVICE && b.uqc !== uqc) {
+      errors.push(gstr1Err({ field: 'Unit (UQC)', current: `${b.uqc} and ${uqc} on HSN ${hsnCode} at ${r.rate}%`, expected: 'one unit per HSN code and rate', message: `${errCtx}: this HSN and rate is sold in two different units.`, fix: 'Make the unit consistent for this HSN and rate, or give the products distinct HSN codes.' }));
+      return;
+    }
+    b.qty = round2(b.qty + (qty || 0));
+    b.cess = round2(b.cess + (r.cess || 0));
+    b.taxable = round2(b.taxable + r.taxable); b.igst = round2(b.igst + r.igst);
+    b.cgst = round2(b.cgst + r.cgst); b.sgst = round2(b.sgst + r.sgst);
+    // A later row can supply a UQC where an earlier one (e.g. a legacy
+    // row with no unit at all) couldn't.
+    if (b.uqc === GSTR1_UQC_SERVICE && uqc !== GSTR1_UQC_SERVICE) b.uqc = uqc;
+  }
+
+  // ── Nil-rated / exempt / non-GST (table 8) ──
+  //
+  // These are not taxable supplies and do not belong in 4A, 5 or 7.
+  // Reporting them there as a taxable supply at 0% puts the right money
+  // in the wrong table. They are totalled here by supply channel and
+  // reported in their own section, and the invoices carrying them are
+  // taken out of the taxable tables entirely.
+  //
+  // sply_ty is inter/intra crossed with B2B/B2C, which is how the
+  // section is broken down. UNVERIFIED against an official artefact:
+  // unlike doc_issue, no Utility-written file containing this section
+  // has been available to diff against. It is written to the documented
+  // shape and is omitted entirely when nothing is classified, so a
+  // business not using it is unaffected either way.
+  const nilBuckets = new Map(); // sply_ty -> { expt_amt, nil_amt, ngsup_amt }
+  const nilField = { nil_rated: 'nil_amt', exempt: 'expt_amt', non_gst: 'ngsup_amt' };
+  const addToNil = (isB2B, supplyType, treatment, amount) => {
+    const sply_ty = (supplyType === 'interstate' ? 'INTR' : 'INTRA') + (isB2B ? 'B2B' : 'B2C');
+    if (!nilBuckets.has(sply_ty)) nilBuckets.set(sply_ty, { sply_ty, expt_amt: 0, nil_amt: 0, ngsup_amt: 0 });
+    const b = nilBuckets.get(sply_ty);
+    const f = nilField[treatment];
+    if (f) b[f] = round2(b[f] + (+amount || 0));
+  };
+
+  // How an invoice's lines are classified, as one answer for the whole
+  // document. A document that mixes taxable and non-taxable lines cannot
+  // be split between the taxable tables and table 8 without a rule for
+  // what its `val` should then be, and no such rule has been proven
+  // here — so it is refused rather than guessed at. An invoice whose
+  // lines are all one treatment, which is every invoice this application
+  // has ever produced, is unaffected.
+  const invoiceTreatment = (inv, items, ctx) => {
+    const kinds = [...new Set((items || []).map(gstTreatmentOf))];
+    if (kinds.length <= 1) return kinds[0] || GST_TREATMENT_DEFAULT;
+    errors.push(gstr1Err({
+      invoice: inv.invoice_number, customer: inv.customer_name, field: 'GST Treatment',
+      current: kinds.map(gstTreatmentLabel).join(' and '),
+      expected: 'one treatment for the whole invoice',
+      message: `${ctx} mixes taxable and non-taxable lines on one document.`,
+      fix: 'Raise the taxable lines and the nil-rated / exempt / non-GST lines as separate invoices.'
+    }));
+    return null;
+  };
+
+  // ── B2B ──
+  const b2bGroups = new Map(); // ctin -> inv[]
+  b2bData.forEach(inv => {
+    const ctx = `B2B invoice ${inv.invoice_number || inv.id}`;
+    const gstin = (inv.gst_number || '').toUpperCase();
+    const gCheck = validateGstin(gstin);
+    if (!gCheck.valid) { errors.push(gstr1Err({ invoice: inv.invoice_number, customer: inv.customer_name, field: 'Customer GST Number', current: gstin, expected: 'a valid 15-character GSTIN', message: `Customer GSTIN is invalid (${gCheck.reason}).`, fix: 'Open the invoice and correct the customer GST Number.' })); return; }
+    if (!gstr1InvoiceNumberOk(inv.invoice_number)) { errors.push(gstr1Err({ invoice: inv.invoice_number, customer: inv.customer_name, field: 'Invoice Number', current: inv.invoice_number, expected: 'up to 16 characters, letters/digits/hyphen/slash only', fix: 'Renumber this invoice from the Invoice List.' })); return; }
+    const idt = formatDateDDMMYYYY(inv.invoice_date);
+    if (!gstr1DateOk(idt)) { errors.push(gstr1Err({ invoice: inv.invoice_number, customer: inv.customer_name, field: 'Invoice Date', current: inv.invoice_date, expected: 'a real date, written to the file as DD-MM-YYYY', fix: 'Re-save the invoice with a valid date.' })); return; }
+    if (inv.invoice_date > todayISO) { errors.push(gstr1Err({ invoice: inv.invoice_number, customer: inv.customer_name, field: 'Invoice Date', current: inv.invoice_date, expected: `a date on or before today (${todayISO})`, fix: 'Correct the invoice date - a return cannot contain a future-dated invoice.' })); return; }
+    if (inv.supply_type !== 'interstate' && inv.supply_type !== 'intrastate') { errors.push(gstr1Err({ invoice: inv.invoice_number, customer: inv.customer_name, field: 'Supply Type', current: inv.supply_type, expected: 'interstate or intrastate', fix: 'Re-save the invoice; the Interstate/Intrastate toggle sets this.' })); return; }
+
+    const pos = gstr1PosRegistered(gstin);
+    if (!GSTR1_VALID_POS_CODES.has(pos)) { errors.push(gstr1Err({ invoice: inv.invoice_number, customer: inv.customer_name, field: 'Place of Supply', current: pos, expected: 'a recognised state code (the first two digits of the customer GSTIN)', fix: 'Correct the customer GST Number on the invoice.' })); return; }
+    // POS vs supply_type must agree — if they don't, one of the two is
+    // stale/wrong (see the earlier Interstate/Intrastate detection fix
+    // for exactly this class of bug on the entry form itself).
+    const expectedSupplyType = pos === businessStateCode ? 'intrastate' : 'interstate';
+    if (expectedSupplyType !== inv.supply_type) {
+      errors.push(gstr1Err({ invoice: inv.invoice_number, customer: inv.customer_name, field: 'Supply Type', current: inv.supply_type, expected: `${expectedSupplyType} (customer GSTIN state ${pos} vs your state ${businessStateCode})`, fix: 'Open the invoice and re-pick the customer so Interstate/Intrastate is redetected.' }));
+    }
+
+    const items = gstr1ItemsForInvoice(inv, 'b2b', itemsByInvoice, legacyHsnRows);
+    if (!items.length) { errors.push(gstr1Err({ invoice: inv.invoice_number, customer: inv.customer_name, field: 'Line Items', current: 'none', expected: 'at least one line item', fix: 'Open the invoice and add its products.' })); return; }
+
+    // A wholly nil-rated, exempt or non-GST invoice belongs in table 8
+    // and nowhere else — not in 4A, and not in the HSN summary, which
+    // summarises taxable supplies.
+    const treatment = invoiceTreatment(inv, items, ctx);
+    if (treatment === null) return;                       // mixed — already reported
+    if (!gstIsTaxableTreatment(treatment)) {
+      addToNil(true, inv.supply_type, treatment, items.reduce((t, it) => t + (+it.taxable_value || 0), 0));
+      return;
+    }
+
+    let itemsOk = true;
+    items.forEach((it, idx) => {
+      const itemCtx = `${ctx}, item ${idx + 1} ("${it.product_name}")`;
+      if (+it.quantity <= 0) { errors.push(gstr1Err({ invoice: inv.invoice_number, customer: inv.customer_name, product: it.product_name, field: 'Quantity', current: it.quantity, expected: 'greater than zero', fix: 'Set a quantity on this line, or remove the line.' })); itemsOk = false; }
+      if (+it.taxable_value < 0) { errors.push(gstr1Err({ invoice: inv.invoice_number, customer: inv.customer_name, product: it.product_name, field: 'Taxable Value', current: it.taxable_value, expected: 'zero or more', fix: 'Correct the rate or discount on this line.' })); itemsOk = false; }
+      const preErrCount = errors.length;
+      gstr1CheckItemTaxable(it, itemCtx, errors, { invoice: inv.invoice_number, customer: inv.customer_name });
+      if (errors.length > preErrCount) itemsOk = false;
+      const uqc = gstr1ToUQC(it.unit, it.hsn_code);
+      if (uqc === null) {
+        errors.push(gstr1Err({
+          invoice: inv.invoice_number, customer: inv.customer_name, product: it.product_name,
+          field: 'Unit', current: it.unit ? `"${it.unit}"` : '(not set)',
+          expected: `one of ${Object.keys(GSTR1_UQC_MAP).join(', ')}`,
+          message: `HSN ${it.hsn_code} is a physical good and has no unit of measure on it, so no UQC can be stated for it.`,
+          fix: 'Open the product and set its Unit, then re-save the invoices that use it. The Portal rejects a goods line with no unit (RET191353).'
+        }));
+        itemsOk = false;
+        return;
+      }
+      addToHsn('b2b', it.hsn_code, it.product_name, uqc, +it.quantity || 0, gstr1RecomputeItem(it, inv.supply_type), itemCtx);
+    });
+    if (!itemsOk) return;
+
+    const recomputed = gstr1RecomputeInvoice(items, inv.supply_type);
+    if (!gstr1TotalMatches(inv.total_amount, recomputed.total)) {
+      errors.push(gstr1TotalMismatch(inv, recomputed.total));
+      return;
+    }
+
+    // A supply to an SEZ is an inter-state supply however close the SEZ
+    // is — section 7(5)(b) of the IGST Act. Charging CGST+SGST on it is
+    // the wrong tax, not merely the wrong label, and a 4B row carrying
+    // state tax will not reconcile.
+    if (gstIsSezCategory(inv.gst_category) && (recomputed.cgst > 0 || recomputed.sgst > 0)) {
+      errors.push(gstr1Err({
+        invoice: inv.invoice_number, customer: inv.customer_name, field: 'Tax',
+        current: `CGST ${recomputed.cgst} + SGST ${recomputed.sgst}`,
+        expected: 'IGST, or no tax at all under an LUT',
+        message: 'A supply to an SEZ is an inter-state supply under section 7(5)(b) of the IGST Act, whatever state the SEZ is in.',
+        fix: 'Open the invoice and set Supply Type to Interstate so the tax is charged as IGST.'
+      }));
+      return;
+    }
+
+    // Supplying an SEZ without paying IGST requires an LUT in force on
+    // the date of the invoice. Without one the supply had to be made on
+    // payment of IGST, and filing it as SEWOP claims a relief that was
+    // not available.
+    if (gstIsSezCategory(inv.gst_category) && recomputed.gstAmount === 0) {
+      const lut = gstLutStatus(profile, inv.invoice_date);
+      if (!lut.active) {
+        errors.push(gstr1Err({
+          invoice: inv.invoice_number, customer: inv.customer_name, field: 'LUT',
+          current: lut.number ? `LUT ${lut.number} ${lut.reason}` : 'no LUT recorded',
+          expected: 'an LUT in force on the date of the invoice',
+          message: 'This SEZ supply carries no tax, which is only allowed under a Letter of Undertaking.',
+          fix: 'Record the LUT and its validity in Business Profile, or raise the invoice with IGST.'
+        }));
+        return;
+      }
+    }
+
+    // Counted in HSN above, reported in Table 13 below; only the supply
+    // section differs.
+    const b2bExportType = gstr1ExportTypeOf(inv);
+    if (b2bExportType) { collectExport(inv, recomputed, idt, b2bExportType); return; }
+
+    const invEntry = {
+      inum: inv.invoice_number, idt, val: gstr1InvoiceVal(recomputed.total), pos,
+      rchrg: inv.reverse_charge ? 'Y' : 'N',
+      inv_typ: gstr1InvTypFor(inv.gst_category, recomputed.igst + recomputed.cgst + recomputed.sgst),
+      itms: recomputed.byRate.map((b, i) => ({ num: i + 1, itm_det: { txval: b.taxable, rt: b.rate, iamt: b.igst, camt: b.cgst, samt: b.sgst, csamt: round2(b.cess || 0) } }))
+    };
+    const b2bEtin = gstr1EcomGstinOf(inv);
+    if (b2bEtin) invEntry.etin = b2bEtin;
+    const b2bDiff = gstr1DiffPercentOf(inv);
+    if (b2bDiff) invEntry.diff_percent = b2bDiff;
+    if (!b2bGroups.has(gstin)) b2bGroups.set(gstin, []);
+    b2bGroups.get(gstin).push(invEntry);
+  });
+  // Ordering below follows the reference file, which is ordered
+  // throughout: b2b runs in invoice-number order, b2cs by place of
+  // supply, and each HSN array by HSN code. JSON arrays are ordered, so
+  // unlike object keys this is a real difference rather than a cosmetic
+  // one. (In the reference, invoice-number order and invoice-date order
+  // coincide, so which of the two is the Utility's actual key is
+  // UNVERIFIED; numbering is the more stable of the two.)
+  const b2b = [...b2bGroups.entries()]
+    .map(([ctin, inv]) => ({ ctin, inv: [...inv].sort((x, y) => gstr1CompareInvoiceNumbers(x.inum, y.inum)) }))
+    .sort((a, b) => gstr1CompareInvoiceNumbers(a.inv[0].inum, b.inv[0].inum));
+
+  // ── B2C — split into B2CL (unregistered, inter-state, above
+  // threshold — reported per-invoice) vs B2CS (everything else in the
+  // B2C bucket — reported as a state+rate aggregate). The old generator
+  // had no B2CL section at all. ──
+  const b2clGroups = new Map(); // pos -> inv[]
+  const b2csBuckets = new Map(); // "state|rate|supplyType" -> aggregate
+  b2cData.forEach(inv => {
+    const ctx = `B2C invoice ${inv.invoice_number || inv.id}`;
+    if (inv.supply_type !== 'interstate' && inv.supply_type !== 'intrastate') { errors.push(gstr1Err({ invoice: inv.invoice_number, customer: inv.customer_name, field: 'Supply Type', current: inv.supply_type, expected: 'interstate or intrastate', fix: 'Re-save the invoice; the Interstate/Intrastate toggle sets this.' })); return; }
+    const idt = formatDateDDMMYYYY(inv.invoice_date);
+    if (!gstr1DateOk(idt)) { errors.push(gstr1Err({ invoice: inv.invoice_number, customer: inv.customer_name, field: 'Invoice Date', current: inv.invoice_date, expected: 'a real date, written to the file as DD-MM-YYYY', fix: 'Re-save the invoice with a valid date.' })); return; }
+    if (inv.invoice_date > todayISO) { errors.push(gstr1Err({ invoice: inv.invoice_number, customer: inv.customer_name, field: 'Invoice Date', current: inv.invoice_date, expected: `a date on or before today (${todayISO})`, fix: 'Correct the invoice date - a return cannot contain a future-dated invoice.' })); return; }
+
+    const pos = gstr1PosUnregistered(inv.state, errors, ctx);
+    if (!GSTR1_VALID_POS_CODES.has(pos) && pos !== '99') { errors.push(gstr1Err({ invoice: inv.invoice_number, customer: inv.customer_name, field: 'Place of Supply', current: pos, expected: 'a recognised state code', fix: 'Set the customer State on the invoice.' })); return; }
+
+    const items = gstr1ItemsForInvoice(inv, 'b2c', itemsByInvoice, legacyHsnRows);
+    if (!items.length) { errors.push(gstr1Err({ invoice: inv.invoice_number, customer: inv.customer_name, field: 'Line Items', current: 'none', expected: 'at least one line item', fix: 'Open the invoice and add its products.' })); return; }
+    // Same rule as B2B: a wholly non-taxable invoice is table 8 only.
+    const treatment = invoiceTreatment(inv, items, ctx);
+    if (treatment === null) return;
+    if (!gstIsTaxableTreatment(treatment)) {
+      addToNil(false, inv.supply_type, treatment, items.reduce((t, it) => t + (+it.taxable_value || 0), 0));
+      return;
+    }
+
+    let itemsOk = true;
+    items.forEach((it, idx) => {
+      const itemCtx = `${ctx}, item ${idx + 1} ("${it.product_name}")`;
+      if (+it.quantity <= 0) { errors.push(gstr1Err({ invoice: inv.invoice_number, customer: inv.customer_name, product: it.product_name, field: 'Quantity', current: it.quantity, expected: 'greater than zero', fix: 'Set a quantity on this line, or remove the line.' })); itemsOk = false; }
+      if (+it.taxable_value < 0) { errors.push(gstr1Err({ invoice: inv.invoice_number, customer: inv.customer_name, product: it.product_name, field: 'Taxable Value', current: it.taxable_value, expected: 'zero or more', fix: 'Correct the rate or discount on this line.' })); itemsOk = false; }
+      const preErrCount = errors.length;
+      gstr1CheckItemTaxable(it, itemCtx, errors, { invoice: inv.invoice_number, customer: inv.customer_name });
+      if (errors.length > preErrCount) itemsOk = false;
+      const uqc = gstr1ToUQC(it.unit, it.hsn_code);
+      if (uqc === null) {
+        errors.push(gstr1Err({
+          invoice: inv.invoice_number, customer: inv.customer_name, product: it.product_name,
+          field: 'Unit', current: it.unit ? `"${it.unit}"` : '(not set)',
+          expected: `one of ${Object.keys(GSTR1_UQC_MAP).join(', ')}`,
+          message: `HSN ${it.hsn_code} is a physical good and has no unit of measure on it, so no UQC can be stated for it.`,
+          fix: 'Open the product and set its Unit, then re-save the invoices that use it. The Portal rejects a goods line with no unit (RET191353).'
+        }));
+        itemsOk = false;
+        return;
+      }
+      addToHsn('b2c', it.hsn_code, it.product_name, uqc, +it.quantity || 0, gstr1RecomputeItem(it, inv.supply_type), itemCtx);
+    });
+    if (!itemsOk) return;
+
+    const recomputed = gstr1RecomputeInvoice(items, inv.supply_type);
+    if (!gstr1TotalMatches(inv.total_amount, recomputed.total)) {
+      errors.push(gstr1TotalMismatch(inv, recomputed.total));
+      return;
+    }
+
+    const b2cExportType = gstr1ExportTypeOf(inv);
+    if (b2cExportType) { collectExport(inv, recomputed, idt, b2cExportType); return; }
+
+    const isLarge = inv.supply_type === 'interstate' && recomputed.total > GSTR1_B2CL_THRESHOLD;
+    if (isLarge) {
+      const invEntry = {
+        inum: inv.invoice_number || `B2C-${inv.id.slice(0, 8)}`, idt, val: gstr1InvoiceVal(recomputed.total),
+        itms: recomputed.byRate.map((b, i) => ({ num: i + 1, itm_det: { txval: b.taxable, rt: b.rate, iamt: b.igst, csamt: round2(b.cess || 0) } }))
+      };
+      // B2CL was the one supply section that never carried the operator
+      // GSTIN, so a large inter-state sale through an operator reported as
+      // though it had been made directly.
+      const b2clEtin = gstr1EcomGstinOf(inv);
+      if (b2clEtin) invEntry.etin = b2clEtin;
+      const b2clDiff = gstr1DiffPercentOf(inv);
+      if (b2clDiff) invEntry.diff_percent = b2clDiff;
+      if (!b2clGroups.has(pos)) b2clGroups.set(pos, []);
+      b2clGroups.get(pos).push(invEntry);
+    } else {
+      recomputed.byRate.forEach(b => {
+        // The operator is part of the identity of a B2CS row: two
+        // operators aggregated together would report one of them as the
+        // other's.
+        const etin = gstr1EcomGstinOf(inv) || '';
+        const key = `${pos}|${b.rate}|${inv.supply_type}|${etin}`;
+        if (!b2csBuckets.has(key)) {
+          const bucket = { sply_ty: inv.supply_type === 'interstate' ? 'INTER' : 'INTRA', pos,
+                           typ: etin ? 'E' : 'OE', rt: b.rate, txval: 0, iamt: 0, camt: 0, samt: 0, csamt: 0 };
+          if (etin) bucket.etin = etin;
+          b2csBuckets.set(key, bucket);
+        }
+        const bucket = b2csBuckets.get(key);
+        bucket.csamt = round2(bucket.csamt + (b.cess || 0));
+        bucket.txval = round2(bucket.txval + b.taxable); bucket.iamt = round2(bucket.iamt + b.igst);
+        bucket.camt = round2(bucket.camt + b.cgst); bucket.samt = round2(bucket.samt + b.sgst);
+      });
+    }
+  });
+  const b2cl = [...b2clGroups.entries()]
+    .map(([pos, inv]) => ({ pos, inv: [...inv].sort((x, y) => gstr1CompareInvoiceNumbers(x.inum, y.inum)) }))
+    .sort((a, b) => a.pos.localeCompare(b.pos));
+  const b2cs = [...b2csBuckets.values()].sort((a, b) => a.pos.localeCompare(b.pos) || a.rt - b.rt);
+
+  // ── Sales Returns — net the returned quantity/value OUT of the HSN
+  // summary for the period (a physical return genuinely reduces net
+  // outward supply for that HSN+rate). Not fabricated into a CDNR/CDNUR
+  // entry: this app's Sales Return module does not itself create a
+  // matching credit note document, and GSTR-1 has no dedicated "sales
+  // return" section of its own — inventing a credit note that doesn't
+  // exist as a real document would be worse than omitting it. If the
+  // business also issued a formal Credit Note for a return, that flows
+  // through the cdn_notes/CDNR path below on its own. ──
+  // Tracked separately (not just inferred from before/after HSN totals)
+  // so the final audit can reconcile HSN against B2B+B2CL+B2CS using the
+  // exact same adjustment figure this loop actually applied — see the
+  // reconciliation note by runFinalGSTR1Audit() for why this must be
+  // kept apart from CDNR/CDNUR's effect on turnover.
+  let salesReturnNettedTaxable = 0;
+  salesReturns.forEach(ret => {
+    const retCtx = `Sales Return ${ret.return_number || ret.id}`;
+    if (ret.return_date > todayISO) { errors.push(gstr1Err({ invoice: ret.return_number, field: 'Return Date', current: ret.return_date, expected: `a date on or before today (${todayISO})`, fix: 'Correct the return date.' })); return; }
+    const items = srItemsByReturn[ret.id] || [];
+    items.forEach((it, idx) => {
+      const ctx = `${retCtx}, item ${idx + 1} ("${it.product_name}")`;
+      if (+it.quantity <= 0) { errors.push(gstr1Err({ invoice: ret.return_number, product: it.product_name, field: 'Return Quantity', current: it.quantity, expected: 'greater than zero', fix: 'Correct the quantity on the sales return.' })); return; }
+      if (!gstr1HsnFormatOk(it.hsn_code)) { errors.push(gstr1Err({ invoice: ret.return_number, product: it.product_name, field: 'HSN Code', current: it.hsn_code, expected: 'a 4, 6 or 8 digit code', fix: 'Set a valid HSN code on the product.' })); return; }
+      const r = gstr1RecomputeItem(it, ret.supply_type);
+      const key = it.hsn_code + '|' + r.rate;
+      // Net against the channel the original sale went out on; a B2B
+      // return cannot reduce the B2C summary.
+      const channel = ret.original_invoice_type === 'b2c' ? 'b2c' : 'b2b';
+      const bucket = hsnBuckets[channel].get(key);
+      if (!bucket) return; // return references an HSN/rate with no matching outward supply this period — nothing to net against, not an error on its own
+      const newTaxable = round2(bucket.taxable - r.taxable);
+      if (newTaxable < 0) {
+        errors.push(`${ctx}: netting this return against HSN ${it.hsn_code} at ${r.rate}% would make the period's HSN taxable value negative (${newTaxable}) — this return likely belongs to a different filing period than the original sale.`);
+        return;
+      }
+      bucket.taxable = newTaxable;
+      bucket.qty = round2(bucket.qty - (+it.quantity || 0));
+      bucket.igst = round2(bucket.igst - r.igst); bucket.cgst = round2(bucket.cgst - r.cgst); bucket.sgst = round2(bucket.sgst - r.sgst);
+      salesReturnNettedTaxable = round2(salesReturnNettedTaxable + r.taxable);
+    });
+  });
+
+  // ── CDNR / CDNUR — Credit and Debit Notes, split by whether the note
+  // carries a customer GSTIN (registered -> CDNR, grouped by ctin like
+  // B2B) or not (unregistered -> CDNUR, flat array). cdn_notes has no
+  // line-item/HSN table of its own (single rate per note, same shape the
+  // whole app's B2B/B2C invoice headers used before line items existed)
+  // — so, same as B2B/B2C above, each note can only ever produce exactly
+  // one itms[] entry; it is NOT included in the HSN section, since there
+  // is no HSN code recorded against a credit/debit note anywhere in the
+  // schema to attribute it to. ──
+  const cdnrGroups = new Map();
+  const cdnur = [];
+  cdnNotes.forEach(note => {
+    const ctx = `${note.note_type === 'credit' ? 'Credit' : 'Debit'} Note ${note.note_number || note.id}`;
+    if (!['credit', 'debit'].includes(note.note_type)) { errors.push(gstr1Err({ invoice: note.note_number, customer: note.customer_name, field: 'Note Type', current: note.note_type, expected: 'credit or debit', fix: 'Re-save the note and pick its type.' })); return; }
+    if (note.supply_type !== 'interstate' && note.supply_type !== 'intrastate') { errors.push(gstr1Err({ invoice: note.note_number, customer: note.customer_name, field: 'Supply Type', current: note.supply_type, expected: 'interstate or intrastate', fix: 'Re-save the note; the Interstate/Intrastate toggle sets this.' })); return; }
+    const ntty = note.note_type === 'credit' ? 'C' : 'D';
+    const ntDt = formatDateDDMMYYYY(note.note_date);
+    if (!gstr1DateOk(ntDt)) { errors.push(gstr1Err({ invoice: note.note_number, customer: note.customer_name, field: 'Note Date', current: note.note_date, expected: 'a real date, written to the file as DD-MM-YYYY', fix: 'Re-save the note with a valid date.' })); return; }
+    if (note.note_date > todayISO) { errors.push(gstr1Err({ invoice: note.note_number, customer: note.customer_name, field: 'Note Date', current: note.note_date, expected: `a date on or before today (${todayISO})`, fix: 'Correct the note date.' })); return; }
+    if (+note.taxable_amount <= 0) { errors.push(gstr1Err({ invoice: note.note_number, customer: note.customer_name, field: 'Taxable Amount', current: note.taxable_amount, expected: 'greater than zero', fix: 'Set the note taxable amount.' })); return; }
+
+    const taxable = round2(+note.taxable_amount);
+    const calc = calcGST(taxable, +note.gst_percentage || 0, note.supply_type);
+    // A note that reverses a supply carrying cess reverses the cess too,
+    // otherwise the cess stays paid on a supply that was cancelled.
+    const noteCess = round2(+note.cess_amount || 0);
+    const val = round2(taxable + calc.gstAmount + noteCess);
+    const gstin = (note.gstin || '').toUpperCase();
+
+    if (gstin) {
+      const gCheck = validateGstin(gstin);
+      if (!gCheck.valid) { errors.push(gstr1Err({ invoice: note.note_number, customer: note.customer_name, field: 'Customer GST Number', current: gstin, expected: 'a valid 15-character GSTIN', message: `Customer GSTIN on this note is invalid (${gCheck.reason}).`, fix: 'Correct the GST Number on the note.' })); return; }
+      const pos = gstr1PosRegistered(gstin);
+      // A note reversing a reverse-charge invoice is itself a
+      // reverse-charge document. This was written as 'N' for every note
+      // because there was nowhere to record otherwise.
+      const entry = { ntty, nt_num: note.note_number, nt_dt: ntDt, pos,
+        rchrg: note.reverse_charge ? 'Y' : 'N', val,
+        itms: [{ num: 1, itm_det: { txval: taxable, rt: +note.gst_percentage || 0, iamt: calc.igst, camt: calc.cgst, samt: calc.sgst, csamt: noteCess } }] };
+      const noteEtin = gstr1EcomGstinOf(note);
+      if (noteEtin) entry.etin = noteEtin;
+      const noteDiff = gstr1DiffPercentOf(note);
+      if (noteDiff) entry.diff_percent = noteDiff;
+      // Always written, including the ordinary domestic 'R'. It used to be
+      // omitted when it was 'R', to keep a return containing only ordinary
+      // notes byte-for-byte unchanged — but inv_typ is a mandatory field on
+      // a CDNR note, and leaving it out is what the Portal rejected.
+      //
+      // Proven by upload, not by reading: a file of b2b + b2cs + hsn +
+      // doc_issue was accepted (ref bf11e0ad, 19/08 11:58), adding b2cl was
+      // accepted (ref 6f7ed599, 12:07), and adding cdnr alone was refused
+      // at the upload gate (ref 4a091bb2, 12:10). b2b writes inv_typ on
+      // every invoice and passes; these notes were the only objects in the
+      // file missing it.
+      const noteInvTyp = gstr1NoteInvTyp(note);
+      entry.inv_typ = noteInvTyp;
+      if (!cdnrGroups.has(gstin)) cdnrGroups.set(gstin, []);
+      cdnrGroups.get(gstin).push(entry);
+    } else {
+      const pos = gstr1PosUnregistered(note.state, errors, ctx);
+      // Unregistered credit/debit notes are reported under the same
+      // large-value B2CL-style bucket, per GSTN's CDNUR shape — there is
+      // no lower-value aggregate section for CDNUR the way B2CS covers
+      // small B2C invoices.
+      const nature = String(note.supply_nature || 'regular').trim();
+      // Said plainly rather than left to be discovered on the portal: this
+      // note is going out under the wrong type because the right one
+      // cannot be verified from here.
+      if (nature !== 'regular' && !GSTR1_EMIT_CDNUR_TYPES) {
+        errors.push(gstr1Err({ invoice: note.note_number, customer: note.customer_name,
+          field: 'Note Type', current: `${nature}, reported as B2CL`,
+          expected: `the ${nature.toUpperCase()} note type`,
+          message: `${ctx}: this note reverses a ${nature} supply, but it is being written as B2CL.`,
+          fix: 'Correct the note type on the Portal after uploading. The nature is recorded here; only the JSON value is held back, because the exact code could not be verified.' }));
+      }
+      const urEntry = { typ: gstr1CdnurTyp(note), ntty, nt_num: note.note_number, nt_dt: ntDt, pos, val, itms: [{ num: 1, itm_det: { txval: taxable, rt: +note.gst_percentage || 0, iamt: calc.igst, csamt: noteCess } }] };
+      const urDiff = gstr1DiffPercentOf(note);
+      if (urDiff) urEntry.diff_percent = urDiff;
+      cdnur.push(urEntry);
+    }
+  });
+  const cdnr = [...cdnrGroups.entries()].map(([ctin, nt]) => ({ ctin, nt }));
+
+  // Each bucket map is keyed "hsn_sc|rate", so a row's rate comes back
+  // out of its key rather than being stored twice. num restarts at 1 in
+  // each array, as it does in a Utility-written return.
+  // Sorted by HSN code, then rate; num is assigned after sorting so it
+  // runs 1..n down the array as it does in the reference.
+  const hsnRows = channel => [...hsnBuckets[channel].entries()]
+    .map(([key, b]) => ({ ...b, rt: +key.split('|')[1] }))
+    .sort((a, b) => a.hsn_sc.localeCompare(b.hsn_sc) || a.rt - b.rt)
+    .map((b, i) => ({
+      num: i + 1, hsn_sc: b.hsn_sc, desc: b.desc, uqc: b.uqc, qty: b.qty,
+      txval: b.taxable, rt: b.rt, iamt: b.igst, camt: b.cgst, samt: b.sgst, csamt: round2(b.cess || 0)
+    }));
+  const hsnB2B = hsnRows('b2b'), hsnB2C = hsnRows('b2c');
+  // Only non-empty arrays are written, the same rule the top-level
+  // sections follow.
+  const hsn = {};
+  if (hsnB2B.length) hsn.hsn_b2b = hsnB2B;
+  if (hsnB2C.length) hsn.hsn_b2c = hsnB2C;
+
+  // Documents issued (the Utility's doc_issue). Derived entirely from the
+  // invoices already in this return, one entry per numbering series: each
+  // series runs from its own lowest invoice number to its own highest,
+  // and totnum is how many it issued.
+  //
+  // A shop counter issuing 138 to 170 and a website issuing 4 to 5 are two
+  // books, not one. Reported together they would read as 4 to 170 — a
+  // claim to have issued 167 documents when 35 were issued. docs[] is an
+  // array for exactly this reason, so each series gets its own row with
+  // its own range and count.
+  //
+  // A series is (where it was issued, how it is numbered) — BOTH, because
+  // either one alone gets a real case wrong:
+  //
+  //   invoice_source alone. It records which channel an invoice was saved
+  //   under, which is not always where its number came from. Website
+  //   orders numbered W-00001 to W-00005 by hand, before the app had a
+  //   channel to put them in, sit in the shop's source alongside 138 to
+  //   170 — and would be reported as "138 to W-00005, 34 documents", a
+  //   range that was never issued. The Portal is being told about
+  //   documents, and 138 and W-00005 are plainly not two ends of one
+  //   sequence.
+  //
+  //   the numbering alone. A shop at 138 and a website that also counts
+  //   1, 2, 3 produce identical-looking numbers from two different books.
+  //   Merging those would undercount one and overstate the other.
+  //
+  // So invoices are grouped by their source AND by the shape of their
+  // number — digits removed, "138" -> "#", "W-00005" -> "W-#". Two
+  // numbers belong to one document series when they came out of the same
+  // channel AND are written the same way. Nothing is hardcoded: the
+  // shapes come from the invoices, so a numbering nobody anticipated is
+  // reported as its own series the first time it appears.
+  //
+  // Ordered by source then shape, so the file is stable between exports
+  // of the same data.
+  const bySeries = new Map();
+  [...b2bData, ...b2cData].forEach(inv => {
+    const num = inv.invoice_number;
+    if (!num) return;
+    const source = gstr1InvoiceSeries(inv);
+    const shape = gstr1NumberShape(num);
+    const key = JSON.stringify([source, shape]);
+    if (!bySeries.has(key)) bySeries.set(key, { source, shape, numbers: [] });
+    bySeries.get(key).numbers.push(num);
+  });
+
+  const seriesDocs = [...bySeries.values()]
+    .sort((a, b) => a.source.localeCompare(b.source) || a.shape.localeCompare(b.shape))
+    .map((group, i) => {
+      const sorted = [...group.numbers].sort(gstr1CompareInvoiceNumbers);
+      return {
+        num: i + 1,
+        from: sorted[0],
+        to: sorted[sorted.length - 1],
+        totnum: sorted.length,
+        // 0 because this application has no concept of a cancelled
+        // invoice — nothing to count, rather than a figure guessed.
+        cancel: 0,
+        net_issue: sorted.length
+      };
+    });
+
+  // Table 13, built from the registry rather than from literals.
+  //
+  // Every row the registry defines is walked in ordinal order and a
+  // doc_det written for each that actually has documents. Row 1 carries
+  // the tax invoices computed above; the voucher and self-invoice rows
+  // carry their own domain tables, fetched alongside the invoices. A row
+  // with nothing on it is not written at all, which is why a business
+  // that issues only invoices gets exactly the file it got before.
+  //
+  // doc_num, doc_typ, from, to, totnum, cancel and net_issue all come
+  // from here or from the domain data. Nothing names a document type.
+  const table13Buckets = new Map();   // docNum -> { docTyp, docs[] }
+  const addTable13 = (docNum, docTyp, docs) => {
+    if (!docs.length) return;
+    if (!table13Buckets.has(docNum)) table13Buckets.set(docNum, { docNum, docTyp, docs: [] });
+    table13Buckets.get(docNum).docs.push(...docs);
+  };
+  const invoiceRow = gstr1Table13RowFor('tax_invoice');
+  addTable13(invoiceRow.docNum, invoiceRow.docTyp, seriesDocs);
+
+  // The vouchers and self invoices. Grouped by numbering book and by the
+  // shape of the number, exactly as invoices are — a document type may
+  // legitimately run more than one book, and two ways of writing a
+  // number are two document series.
+  //
+  // `cancel` is a real count here rather than the 0 invoices carry: a
+  // cancelled voucher keeps its row and its number precisely so Table 13
+  // can report it.
+  // A return cannot contain a future-dated document. Invoices are already
+  // held to that above; every other document type is held to it here, so
+  // one file cannot reject a future invoice in row 1 while reporting a
+  // future challan in row 9.
+  const futureDocs = documentRows.filter(r => r.document_date && r.document_date > todayISO);
+  futureDocs.forEach(r => errors.push(gstr1Err({
+    invoice: r.document_number,
+    field: 'Document Date',
+    current: r.document_date,
+    expected: `a date on or before today (${todayISO})`,
+    message: `${gstDocumentTypeLabel(r.__documentType) || r.__documentType} ${r.document_number} is dated in the future.`,
+    fix: 'Correct the document date — a return cannot contain a future-dated document.'
+  })));
+  const datedDocumentRows = documentRows.filter(r => !(r.document_date && r.document_date > todayISO));
+
+  // Credit and debit notes are documents issued too, and the registry
+  // gives them Table 13 rows 5 and 4. gstr1FetchDocuments() cannot read
+  // them: cdn_notes holds both types in one table with no document_type
+  // column to tell them apart, and dates its rows note_date rather than
+  // document_date — which is why cdn_notes sits in
+  // GSTR1_TABLE13_HANDLED_ELSEWHERE. They are already fetched above for
+  // 9B, so the rows are mapped into the shape the shared builder expects
+  // and go through exactly the same grouping, ordering and cancellation
+  // counting as every other document type. No second Table 13 builder.
+  //
+  // Two books of notes numbered differently stay two docs[] entries, the
+  // same way the shop's 138 and the website's W-00001 do — merging them
+  // would report a range that was never issued.
+  const noteDocumentRows = cdnNotes
+    .filter(n => !(n.note_date && n.note_date > todayISO))
+    .map(n => ({
+      __documentType: String(n.note_type || '').trim().toLowerCase() === 'debit' ? 'debit_note' : 'credit_note',
+      document_number: n.note_number,
+      document_date: n.note_date,
+      // cdn_notes carries no status column: a note cannot be cancelled in
+      // this application, so nothing lands in Table 13's cancel column.
+      status: null
+    }));
+
+  gstr1DocumentRanges([...datedDocumentRows, ...noteDocumentRows]).forEach(entry => {
+    const row = gstr1Table13RowFor(entry.documentType);
+    if (row) addTable13(row.docNum, row.docTyp, entry.docs);
+  });
+
+  const doc_det = [...table13Buckets.values()]
+    .sort((a, b) => a.docNum - b.docNum)
+    .map(bucket => ({
+      doc_num: bucket.docNum,
+      doc_typ: bucket.docTyp,
+      // num runs 1..n within each doc_det, so a bucket fed from more
+      // than one source is renumbered rather than carrying two 1s.
+      docs: bucket.docs.map((d, i) => ({ ...d, num: i + 1 }))
+    }));
+  const doc_issue = doc_det.length ? { doc_det } : {};
+
+  // Still computed, no longer emitted: a Utility-written return has no gt
+  // or cur_gt, and the value we produced was the period's invoice total,
+  // not the taxpayer's gross annual turnover, which is what gt means. The
+  // final audit still reconciles every section against it.
+  const grandTotal = round2(
+    b2b.reduce((s, g) => s + g.inv.reduce((s2, i) => s2 + i.val, 0), 0) +
+    b2cl.reduce((s, g) => s + g.inv.reduce((s2, i) => s2 + i.val, 0), 0) +
+    b2cs.reduce((s, r) => s + round2(r.txval + r.iamt + r.camt + r.samt), 0) -
+    cdnr.reduce((s, g) => s + g.nt.reduce((s2, n) => s2 + (n.ntty === 'C' ? n.val : -n.val), 0), 0) -
+    cdnur.reduce((s, n) => s + (n.ntty === 'C' ? n.val : -n.val), 0)
+  );
+
+  // Assembled through the registry rather than as an object literal, so
+  // the written key order and the emit-when-empty policy both come from
+  // GSTR1_SECTIONS and cannot drift from what the audit expects.
+  // Ordered by supply channel so the same data always writes the same
+  // file. Only channels that actually carry a non-taxable supply appear.
+  // A Bill of Supply is issued instead of a tax invoice, by a composition
+  // dealer or a supplier of exempt goods. It carries no tax, so it belongs
+  // in Table 8 with the other non-taxable supplies rather than in any of
+  // the taxable sections. Its number is still reported in Table 13, which
+  // it shares with tax invoices because that table reports numbering
+  // series rather than tax status.
+  const BOS_TREATMENT = { exempted: 'exempt', nil_rated: 'nil_rated', non_gst: 'non_gst' };
+  datedDocumentRows
+    .filter(r => r.__documentType === 'bill_of_supply')
+    .filter(r => String(r.status || '').toLowerCase() !== 'cancelled')
+    .forEach(r => {
+      const treatment = BOS_TREATMENT[String(r.supply_nature || '').trim()] || 'exempt';
+      addToNil(!!String(r.party_gstin || '').trim(), r.supply_type, treatment, round2(r.total_value));
+    });
+
+  const nil = nilBuckets.size
+    ? { inv: [...nilBuckets.values()].sort((a, b) => a.sply_ty.localeCompare(b.sply_ty)) }
+    : {};
+
+  // Revised invoices, if the amendment sections are switched on. While
+  // GSTR1_EMIT_AMENDMENTS is false both arrays come back empty and are
+  // therefore not written — the return is unchanged.
+  const { b2ba, b2cla } = gstr1BuildAmendments(
+    datedDocumentRows.filter(r => r.__documentType === 'revised_invoice'),
+    amendmentRows);
+
+  // Amendments this application records but does not yet write. Reported
+  // at export time so what is missing from the file is stated rather than
+  // left to be discovered — the same rule the unproduced sections follow.
+  const unwrittenAmendments = (amendmentRows || [])
+    .filter(a => !['b2b', 'b2cl'].includes(a.section));
+  if (unwrittenAmendments.length && !GSTR1_EMIT_AMENDMENTS) {
+    errors.push(gstr1Err({
+      field: 'Amendments',
+      current: `${unwrittenAmendments.length} recorded`,
+      expected: 'amendment sections in the file',
+      message: `${unwrittenAmendments.length} amendment${unwrittenAmendments.length === 1 ? ' is' : 's are'} recorded for this period but ${unwrittenAmendments.length === 1 ? 'is' : 'are'} not written to the JSON.`,
+      fix: 'Enter them on the Portal directly. Their JSON shape could not be verified from here, so they are held back rather than guessed.'
+    }));
+  }
+
+  // Section 9(5): supplies where the OPERATOR pays the tax, not the
+  // supplier. They belong in GSTR-1 Tables 14 and 15, which this file does
+  // not write because no schema reference available here gives their
+  // shape. Saying so at export time is the difference between a known gap
+  // and a silent one — the figures are here, they are just not in the JSON.
+  const section95 = [...b2bData, ...b2cData]
+    .filter(r => String(r.ecom_supply_type || '').trim() === 'section_9_5');
+  if (section95.length) {
+    const total = round2(section95.reduce((t, r) => t + (+r.taxable_amount || 0), 0));
+    errors.push(gstr1Err({
+      field: 'Section 9(5) supplies',
+      current: `${section95.length} invoice${section95.length === 1 ? '' : 's'}, ${total} taxable`,
+      expected: 'GSTR-1 Tables 14 and 15',
+      message: `${section95.length} supply${section95.length === 1 ? '' : ' supplies'} marked as section 9(5) — where the operator pays the tax — ${section95.length === 1 ? 'is' : 'are'} not written to the JSON.`,
+      fix: 'Enter them in Tables 14/15 on the Portal. Their JSON shape could not be verified from here, so they are held back rather than guessed. The Document Register lists them.'
+    }));
+  }
+
+  // Table 6A. Ordered by export type, and the invoices within each by
+  // number, so the same data always writes the same file.
+  const exp = [...expGroups.entries()]
+    .sort((a, b) => a[0].localeCompare(b[0]))
+    .map(([exp_typ, inv]) => ({
+      exp_typ,
+      inv: inv.sort((x, y) => gstr1CompareInvoiceNumbers(x.inum, y.inum))
+    }));
+
+  // Tables 11A and 11B. An advance is reported by place of supply and
+  // rate, not per document — the receipt voucher that recorded it is
+  // reported separately, in Table 13.
+  const at = gstr1BuildAdvanceSection(
+    datedDocumentRows.filter(r => r.__documentType === 'receipt_voucher'),
+    r => round2(r.advance_amount), r => r.place_of_supply, r => r.supply_type,
+    errors, 'Receipt voucher');
+  // Named txpd because the payload key is txpd — the shorthand below puts
+  // this variable's name straight into the JSON, so the two cannot drift.
+  const txpd = gstr1BuildAdvanceSection(
+    advanceAdjustmentRows,
+    r => round2(r.adjusted_amount), r => r.place_of_supply, r => r.supply_type,
+    errors, 'Advance adjustment');
+
+  const payload = assembleGSTR1Payload({
+    gstin: businessGstin, fp, version: GSTR1_VERSION, hash: GSTR1_HASH,
+    b2b, b2ba, b2cl, b2cla, b2cs, cdnr, cdnur, exp, at, txpd, nil, hsn, doc_issue
+  });
+  return { payload, errors, context: { periodStart: start, periodEnd: end, salesReturnNettedTaxable, grandTotal } };
+}
+
+// ── Final audit — a fully independent second pass over the ALREADY-BUILT
+// payload, re-deriving every total from the payload's own arrays and
+// cross-checking them against each other. This is the reconciliation gate
+// the brief calls out explicitly: it exists so that if a future edit to
+// buildGSTR1Payload() ever breaks the invariant that B2B+B2CL+B2CS+
+// adjustments == HSN taxable total, the export refuses to run instead of
+// silently producing a file that fails on the Portal. ──
+function runFinalGSTR1Audit(payload, errors, context) {
+  // 1. JSON Parse — round-trip through JSON.stringify/parse; anything
+  // that can't survive that (a stray undefined turned into a hole, NaN,
+  // circular ref) fails here before it ever reaches disk.
+  let reparsed;
+  try { reparsed = JSON.parse(JSON.stringify(payload)); }
+  catch (e) { errors.push(`JSON serialization failed: ${e.message}`); return; }
+
+  // 2. Schema — presence, types, unknown keys and row shapes, all driven
+  // by GSTR1_SECTIONS. Previously a key list hardcoded here, which meant
+  // any section added to the payload was rejected as "unexpected" by this
+  // very check. Run against the reparsed copy, so what is validated is
+  // exactly what will be written.
+  validateGSTR1Schema(reparsed, errors);
+
+  // 3. GSTIN — filer's own GSTIN, re-validated on the built payload.
+  const filerCheck = validateGstin(reparsed.gstin);
+  if (!filerCheck.valid) errors.push(`Final audit: filer GSTIN "${reparsed.gstin}" is invalid (${filerCheck.reason}).`);
+
+  // 4. fp format — exactly MMYYYY, 6 digits.
+  if (!/^(0[1-9]|1[0-2])\d{4}$/.test(reparsed.fp || '')) errors.push(`Final audit: filing period "${reparsed.fp}" is not a valid MMYYYY value.`);
+
+  // 5. Mathematical reconciliation — "Invoice taxable total = B2B +
+  // B2CL + B2CS + adjustments AND = HSN taxable total."
+  //
+  // The only "adjustment" that can legitimately apply to this check is
+  // sales-return netting: HSN rows are built by summing the line items of
+  // every taxable outward supply by HSN+rate and then subtracting
+  // returned quantity/value for that same HSN+rate (see
+  // buildGSTR1Payload's Sales Returns section) — so HSN taxable is
+  // *always* those supplies minus exactly that netted figure, never more,
+  // never less.
+  //
+  // Exports count as one of those supplies. addToHsn() runs at the top of
+  // each item loop, and the export short-circuit that sends the invoice
+  // to table 6A (collectExport) comes after it — so an export's lines are
+  // already in the HSN buckets by the time the invoice leaves for 6A.
+  // This side used to omit them, which made every return containing an
+  // export fail by exactly the export taxable value: HSN counted them and
+  // the invoice side did not. Nil-rated, exempt and non-GST invoices are
+  // a genuine exception and are correctly absent from both sides — they
+  // return before addToHsn() is ever reached, and are reported in table 8.
+  //
+  // CDNR/CDNUR (Credit/Debit Notes) are deliberately NOT part of this
+  // specific check: cdn_notes has no hsn_code column anywhere in the
+  // schema, so a note can never be attributed to an HSN row in the first
+  // place — comparing HSN against a total that includes them would be
+  // comparing two numbers that were never supposed to be equal, not a
+  // real reconciliation. Their effect on the filer's overall turnover is
+  // checked separately in the Grand Total check (#6) instead, which is
+  // the number they actually belong to.
+  const sumItmTaxable = (invArr) => invArr.reduce((s, g) => s + g.inv.reduce((s2, i) => s2 + i.itms.reduce((s3, it) => s3 + it.itm_det.txval, 0), 0), 0);
+  const b2bTaxable = round2(sumItmTaxable(reparsed.b2b || []));
+  const b2clTaxable = round2(sumItmTaxable(reparsed.b2cl || []));
+  const b2csTaxable = round2((reparsed.b2cs || []).reduce((s, r) => s + r.txval, 0));
+  // exp rows carry flat item objects — txval sits on the item itself,
+  // not inside the num/itm_det pair b2b and b2cl use.
+  const expTaxable = round2((reparsed.exp || []).reduce((s, g) =>
+    s + g.inv.reduce((s2, i) => s2 + i.itms.reduce((s3, it) => s3 + it.txval, 0), 0), 0));
+  const salesReturnNettedTaxable = round2(context?.salesReturnNettedTaxable || 0);
+  const invoiceSideTaxable = round2(b2bTaxable + b2clTaxable + b2csTaxable + expTaxable - salesReturnNettedTaxable);
+  const hsnTaxable = round2(['hsn_b2b', 'hsn_b2c']
+    .flatMap(k => (reparsed.hsn && reparsed.hsn[k]) || [])
+    .reduce((s, r) => s + r.txval, 0));
+  if (Math.abs(invoiceSideTaxable - hsnTaxable) > GSTR1_RECONCILE_TOLERANCE) {
+    errors.push(`Final audit — RECONCILIATION FAILED: (B2B + B2CL + B2CS + Exports − Sales Return adjustments) = ₹${invoiceSideTaxable} does not equal HSN section taxable total (₹${hsnTaxable}). Difference: ₹${round2(invoiceSideTaxable - hsnTaxable)}.`);
+  }
+
+  // 5b. CDNR/CDNUR self-consistency — each note's stated val must equal
+  // its own itms' taxable + tax (this is what actually needs to
+  // reconcile for notes, since HSN structurally can't).
+  const noteValOk = (n) => Math.abs(n.val - round2(n.itms.reduce((s, it) => s + it.itm_det.txval + (it.itm_det.iamt || 0) + (it.itm_det.camt || 0) + (it.itm_det.samt || 0), 0))) <= GSTR1_RECONCILE_TOLERANCE;
+  (reparsed.cdnr || []).forEach(g => g.nt.forEach(n => { if (!noteValOk(n)) errors.push(`Final audit: CDNR note ${n.nt_num} val (₹${n.val}) does not match its own item total.`); }));
+  (reparsed.cdnur || []).forEach(n => { if (!noteValOk(n)) errors.push(`Final audit: CDNUR note ${n.nt_num} val (₹${n.val}) does not match its own item total.`); });
+
+  // 6. Grand total — every section's own invoice-level value, re-derived
+  // here from the payload and compared against the figure the builder
+  // arrived at independently.
+  const sumVal = (invArr) => invArr.reduce((s, g) => s + g.inv.reduce((s2, i) => s2 + i.val, 0), 0);
+  const b2bVal = sumVal(reparsed.b2b || []), b2clVal = sumVal(reparsed.b2cl || []);
+  const b2csVal = (reparsed.b2cs || []).reduce((s, r) => s + round2(r.txval + r.iamt + r.camt + r.samt), 0);
+  const cdnrVal = (reparsed.cdnr || []).reduce((s, g) => s + g.nt.reduce((s2, n) => s2 + (n.ntty === 'C' ? n.val : -n.val), 0), 0);
+  const cdnurVal = (reparsed.cdnur || []).reduce((s, n) => s + (n.ntty === 'C' ? n.val : -n.val), 0);
+  const recomputedGt = round2(b2bVal + b2clVal + b2csVal - cdnrVal - cdnurVal);
+  // gt is not written to the file any more, so this reconciles the
+  // sections against the figure buildGSTR1Payload() computed while it was
+  // assembling them. A disagreement still means the two halves of the
+  // generator disagree about the same return.
+  const statedGt = round2(context?.grandTotal || 0);
+  if (Math.abs(recomputedGt - statedGt) > GSTR1_RECONCILE_TOLERANCE) {
+    errors.push(`Final audit — GRAND TOTAL MISMATCH: the sections total ₹${recomputedGt} but the generator computed ₹${statedGt} while building them.`);
+  }
+
+  // 7. GSTIN validation across every section.
+  (reparsed.b2b || []).forEach(g => { if (!validateGstin(g.ctin).valid) errors.push(`Final audit: B2B section ctin "${g.ctin}" is invalid.`); });
+  (reparsed.cdnr || []).forEach(g => { if (!validateGstin(g.ctin).valid) errors.push(`Final audit: CDNR section ctin "${g.ctin}" is invalid.`); });
+
+  // 8. POS validation across every section.
+  const checkPos = (pos, where) => { if (!GSTR1_VALID_POS_CODES.has(pos) && pos !== '99') errors.push(`Final audit: invalid POS "${pos}" in ${where}.`); };
+  (reparsed.b2b || []).forEach(g => g.inv.forEach(i => checkPos(i.pos, `B2B invoice ${i.inum}`)));
+  (reparsed.b2cl || []).forEach(g => checkPos(g.pos, `B2CL group`));
+  (reparsed.b2cs || []).forEach(r => checkPos(r.pos, `B2CS bucket (rate ${r.rt}%)`));
+  // The two advance sections were missing from this list, which is exactly
+  // why a state NAME reached the Portal in their pos: the audit that would
+  // have caught it was not looking at them.
+  (reparsed.at || []).forEach(g => checkPos(g.pos, `AT group (advances received)`));
+  (reparsed.txpd || []).forEach(g => checkPos(g.pos, `TXPD group (advances adjusted)`));
+
+  // 9. HSN validation — format, and no duplicate hsn+rate rows (the
+  // bucket map construction already prevents this internally, but the
+  // final audit re-checks the actual arrays that will be written).
+  //
+  // Uniqueness is per array, not across both: the same HSN at the same
+  // rate legitimately appears once in hsn_b2b and once in hsn_b2c when a
+  // product is sold to registered and unregistered customers alike.
+  ['hsn_b2b', 'hsn_b2c'].forEach(k => {
+  const hsnSeen = new Set();
+  ((reparsed.hsn && reparsed.hsn[k]) || []).forEach(row => {
+    if (!gstr1HsnFormatOk(row.hsn_sc)) errors.push(`Final audit: HSN row "${row.hsn_sc}" is not a valid 4/6/8-digit code.`);
+    const key = row.hsn_sc + '|' + row.rt;
+    if (hsnSeen.has(key)) errors.push(`Final audit: duplicate HSN row for code ${row.hsn_sc} at rate ${row.rt}% in ${k}.`);
+    hsnSeen.add(key);
+    if (row.qty < 0) errors.push(`Final audit: HSN row ${row.hsn_sc} has negative quantity (${row.qty}).`);
+    if (row.txval < 0) errors.push(`Final audit: HSN row ${row.hsn_sc} has negative taxable value (${row.txval}).`);
+  });
+  });
+}
+
+// ── Serialisation ───────────────────────────────────────────
+// Written the way the Offline Utility writes it: one line, no padding,
+// and nested object keys in alphabetical order. Neither matters to a JSON
+// parser — objects are unordered and whitespace is insignificant — but
+// matching removes a whole class of "why does mine look different"
+// question when the two files are put side by side, and costs nothing.
+//
+// The root keeps the order GSTR1_SECTIONS declares (gstin, fp, version,
+// hash, then sections), which is the order the Utility uses there.
+function gstr1SortKeysDeep(value) {
+  if (Array.isArray(value)) return value.map(gstr1SortKeysDeep);
+  if (value && typeof value === 'object') {
+    const out = {};
+    Object.keys(value).sort().forEach(k => { out[k] = gstr1SortKeysDeep(value[k]); });
+    return out;
+  }
+  return value;
+}
+
+function gstr1SerializePayload(payload) {
+  const ordered = {};
+  Object.keys(payload).forEach(k => { ordered[k] = gstr1SortKeysDeep(payload[k]); });
+  // The reference escapes every forward slash ("00158\/26-27"). It is an
+  // optional escape that any JSON parser reads back identically, so this
+  // changes no value — it makes the two files byte-comparable, which is
+  // worth having when the next difference has to be found by eye.
+  return JSON.stringify(ordered).replace(/\//g, '\\/');
+}
+
+// ── What the file does not contain ──────────────────────────
+// Reported on every export, whether or not it succeeds. These do not
+// block the download — they are statements of coverage, so the filer
+// knows what still has to be entered on the Portal instead of finding
+// out when the return is short.
+function gstr1CoverageNotes(payload) {
+  const notes = GSTR1_UNPRODUCED_SECTIONS.map(s =>
+    `Not included — ${s.label}: ${s.reason}. Add it on the Portal after upload if this period needs it.`);
+  GSTR1_SECTIONS.filter(s => s.kind === 'section').forEach(spec => {
+    if (payload[spec.key] !== undefined && gstr1SectionIsEmpty(spec, payload[spec.key])) {
+      notes.push(`Empty — ${spec.label}: no qualifying records this period; the section is still written to the file.`);
+    }
+  });
+  return notes;
+}
+
+// ── UI: validation-failure modal (never a native alert()) ──
+function gstr1SetModal(titleHtml, leadHtml, innerHtml) {
+  const modal = document.getElementById('gstr1ValidationModal');
+  const list = document.getElementById('gstr1ValidationList');
+  if (!modal || !list) return false;
+  const title = document.getElementById('gstr1ValidationTitle');
+  const lead = document.getElementById('gstr1ValidationLead');
+  if (title) title.innerHTML = titleHtml;
+  if (lead) lead.innerHTML = leadHtml;
+  list.innerHTML = innerHtml;
+  modal.classList.add('open');
+  return true;
+}
+
+// One error, laid out so the person reading it can act without going
+// looking: which document, which line, which field, what is there, what
+// belongs there, and what to do about it.
+function gstr1ErrorHtml(e) {
+  if (typeof e === 'string' || !e || !e.__gstr1Err) return `<li>${escItemHtml(gstr1ErrorText(e))}</li>`;
+  const row = (k, v) => v === undefined || v === null || v === ''
+    ? '' : `<div><span class="text-muted-sm" style="display:inline-block;min-width:118px;">${k}</span>${escItemHtml(String(v))}</div>`;
+  return `<li style="margin-bottom:14px;">
+    ${e.message ? `<div class="fw-600 mb-6">${escItemHtml(e.message)}</div>` : ''}
+    ${row('Invoice', e.invoice)}
+    ${row('Customer', e.customer)}
+    ${row('Product', e.product)}
+    ${row('Field', e.field)}
+    ${row('Current value', e.current)}
+    ${row('Expected', e.expected)}
+    ${e.fix ? `<div class="mt-6"><b>How to fix:</b> ${escItemHtml(e.fix)}</div>` : ''}
+  </li>`;
+}
+
+function showGSTR1ValidationErrors(errors, notes = []) {
+  const errorItems = errors.map(gstr1ErrorHtml).join('');
+  const noteItems = notes.length
+    ? `<li style="list-style:none;margin-top:14px;padding-top:12px;border-top:1px solid var(--border);">
+         <b>Sections this export does not produce</b>
+         <ul style="margin-top:8px;">${notes.map(n => `<li>${escItemHtml(n)}</li>`).join('')}</ul>
+       </li>`
+    : '';
+  const shown = gstr1SetModal(
+    '<i class="fas fa-triangle-exclamation" style="color:var(--danger, #d32f2f);"></i> GSTR-1 Export Blocked — Validation Failed',
+    'The JSON was <b>not</b> generated. Fix the issue(s) below and try again.',
+    errorItems + noteItems);
+  if (!shown) {
+    showToast(`GSTR-1 export blocked — ${errors.length} validation error(s). See console.`, 'error');
+    // Rendered as text: a structured record logs as [object Object] otherwise.
+    console.error('GSTR-1 validation errors:', errors.map(gstr1ErrorText));
+  }
+}
+
+// Shown after a successful export: what the filer still has to handle on
+// the Portal. A return that is short a section is the filer's problem to
+// fix, so it is stated here rather than only in the console.
+function showGSTR1CoverageSummary(notes) {
+  if (!notes.length) return;
+  gstr1SetModal(
+    '<i class="fas fa-circle-info" style="color:var(--primary);"></i> GSTR-1 Exported — What This File Covers',
+    'The JSON was generated and downloaded. It does <b>not</b> contain the sections below, because this application holds no data for them.',
+    notes.map(n => `<li>${escItemHtml(n)}</li>`).join(''));
+}
+function closeGSTR1ValidationModal() {
+  document.getElementById('gstr1ValidationModal')?.classList.remove('open');
+}
+
+// ── Entry point — re-derives the period from the report page's own
+// filter (the single source of truth for "what period is being
+// exported"), so there is no separate stale copy of that decision passed
+// around through function arguments. ──
+async function exportGSTR1JSON() {
+  const user = await getCurrentUser();
+  if (!user) return;
+
+  // The profile IS the return's identity: its GSTIN is the gstin written
+  // on the file, and the state code every place of supply is compared
+  // against. Reading it from the cache alone was wrong, because nothing
+  // guaranteed the cache was warm — js/reports.js starts the profile
+  // load without awaiting it, so a click landing in that window read
+  // null. Null then became an empty GSTIN and, through getStateCode(''),
+  // state code 99 — on a business registered in Tamil Nadu, with the
+  // correct GSTIN sitting in the database the whole time.
+  //
+  // So it is loaded here if it is not already in hand. Waiting costs one
+  // request that is usually already in flight; guessing costs a wrong
+  // return.
+  let profile = (typeof getCachedProfile === 'function') ? getCachedProfile() : null;
+  if (!profile?.gstin && typeof loadUserProfile === 'function') {
+    profile = await loadUserProfile(user.id) || profile;
+  }
+  // The period dropdown is filled from the database after the page loads.
+  // A click landing in that window used to read a select with no options
+  // — value "", selectedIndex -1 — and report "(nothing selected)" while
+  // the user was looking at July 2026 in the very same control a moment
+  // later. Waiting costs nothing once it is ready, and makes an early
+  // click do what was meant instead of failing.
+  await gstr1AwaitPeriodOptions();
+
+  // Whatever the period dropdown actually holds — no fallback. A default
+  // of 'current' here would put the system month on the file when nothing
+  // had been selected, which is the failure this is guarding against.
+  const periodEl = document.getElementById('reportMonth');
+  const periodFilter = periodEl?.value ?? '';
+
+  // Traceable on demand. A period that arrives wrong has to be diagnosed
+  // from the machine it happened on, and "it says current" is not enough
+  // to tell whether the dropdown held that, whether the element was found
+  // at all, or whether something reset it between the click and here.
+  gstr1TracePeriod('exportGSTR1JSON', periodEl, periodFilter);
+
+  // The month is named in every message from here on. A GSTR-1 is filed
+  // for exactly one month, and the only thing standing between the user
+  // and filing the wrong one is the dropdown they set a moment ago —
+  // reading it back to them at each step is how a mis-selection gets
+  // noticed before the file is uploaded rather than after.
+  //
+  // Only when the selection actually names a month: 'current', 'fy' and
+  // the quarters are refused by gstr1FilingPeriod() a moment later, and
+  // "Validating GSTR-1 for current…" would be a confusing thing to say
+  // just before explaining that it is not a filing period at all.
+  const periodNamesMonth = GSTR1_MONTH_SELECTION.test(String(periodFilter || ''));
+  const forPeriod = periodNamesMonth ? ` for ${gstr1MonthLabel(periodFilter)}` : '';
+
+  showToast(`Validating GSTR-1${forPeriod}…`, 'success');
+  const { payload, errors, context } = await buildGSTR1Payload(user.id, profile, periodFilter);
+
+  // Before anything else: the state table must still cover every state the
+  // app can store. A gap here means POS silently becomes 99, so it blocks
+  // the export rather than producing a return with a bad place of supply.
+  gstr1AssertStateTableComplete(errors);
+
+  // Schema first, then the reconciliation audit — a payload with a missing
+  // or mistyped section produces clearer errors from the schema pass than
+  // from arithmetic that trips over it.
+  // Three gates, cheapest and most structural first, so the message the
+  // user sees is the one closest to the actual cause:
+  //   schema  — is the payload the right shape at all
+  //   strict  — is every value one this generator may legitimately emit
+  //   audit   — do the totals reconcile against each other
+  if (!errors.length && payload) validateGSTR1Schema(payload, errors);
+  if (!errors.length && payload) validateGSTR1Strict(payload, errors);
+  if (!errors.length) runFinalGSTR1Audit(payload, errors, context);
+
+  const notes = payload ? gstr1CoverageNotes(payload) : [];
+  notes.forEach(n => console.info('[GSTR-1 coverage]', n));
+
+  if (errors.length) {
+    showGSTR1ValidationErrors(errors, notes);
+    return; // never write the file
+  }
+
+  // Named from payload.fp, not from the dropdown: fp is re-derived from
+  // the invoices actually being written (see gstr1DeriveFilingMonth), and
+  // it is the value that goes into the filename. The two can only differ
+  // if the export was already blocked above, so on this line they agree —
+  // but quoting the one that is really on the file keeps the message true
+  // by construction rather than by coincidence.
+  const filedFor = gstr1MonthLabel(`${payload.fp.slice(2)}-${payload.fp.slice(0, 2)}`);
+
+  showToast(`Generating GSTR-1 JSON for ${filedFor}…`, 'success');
+  const blob = new Blob([gstr1SerializePayload(payload)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `GSTR1_${payload.fp}.json`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+  showToast(`GSTR-1 JSON for ${filedFor} generated successfully — ready to upload to the GST Portal.`, 'success');
+  showGSTR1CoverageSummary(notes);
+}
+
+function formatDateDDMMYYYY(d) {
+  if (!d) return '';
+  const parts = String(d).split('-');
+  if (parts.length === 3) return `${parts[2]}-${parts[1]}-${parts[0]}`;
+  return d;
+}
+
+// ── State code table ────────────────────────────────────────
+// Keyed by the EXACT strings in INDIAN_STATES (js/utils.js) — the list
+// every state dropdown in this app is built from, and therefore the only
+// set of values that can actually reach here from stored invoice data.
+//
+// The previous table was keyed by hand-typed names that had drifted out
+// of step with that list, and two of them no longer matched anything the
+// app can store:
+//
+//   "Andaman and Nicobar Islands"              -> no key -> 99
+//   "Dadra and Nagar Haveli and Daman and Diu" -> no key -> 99
+//
+// A 99 here is not a harmless default: gstr1PosUnregistered() treats it
+// as "unrecognised state" and blocks the whole export, so a single B2C
+// invoice to either of those two UTs made a GSTR-1 file impossible to
+// produce at all. gstr1AssertStateTableComplete() below now fails the
+// export loudly if this table and INDIAN_STATES ever drift again.

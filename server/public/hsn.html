@@ -1,0 +1,248 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>HSN Summary - GST Management System</title>
+  <link rel="stylesheet" href="client/css/style.css?v=28">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
+  <script src="https://cdn.sheetjs.com/xlsx-latest/package/dist/xlsx.full.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.31/jspdf.plugin.autotable.min.js"></script>
+  <script src="shared/india-districts.js?v=28"></script>
+  <script src="client/js/api/apiClient.js?v=28"></script>
+  <script src="client/js/api/backup.js?v=28"></script>
+  <script src="client/js/core/config.js?v=28"></script>
+  <script src="client/js/api/product-sync.js?v=28"></script>
+  <script src="client/js/core/auth.js?v=28"></script>
+  <script src="client/js/utilities/utils.js?v=28"></script>
+  <script src="client/js/core/search.js?v=28"></script>
+  <script src="client/js/pages/profile.js?v=28"></script>
+  <script src="client/js/utilities/export.js?v=28"></script>
+  <script src="client/js/gst/hsn.js?v=28"></script>
+</head>
+<body>
+<div class="app-layout">
+
+  <aside class="sidebar">
+    <a class="sidebar-brand" href="dashboard.html">
+      <div class="brand-icon"><i class="fas fa-file-invoice-dollar"></i></div>
+      <span>GST Invoice<br>Management</span>
+    </a>
+    <nav class="sidebar-menu">
+      <div class="menu-section">Main</div>
+      <a href="dashboard.html" class="menu-item"><i class="fas fa-tachometer-alt"></i> Dashboard</a>
+      <div class="menu-section">Invoices / Sales</div>
+      <a href="invoice.html" class="menu-item"><i class="fas fa-plus-circle"></i> New Invoice</a>
+      <a href="invoice-list.html" class="menu-item"><i class="fas fa-list-alt"></i> Invoice List</a>
+      <a href="cdnotes.html" class="menu-item"><i class="fas fa-file-minus"></i> Credit / Debit Notes</a>
+      <a href="sales-returns.html" class="menu-item"><i class="fas fa-rotate-left"></i> Sales Returns</a>
+      <a href="bill-of-supply.html" class="menu-item"><i class="fas fa-file-invoice"></i> Bill of Supply</a>
+      <a href="revised-invoice.html" class="menu-item"><i class="fas fa-file-pen"></i> Revised Invoice</a>
+      <a href="advances.html" class="menu-item"><i class="fas fa-hand-holding-dollar"></i> Advances</a>
+      <a href="vouchers.html" class="menu-item"><i class="fas fa-receipt"></i> Vouchers</a>
+      <a href="challans.html" class="menu-item"><i class="fas fa-file-signature"></i> Delivery Challans</a>
+      <a href="amendments.html" class="menu-item"><i class="fas fa-pen-to-square"></i> Amendments</a>
+      <div class="menu-section">Purchases</div>
+      <a href="vendors.html" class="menu-item"><i class="fas fa-truck"></i> Vendors</a>
+      <a href="vendor-ledger.html" class="menu-item"><i class="fas fa-book"></i> Vendor Ledger</a>
+      <a href="purchases.html" class="menu-item"><i class="fas fa-cart-plus"></i> New Purchase</a>
+      <a href="purchase-list.html" class="menu-item"><i class="fas fa-boxes"></i> Purchase List</a>
+      <a href="purchase-returns.html" class="menu-item"><i class="fas fa-undo"></i> Purchase Returns</a>
+      <div class="menu-section">GST / Special</div>
+      <a href="eway-bills.html" class="menu-item"><i class="fas fa-truck-fast"></i> E-Way Bills</a>
+      <a href="challans.html#job-workers" class="menu-item"><i class="fas fa-industry"></i> Job Workers</a>
+      <div class="menu-section">HSN</div>
+      <a href="hsn.html#b2b" class="menu-item"><i class="fas fa-barcode"></i> B2B HSN</a>
+      <a href="hsn.html#b2c" class="menu-item"><i class="fas fa-tags"></i> B2C HSN</a>
+      <div class="menu-section">Masters</div>
+      <a href="customers.html" class="menu-item"><i class="fas fa-address-book"></i> Customers</a>
+      <a href="customer-ledger.html" class="menu-item"><i class="fas fa-book"></i> Customer Ledger</a>
+      <a href="products.html" class="menu-item"><i class="fas fa-box"></i> Products</a>
+      <div class="menu-section">Expenses</div>
+      <a href="expenses.html" class="menu-item"><i class="fas fa-receipt"></i> Expenses</a>
+      <div class="menu-section">Reports</div>
+      <a href="reports.html" class="menu-item"><i class="fas fa-chart-bar"></i> Reports &amp; Export</a>
+      <a href="gstr3b.html" class="menu-item"><i class="fas fa-calculator"></i> GSTR-3B Summary</a>
+      <a href="document-register.html" class="menu-item"><i class="fas fa-book-open"></i> Document Register</a>
+      <div class="menu-section">Settings</div>
+      <a href="#" class="menu-item" onclick="openProfileModal();return false;"><i class="fas fa-building"></i> Business Profile</a>
+    </nav>
+    <div class="sidebar-user">
+      <div class="user-avatar"><i class="fas fa-user"></i></div>
+      <div class="user-info" onclick="openSettingsModal()" title="Click to open settings">
+        <div class="user-name" id="navUserName">User</div>
+        <div class="user-role">GST Manager</div>
+      </div>
+      <button type="button" class="btn-logout btn-settings" onclick="openSettingsModal()" title="Settings"><i class="fas fa-cog"></i></button>
+      <button type="button" class="btn-logout" id="logoutBtn" title="Logout"><i class="fas fa-sign-out-alt"></i></button>
+    </div>
+  </aside>
+
+  <div class="main-content">
+    <div class="top-bar">
+      <button type="button" class="menu-toggle" id="menuToggle" aria-label="Toggle sidebar menu"><i class="fas fa-bars"></i></button>
+      <span class="page-title"><i class="fas fa-barcode"></i>HSN Summary</span>
+      <div class="ml-auto d-flex gap-10">
+        <button type="button" class="btn btn-secondary btn-sm btn-icon" onclick="openGlobalSearch()" title="Search everywhere (Ctrl+K)" aria-label="Global search"><i class="fas fa-search"></i></button>
+        <a href="invoice.html" class="btn btn-secondary btn-sm"><i class="fas fa-plus"></i> New Invoice</a>
+        <a href="reports.html" class="btn btn-info btn-sm"><i class="fas fa-arrow-right"></i> Reports</a>
+      </div>
+    </div>
+
+    <div class="content">
+      <!-- Tabs -->
+      <div class="tab-bar">
+        <button type="button" class="tab-btn active" id="tabB2B" onclick="hsnTabClick('b2b')"><i class="fas fa-building"></i> B2B HSN</button>
+        <button type="button" class="tab-btn"        id="tabB2C" onclick="hsnTabClick('b2c')"><i class="fas fa-users"></i> B2C HSN</button>
+      </div>
+
+      <!-- B2B HSN Tab -->
+      <div class="tab-pane active">
+        <div class="banner-success mb-20">
+          <i class="fas fa-info-circle"></i>
+          <div class="banner-text">
+            HSN Summary is generated automatically from the products on your B2B invoices &mdash; there is nothing to enter here.
+            Add or edit products on the <a href="invoice.html">New Invoice</a> page and this updates on its own.
+          </div>
+        </div>
+
+        <!-- HSN Analytics — search one HSN code and see its totals and the
+             products behind it. Aggregated in js/hsn.js from the summary data
+             already loaded for the table below; no extra request is made, and
+             the table and its Excel export are left untouched. -->
+        <div class="card mb-20">
+          <div class="card-body">
+            <div class="d-flex gap-10 align-center flex-wrap">
+              <label for="hsnB2BSearch" class="fw-600">HSN Code</label>
+              <input type="text" id="hsnB2BSearch" class="form-control w-200" inputmode="numeric" maxlength="8"
+                     placeholder="e.g. 84386000" aria-label="Search B2B HSN code"
+                     onkeydown="if (event.key === 'Enter') { event.preventDefault(); runHsnSearch('b2b'); }">
+              <button type="button" class="btn btn-primary btn-sm" onclick="runHsnSearch('b2b')"><i class="fas fa-search"></i> Search</button>
+              <button type="button" class="btn btn-secondary btn-sm" onclick="clearHsnSearch('b2b')"><i class="fas fa-times"></i> Clear</button>
+            </div>
+            <div id="hsnB2BAnalytics"></div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-header">
+            <span class="card-title"><i class="fas fa-list"></i> B2B HSN Summary</span>
+            <div class="d-flex gap-10">
+              <button type="button" class="btn btn-success btn-sm" onclick="exportHSNExcel(hsnB2BData, [])"><i class="fas fa-file-excel"></i> Excel</button>
+            </div>
+          </div>
+          <div class="card-body p-0">
+            <div class="table-wrapper">
+              <table class="data-table">
+                <thead>
+                  <tr><th>#</th><th>HSN Code</th><th>Product Name</th><th>Type</th><th>Qty</th><th>Taxable Value</th><th>GST%</th><th>Supply</th><th>IGST</th><th>CGST/SGST</th><th>Total GST</th><th>Total Invoice</th><th>Source</th></tr>
+                </thead>
+                <tbody id="hsnB2BTableBody">
+                  <tr><td colspan="13" class="empty-state"><i class="fas fa-spinner fa-spin table-loading-icon"></i>Loading...</td></tr>
+                </tbody>
+                <tfoot id="hsnB2BTableTotal"></tfoot>
+              </table>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- B2C HSN Tab -->
+      <div class="tab-pane">
+        <div class="banner-success mb-20">
+          <i class="fas fa-info-circle"></i>
+          <div class="banner-text">
+            HSN Summary is generated automatically from the products on your B2C invoices &mdash; there is nothing to enter here.
+            Add or edit products on the <a href="invoice.html">New Invoice</a> page and this updates on its own.
+          </div>
+        </div>
+
+        <!-- HSN Analytics — identical to the B2B pane above, aggregated only
+             from B2C data. See runHsnSearch() in js/hsn.js. -->
+        <div class="card mb-20">
+          <div class="card-body">
+            <div class="d-flex gap-10 align-center flex-wrap">
+              <label for="hsnB2CSearch" class="fw-600">HSN Code</label>
+              <input type="text" id="hsnB2CSearch" class="form-control w-200" inputmode="numeric" maxlength="8"
+                     placeholder="e.g. 84386000" aria-label="Search B2C HSN code"
+                     onkeydown="if (event.key === 'Enter') { event.preventDefault(); runHsnSearch('b2c'); }">
+              <button type="button" class="btn btn-primary btn-sm" onclick="runHsnSearch('b2c')"><i class="fas fa-search"></i> Search</button>
+              <button type="button" class="btn btn-secondary btn-sm" onclick="clearHsnSearch('b2c')"><i class="fas fa-times"></i> Clear</button>
+            </div>
+            <div id="hsnB2CAnalytics"></div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-header">
+            <span class="card-title"><i class="fas fa-list"></i> B2C HSN Summary</span>
+            <div class="d-flex gap-10">
+              <button type="button" class="btn btn-success btn-sm" onclick="exportHSNExcel([], hsnB2CData)"><i class="fas fa-file-excel"></i> Excel</button>
+            </div>
+          </div>
+          <div class="card-body p-0">
+            <div class="table-wrapper">
+              <table class="data-table">
+                <thead>
+                  <tr><th>#</th><th>HSN Code</th><th>Product Name</th><th>Type</th><th>Taxable Value</th><th>GST%</th><th>Supply</th><th>IGST</th><th>CGST/SGST</th><th>Total GST</th><th>Total Invoice</th><th>Source</th></tr>
+                </thead>
+                <tbody id="hsnB2CTableBody">
+                  <tr><td colspan="12" class="empty-state"><i class="fas fa-spinner fa-spin table-loading-icon"></i>Loading...</td></tr>
+                </tbody>
+                <tfoot id="hsnB2CTableTotal"></tfoot>
+              </table>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+document.addEventListener('DOMContentLoaded', () => {
+  // Read URL hash to decide which tab to open
+  const hash = window.location.hash || '#b2b';
+  const isB2C = hash === '#b2c';
+
+  // Set active sidebar link
+  document.getElementById('sideB2BHSN')?.classList.toggle('active', !isB2C);
+  document.getElementById('sideB2CHSN')?.classList.toggle('active',  isB2C);
+
+  // Update page title
+  const titleEl = document.querySelector('.page-title');
+  if (titleEl) {
+    titleEl.innerHTML = isB2C
+      ? '<i class="fas fa-tags"></i>HSN Summary &mdash; B2C'
+      : '<i class="fas fa-barcode"></i>HSN Summary &mdash; B2B';
+  }
+
+  // Switch to correct tab
+  if (isB2C) {
+    switchHSNTab('b2c');
+    document.getElementById('tabB2B')?.classList.remove('active');
+    document.getElementById('tabB2C')?.classList.add('active');
+  }
+
+  initHSN();
+});
+</script>
+
+<!-- Global Search Modal -->
+<div class="modal-overlay" id="globalSearchModal">
+  <div class="modal modal-lg">
+    <div class="modal-header">
+      <span class="modal-title"><i class="fas fa-search"></i> Search Everywhere</span>
+      <button type="button" class="modal-close" onclick="closeGlobalSearch()" aria-label="Close"><i class="fas fa-times"></i></button>
+    </div>
+    <div class="modal-body">
+      <input type="text" id="globalSearchInput" class="form-control mb-16" oninput="onGlobalSearchInput(this.value)" aria-label="Global search input">
+      <div id="globalSearchResults"><p class="text-muted-sm">Type at least 2 characters&hellip;</p></div>
+    </div>
+  </div>
+</div>
+
+</body>
+</html>
+

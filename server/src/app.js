@@ -144,23 +144,22 @@ mountGenericRoutes(app);
 // is off unless SERVE_CLIENT=1 — both keep behaving exactly as they do now.
 // Hostinger runs one process for both, and sets the flag.
 //
-// An explicit allow-list, NOT express.static on the repository root: the
-// root also holds server/ (source and .env) and .git, and a blanket mount
-// would publish all of it over HTTP. Only the three things the browser
-// actually loads are served — the page files, client/ and shared/.
+// Hostinger's deploy root is server/, so nothing above it exists at
+// runtime. server/public/ holds the pages and client/ for that reason.
+//
+// Serving public/ is safe by structure rather than by pattern: it is a
+// sibling of src/, db/ and .env, and express.static cannot reach a
+// sibling — so no backend file is publishable through it at all.
 //
 // Every href and src in the HTML is relative (no leading slash), so the
-// pages need no change to be served from here.
+// pages need no change to be served from here: /client/* resolves inside
+// public/, and /shared/* is mapped below.
 if (process.env.SERVE_CLIENT === '1') {
-  const CLIENT_ROOT = path.resolve(__dirname, '..', '..');
-  app.use('/client', express.static(path.join(CLIENT_ROOT, 'client')));
-  app.use('/shared', express.static(path.join(CLIENT_ROOT, 'shared')));
-  // Root-level pages only: a bare "/" is index.html, and the pattern admits
-  // nothing but a plain lowercase filename, so it cannot be walked upwards
-  // into another directory.
-  app.get(/^\/([a-z0-9-]+\.html)?$/i, (req, res) => {
-    res.sendFile(path.join(CLIENT_ROOT, req.params[0] || 'index.html'));
-  });
+  app.use(express.static(path.join(__dirname, '..', 'public')));
+  // The browser loads the same district and return-rule files the API
+  // validates against, so both are served from the one copy in server/
+  // rather than a second one inside public/.
+  app.use('/shared', express.static(path.join(__dirname, '..', 'shared')));
 }
 
 // Any /api/* path that no route above claimed. Without this Express

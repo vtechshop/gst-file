@@ -1,0 +1,457 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Reports - GST Management System</title>
+  <link rel="stylesheet" href="client/css/style.css?v=28">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
+  <script src="https://cdn.sheetjs.com/xlsx-latest/package/dist/xlsx.full.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.31/jspdf.plugin.autotable.min.js"></script>
+  <script src="shared/india-districts.js?v=28"></script>
+  <script src="client/js/api/apiClient.js?v=28"></script>
+  <script src="client/js/api/backup.js?v=28"></script>
+  <script src="client/js/core/config.js?v=28"></script>
+  <script src="client/js/api/product-sync.js?v=28"></script>
+  <script src="client/js/core/auth.js?v=28"></script>
+  <script src="client/js/utilities/utils.js?v=28"></script>
+  <script src="client/js/core/search.js?v=28"></script>
+  <script src="client/js/pages/profile.js?v=28"></script>
+  <script src="client/js/utilities/export.js?v=28"></script>
+  <script src="client/js/utilities/future.js?v=28"></script>
+  <script src="client/js/reports/reports.js?v=28"></script>
+  <script src="client/js/gst/gstr1-export.js?v=28"></script>
+</head>
+<body>
+<div class="app-layout">
+
+  <aside class="sidebar">
+    <a class="sidebar-brand" href="dashboard.html">
+      <div class="brand-icon"><i class="fas fa-file-invoice-dollar"></i></div>
+      <span>GST Invoice<br>Management</span>
+    </a>
+    <nav class="sidebar-menu">
+      <div class="menu-section">Main</div>
+      <a href="dashboard.html" class="menu-item"><i class="fas fa-tachometer-alt"></i> Dashboard</a>
+      <div class="menu-section">Invoices / Sales</div>
+      <a href="invoice.html" class="menu-item"><i class="fas fa-plus-circle"></i> New Invoice</a>
+      <a href="invoice-list.html" class="menu-item"><i class="fas fa-list-alt"></i> Invoice List</a>
+      <a href="cdnotes.html" class="menu-item"><i class="fas fa-file-minus"></i> Credit / Debit Notes</a>
+      <a href="sales-returns.html" class="menu-item"><i class="fas fa-rotate-left"></i> Sales Returns</a>
+      <a href="bill-of-supply.html" class="menu-item"><i class="fas fa-file-invoice"></i> Bill of Supply</a>
+      <a href="revised-invoice.html" class="menu-item"><i class="fas fa-file-pen"></i> Revised Invoice</a>
+      <a href="advances.html" class="menu-item"><i class="fas fa-hand-holding-dollar"></i> Advances</a>
+      <a href="vouchers.html" class="menu-item"><i class="fas fa-receipt"></i> Vouchers</a>
+      <a href="challans.html" class="menu-item"><i class="fas fa-file-signature"></i> Delivery Challans</a>
+      <a href="amendments.html" class="menu-item"><i class="fas fa-pen-to-square"></i> Amendments</a>
+      <div class="menu-section">Purchases</div>
+      <a href="vendors.html" class="menu-item"><i class="fas fa-truck"></i> Vendors</a>
+      <a href="vendor-ledger.html" class="menu-item"><i class="fas fa-book"></i> Vendor Ledger</a>
+      <a href="purchases.html" class="menu-item"><i class="fas fa-cart-plus"></i> New Purchase</a>
+      <a href="purchase-list.html" class="menu-item"><i class="fas fa-boxes"></i> Purchase List</a>
+      <a href="purchase-returns.html" class="menu-item"><i class="fas fa-undo"></i> Purchase Returns</a>
+      <div class="menu-section">GST / Special</div>
+      <a href="eway-bills.html" class="menu-item"><i class="fas fa-truck-fast"></i> E-Way Bills</a>
+      <a href="challans.html#job-workers" class="menu-item"><i class="fas fa-industry"></i> Job Workers</a>
+      <div class="menu-section">HSN</div>
+      <a href="hsn.html#b2b" class="menu-item"><i class="fas fa-barcode"></i> B2B HSN</a>
+      <a href="hsn.html#b2c" class="menu-item"><i class="fas fa-tags"></i> B2C HSN</a>
+      <div class="menu-section">Masters</div>
+      <a href="customers.html" class="menu-item"><i class="fas fa-address-book"></i> Customers</a>
+      <a href="customer-ledger.html" class="menu-item"><i class="fas fa-book"></i> Customer Ledger</a>
+      <a href="products.html" class="menu-item"><i class="fas fa-box"></i> Products</a>
+      <div class="menu-section">Expenses</div>
+      <a href="expenses.html" class="menu-item"><i class="fas fa-receipt"></i> Expenses</a>
+      <div class="menu-section">Reports</div>
+      <a href="reports.html" class="menu-item active"><i class="fas fa-chart-bar"></i> Reports &amp; Export</a>
+      <a href="gstr3b.html" class="menu-item"><i class="fas fa-calculator"></i> GSTR-3B Summary</a>
+      <a href="document-register.html" class="menu-item"><i class="fas fa-book-open"></i> Document Register</a>
+      <div class="menu-section">Settings</div>
+      <a href="#" class="menu-item" onclick="openProfileModal();return false;"><i class="fas fa-building"></i> Business Profile</a>
+    </nav>
+    <div class="sidebar-user">
+      <div class="user-avatar"><i class="fas fa-user"></i></div>
+      <div class="user-info" onclick="openSettingsModal()" title="Click to open settings">
+        <div class="user-name" id="navUserName">User</div>
+        <div class="user-role">GST Manager</div>
+      </div>
+      <button type="button" class="btn-logout btn-settings" onclick="openSettingsModal()" title="Settings"><i class="fas fa-cog"></i></button>
+      <button type="button" class="btn-logout" id="logoutBtn" title="Logout"><i class="fas fa-sign-out-alt"></i></button>
+    </div>
+  </aside>
+
+  <div class="main-content">
+    <div class="top-bar">
+      <button type="button" class="menu-toggle" id="menuToggle" aria-label="Toggle sidebar menu"><i class="fas fa-bars"></i></button>
+      <span class="page-title"><i class="fas fa-chart-bar"></i>Reports &amp; Export</span>
+      <div class="ml-auto d-flex gap-10 align-center">
+        <button type="button" class="btn btn-secondary btn-sm btn-icon" onclick="openGlobalSearch()" title="Search everywhere (Ctrl+K)" aria-label="Global search"><i class="fas fa-search"></i></button>
+        <select class="form-control toolbar-select" id="reportMonth" onchange="loadReports(this.value)" aria-label="Select month"></select>
+      </div>
+    </div>
+
+    <div class="content">
+
+      <!-- Summary Cards -->
+      <div class="stat-grid mb-20">
+        <div class="stat-card border-green">
+          <div class="stat-icon green"><i class="fas fa-building"></i></div>
+          <div class="stat-info"><div class="stat-label">B2B Invoices</div><div class="stat-value" id="repB2BCount">0</div><div class="stat-sub" id="repB2BTaxable">&#8377;0</div></div>
+        </div>
+        <div class="stat-card border-teal">
+          <div class="stat-icon teal"><i class="fas fa-users"></i></div>
+          <div class="stat-info"><div class="stat-label">B2C Invoices</div><div class="stat-value" id="repB2CCount">0</div><div class="stat-sub" id="repB2CTaxable">&#8377;0</div></div>
+        </div>
+        <div class="stat-card border-orange">
+          <div class="stat-icon orange"><i class="fas fa-percentage"></i></div>
+          <div class="stat-info"><div class="stat-label">Total GST</div><div class="stat-value" id="repTotalGST">&#8377;0</div></div>
+        </div>
+        <div class="stat-card border-blue">
+          <div class="stat-icon blue"><i class="fas fa-globe"></i></div>
+          <div class="stat-info"><div class="stat-label">IGST</div><div class="stat-value" id="repIGST">&#8377;0</div></div>
+        </div>
+        <div class="stat-card border-orange">
+          <div class="stat-icon orange"><i class="fas fa-map-marker-alt"></i></div>
+          <div class="stat-info"><div class="stat-label">CGST</div><div class="stat-value" id="repCGST">&#8377;0</div></div>
+        </div>
+        <div class="stat-card border-purple">
+          <div class="stat-icon purple"><i class="fas fa-map-pin"></i></div>
+          <div class="stat-info"><div class="stat-label">SGST</div><div class="stat-value" id="repSGST">&#8377;0</div></div>
+        </div>
+        <div class="stat-card border-dark">
+          <div class="stat-icon green"><i class="fas fa-money-bill-wave"></i></div>
+          <div class="stat-info"><div class="stat-label">Grand Total</div><div class="stat-value" id="repGrandTotal">&#8377;0</div><div class="stat-sub"><span id="repTotalCount">0</span> invoices</div></div>
+        </div>
+      </div>
+
+      <!-- Export Actions -->
+      <div class="card mb-20">
+        <div class="card-header">
+          <span class="card-title"><i class="fas fa-download"></i> Export Options</span>
+        </div>
+        <div class="card-body d-flex gap-12 flex-wrap">
+          <button type="button" class="btn btn-primary" onclick="exportGSTR1JSON()" title="Generates the GSTR-1 return in GST portal JSON format from your saved invoices"><i class="fas fa-file-signature"></i> Generate Return</button>
+          <button type="button" class="btn btn-success" onclick="exportFullGSTR1()"><i class="fas fa-file-excel"></i> Export Full GSTR-1 (Excel)</button>
+          <button type="button" class="btn btn-danger"  onclick="exportSummaryPDF()"><i class="fas fa-file-pdf"></i> Export Summary (PDF)</button>
+          <button type="button" class="btn btn-primary" onclick="exportB2BExcel(repB2B)"><i class="fas fa-file-excel"></i> B2B Excel</button>
+          <button type="button" class="btn btn-primary" onclick="exportB2CExcel(repB2C)"><i class="fas fa-file-excel"></i> B2C Excel</button>
+          <button type="button" class="btn btn-warning" onclick="exportHSNExcel(repB2BHSN, repB2CHSN)"><i class="fas fa-file-excel"></i> HSN Excel</button>
+          <button type="button" class="btn btn-secondary" onclick="printReport('reportPrintArea','GSTR-1 Summary Report')"><i class="fas fa-print"></i> Print Report</button>
+          <button type="button" class="btn btn-info btn-info-alt" onclick="exportGSTR1JSON()"><i class="fas fa-file-code"></i> GSTR-1 JSON (Portal)</button>
+          <a href="gstr3b.html" class="btn btn-secondary"><i class="fas fa-calculator"></i> GSTR-3B Summary</a>
+          <button type="button" class="btn btn-secondary" onclick="generateEInvoiceIRN()" title="Coming soon"><i class="fas fa-qrcode"></i> E-Invoice (IRN) &mdash; Coming Soon</button>
+          <button type="button" class="btn btn-secondary" onclick="generateEWayBill()" title="Coming soon"><i class="fas fa-truck"></i> E-Way Bill &mdash; Coming Soon</button>
+        </div>
+      </div>
+
+      <div id="reportPrintArea">
+
+        <!-- GSTR-1 Summary -->
+        <div class="card mb-20">
+          <div class="card-header">
+            <span class="card-title"><i class="fas fa-file-alt"></i> GSTR-1 Summary</span>
+          </div>
+          <div class="card-body p-0">
+            <div class="table-wrapper">
+              <table class="data-table">
+                <thead><tr><th>Transaction Type</th><th>Invoice Count</th><th>Taxable Value</th><th>GST Amount</th><th>Total Value</th></tr></thead>
+                <tbody id="gstr1SummaryBody">
+                  <tr><td colspan="5" class="empty-state"><i class="fas fa-spinner fa-spin table-loading-icon"></i>Loading...</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        <!-- B2B Details -->
+        <div class="card mb-20">
+          <div class="card-header">
+            <span class="card-title"><i class="fas fa-building"></i> B2B Invoice Details</span>
+          </div>
+          <div class="card-body p-0">
+            <div class="table-wrapper">
+              <table class="data-table">
+                <thead><tr><th>#</th><th>GST No</th><th>Customer</th><th>Invoice No</th><th>Date</th><th>Taxable</th><th>GST%</th><th>Total</th></tr></thead>
+                <tbody id="gstr1B2BBody">
+                  <tr><td colspan="8" class="empty-state">Loading...</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        <!-- B2C Details -->
+        <div class="card mb-20">
+          <div class="card-header">
+            <span class="card-title"><i class="fas fa-users"></i> B2C Invoice Details</span>
+          </div>
+          <div class="card-body p-0">
+            <div class="table-wrapper">
+              <table class="data-table">
+                <thead><tr><th>#</th><th>State</th><th>Supply Type</th><th>Date</th><th>Taxable</th><th>GST%</th><th>Total</th></tr></thead>
+                <tbody id="gstr1B2CBody">
+                  <tr><td colspan="7" class="empty-state">Loading...</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        <!-- Monthly GST Report -->
+        <div class="card mb-20">
+          <div class="card-header">
+            <span class="card-title"><i class="fas fa-calendar-alt"></i> Month-wise GST Report</span>
+          </div>
+          <div class="card-body p-0">
+            <div class="table-wrapper">
+              <table class="data-table">
+                <thead><tr><th>Month</th><th>Invoices</th><th>Taxable Amount</th><th>IGST</th><th>CGST</th><th>SGST</th><th>Total GST</th><th>Grand Total</th></tr></thead>
+                <tbody id="monthlyTableBody">
+                  <tr><td colspan="8" class="empty-state">Loading...</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        <!-- HSN Summary -->
+        <div class="card mb-20">
+          <div class="card-header">
+            <span class="card-title"><i class="fas fa-barcode"></i> HSN Summary Report</span>
+          </div>
+          <div class="card-body p-0">
+            <div class="table-wrapper">
+              <table class="data-table">
+                <thead><tr><th>#</th><th>HSN Code</th><th>Product</th><th>Category</th><th>Qty</th><th>Taxable Value</th><th>IGST/CGST/SGST</th><th>Total GST</th><th>Total Invoice</th></tr></thead>
+                <tbody id="hsnReportBody">
+                  <tr><td colspan="9" class="empty-state">Loading...</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        <!-- Customer-wise Report -->
+        <div class="card mb-20">
+          <div class="card-header">
+            <span class="card-title"><i class="fas fa-users"></i> Customer-wise Report (B2B)</span>
+          </div>
+          <div class="card-body p-0">
+            <div class="table-wrapper">
+              <table class="data-table">
+                <thead><tr><th>Customer</th><th>GSTIN</th><th>Invoices</th><th>Taxable</th><th>GST</th><th>Total</th></tr></thead>
+                <tbody id="customerWiseBody">
+                  <tr><td colspan="6" class="empty-state">Loading...</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        <!-- Product-wise Report -->
+        <div class="card mb-20">
+          <div class="card-header">
+            <span class="card-title"><i class="fas fa-box"></i> Product-wise Report</span>
+          </div>
+          <div class="card-body p-0">
+            <div class="table-wrapper">
+              <table class="data-table">
+                <thead><tr><th>Product</th><th>HSN Code</th><th>Qty</th><th>Taxable</th><th>GST</th><th>Total</th></tr></thead>
+                <tbody id="productWiseBody">
+                  <tr><td colspan="6" class="empty-state">Loading...</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        <!-- Vendor-wise Purchases Report -->
+        <div class="card mb-20">
+          <div class="card-header">
+            <span class="card-title"><i class="fas fa-truck"></i> Vendor-wise Purchases Report</span>
+          </div>
+          <div class="card-body p-0">
+            <div class="table-wrapper">
+              <table class="data-table">
+                <thead><tr><th>Vendor</th><th>GSTIN</th><th>Purchases</th><th>Taxable</th><th>GST</th><th>Total</th></tr></thead>
+                <tbody id="vendorWiseBody">
+                  <tr><td colspan="6" class="empty-state">Loading...</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        <!-- Product-wise Purchases Report -->
+        <div class="card mb-20">
+          <div class="card-header">
+            <span class="card-title"><i class="fas fa-boxes"></i> Product-wise Purchases Report</span>
+          </div>
+          <div class="card-body p-0">
+            <div class="table-wrapper">
+              <table class="data-table">
+                <thead><tr><th>Product</th><th>HSN Code</th><th>Qty</th><th>Taxable</th><th>GST</th><th>Total</th></tr></thead>
+                <tbody id="purchProductWiseBody">
+                  <tr><td colspan="6" class="empty-state">Loading...</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        <!-- Customer-wise Sales Returns Report -->
+        <div class="card mb-20">
+          <div class="card-header">
+            <span class="card-title"><i class="fas fa-rotate-left"></i> Customer-wise Sales Returns Report</span>
+          </div>
+          <div class="card-body p-0">
+            <div class="table-wrapper">
+              <table class="data-table">
+                <thead><tr><th>Customer</th><th>GSTIN</th><th>Returns</th><th>Taxable</th><th>GST</th><th>Total</th></tr></thead>
+                <tbody id="srCustomerWiseBody">
+                  <tr><td colspan="6" class="empty-state">Loading...</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        <!-- Product-wise Sales Returns Report -->
+        <div class="card mb-20">
+          <div class="card-header">
+            <span class="card-title"><i class="fas fa-boxes"></i> Product-wise Sales Returns Report</span>
+          </div>
+          <div class="card-body p-0">
+            <div class="table-wrapper">
+              <table class="data-table">
+                <thead><tr><th>Product</th><th>HSN Code</th><th>Qty</th><th>Taxable</th><th>GST</th><th>Total</th></tr></thead>
+                <tbody id="srProductWiseBody">
+                  <tr><td colspan="6" class="empty-state">Loading...</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        <!-- Expense Report — by Category -->
+        <div class="card mb-20">
+          <div class="card-header">
+            <span class="card-title"><i class="fas fa-receipt"></i> Expense Report — By Category</span>
+          </div>
+          <div class="card-body p-0">
+            <div class="table-wrapper">
+              <table class="data-table">
+                <thead><tr><th>Category</th><th>Count</th><th>Total Amount</th></tr></thead>
+                <tbody id="expByCategoryBody">
+                  <tr><td colspan="3" class="empty-state">Loading...</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        <!-- Expense Report — by Month -->
+        <div class="card mb-20">
+          <div class="card-header">
+            <span class="card-title"><i class="fas fa-calendar-alt"></i> Expense Report — By Month</span>
+          </div>
+          <div class="card-body p-0">
+            <div class="table-wrapper">
+              <table class="data-table">
+                <thead><tr><th>Month</th><th>Count</th><th>Total Amount</th></tr></thead>
+                <tbody id="expByMonthBody">
+                  <tr><td colspan="3" class="empty-state">Loading...</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        <!-- HSN-wise Aggregated Report -->
+        <div class="card mb-20">
+          <div class="card-header">
+            <span class="card-title"><i class="fas fa-layer-group"></i> HSN-wise Report (Aggregated)</span>
+          </div>
+          <div class="card-body p-0">
+            <div class="table-wrapper">
+              <table class="data-table">
+                <thead><tr><th>HSN Code</th><th>Products</th><th>Qty</th><th>Taxable</th><th>GST</th><th>Total</th></tr></thead>
+                <tbody id="hsnWiseBody">
+                  <tr><td colspan="6" class="empty-state">Loading...</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        <!-- GST Rate-wise Report -->
+        <div class="card mb-20">
+          <div class="card-header">
+            <span class="card-title"><i class="fas fa-percentage"></i> GST Rate-wise Report</span>
+          </div>
+          <div class="card-body p-0">
+            <div class="table-wrapper">
+              <table class="data-table">
+                <thead><tr><th>GST Rate</th><th>Invoices</th><th>Taxable</th><th>GST</th><th>Total</th></tr></thead>
+                <tbody id="gstRateWiseBody">
+                  <tr><td colspan="5" class="empty-state">Loading...</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+      </div><!-- /reportPrintArea -->
+    </div>
+  </div>
+</div>
+
+<div class="loading-overlay d-none" id="repLoader">
+  <div class="text-center">
+    <div class="spinner"></div>
+    <p class="mt-12 text-primary fw-600">Generating reports...</p>
+  </div>
+</div>
+
+<script>
+document.addEventListener('DOMContentLoaded', initReports);
+</script>
+
+<!-- GSTR-1 Validation Errors Modal — shown instead of downloading
+     whenever buildGSTR1Payload()/runFinalGSTR1Audit() (js/gstr1-export.js)
+     find anything wrong; the JSON is never written to disk when this
+     is showing. -->
+<div class="modal-overlay" id="gstr1ValidationModal">
+  <div class="modal modal-lg">
+    <div class="modal-header">
+      <span class="modal-title" id="gstr1ValidationTitle"><i class="fas fa-triangle-exclamation" style="color:var(--danger, #d32f2f);"></i> GSTR-1 Export Blocked — Validation Failed</span>
+      <button type="button" class="modal-close" onclick="closeGSTR1ValidationModal()" aria-label="Close"><i class="fas fa-times"></i></button>
+    </div>
+    <div class="modal-body">
+      <!-- Title and lead are set from js/gstr1-export.js: the same dialog
+           reports a blocked export and, after a successful one, what the
+           generated file does not cover. -->
+      <p class="text-muted-sm mb-16" id="gstr1ValidationLead">The JSON was <b>not</b> generated. Fix the issue(s) below and try again.</p>
+      <ul id="gstr1ValidationList" style="margin:0;padding-left:20px;line-height:1.9;"></ul>
+    </div>
+  </div>
+</div>
+
+<!-- Global Search Modal -->
+<div class="modal-overlay" id="globalSearchModal">
+  <div class="modal modal-lg">
+    <div class="modal-header">
+      <span class="modal-title"><i class="fas fa-search"></i> Search Everywhere</span>
+      <button type="button" class="modal-close" onclick="closeGlobalSearch()" aria-label="Close"><i class="fas fa-times"></i></button>
+    </div>
+    <div class="modal-body">
+      <input type="text" id="globalSearchInput" class="form-control mb-16" oninput="onGlobalSearchInput(this.value)" aria-label="Global search input">
+      <div id="globalSearchResults"><p class="text-muted-sm">Type at least 2 characters&hellip;</p></div>
+    </div>
+  </div>
+</div>
+
+</body>
+</html>
+
