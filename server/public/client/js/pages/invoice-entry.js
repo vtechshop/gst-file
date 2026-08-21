@@ -25,6 +25,7 @@ async function initInvoiceEntry() {
   setupMobileMenu();
   await loadUserProfile(user.id);
   populateInvoiceStateOptions();
+  onInvShipSameChange();   // start disabled + mirroring, the default
   populateInvoiceSourceOptions();
   populateInvGstCategoryOptions();
   // The business-wide default recorded in Business Profile.
@@ -279,9 +280,13 @@ function detectSupplyType() {
 
 // ── State options ──────────────────────────────────
 function populateInvoiceStateOptions() {
-  const sel = document.getElementById('invState');
-  if (!sel) return;
-  sel.innerHTML = '<option value="">Select State</option>' + INDIAN_STATES.map(s => `<option value="${s}">${s}</option>`).join('');
+  const options = '<option value="">Select State</option>' + INDIAN_STATES.map(s => `<option value="${s}">${s}</option>`).join('');
+  // Ship To reads from the same list as Billing - one source for the 36
+  // State/UT names, exactly as every other state dropdown in the app.
+  ['invState', 'invShipState'].forEach((id) => {
+    const sel = document.getElementById(id);
+    if (sel) sel.innerHTML = options;
+  });
 }
 
 // ── Invoice Number Auto-generate (shared sequence across B2B + B2C —
@@ -568,6 +573,24 @@ function onInvoiceCustomerInput() {
   const phEl  = document.getElementById('invPhone');   if (phEl  && !phEl.value  && cust.phone)   phEl.value  = cust.phone;
   const adEl  = document.getElementById('invAddress'); if (adEl  && !adEl.value  && cust.address) adEl.value  = cust.address;
   const stEl  = document.getElementById('invState');   if (stEl  && !stEl.value  && cust.state)   stEl.value  = cust.state;
+  // A customer with a Ship To on file is one that habitually ships
+  // elsewhere, so the invoice starts unticked and prefilled. The same
+  // only-fill-what-is-empty rule as the fields above: a Ship To already
+  // typed on this invoice is never overwritten.
+  const shipSameEl = document.getElementById('invShipSame');
+  const shipAdEl = document.getElementById('invShipAddress');
+  if (cust.shipping_address && shipSameEl && shipAdEl && !shipAdEl.value) {
+    shipSameEl.checked = false;
+    onInvShipSameChange();
+    shipAdEl.value = cust.shipping_address;
+    const shipStEl = document.getElementById('invShipState');
+    if (shipStEl) shipStEl.value = cust.shipping_state || '';
+    const shipDiEl = document.getElementById('invShipDistrict');
+    if (shipDiEl) shipDiEl.value = cust.shipping_district || '';
+    populateDistrictList('invShipDistrictList', cust.shipping_state || '');
+  } else {
+    mirrorInvShipFromBilling();
+  }
   applyCustomerGstCategory(cust);
   detectSupplyType();
   updateGstinValidationStatus();
@@ -640,6 +663,17 @@ async function loadInvoiceForEdit(type, id) {
   setInvValue('invPhone', rec.phone || '');
   setInvValue('invAddress', rec.address || '');
   setInvValue('invState', rec.state || '');
+  // A stored Ship To means the box was unticked when this invoice was
+  // saved; NULL means it went to the billing address. Legacy invoices
+  // predate the columns entirely and read as NULL, which is what they
+  // always meant, so they reopen ticked and unchanged.
+  setInvValue('invShipAddress', rec.shipping_address || '');
+  setInvValue('invShipState', rec.shipping_state || '');
+  setInvValue('invShipDistrict', rec.shipping_district || '');
+  const shipSame = document.getElementById('invShipSame');
+  if (shipSame) shipSame.checked = !rec.shipping_address;
+  populateDistrictList('invShipDistrictList', rec.shipping_state || '');
+  onInvShipSameChange();
   setInvValue('invNum', rec.invoice_number || '');
   setInvValue('invDate', rec.invoice_date || '');
   setInvValue('invSupply', rec.supply_type || 'intrastate');
@@ -838,6 +872,7 @@ async function saveInvoice() {
   const headerBase = {
     user_id: user.id,
     customer_name: custName, phone, address, state,
+    ...buildInvShipTo(),
     invoice_number: invNum, invoice_date: invDate, supply_type: supply,
     invoice_source: source,
     gst_category: gstCategory,
@@ -990,6 +1025,12 @@ function clearInvoiceFormFields() {
   ['invGstin','invPhone','invAddress','invNum'].forEach(id => setInvValue(id, ''));
   setInvValue('invCustName', 'Walk-in Customer');
   setInvValue('invState', '');
+  setInvValue('invShipAddress', '');
+  setInvValue('invShipState', '');
+  setInvValue('invShipDistrict', '');
+  const shipSameReset = document.getElementById('invShipSame');
+  if (shipSameReset) shipSameReset.checked = true;   // default is same as billing
+  onInvShipSameChange();
   setInvValue('invDate', toISO(new Date()));
   setInvValue('invSupply', 'intrastate');
   // Back to the default series, same as every other field here returns
@@ -1165,9 +1206,76 @@ function restoreEcomFields(inv) {
 // GST place-of-supply decision.
 function onInvStateChange() {
   syncDistrictField('invState', 'invDistrict', 'invDistrictList', 'invDistrictError');
+  mirrorInvShipFromBilling();
 }
 function onInvDistrictChange() {
   syncDistrictField('invState', 'invDistrict', 'invDistrictList', 'invDistrictError');
+  mirrorInvShipFromBilling();
+}
+
+// ── Shipped To ─────────────────────────────────────
+// Ticked means the goods went to the billing address. That is stored as
+// NULL, never as a copy: one address on the invoice, so correcting the
+// billing address later cannot leave a stale Ship To behind it. Unticked,
+// the invoice carries its own.
+//
+// While ticked the fields are disabled and mirror Billing live, so editing
+// Billing moves Ship To with it and the user never types the address twice.
+function invShipSameChecked() {
+  const el = document.getElementById('invShipSame');
+  return el ? el.checked : true;   // absent checkbox = the old behaviour
+}
+
+// Copies Billing into the Ship To fields for display only. Nothing here
+// reaches the save payload - see buildInvShipTo() for what is stored.
+function mirrorInvShipFromBilling() {
+  if (!invShipSameChecked()) return;
+  const set = (id, v) => { const el = document.getElementById(id); if (el) el.value = v || ''; };
+  set('invShipAddress', getInvText('invAddress'));
+  set('invShipState', document.getElementById('invState')?.value || '');
+  set('invShipDistrict', document.getElementById('invDistrict')?.value || '');
+  populateDistrictList('invShipDistrictList', document.getElementById('invShipState')?.value || '');
+}
+
+function onInvShipSameChange() {
+  const same = invShipSameChecked();
+  ['invShipAddress', 'invShipState', 'invShipDistrict'].forEach((id) => {
+    const el = document.getElementById(id);
+    if (el) el.disabled = same;
+  });
+  const note = document.getElementById('invShipNote');
+  if (note) {
+    note.textContent = same
+      ? 'Goods are delivered to the billing address.'
+      : 'Changing this does NOT change the Billing Address.';
+  }
+  if (same) {
+    mirrorInvShipFromBilling();
+    // A ticked box cannot be holding an invalid district, so clear any
+    // message the user left behind while it was unticked.
+    const err = document.getElementById('invShipDistrictError');
+    if (err) { err.textContent = ''; err.classList.add('d-none'); }
+  }
+}
+
+function onInvShipStateChange() {
+  syncDistrictField('invShipState', 'invShipDistrict', 'invShipDistrictList', 'invShipDistrictError');
+}
+function onInvShipDistrictChange() {
+  syncDistrictField('invShipState', 'invShipDistrict', 'invShipDistrictList', 'invShipDistrictError');
+}
+
+// What actually goes on the invoice row. NULL for all three when ticked -
+// the whole point of the feature.
+function buildInvShipTo() {
+  if (invShipSameChecked()) {
+    return { shipping_address: null, shipping_state: null, shipping_district: null };
+  }
+  return {
+    shipping_address: getInvText('invShipAddress') || null,
+    shipping_state: document.getElementById('invShipState')?.value || null,
+    shipping_district: getInvText('invShipDistrict') || null
+  };
 }
 
 // ── GSTIN lookup against the public taxpayer register ──────────────────

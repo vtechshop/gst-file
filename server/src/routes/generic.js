@@ -391,6 +391,9 @@ const TABLES = {
   },
   b2b_invoices: {
     columns: ['id','user_id','gst_number','customer_name','phone','address','state','district',
+      // Ship To. NULL means the goods went to the billing address above -
+      // never a copy of it, so nothing can drift when billing is corrected.
+      'shipping_address','shipping_state','shipping_district',
       'invoice_number','invoice_date','taxable_amount','gst_percentage','gst_amount',
       'total_amount','supply_type','igst','cgst','sgst','transport_required',
       'vehicle_number','transporter_name','transport_mode','transport_distance_km',
@@ -401,10 +404,13 @@ const TABLES = {
       'cess_amount','ecom_gstin','ecom_supply_type',
       'sez_recipient_type','export_of','lut_number',
       'differential_65'],
-    validate: makeDistrictValidator([['state', 'district']])
+    validate: makeDistrictValidator([['state', 'district'], ['shipping_state', 'shipping_district']])
   },
   b2c_invoices: {
     columns: ['id','user_id','gst_number','customer_name','phone','address','state','district',
+      // Ship To. NULL means the goods went to the billing address above -
+      // never a copy of it, so nothing can drift when billing is corrected.
+      'shipping_address','shipping_state','shipping_district',
       'invoice_number','taxable_amount','gst_percentage','gst_amount','total_amount',
       'supply_type','igst','cgst','sgst','invoice_date','transport_required',
       'vehicle_number','transporter_name','transport_mode','transport_distance_km',
@@ -415,7 +421,7 @@ const TABLES = {
       'cess_amount','ecom_gstin','ecom_supply_type',
       'sez_recipient_type','export_of','lut_number',
       'differential_65'],
-    validate: makeDistrictValidator([['state', 'district']])
+    validate: makeDistrictValidator([['state', 'district'], ['shipping_state', 'shipping_district']])
   },
   b2b_hsn: {
     // Legacy — no longer written to directly by normal invoice flow, but

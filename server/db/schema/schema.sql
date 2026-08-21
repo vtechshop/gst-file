@@ -145,6 +145,13 @@ CREATE TABLE IF NOT EXISTS b2b_invoices (
   -- exactly the invoice it was before these columns existed. WPAY means
   -- exported on payment of IGST, WOPAY under a LUT or bond.
   export_type TEXT,
+  -- Ship To. NULL means the goods went to the billing address above; it is
+  -- never a copy of it, so there is one address on the row and nothing that
+  -- can drift when the billing address is corrected. Named to match
+  -- customers.shipping_* so an invoice can be prefilled from the customer.
+  shipping_address TEXT,
+  shipping_state TEXT,
+  shipping_district TEXT,
   shipping_bill_number TEXT,
   shipping_bill_date DATE,
   port_code TEXT,
@@ -215,6 +222,13 @@ CREATE TABLE IF NOT EXISTS b2c_invoices (
   -- exactly the invoice it was before these columns existed. WPAY means
   -- exported on payment of IGST, WOPAY under a LUT or bond.
   export_type TEXT,
+  -- Ship To. NULL means the goods went to the billing address above; it is
+  -- never a copy of it, so there is one address on the row and nothing that
+  -- can drift when the billing address is corrected. Named to match
+  -- customers.shipping_* so an invoice can be prefilled from the customer.
+  shipping_address TEXT,
+  shipping_state TEXT,
+  shipping_district TEXT,
   shipping_bill_number TEXT,
   shipping_bill_date DATE,
   port_code TEXT,

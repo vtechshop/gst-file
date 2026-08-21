@@ -72,13 +72,17 @@ async function fetchInvoiceRecord(type, id) {
     address: data.address || customer?.address || '',
     phone: data.phone || customer?.phone || '',
     email: customer?.email || '',
-    // Ship-to lives on the customer record, not the invoice. Where none is
-    // recorded the goods went to the billing address, so that is what the
-    // Ship To box shows — the section is never dropped, because a tax
-    // invoice that omits where the goods went is missing information a
-    // reader expects to find.
-    shipping_address: customer?.shipping_address || '',
-    shipping_state: customer?.shipping_state || '',
+    // Ship To recorded ON THE INVOICE wins: a tax invoice states where the
+    // goods went on the day it was raised, so editing the customer's
+    // delivery address later must not rewrite invoices already issued.
+    // Invoices predating that column fall back to the customer record, and
+    // then to the billing address, so nothing already printed changes.
+    // Empty means the goods went to the billing address — the Ship To box
+    // is never dropped, because a tax invoice that omits where the goods
+    // went is missing information a reader expects to find.
+    shipping_address: data.shipping_address || customer?.shipping_address || '',
+    shipping_state: data.shipping_state || customer?.shipping_state || '',
+    shipping_district: data.shipping_district || customer?.shipping_district || '',
     taxable_amount: +data.taxable_amount,
     gst_percentage: +data.gst_percentage,
     gst_amount: +data.gst_amount,

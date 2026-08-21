@@ -35,6 +35,7 @@
     "migration_amendments.sql",
     "migration_cess_ecom.sql",
     "migration_diffpercent_rcm.sql",
-    "migration_address_district.sql"
+    "migration_address_district.sql",
+    "migration_invoice_shipping_address.sql"
   ]
 }

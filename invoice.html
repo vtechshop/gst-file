@@ -193,7 +193,42 @@
 
           <div class="form-group mb-16">
             <label for="invAddress">Address</label>
-            <input type="text" id="invAddress" class="form-control">
+            <input type="text" id="invAddress" class="form-control" oninput="mirrorInvShipFromBilling()">
+          </div>
+
+          <!-- Shipped To -->
+          <!--
+            Ticked by default, which is the ordinary case: goods go to the address
+            they are billed to. Ticked leaves these fields disabled and mirroring
+            Billing, and saves NULL rather than a copy - so the invoice carries one
+            address and nothing that can drift when the billing address is
+            corrected. Unticked makes them editable and the invoice keeps its own.
+          -->
+          <div class="section-title mb-14">Shipped To</div>
+          <div class="form-group mb-16">
+            <label class="d-flex align-center gap-8" style="cursor:pointer;">
+              <input type="checkbox" id="invShipSame" checked onchange="onInvShipSameChange()">
+              <span>Same as Billing Address</span>
+            </label>
+            <span class="fs-11 text-muted-sm" id="invShipNote"></span>
+          </div>
+          <div class="form-grid cols-3 mb-16">
+            <div class="form-group">
+              <label for="invShipState">Ship-To State</label>
+              <select id="invShipState" class="form-control" onchange="onInvShipStateChange()"><option value="">Select State</option></select>
+            </div>
+            <div class="form-group">
+              <label for="invShipDistrict">Ship-To District</label>
+              <input type="text" id="invShipDistrict" class="form-control" list="invShipDistrictList"
+                     placeholder="Select State first" autocomplete="off"
+                     onchange="onInvShipDistrictChange()" aria-describedby="invShipDistrictError">
+              <datalist id="invShipDistrictList"></datalist>
+              <div id="invShipDistrictError" class="fs-11 text-danger d-none" style="margin-top:4px;"></div>
+            </div>
+          </div>
+          <div class="form-group mb-16">
+            <label for="invShipAddress">Ship-To Address</label>
+            <input type="text" id="invShipAddress" class="form-control">
           </div>
 
           <!-- Invoice Info -->
