@@ -7,6 +7,7 @@
     "start": "node src/app.js",
     "dev": "node --watch src/app.js",
     "test": "node --test",
+    "build:public": "node scripts/build-public.js",
     "migrate": "node src/db/migrator.js up",
     "migrate:status": "node src/db/migrator.js status",
     "migrate:baseline": "node src/db/migrator.js baseline"
