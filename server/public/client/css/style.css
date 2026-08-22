@@ -579,17 +579,44 @@ table.data-table {
    the table itself is never compressed to fit. Scoped to this one table
    (not table.data-table generally) so every other table in the app
    keeps its existing auto/100%-width layout untouched. ---- */
-.items-table-fixed { table-layout: fixed; width: 1420px; max-width: none; }
-.items-table-fixed th:nth-child(1),  .items-table-fixed td:nth-child(1)  { width: 320px; }
-.items-table-fixed th:nth-child(2),  .items-table-fixed td:nth-child(2)  { width: 140px; }
-.items-table-fixed th:nth-child(3),  .items-table-fixed td:nth-child(3)  { width: 120px; }
-.items-table-fixed th:nth-child(4),  .items-table-fixed td:nth-child(4)  { width: 90px; }
-.items-table-fixed th:nth-child(5),  .items-table-fixed td:nth-child(5)  { width: 140px; }
-.items-table-fixed th:nth-child(6),  .items-table-fixed td:nth-child(6)  { width: 110px; }
-.items-table-fixed th:nth-child(7),  .items-table-fixed td:nth-child(7)  { width: 90px; }
-.items-table-fixed th:nth-child(8),  .items-table-fixed td:nth-child(8)  { width: 170px; }
-.items-table-fixed th:nth-child(9),  .items-table-fixed td:nth-child(9)  { width: 170px; }
-.items-table-fixed th:nth-child(10), .items-table-fixed td:nth-child(10) { width: 70px; }
+/* The table has TWELVE columns; these widths covered only the first ten,
+   and those ten already added up to the table's whole 1420px. Under
+   table-layout:fixed that left Total and Delete sharing what was left —
+   nothing — so both collapsed and drew on top of Taxable Value: the
+   clipped figure and the trash icon sitting over it. The widths had also
+   drifted out of step with the header, giving Cess % 170px while Taxable
+   Value, which holds the longest number on the row, had 70px.
+
+   Every column is now named and measured against what it actually holds,
+   and the total is the table's declared width. .table-wrapper already
+   scrolls horizontally, so a narrow screen scrolls rather than squeezing
+   figures until they are unreadable. */
+.items-table-fixed { table-layout: fixed; width: 1694px; max-width: none; }
+.items-table-fixed th:nth-child(1),  .items-table-fixed td:nth-child(1)  { width: 320px; }  /* Product        */
+.items-table-fixed th:nth-child(2),  .items-table-fixed td:nth-child(2)  { width: 140px; }  /* HSN            */
+.items-table-fixed th:nth-child(3),  .items-table-fixed td:nth-child(3)  { width: 120px; }  /* Unit           */
+.items-table-fixed th:nth-child(4),  .items-table-fixed td:nth-child(4)  { width: 170px; }  /* GST Treatment  */
+.items-table-fixed th:nth-child(5),  .items-table-fixed td:nth-child(5)  { width: 90px;  }  /* Qty            */
+.items-table-fixed th:nth-child(6),  .items-table-fixed td:nth-child(6)  { width: 130px; }  /* Rate           */
+.items-table-fixed th:nth-child(7),  .items-table-fixed td:nth-child(7)  { width: 110px; }  /* Discount %     */
+.items-table-fixed th:nth-child(8),  .items-table-fixed td:nth-child(8)  { width: 110px; }  /* GST %          */
+.items-table-fixed th:nth-child(9),  .items-table-fixed td:nth-child(9)  { width: 100px; }  /* Cess %         */
+.items-table-fixed th:nth-child(10), .items-table-fixed td:nth-child(10) { width: 170px; }  /* Taxable Value  */
+.items-table-fixed th:nth-child(11), .items-table-fixed td:nth-child(11) { width: 170px; }  /* Total          */
+.items-table-fixed th:nth-child(12), .items-table-fixed td:nth-child(12) { width: 64px;  }  /* Delete         */
+
+/* The two money columns carry the longest values on the row —
+   Rs.1,00,00,000.00 — and must never wrap or be trimmed to fit. */
+.items-table-fixed td:nth-child(10),
+.items-table-fixed td:nth-child(11) { white-space: nowrap; }
+
+/* Delete gets a column of its own rather than being pushed along by
+   whatever the figure beside it happens to be, so the icon sits in the
+   same place on every row. Centred against the row rather than the top,
+   which is where the other cells align because they hold inputs. */
+.items-table-fixed th:nth-child(12),
+#itemsTable td:nth-child(12) { text-align: center; }
+#itemsTable td:nth-child(12) { vertical-align: middle; }
 
 /* A bit more breathing room than the app's other data tables — this one
    packs inputs/selects/inline validation text into every cell, not
