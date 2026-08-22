@@ -373,8 +373,8 @@ async function downloadInvoicePDF(type, id) {
 // document, which is the point of a duplicate.
 const INVOICE_COPY_LABELS = [
   'Original for Recipient',
-  'Duplicate for Recipient',
-  'Duplicate for Transport'
+  'Duplicate for File Copy',
+  'Duplicate for Transporter'
 ];
 
 async function buildInvoicePDFDoc(inv) {
