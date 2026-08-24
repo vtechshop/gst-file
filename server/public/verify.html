@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="robots" content="noindex, nofollow">
+  <title>Invoice Verification</title>
+  <link rel="icon" href="favicon.ico">
+  <link rel="stylesheet" href="client/css/style.css?v=28">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+</head>
+<body>
+  <!--
+    Public page: reached by scanning the QR on a printed invoice, so it must
+    work for someone with no login. It loads nothing but the verification
+    endpoint and shows only what is already printed on the document in the
+    reader's hand.
+  -->
+  <div class="container" style="max-width:760px;margin:0 auto;padding:24px 16px;">
+    <div class="card">
+      <div class="card-header">
+        <span class="card-title"><i class="fas fa-shield-halved"></i> Invoice Verification</span>
+      </div>
+      <div class="card-body">
+        <div id="verifyStatus" class="mb-16"></div>
+        <div id="verifyBody"></div>
+        <p class="fs-11 text-muted-sm" style="margin-top:18px;">
+          These details were retrieved from the invoice record held by the issuing business.
+        </p>
+      </div>
+    </div>
+  </div>
+
+  <script src="client/js/pages/verify.js?v=28"></script>
+</body>
+</html>

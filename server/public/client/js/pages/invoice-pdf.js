@@ -693,7 +693,11 @@ async function buildInvoicePDFDoc(inv) {
     // into the seal and signature. `y` is settled once both have been drawn.
 
     // ── QR (left) + Seal + Signature (right) ──
-    const qrSource = qrCustomData || await generateQRDataUrl(`Invoice: ${inv.invoice_number}\nDate: ${formatDate(inv.invoice_date)}\nAmount: Rs.${formatNum(inv.total_amount)}`, p?.header_color);
+    // The QR carries the verification ADDRESS, not the invoice. Encoding the
+    // figures would let the paper verify against itself; an id sends the
+    // reader to the record instead. The same URL is on all three copies,
+    // because it is the same invoice.
+    const qrSource = qrCustomData || await generateQRDataUrl(invoiceVerifyUrl(inv.type, inv.id), p?.header_color);
     const qrIsCustom = !!qrCustomData;
     // Stamp size, and how much HEIGHT to hold for it. A business with a seal
     // gets the full 26mm, unchanged. A business with none was getting 26mm of
@@ -952,7 +956,7 @@ async function buildInvoiceHTML(inv, opts) {
   const p = (typeof getCachedProfile === 'function') ? getCachedProfile() : null;
   const accentHex = p?.header_color || '#004d40';
 
-  const qrSource = p?.qr_base64 || await generateQRDataUrl(`Invoice: ${inv.invoice_number}\nDate: ${formatDate(inv.invoice_date)}\nAmount: Rs.${formatNum(inv.total_amount)}`, accentHex);
+  const qrSource = p?.qr_base64 || await generateQRDataUrl(invoiceVerifyUrl(inv.type, inv.id), accentHex);
   const qrCaption = p?.qr_base64 ? 'Scan QR' : 'Scan to verify invoice';
   const contactLine = [p?.email, p?.phone].filter(Boolean).join(' &middot; ');
   const bankLines = bankDetailLines(p);

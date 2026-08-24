@@ -47,4 +47,24 @@ const FEATURE_FLAGS = {
 const PRODUCT_SYNC_BACKEND_URL = IS_LOCAL_DEV ? 'http://localhost:4000/api/product-sync'
   : IS_VERCEL ? 'https://gst-file.onrender.com/api/product-sync'
   : '/api/product-sync';
+
+// ── Invoice QR verification ────────────────────────────────
+// Where a scanned invoice QR lands. Deliberately FIXED rather than taken
+// from location.origin: a PDF is a document that outlives the session that
+// produced it and gets forwarded, printed and filed, so the address printed
+// on it has to be the one that will still answer months later - not whichever
+// host happened to render it. Kept as one constant so moving to the final
+// custom domain is a one-line change.
+const INVOICE_VERIFY_BASE_URL = 'https://lemonchiffon-finch-880646.hostingersite.com';
+
+// Compact by design: the QR carries an address, never the invoice itself.
+// Encoding the figures would make the paper the source of truth, and a
+// forged or stale copy would verify against itself; a lookup by id makes the
+// database answer instead.
+function invoiceVerifyUrl(type, id) {
+  if (!type || !id) return '';
+  return INVOICE_VERIFY_BASE_URL + '/verify.html?t='
+    + encodeURIComponent(type) + '&id=' + encodeURIComponent(id);
+}
+
 const IS_PRODUCT_SYNC_CONFIGURED = PRODUCT_SYNC_BACKEND_URL !== 'YOUR_PRODUCT_SYNC_BACKEND_URL' && !!PRODUCT_SYNC_BACKEND_URL;

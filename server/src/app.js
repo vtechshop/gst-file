@@ -27,6 +27,7 @@ const productSyncRoutes = require('./routes/product-sync');
 const billScanRoutes = require('./routes/bill-scan');
 const invoiceScanRoutes = require('./routes/invoice-scan');
 const gstVerifyRoutes = require('./routes/gst-verify');
+const verifyRoutes = require('./routes/verify');
 const { mountGenericRoutes } = require('./routes/generic');
 const { errorHandler } = require('./middleware/errorHandler');
 
@@ -136,6 +137,12 @@ app.use('/api/invoice-scan', invoiceScanRoutes);
 // secret server-side for the same reason bill-scan holds the Gemini key,
 // and like it cannot write to the database. requireAuth'd internally.
 app.use('/api/gst', gstVerifyRoutes);
+// PUBLIC - the only router here without requireAuth. It answers the QR
+// printed on invoices, which is read by customers, transporters and tax
+// officers who have no login. It is read-only, returns a fixed list of
+// fields already printed on the document they are holding, and is covered
+// by the /api rate limiter mounted above. See routes/verify.js.
+app.use('/api/verify', verifyRoutes);
 mountGenericRoutes(app);
 
 // ── Frontend, only where it is deployed beside the API ───
