@@ -1,0 +1,32 @@
+-- =============================================
+-- GST Category on vendors and purchases.
+--
+-- Customers and invoices already carry gst_category (see
+-- migration_customer_gst_category.sql). The purchase side had no
+-- equivalent, so a vendor's status had to be remembered rather than
+-- recorded, and a purchase could not say what the supplier was on the day
+-- it was entered.
+--
+-- The column is the SAME name and the SAME vocabulary as the sales side —
+-- GST_CUSTOMER_CATEGORIES in client/js/utilities/utils.js — so there is one
+-- list of categories in the application, not two that can drift.
+--
+-- NULLABLE, NO DEFAULT, NO BACKFILL.
+-- customers.gst_category is NOT NULL DEFAULT 'regular', but that column was
+-- introduced differently. Writing a default into every existing vendor and
+-- purchase would be putting a category nobody chose onto historical rows.
+-- Left NULL, they read as 'regular' anyway: gstCustomerCategory() maps
+-- anything unrecognised — NULL included — to the default, which is what
+-- every one of these rows already meant.
+--
+-- The vendor column is the vendor's usual status and prefills a new
+-- purchase. The purchase column is what was true for THAT purchase, so
+-- changing one does not rewrite the other.
+--
+-- Nothing about tax reads these columns. Purchase GST is still driven by
+-- supply_type and the rates on the line items; this records who the
+-- supplier was, not what was charged.
+-- =============================================
+
+ALTER TABLE vendors   ADD COLUMN IF NOT EXISTS gst_category TEXT;
+ALTER TABLE purchases ADD COLUMN IF NOT EXISTS gst_category TEXT;

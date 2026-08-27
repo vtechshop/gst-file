@@ -602,6 +602,10 @@ CREATE TABLE IF NOT EXISTS vendors (
   email TEXT,
   address TEXT,
   state TEXT,
+  -- Same vocabulary as customers.gst_category — one list of categories in
+  -- the application, not two. NULL reads as 'regular', which is what every
+  -- row written before this column existed already meant.
+  gst_category TEXT,
   district TEXT,
   created_at TIMESTAMPTZ DEFAULT NOW(),
   updated_at TIMESTAMPTZ DEFAULT NOW()
@@ -620,6 +624,10 @@ CREATE TABLE IF NOT EXISTS purchases (
   phone TEXT,
   address TEXT,
   state TEXT,
+  -- Same vocabulary as customers.gst_category — one list of categories in
+  -- the application, not two. NULL reads as 'regular', which is what every
+  -- row written before this column existed already meant.
+  gst_category TEXT,
   district TEXT,
   purchase_number TEXT NOT NULL,
   purchase_date DATE NOT NULL,

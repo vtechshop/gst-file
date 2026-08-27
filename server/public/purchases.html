@@ -138,6 +138,11 @@
               <select id="purchState" class="form-control" onchange="detectPurchSupplyType();onPurchStateChange()"><option value="">Select State</option></select>
             </div>
             <div class="form-group">
+              <label for="purchGstCategory">GST Category</label>
+              <select id="purchGstCategory" class="form-control"></select>
+              <span class="fs-11 text-muted-sm" id="purchGstCategoryNote"></span>
+            </div>
+            <div class="form-group">
               <label for="purchDistrict">District</label>
               <input type="text" id="purchDistrict" class="form-control" list="purchDistrictList"
                      placeholder="Select State first" autocomplete="off"

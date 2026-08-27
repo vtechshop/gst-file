@@ -20,6 +20,7 @@ async function initPurchaseEntry() {
   setupMobileMenu();
   await loadUserProfile(user.id);
   populatePurchStateOptions();
+  populateGstCategorySelect('purchGstCategory');   // same list as Invoice Entry
   await loadPurchVendorsList(user.id);
   await initPurchaseItems(user.id, 'purchase');
   setPurchValue('purchDate', toISO(new Date()));
@@ -136,6 +137,23 @@ function autoFillVendorField(id, value) {
   purchAutoFilled[id] = value;
 }
 
+// GST Category needs its own version of the above. A <select> always holds
+// a value, so "don't overwrite what is already there" would never fill it.
+// The rule that actually matters is the same one though: replace it while it
+// still holds whatever was put there automatically (or the untouched
+// default), and leave it alone once the user has chosen something himself.
+function autoFillVendorGstCategory(value) {
+  const el = document.getElementById('purchGstCategory');
+  if (!el) return;
+  const auto = purchAutoFilled.purchGstCategory;
+  const untouched = auto === undefined
+    ? el.value === GST_CUSTOMER_CATEGORY_DEFAULT
+    : el.value === auto;
+  if (!untouched) return;
+  el.value = gstCustomerCategory({ gst_category: value });
+  purchAutoFilled.purchGstCategory = el.value;
+}
+
 // Undoes the auto-fill when the vendor name stops matching Vendor Master.
 // A field is only cleared if it still holds exactly what was auto-filled —
 // if the user edited it afterwards, that edit is theirs and is left alone.
@@ -144,7 +162,10 @@ function autoFillVendorField(id, value) {
 function clearAutoFilledVendorFields() {
   Object.entries(purchAutoFilled).forEach(([id, filled]) => {
     const el = document.getElementById(id);
-    if (el && el.value === filled) el.value = '';
+    if (!el || el.value !== filled) return;
+    // A select has no blank state to go back to, so the category returns to
+    // the default rather than being emptied into nothing.
+    el.value = (id === 'purchGstCategory') ? GST_CUSTOMER_CATEGORY_DEFAULT : '';
   });
   purchAutoFilled = {};
 }
@@ -163,6 +184,11 @@ function onPurchVendorInput() {
   autoFillVendorField('purchPhone',   vendor.phone);
   autoFillVendorField('purchAddress', vendor.address);
   autoFillVendorField('purchState',   vendor.state);
+
+  // The vendor's usual GST status, prefilled the same only-fill-what-is-empty
+  // way as the fields above. Changing it here changes THIS purchase only —
+  // the vendor master is written by Vendor Master, never from this form.
+  autoFillVendorGstCategory(vendor.gst_category);
   detectPurchSupplyType();
   updatePurchGstinValidationStatus();
 }
@@ -327,6 +353,9 @@ async function loadPurchaseForEdit(id) {
 
   purchEditId = id;
   purchSelectedVendorId = rec.vendor_id || null;
+  // What this purchase recorded, not what the vendor says today. A purchase
+  // saved before this column existed has none and reads as Regular.
+  populateGstCategorySelect('purchGstCategory', rec.gst_category);
 
   setPurchValue('purchVendorName', rec.vendor_name || '');
   setPurchValue('purchGstin', rec.vendor_gstin || '');
@@ -396,6 +425,7 @@ async function savePurchase() {
     user_id: user.id,
     vendor_id: purchSelectedVendorId,
     vendor_name: vendorName, vendor_gstin: gstin || null, phone, address, state,
+    gst_category: document.getElementById('purchGstCategory')?.value || GST_CUSTOMER_CATEGORY_DEFAULT,
     purchase_number: purchNum, purchase_date: purchDate, supply_type: supply
   };
   // payment_status/amount_paid are ledger-derived (server/routes/payments.js
@@ -446,6 +476,7 @@ function clearPurchaseFormFields() {
   ['purchGstin','purchPhone','purchAddress','purchNum'].forEach(id => setPurchValue(id, ''));
   setPurchValue('purchVendorName', '');
   setPurchValue('purchState', '');
+  populateGstCategorySelect('purchGstCategory');   // back to the default
   setPurchValue('purchDate', toISO(new Date()));
   setPurchValue('purchSupply', 'intrastate');
   setPurchValue('purchPaymentStatus', 'unpaid');

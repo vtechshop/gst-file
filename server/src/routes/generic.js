@@ -450,11 +450,15 @@ const TABLES = {
   },
   vendors: {
     columns: ['id','user_id','name','gstin','phone','email','address','state','district',
+      // Vendor's usual GST status / what it was for THIS purchase.
+      'gst_category',
       'created_at','updated_at'],
     validate: makeDistrictValidator([['state', 'district']])
   },
   purchases: {
     columns: ['id','user_id','vendor_id','vendor_name','vendor_gstin','phone','address','state','district',
+      // Vendor's usual GST status / what it was for THIS purchase.
+      'gst_category',
       'purchase_number','purchase_date','taxable_amount','gst_percentage','gst_amount',
       'total_amount','supply_type','igst','cgst','sgst','payment_status','amount_paid',
       'created_at','updated_at'],

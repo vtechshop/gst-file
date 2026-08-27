@@ -24,6 +24,7 @@ async function initVendors() {
   setupLogoutBtn();
   setupMobileMenu();
   populateVendStateOptions();
+  populateGstCategorySelect('vendGstCategory');   // same list as Invoice Entry
   loadUserProfile(user.id);
   setupVendSearch();
   await loadVendors(user.id);
@@ -55,7 +56,10 @@ async function saveVendor() {
   }
 
   const payload = { user_id: user.id, name, gstin, phone, email, address: addr, state,
-    district: document.getElementById('vendDistrict')?.value?.trim() || '' };
+    district: document.getElementById('vendDistrict')?.value?.trim() || '',
+    // The vendor's usual status. A purchase takes a copy of this and can
+    // then differ from it without changing the vendor.
+    gst_category: document.getElementById('vendGstCategory')?.value || GST_CUSTOMER_CATEGORY_DEFAULT };
 
   let error;
   if (vendEditId) {
@@ -87,6 +91,7 @@ function resetVendor() {
     const el = document.getElementById(id); if (el) el.value = '';
   });
   const st = document.getElementById('vendState'); if (st) st.value = '';
+  populateGstCategorySelect('vendGstCategory');   // back to the default
   populateDistrictList('vendDistrictList', '');
   vendEditId = null;
   renderGstinStatusInto('vendGstinStatus', '');
@@ -165,6 +170,8 @@ function editVendor(id) {
   // District after State so the list belongs to the right state before the
   // value lands in it. A vendor saved before District existed has none.
   const vd = document.getElementById('vendDistrict'); if (vd) vd.value = rec.district || '';
+  // A vendor saved before this column existed has none; it reads as Regular.
+  populateGstCategorySelect('vendGstCategory', rec.gst_category);
   populateDistrictList('vendDistrictList', rec.state || '');
   renderGstinStatusInto('vendGstinStatus', rec.gstin || '');
   document.getElementById('vendFormTitle').textContent = 'Edit Vendor';

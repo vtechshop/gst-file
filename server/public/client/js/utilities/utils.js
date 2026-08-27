@@ -945,6 +945,23 @@ function gstCustomerCategorySpec(value) {
     || GST_CUSTOMER_CATEGORIES[0];
 }
 
+// Fills a GST Category <select> from the one list above, and selects the
+// value the record carries. Anything unrecognised — including a row
+// written before the column existed, which is NULL — falls back to the
+// default, so an old vendor or purchase reads as Regular without anything
+// having been written into it.
+//
+// Invoice Entry keeps its own populate function; this exists so Vendor
+// Master and Purchase Entry share one implementation rather than each
+// growing a copy of the same three lines.
+function populateGstCategorySelect(selectId, value) {
+  const el = document.getElementById(selectId);
+  if (!el) return;
+  el.innerHTML = GST_CUSTOMER_CATEGORIES.map(c =>
+    `<option value="${escHtmlAttr(c.value)}">${escItemHtml(c.label)}</option>`).join('');
+  el.value = gstCustomerCategory({ gst_category: value });
+}
+
 // Supplies to an SEZ are inter-state supplies by law regardless of where
 // the SEZ physically sits — section 7(5)(b) of the IGST Act. A supply to
 // an SEZ unit in the same state as the supplier still attracts IGST, not
