@@ -161,12 +161,27 @@ mountGenericRoutes(app);
 // Every href and src in the HTML is relative (no leading slash), so the
 // pages need no change to be served from here: /client/* resolves inside
 // public/, and /shared/* is mapped below.
+// A deploy can change which scripts a page pulls in. A browser holding the
+// previous HTML then runs the old markup against the new assets and misses a
+// <script> that only the new page lists - which is exactly how a missing PDF
+// helper survived a deploy and looked like a code bug. So HTML is revalidated
+// on every load: no-cache still stores the copy but revalidates before
+// reusing it, and express.static's ETag/Last-Modified turn that check into
+// a cheap 304 rather than a full re-download.
+//
+// The assets the page references are deliberately left alone. They carry
+// ?v=NN, so the query IS their cache key - a changed asset arrives under a
+// URL nothing has cached, and an unchanged one stays cacheable at the CDN.
+function cacheControlForStatic(res, filePath) {
+  if (filePath.endsWith('.html')) res.setHeader('Cache-Control', 'no-cache, must-revalidate');
+}
+
 if (process.env.SERVE_CLIENT === '1') {
-  app.use(express.static(path.join(__dirname, '..', 'public')));
+  app.use(express.static(path.join(__dirname, '..', 'public'), { setHeaders: cacheControlForStatic }));
   // The browser loads the same district and return-rule files the API
   // validates against, so both are served from the one copy in server/
   // rather than a second one inside public/.
-  app.use('/shared', express.static(path.join(__dirname, '..', 'shared')));
+  app.use('/shared', express.static(path.join(__dirname, '..', 'shared'), { setHeaders: cacheControlForStatic }));
 }
 
 // Any /api/* path that no route above claimed. Without this Express
