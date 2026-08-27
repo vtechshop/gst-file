@@ -1426,6 +1426,103 @@ CREATE INDEX IF NOT EXISTS idx_gst_amendments_section
   ON gst_amendments(user_id, section, original_period);
 
 
+
+-- ── Proforma Invoices ─────────────────────────────────
+-- A quotation, not a tax invoice. Its own tables so no Dashboard,
+-- Reports, ledger, Invoice List or GSTR-1 query can reach it - see
+-- db/migrations/migration_proforma_invoices.sql for the full note.
+CREATE TABLE IF NOT EXISTS proforma_invoices (
+  id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
+  user_id UUID REFERENCES users(id) ON DELETE CASCADE NOT NULL,
+
+  -- Its own numbering book. document_series is what keeps it out of the tax
+  -- invoice sequence: the two count separately and cannot interleave.
+  document_number TEXT NOT NULL,
+  document_date DATE NOT NULL,
+  document_series TEXT NOT NULL DEFAULT 'proforma_invoice',
+
+  -- An offer is open for a while and then it is not. Defaulted by the form
+  -- to 30 days, and editable, so a business that quotes for 7 or 90 can.
+  valid_until DATE,
+
+  -- What a person did to it. Expiry is NOT here - see the note above.
+  status TEXT NOT NULL DEFAULT 'draft',
+
+  customer_id UUID REFERENCES customers(id) ON DELETE SET NULL,
+  customer_name TEXT NOT NULL,
+  gst_number TEXT,
+  phone TEXT,
+  address TEXT,
+  state TEXT,
+  district TEXT,
+
+  -- Same meaning as on an invoice: NULL is "same as the billing address".
+  shipping_address TEXT,
+  shipping_state TEXT,
+  shipping_district TEXT,
+
+  supply_type TEXT NOT NULL DEFAULT 'intrastate',
+  gst_category TEXT NOT NULL DEFAULT 'regular',
+
+  taxable_amount DECIMAL(15,2) NOT NULL DEFAULT 0,
+  gst_percentage DECIMAL(5,2) NOT NULL DEFAULT 0,
+  gst_amount DECIMAL(15,2) NOT NULL DEFAULT 0,
+  igst DECIMAL(15,2) NOT NULL DEFAULT 0,
+  cgst DECIMAL(15,2) NOT NULL DEFAULT 0,
+  sgst DECIMAL(15,2) NOT NULL DEFAULT 0,
+  total_amount DECIMAL(15,2) NOT NULL DEFAULT 0,
+
+  notes TEXT,
+  terms TEXT,
+
+  -- Written only after the tax invoice has actually saved.
+  converted_invoice_id UUID,
+  converted_invoice_type TEXT,
+
+  cancelled_at TIMESTAMPTZ,
+  cancel_reason TEXT,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS proforma_invoice_items (
+  id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
+  user_id UUID REFERENCES users(id) ON DELETE CASCADE NOT NULL,
+  proforma_invoice_id UUID REFERENCES proforma_invoices(id) ON DELETE CASCADE NOT NULL,
+  product_id UUID REFERENCES products(id) ON DELETE SET NULL,
+  product_name TEXT NOT NULL,
+  hsn_code TEXT,
+  unit TEXT,
+  quantity DECIMAL(15,3) NOT NULL DEFAULT 1,
+  rate DECIMAL(15,2) NOT NULL DEFAULT 0,
+  discount_percentage DECIMAL(5,2) NOT NULL DEFAULT 0,
+  gst_percentage DECIMAL(5,2) NOT NULL DEFAULT 0,
+  taxable_value DECIMAL(15,2) NOT NULL DEFAULT 0,
+  gst_amount DECIMAL(15,2) NOT NULL DEFAULT 0,
+  igst DECIMAL(15,2) NOT NULL DEFAULT 0,
+  cgst DECIMAL(15,2) NOT NULL DEFAULT 0,
+  sgst DECIMAL(15,2) NOT NULL DEFAULT 0,
+  total_amount DECIMAL(15,2) NOT NULL DEFAULT 0,
+  gst_treatment TEXT NOT NULL DEFAULT 'taxable',
+  cess_rate DECIMAL(5,3) NOT NULL DEFAULT 0,
+  cess_amount DECIMAL(15,2) NOT NULL DEFAULT 0,
+  sort_order INTEGER NOT NULL DEFAULT 0,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_proforma_invoices_user     ON proforma_invoices(user_id, document_date);
+CREATE INDEX IF NOT EXISTS idx_proforma_invoices_status   ON proforma_invoices(user_id, status);
+CREATE INDEX IF NOT EXISTS idx_proforma_items_parent      ON proforma_invoice_items(proforma_invoice_id, sort_order);
+
+DROP TRIGGER IF EXISTS proforma_invoices_upd ON proforma_invoices;
+CREATE TRIGGER proforma_invoices_upd BEFORE UPDATE ON proforma_invoices
+  FOR EACH ROW EXECUTE FUNCTION update_updated_at();
+
+DROP TRIGGER IF EXISTS proforma_invoice_items_upd ON proforma_invoice_items;
+CREATE TRIGGER proforma_invoice_items_upd BEFORE UPDATE ON proforma_invoice_items
+  FOR EACH ROW EXECUTE FUNCTION update_updated_at();
+
 CREATE TRIGGER unregistered_suppliers_upd BEFORE UPDATE ON unregistered_suppliers FOR EACH ROW EXECUTE FUNCTION update_updated_at();
 CREATE TRIGGER self_invoices_upd    BEFORE UPDATE ON self_invoices    FOR EACH ROW EXECUTE FUNCTION update_updated_at();
 CREATE TRIGGER receipt_vouchers_upd BEFORE UPDATE ON receipt_vouchers FOR EACH ROW EXECUTE FUNCTION update_updated_at();

@@ -1,0 +1,237 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>New Proforma - GST Management System</title>
+  <link rel="stylesheet" href="client/css/style.css?v=28">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.31/jspdf.plugin.autotable.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/qrcode@1.4.4/build/qrcode.min.js"></script>
+    <script src="shared/india-districts.js?v=28"></script>
+  <script src="client/js/api/apiClient.js?v=28"></script>
+  <script src="client/js/api/backup.js?v=28"></script>
+  <script src="client/js/core/config.js?v=28"></script>
+  <script src="client/js/api/product-sync.js?v=28"></script>
+  <script src="client/js/core/auth.js?v=28"></script>
+  <script src="client/js/utilities/utils.js?v=28"></script>
+  <script src="client/js/core/search.js?v=28"></script>
+  <script src="client/js/pages/profile.js?v=28"></script>
+  <script src="client/js/pages/products.js?v=28"></script>
+  <script src="client/js/core/drafts.js?v=28"></script>
+  <script src="client/js/pages/invoice-items.js?v=28"></script>
+  <script src="client/js/pages/proforma-pdf.js?v=28"></script>
+  <script src="client/js/pages/proforma-entry.js?v=28"></script>
+</head>
+<body>
+<div class="app-layout">
+
+  <!-- Sidebar -->
+  <aside class="sidebar">
+    <a class="sidebar-brand" href="dashboard.html">
+      <div class="brand-icon"><i class="fas fa-file-invoice-dollar"></i></div>
+      <span>GST Invoice<br>Management</span>
+    </a>
+    <nav class="sidebar-menu">
+      <div class="menu-section">Main</div>
+      <a href="dashboard.html" class="menu-item"><i class="fas fa-tachometer-alt"></i> Dashboard</a>
+      <div class="menu-section">Invoices / Sales</div>
+      <a href="invoice.html" class="menu-item"><i class="fas fa-plus-circle"></i> New Invoice</a>
+      <a href="invoice-list.html" class="menu-item"><i class="fas fa-list-alt"></i> Invoice List</a>
+      <a href="proforma.html" class="menu-item"><i class="fas fa-file-contract"></i> New Proforma</a>
+      <a href="proforma-list.html" class="menu-item"><i class="fas fa-folder-open"></i> Proforma Invoices</a>
+      <a href="cdnotes.html" class="menu-item"><i class="fas fa-file-minus"></i> Credit / Debit Notes</a>
+      <a href="sales-returns.html" class="menu-item"><i class="fas fa-rotate-left"></i> Sales Returns</a>
+      <a href="bill-of-supply.html" class="menu-item"><i class="fas fa-file-invoice"></i> Bill of Supply</a>
+      <a href="revised-invoice.html" class="menu-item"><i class="fas fa-file-pen"></i> Revised Invoice</a>
+      <a href="advances.html" class="menu-item"><i class="fas fa-hand-holding-dollar"></i> Advances</a>
+      <a href="vouchers.html" class="menu-item"><i class="fas fa-receipt"></i> Vouchers</a>
+      <a href="challans.html" class="menu-item"><i class="fas fa-file-signature"></i> Delivery Challans</a>
+      <a href="amendments.html" class="menu-item"><i class="fas fa-pen-to-square"></i> Amendments</a>
+      <div class="menu-section">Purchases</div>
+      <a href="vendors.html" class="menu-item"><i class="fas fa-truck"></i> Vendors</a>
+      <a href="vendor-ledger.html" class="menu-item"><i class="fas fa-book"></i> Vendor Ledger</a>
+      <a href="purchases.html" class="menu-item"><i class="fas fa-cart-plus"></i> New Purchase</a>
+      <a href="purchase-list.html" class="menu-item"><i class="fas fa-boxes"></i> Purchase List</a>
+      <a href="purchase-returns.html" class="menu-item"><i class="fas fa-undo"></i> Purchase Returns</a>
+      <div class="menu-section">GST / Special</div>
+      <a href="eway-bills.html" class="menu-item"><i class="fas fa-truck-fast"></i> E-Way Bills</a>
+      <a href="challans.html#job-workers" class="menu-item"><i class="fas fa-industry"></i> Job Workers</a>
+      <div class="menu-section">HSN</div>
+      <a href="hsn.html#b2b" class="menu-item"><i class="fas fa-barcode"></i> B2B HSN</a>
+      <a href="hsn.html#b2c" class="menu-item"><i class="fas fa-tags"></i> B2C HSN</a>
+      <div class="menu-section">Masters</div>
+      <a href="customers.html" class="menu-item"><i class="fas fa-address-book"></i> Customers</a>
+      <a href="customer-ledger.html" class="menu-item"><i class="fas fa-book"></i> Customer Ledger</a>
+      <a href="products.html" class="menu-item"><i class="fas fa-box"></i> Products</a>
+      <div class="menu-section">Expenses</div>
+      <a href="expenses.html" class="menu-item"><i class="fas fa-receipt"></i> Expenses</a>
+      <div class="menu-section">Reports</div>
+      <a href="reports.html" class="menu-item"><i class="fas fa-chart-bar"></i> Reports &amp; Export</a>
+      <a href="gstr3b.html" class="menu-item"><i class="fas fa-calculator"></i> GSTR-3B Summary</a>
+      <a href="document-register.html" class="menu-item"><i class="fas fa-book-open"></i> Document Register</a>
+      <div class="menu-section">Settings</div>
+      <a href="#" class="menu-item" onclick="openProfileModal();return false;"><i class="fas fa-building"></i> Business Profile</a>
+    </nav>
+    <div class="sidebar-user">
+      <div class="user-avatar"><i class="fas fa-user"></i></div>
+      <div class="user-info" onclick="openSettingsModal()" title="Click to open settings">
+        <div class="user-name" id="navUserName">User</div>
+        <div class="user-role">GST Manager</div>
+      </div>
+      <button type="button" class="btn-logout btn-settings" onclick="openSettingsModal()" title="Settings"><i class="fas fa-cog"></i></button>
+      <button type="button" class="btn-logout" id="logoutBtn" title="Logout"><i class="fas fa-sign-out-alt"></i></button>
+    </div>
+  </aside>
+
+  <div class="main-content">
+    <div class="top-bar">
+      <button type="button" class="menu-toggle" id="menuToggle" aria-label="Toggle sidebar menu"><i class="fas fa-bars"></i></button>
+      <span class="page-title"><i class="fas fa-file-contract"></i>New Proforma</span>
+      <div class="ml-auto d-flex gap-10">
+        <button type="button" class="btn btn-secondary btn-sm btn-icon" onclick="openGlobalSearch()" title="Search everywhere (Ctrl+K)" aria-label="Global search"><i class="fas fa-search"></i></button>
+      </div>
+    </div>
+
+    <div class="content">
+      <!--
+        A quotation, not a tax invoice. The party block, the Ship To block and
+        the product grid are the SAME components Invoice Entry uses - the grid
+        renders itself into #itemsSection and reads #invSupply - so the two
+        forms cannot drift apart in how a line is priced or an address kept.
+      -->
+      <div class="card mb-16">
+        <div class="card-header"><span class="card-title"><i class="fas fa-file-contract"></i> Proforma Details</span></div>
+        <div class="card-body">
+          <div class="form-grid cols-3 mb-16">
+            <div class="form-group">
+              <label for="pfNumber">Proforma Number <span class="text-required">*</span></label>
+              <input type="text" id="pfNumber" class="form-control" placeholder="Auto">
+            </div>
+            <div class="form-group">
+              <label for="pfDate">Proforma Date <span class="text-required">*</span></label>
+              <input type="date" id="pfDate" class="form-control" onchange="onProformaDateChange()">
+            </div>
+            <div class="form-group">
+              <!-- Defaulted to 30 days by the date handler, and editable: a
+                   business that quotes for 7 or 90 days simply types it. -->
+              <label for="pfValidUntil">Valid Until</label>
+              <input type="date" id="pfValidUntil" class="form-control">
+              <span class="fs-11 text-muted-sm" id="pfValidityNote"></span>
+            </div>
+          </div>
+          <div class="form-grid cols-3 mb-16">
+            <div class="form-group">
+              <label for="pfStatus">Status</label>
+              <select id="pfStatus" class="form-control"></select>
+            </div>
+            <div class="form-group">
+              <label for="pfGstCategory">GST Category</label>
+              <select id="pfGstCategory" class="form-control"></select>
+            </div>
+            <div class="form-group">
+              <label for="pfGstin">Customer GSTIN</label>
+              <input type="text" id="pfGstin" class="form-control uppercase" maxlength="15">
+            </div>
+          </div>
+          <div class="form-grid cols-3 mb-16">
+            <div class="form-group">
+              <label for="pfCustName">Customer Name <span class="text-required">*</span></label>
+              <input type="text" id="pfCustName" class="form-control" list="pfCustomerList" autocomplete="off" oninput="onProformaCustomerInput()">
+              <datalist id="pfCustomerList"></datalist>
+            </div>
+            <div class="form-group">
+              <label for="pfPhone">Phone</label>
+              <input type="tel" id="pfPhone" class="form-control">
+            </div>
+            <div class="form-group">
+              <label for="pfState">State</label>
+              <select id="pfState" class="form-control" onchange="onProformaStateChange()"><option value="">Select State</option></select>
+            </div>
+          </div>
+          <div class="form-grid cols-3 mb-16">
+            <div class="form-group">
+              <label for="pfDistrict">District</label>
+              <input type="text" id="pfDistrict" class="form-control" list="pfDistrictList" autocomplete="off" onchange="onProformaDistrictChange()">
+              <datalist id="pfDistrictList"></datalist>
+              <div id="pfDistrictError" class="fs-11 text-danger d-none" style="margin-top:4px;"></div>
+            </div>
+          </div>
+          <div class="form-group mb-16">
+            <label for="pfAddress">Billing Address</label>
+            <input type="text" id="pfAddress" class="form-control" oninput="mirrorProformaShipFromBilling()">
+          </div>
+
+          <!-- Same rule as the invoice: ticked stores NULL, never a copy. -->
+          <div class="section-title mb-14">Shipped To</div>
+          <div class="form-group mb-16">
+            <label class="d-flex align-center gap-8" style="cursor:pointer;">
+              <input type="checkbox" id="pfShipSame" checked onchange="onProformaShipSameChange()">
+              <span>Same as Billing Address</span>
+            </label>
+            <span class="fs-11 text-muted-sm" id="pfShipNote"></span>
+          </div>
+          <div class="form-grid cols-3 mb-16">
+            <div class="form-group">
+              <label for="pfShipState">Ship-To State</label>
+              <select id="pfShipState" class="form-control" onchange="onProformaShipStateChange()"><option value="">Select State</option></select>
+            </div>
+            <div class="form-group">
+              <label for="pfShipDistrict">Ship-To District</label>
+              <input type="text" id="pfShipDistrict" class="form-control" list="pfShipDistrictList" autocomplete="off" onchange="onProformaShipDistrictChange()">
+              <datalist id="pfShipDistrictList"></datalist>
+              <div id="pfShipDistrictError" class="fs-11 text-danger d-none" style="margin-top:4px;"></div>
+            </div>
+          </div>
+          <div class="form-group mb-16">
+            <label for="pfShipAddress">Ship-To Address</label>
+            <input type="text" id="pfShipAddress" class="form-control">
+          </div>
+          <!-- The item grid reads this for the intrastate/interstate split. -->
+          <input type="hidden" id="invSupply" value="intrastate">
+        </div>
+      </div>
+
+      <!-- The invoice product grid, mounted verbatim. -->
+      <div id="itemsSection"></div>
+
+      <div class="card mb-16">
+        <div class="card-body">
+          <div class="form-group mb-16">
+            <label for="pfNotes">Notes</label>
+            <textarea id="pfNotes" class="form-control" rows="2"></textarea>
+          </div>
+          <div class="form-group mb-16">
+            <label for="pfTerms">Terms / Payment Terms</label>
+            <textarea id="pfTerms" class="form-control" rows="2"></textarea>
+          </div>
+          <div class="d-flex gap-10">
+            <button type="button" class="btn btn-primary" id="pfSaveBtn" onclick="saveProforma()"><i class="fas fa-save"></i> Save Proforma</button>
+            <button type="button" class="btn btn-secondary" onclick="goToProformaList()"><i class="fas fa-list"></i> Proforma List</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+
+  <script>
+document.addEventListener('DOMContentLoaded', initProformaEntry);
+</script>
+
+<!-- Global Search Modal -->
+<div class="modal-overlay" id="globalSearchModal">
+  <div class="modal modal-lg">
+    <div class="modal-header">
+      <span class="modal-title"><i class="fas fa-search"></i> Search Everywhere</span>
+      <button type="button" class="modal-close" onclick="closeGlobalSearch()" aria-label="Close"><i class="fas fa-times"></i></button>
+    </div>
+    <div class="modal-body">
+      <input type="text" id="globalSearchInput" class="form-control mb-16" oninput="onGlobalSearchInput(this.value)" aria-label="Global search input">
+      <div id="globalSearchResults"><p class="text-muted-sm">Type at least 2 characters&hellip;</p></div>
+    </div>
+  </div>
+</div>
+
+</body>
+</html>

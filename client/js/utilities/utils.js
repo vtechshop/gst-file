@@ -582,6 +582,23 @@ const GST_DOCUMENT_TYPES = [
     effectiveFrom: GST_COMMENCEMENT, effectiveTo: null, status: 'active', version: 1,
     enabled: true, proven: false },
 
+  { key: 'proforma_invoice', label: 'Proforma Invoice', portalName: null,
+    rule: null, direction: 'outward', storage: 'proforma_invoices', series: 'proforma_invoice',
+    taxable: false, affectsTurnover: false, affectsHsn: false, affectsLiability: false,
+    affectsAmendments: false,
+    supportsCancellation: true, supportsAmendment: false,
+    supportsAutoNumbering: true, supportsManualNumbering: true, docNum: null,
+    // An offer, not a supply. Nothing has been supplied when one is issued,
+    // so no tax is due and it is reported in no return at all - docNum null
+    // is what keeps it out of GSTR-1 Table 13, which selects on that field.
+    // It is in the registry so it gets its own numbering book and so the
+    // Document Register stays a complete answer to what this business issues.
+    sections: [],
+    requires: ['document_number', 'document_date', 'party', 'line_items'],
+    masters: ['customer', 'product'], validations: ['valid_until_after_date'],
+    effectiveFrom: GST_COMMENCEMENT, effectiveTo: null, status: 'active', version: 1,
+    enabled: true, proven: false },
+
   { key: 'eway_bill', label: 'E-Way Bill', portalName: 'E-Way Bill (EWB-01)',
     rule: 'Rule 138', direction: 'outward', storage: 'eway_bills', series: null,
     taxable: false, affectsTurnover: false, affectsHsn: false, affectsLiability: false,
@@ -960,6 +977,53 @@ function populateGstCategorySelect(selectId, value) {
   el.innerHTML = GST_CUSTOMER_CATEGORIES.map(c =>
     `<option value="${escHtmlAttr(c.value)}">${escItemHtml(c.label)}</option>`).join('');
   el.value = gstCustomerCategory({ gst_category: value });
+}
+
+// ── Proforma Invoice status ────────────────────────────────
+// A proforma is an offer, so its status is mostly a record of what a person
+// did with it. Expired is the exception: it is nothing but the passage of
+// time against valid_until, so it is derived when the row is read rather
+// than written by a job that would have to run every night.
+//
+// Converted and Cancelled outrank the date. A quotation that was accepted
+// and invoiced did not later expire, and neither did one that was withdrawn
+// - saying so would misreport what happened.
+const PROFORMA_STATUSES = ['draft', 'sent', 'accepted', 'converted', 'cancelled'];
+const PROFORMA_STATUS_DEFAULT = 'draft';
+const PROFORMA_STATUS_LABELS = {
+  draft: 'Draft', sent: 'Sent', accepted: 'Accepted',
+  converted: 'Converted', cancelled: 'Cancelled', expired: 'Expired'
+};
+
+function proformaStatus(row) {
+  const v = String(row?.status || '').trim().toLowerCase();
+  return PROFORMA_STATUSES.includes(v) ? v : PROFORMA_STATUS_DEFAULT;
+}
+
+// `today` is injectable so this can be tested without waiting for a date to
+// pass, and so a list rendered at 23:59 does not disagree with itself.
+function proformaEffectiveStatus(row, today) {
+  const stored = proformaStatus(row);
+  if (stored === 'converted' || stored === 'cancelled') return stored;
+  const until = row?.valid_until;
+  if (!until) return stored;
+  const now = today || toISO(new Date());
+  return String(until) < String(now) ? 'expired' : stored;
+}
+
+function proformaStatusLabel(row, today) {
+  return PROFORMA_STATUS_LABELS[proformaEffectiveStatus(row, today)] || 'Draft';
+}
+
+// The default offer window. Editable on the form - a business that quotes
+// for 7 or 90 days just types it.
+const PROFORMA_VALIDITY_DAYS = 30;
+
+function proformaDefaultValidUntil(dateISO) {
+  const base = dateISO ? new Date(dateISO + 'T00:00:00') : new Date();
+  if (isNaN(base.getTime())) return '';
+  base.setDate(base.getDate() + PROFORMA_VALIDITY_DAYS);
+  return toISO(base);
 }
 
 // Supplies to an SEZ are inter-state supplies by law regardless of where

@@ -37,6 +37,7 @@
     "migration_diffpercent_rcm.sql",
     "migration_address_district.sql",
     "migration_invoice_shipping_address.sql",
-    "migration_vendor_purchase_gst_category.sql"
+    "migration_vendor_purchase_gst_category.sql",
+    "migration_proforma_invoices.sql"
   ]
 }

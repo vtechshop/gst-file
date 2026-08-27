@@ -11,6 +11,9 @@
 // of the user picking a page.
 // =============================================
 
+// Set only by an Import from the Proforma list; cleared as soon as it is
+// used. Never persisted - the link is written on the proforma's own row.
+let pendingProformaSourceId = null;
 let invoiceEditId = null;
 let invoiceEditType = null;
 let invoiceCustomersList = [];
@@ -713,6 +716,34 @@ async function loadInvoiceForEdit(type, id) {
   document.getElementById('invSaveBtn').innerHTML = '<i class="fas fa-save"></i> Update Invoice';
 }
 
+// Records on the QUOTATION what it turned into. Deliberately one-way and
+// one-sided: nothing is added to the invoice tables, so an invoice created
+// from a proforma is an ordinary invoice that happens to have been typed
+// from one, and every Dashboard, ledger and GSTR-1 query keeps reading
+// exactly what it read before.
+//
+// Failure here is reported but not fatal. The invoice is already saved and
+// correct; a proforma left saying Sent is a wrong label on a quotation, not
+// a wrong tax record, and re-importing will set it again.
+async function markProformaConverted(invoiceId, invoiceType) {
+  const proformaId = pendingProformaSourceId;
+  pendingProformaSourceId = null;          // used once, whatever happens next
+  if (!proformaId || !invoiceId) return;
+  try {
+    await _supabase.from('proforma_invoices')
+      .update({
+        status: 'converted',
+        converted_invoice_id: invoiceId,
+        converted_invoice_type: invoiceType
+      })
+      .eq('id', proformaId);
+  } catch (err) {
+    if (typeof showToast === 'function') {
+      showToast('Invoice saved. The proforma could not be marked Converted.', 'warning');
+    }
+  }
+}
+
 // ── Duplicate mode (js/invoice-list.js's Duplicate action stashes the
 // source invoice here before navigating — nothing is written to the DB
 // until Save is clicked) ────────────────────────────
@@ -766,6 +797,23 @@ async function loadInvoiceDuplicateDraft() {
   setInvValue('invVehicleType', draft.vehicle_type || '');
   setInvValue('invDispatchFrom', draft.dispatch_from || '');
   setInvValue('invDispatchTo', draft.dispatch_to || '');
+
+  // Fields the duplicate draft predates. A proforma carries them, and an
+  // invoice duplicate simply has them undefined, so both paths are safe.
+  setInvValue('invDistrict', draft.district || '');
+  populateDistrictList('invDistrictList', draft.state || '');
+  setInvValue('invShipAddress', draft.shipping_address || '');
+  setInvValue('invShipState', draft.shipping_state || '');
+  setInvValue('invShipDistrict', draft.shipping_district || '');
+  const shipSameDup = document.getElementById('invShipSame');
+  if (shipSameDup) shipSameDup.checked = !draft.shipping_address;
+  populateDistrictList('invShipDistrictList', draft.shipping_state || '');
+  onInvShipSameChange();
+
+  // Where this draft came from, if anywhere. Held in memory only and used
+  // once, AFTER the invoice has actually saved - clicking Import must not
+  // change the quotation, and a save that fails must leave it alone.
+  pendingProformaSourceId = draft.source_proforma_id || null;
 
   if (Array.isArray(draft.items) && draft.items.length) loadItemsIntoTable(draft.items);
 
@@ -948,6 +996,13 @@ async function saveInvoice() {
       }
     }
   }
+
+  // The quotation is told what it became only now, after the invoice has
+  // actually saved. If the save had failed we would never reach this line,
+  // which is precisely the guarantee: a failed save leaves the proforma
+  // exactly as it was. The link lives on the proforma; nothing is written
+  // to the invoice tables for it.
+  await markProformaConverted(invoiceId, type);
 
   showToast(wasNewInvoice ? 'Invoice saved successfully!' : 'Invoice updated successfully!');
   clearDraft(INVOICE_FORM_KEY);

@@ -52,6 +52,12 @@ const DOCUMENT_TABLES = {
   revised_invoice: { table: 'revised_invoices', series: 'revised_invoice',
                      items: 'revised_invoice_items', itemsFk: 'revised_invoice_id' },
 
+  // A quotation. Registered here purely for its own numbering book and the
+  // generic save/cancel path - it reports in no return, see the registry
+  // entry in js/utils.js.
+  proforma_invoice: { table: 'proforma_invoices', series: 'proforma_invoice',
+                     items: 'proforma_invoice_items', itemsFk: 'proforma_invoice_id' },
+
   bill_of_supply:  { table: 'bill_of_supply', series: 'bill_of_supply',
                      items: 'bill_of_supply_items', itemsFk: 'bill_of_supply_id' },
 
@@ -85,7 +91,10 @@ const DEFAULT_DOCUMENT_FORMATS = {
   dc_job_work:     'JW-#####',
   dc_approval:     'AP-#####',
   dc_liquid_gas:   'LG-#####',
-  dc_other:        'DC-#####'
+  dc_other:        'DC-#####',
+  // A quotation must not be mistaken for a tax document at a glance, so it
+  // gets its own visible prefix rather than the generic DOC- fallback.
+  proforma_invoice: 'PI-#####'
 };
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;

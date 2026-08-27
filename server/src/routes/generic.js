@@ -423,6 +423,26 @@ const TABLES = {
       'differential_65'],
     validate: makeDistrictValidator([['state', 'district'], ['shipping_state', 'shipping_district']])
   },
+  // Quotations. Separate tables on purpose: no Dashboard, Reports, ledger,
+  // Invoice List or GSTR-1 query reads them, so a proforma cannot leak into
+  // any of those by accident.
+  proforma_invoices: {
+    columns: ['id','user_id','document_number','document_date','document_series',
+      'valid_until','status','customer_id','customer_name','gst_number','phone',
+      'address','state','district','shipping_address','shipping_state','shipping_district',
+      'supply_type','gst_category','taxable_amount','gst_percentage','gst_amount',
+      'igst','cgst','sgst','total_amount','notes','terms',
+      'converted_invoice_id','converted_invoice_type','cancelled_at','cancel_reason',
+      'created_at','updated_at'],
+    validate: makeDistrictValidator([['state', 'district'], ['shipping_state', 'shipping_district']])
+  },
+  proforma_invoice_items: {
+    columns: ['id','user_id','proforma_invoice_id','product_id','product_name','hsn_code',
+      'unit','quantity','rate','discount_percentage','gst_percentage','taxable_value',
+      'gst_amount','igst','cgst','sgst','total_amount','gst_treatment','cess_rate',
+      'cess_amount','sort_order','created_at','updated_at']
+  },
+
   b2b_hsn: {
     // Legacy — no longer written to directly by normal invoice flow, but
     // the cascade-delete path (server/routes/invoices.js) still needs
