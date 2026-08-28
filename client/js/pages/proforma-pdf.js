@@ -249,14 +249,51 @@ async function buildProformaPDFDoc(row, items) {
   const sealReserveH = sealData ? SEAL : (signatureData ? 18 : 14);
   const bandTop = doc.internal.pageSize.height - 12 - 18 - (6 + sealReserveH + 5);
   let sigY = Math.max(ruleY + 12, bandTop);
-  doc.setFontSize(8.5); doc.setFont('helvetica', 'normal'); doc.setTextColor(60, 60, 60);
-  doc.text('For ' + (p?.business_name || ''), R, sigY, { align: 'right' });
-  if (sealData) { try { doc.addImage(sealData, 'PNG', R - SEAL, sigY + 3, SEAL, SEAL); } catch {} }
-  else if (signatureData) { try { doc.addImage(signatureData, 'PNG', R - SEAL, sigY + 3, SEAL, SEAL / 2); } catch {} }
-  const sigLineY = sigY + 6 + sealReserveH;
-  doc.setDrawColor(180, 180, 180); doc.line(R - 60, sigLineY, R, sigLineY);
+
+  // The same stamp block the tax invoice draws, measured the same way: every
+  // size below is of the INK inside each file, never of the file's edges - see
+  // inkBoundsOf() in invoice-pdf.js. Drawing the PNG at SEAL square instead
+  // sized the transparent margin rather than the mark, so the stamp came out
+  // small and faint; and the signature was drawn only where no seal existed,
+  // so a business with both never saw it at all.
+  const [sealInk, sigInk] = await Promise.all([inkBoundsOf(sealData), inkBoundsOf(signatureData)]);
+  const sealCx = R - 5 - SEAL / 2;       // centre, held clear of the margin
+  const sealTop = sigY + 3;              // unchanged: the band does not move
+
+  // Fit the stamp's longer side to SEAL, so a mark wider than it is tall does
+  // not overshoot the space reserved for it.
+  const sbk = sealInk || { w: 1, h: 1, imgW: 1, imgH: 1 };
+  const sealWantW = SEAL * sbk.w / Math.max(sbk.w, sbk.h * (sbk.imgH / sbk.imgW));
+  const seal = sealData ? placeInk(sealInk, sealWantW, sealCx, sealTop)
+                        : { inkW: SEAL, inkH: sealReserveH };
+
+  doc.setFont('helvetica', 'normal'); doc.setFontSize(9.5); doc.setTextColor(30, 30, 30);
+  doc.text('For ' + (p?.business_name || ''), sealCx, sealTop - 1.8, { align: 'center' });
+
+  if (sealData) {
+    try { doc.addImage(sealData, 'PNG', seal.x, seal.y, seal.w, seal.h); } catch {}
+  }
+  if (signatureData) {
+    // Centred over the stamp's visible ink, and capped so a tall scan cannot
+    // spill out of it - the same rule the tax invoice uses.
+    const cx = sealCx, cy = sealTop + seal.inkH * 0.50;
+    let sig = placeInk(sigInk, seal.inkW * 0.62, cx, 0);
+    const maxH = seal.inkH * 0.5;
+    if (sig.inkH > maxH) {
+      const k = maxH / sig.inkH;
+      sig = placeInk(sigInk, seal.inkW * 0.62 * k, cx, 0);
+    }
+    // placeInk aligns the ink's top; the block wants its centre.
+    const sgk = sigInk || { y: 0, h: 1 };
+    sig.y = cy - sgk.y * sig.h - sig.inkH / 2;
+    try { doc.addImage(signatureData, 'PNG', sig.x, sig.y, sig.w, sig.h); } catch {}
+  }
+
+  const authY = sealTop + seal.inkH + 5;
+  doc.setDrawColor(170, 170, 170);
+  doc.line(sealCx - 22, authY - 3.5, sealCx + 22, authY - 3.5);
   doc.setFontSize(8); doc.setTextColor(120, 120, 120);
-  doc.text('Authorized Signatory', R, sigLineY + 4, { align: 'right' });
+  doc.text('Authorized Signatory', sealCx, authY, { align: 'center' });
 
   // ── Footer + page numbers ──
   const PAGE_BOTTOM = doc.internal.pageSize.height - 12;
