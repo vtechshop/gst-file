@@ -58,6 +58,11 @@ const DOCUMENT_TABLES = {
   proforma_invoice: { table: 'proforma_invoices', series: 'proforma_invoice',
                      items: 'proforma_invoice_items', itemsFk: 'proforma_invoice_id' },
 
+  // The warranty register draws its own numbers (WAR-#####) so a warranty
+  // can never consume a tax invoice number. It has no line items, and its
+  // number column is warranty_number rather than document_number.
+  warranty:        { table: 'warranties', series: 'warranty', numberCol: 'warranty_number' },
+
   bill_of_supply:  { table: 'bill_of_supply', series: 'bill_of_supply',
                      items: 'bill_of_supply_items', itemsFk: 'bill_of_supply_id' },
 
@@ -94,7 +99,8 @@ const DEFAULT_DOCUMENT_FORMATS = {
   dc_other:        'DC-#####',
   // A quotation must not be mistaken for a tax document at a glance, so it
   // gets its own visible prefix rather than the generic DOC- fallback.
-  proforma_invoice: 'PI-#####'
+  proforma_invoice: 'PI-#####',
+  warranty:        'WAR-#####'
 };
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -154,8 +160,12 @@ router.post('/reserve-number', asyncRoute(async (req, res) => {
 
     // Only this book's numbers are taken. A receipt voucher numbered 5
     // does not stop a payment voucher being numbered 5.
+    // Most books number a column called document_number; the warranty
+    // register calls its own warranty_number. The name comes from the
+    // fixed spec above, never from anything the request supplied.
+    const numberCol = docSpec(type).numberCol || 'document_number';
     const { rows: taken } = await client.query(
-      `SELECT document_number FROM ${table} WHERE user_id = $1 AND document_series = $2`,
+      `SELECT ${numberCol} AS document_number FROM ${table} WHERE user_id = $1 AND document_series = $2`,
       [req.userId, series]);
     const used = new Set(taken.map(r => (r.document_number || '').toUpperCase()));
 

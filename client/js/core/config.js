@@ -67,4 +67,14 @@ function invoiceVerifyUrl(type, id) {
     + encodeURIComponent(type) + '&id=' + encodeURIComponent(id);
 }
 
+// The ONE address a warranty is verified at. The QR and the NFC tag both
+// carry this and nothing else: encode the cover itself and the tag becomes
+// the source of truth, so a cancelled warranty would keep verifying against
+// its own copy. A lookup by id makes the database answer, which is also why
+// a status change needs no tag to be rewritten.
+function warrantyVerifyUrl(id) {
+  if (!id) return '';
+  return INVOICE_VERIFY_BASE_URL + '/warranty-verify.html?id=' + encodeURIComponent(id);
+}
+
 const IS_PRODUCT_SYNC_CONFIGURED = PRODUCT_SYNC_BACKEND_URL !== 'YOUR_PRODUCT_SYNC_BACKEND_URL' && !!PRODUCT_SYNC_BACKEND_URL;

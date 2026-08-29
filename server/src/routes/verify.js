@@ -86,4 +86,73 @@ router.get('/invoice/:type/:id', asyncRoute(async (req, res) => {
   });
 }));
 
+// ── Public warranty verification ──
+// Same rules as the invoice route above, for the same reason: this answers a
+// QR or an NFC tag on goods in a customer's hands, and that customer has no
+// login. The id is checked by shape before it reaches the database, the
+// SELECT names its columns so a later migration cannot widen the response,
+// and every failure answers one generic 404 - so the endpoint cannot be used
+// to discover which warranties exist.
+//
+// Expiry is computed here rather than read, because the stored status only
+// records what a person decided. That is what makes a tag answer truthfully
+// the day after cover ends without anyone rewriting it.
+function warrantyNotFound(res) {
+  return res.status(404).json({ found: false, status: 'WARRANTY_NOT_FOUND', message: 'Warranty not found' });
+}
+
+router.get('/warranty/:id', asyncRoute(async (req, res) => {
+  if (!UUID_RE.test(String(req.params.id || ''))) return warrantyNotFound(res);
+
+  // customer_phone, notes, internal ids and every timestamp are deliberately
+  // absent: none of them is needed to answer 'is this item still covered?'.
+  const { rows } = await pool.query(
+    `SELECT w.warranty_number, w.status, w.customer_name,
+            w.invoice_number, w.invoice_date, w.purchase_date,
+            w.product_name, w.product_sku, w.serial_number, w.quantity,
+            w.warranty_period_months, w.warranty_start_date,
+            w.warranty_until, w.extended_until, w.warranty_terms,
+            p.business_name AS supplier_name
+       FROM warranties w
+       LEFT JOIN profiles p ON p.id = w.user_id
+      WHERE w.id = $1`,
+    [req.params.id]
+  );
+  const w = rows[0];
+  if (!w) return warrantyNotFound(res);
+
+  const until = w.extended_until || w.warranty_until;
+  const today = new Date().toISOString().slice(0, 10);
+  const cancelled = String(w.status || '').toLowerCase() === 'cancelled';
+  const expired = !cancelled && !!until && String(until).slice(0, 10) < today;
+  const state = cancelled ? 'CANCELLED' : expired ? 'EXPIRED' : 'ACTIVE';
+  const daysRemaining = until && !cancelled
+    ? Math.round((new Date(String(until).slice(0, 10) + 'T00:00:00')
+                - new Date(today + 'T00:00:00')) / 86400000)
+    : null;
+
+  res.json({
+    found: true,
+    status: state,
+    warranty: {
+      warranty_number: w.warranty_number,
+      status: state,
+      days_remaining: daysRemaining,
+      supplier_name: w.supplier_name || null,
+      customer_name: w.customer_name || null,
+      invoice_number: w.invoice_number || null,
+      invoice_date: w.invoice_date || null,
+      purchase_date: w.purchase_date || null,
+      product_name: w.product_name || null,
+      product_sku: w.product_sku || null,
+      serial_number: w.serial_number || null,
+      quantity: w.quantity,
+      warranty_period_months: w.warranty_period_months,
+      warranty_start_date: w.warranty_start_date || null,
+      warranty_until: until || null,
+      warranty_terms: w.warranty_terms || null
+    }
+  });
+}));
+
 module.exports = router;

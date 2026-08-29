@@ -582,6 +582,23 @@ const GST_DOCUMENT_TYPES = [
     effectiveFrom: GST_COMMENCEMENT, effectiveTo: null, status: 'active', version: 1,
     enabled: true, proven: false },
 
+  // A warranty is a promise about goods already supplied, not a supply. It
+  // is in the registry only so it gets its own numbering book (WAR-#####)
+  // and so the Document Register stays a complete answer to what this
+  // business issues - docNum null keeps it out of GSTR-1 Table 13, which
+  // selects on that field, and it carries no tax weight anywhere.
+  { key: 'warranty', label: 'Warranty', portalName: null,
+    rule: null, direction: 'outward', storage: 'warranties', series: 'warranty',
+    taxable: false, affectsTurnover: false, affectsHsn: false, affectsLiability: false,
+    affectsAmendments: false,
+    supportsCancellation: true, supportsAmendment: false,
+    supportsAutoNumbering: true, supportsManualNumbering: false, docNum: null,
+    sections: [],
+    requires: ['warranty_number', 'invoice_id', 'product_name'],
+    masters: ['customer', 'product'], validations: ['warranty_until_after_start'],
+    effectiveFrom: GST_COMMENCEMENT, effectiveTo: null, status: 'active', version: 1,
+    enabled: true, proven: false },
+
   { key: 'proforma_invoice', label: 'Proforma Invoice', portalName: null,
     rule: null, direction: 'outward', storage: 'proforma_invoices', series: 'proforma_invoice',
     taxable: false, affectsTurnover: false, affectsHsn: false, affectsLiability: false,
@@ -2112,4 +2129,42 @@ function populateWarrantySelect(selectId, value) {
     + WARRANTY_PERIOD_OPTIONS.map(o =>
         `<option value="${o.months}">${escItemHtml(o.label)}</option>`).join('');
   el.value = value == null || value === '' ? '' : String(parseInt(value, 10) || '');
+}
+
+// ── Warranty register status ───────────────────────
+// Only two states are ever stored: what a person decided. Expiry is nothing
+// but the passage of time against warranty_until, so it is derived when the
+// row is read rather than written by a nightly job that would leave every
+// record stale between runs.
+//
+// Cancelled outranks the calendar: a warranty withdrawn in March did not
+// later expire, and saying so would misreport what happened.
+const WARRANTY_STATUSES = ['active', 'cancelled'];
+const WARRANTY_STATUS_LABELS = {
+  active: 'Active', cancelled: 'Cancelled', expired: 'Expired'
+};
+
+function warrantyEffectiveStatus(row, today) {
+  const stored = String(row?.status || 'active').trim().toLowerCase();
+  if (stored === 'cancelled') return 'cancelled';
+  // An extension moves the end date without rewriting history.
+  const until = row?.extended_until || row?.warranty_until;
+  if (!until) return 'active';
+  const now = today || toISO(new Date());
+  return String(until).slice(0, 10) < String(now) ? 'expired' : 'active';
+}
+
+function warrantyStatusLabel(row, today) {
+  return WARRANTY_STATUS_LABELS[warrantyEffectiveStatus(row, today)] || 'Active';
+}
+
+// Whole days left, or null when there is no end date. Compared as date parts
+// so a reader in IST does not see yesterday's answer.
+function warrantyDaysRemaining(row, today) {
+  const until = row?.extended_until || row?.warranty_until;
+  if (!until) return null;
+  const a = new Date(String(today || toISO(new Date())).slice(0, 10) + 'T00:00:00');
+  const b = new Date(String(until).slice(0, 10) + 'T00:00:00');
+  if (isNaN(a.getTime()) || isNaN(b.getTime())) return null;
+  return Math.round((b - a) / 86400000);
 }

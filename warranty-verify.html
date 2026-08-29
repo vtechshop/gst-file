@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="robots" content="noindex, nofollow">
+  <title>Warranty Verification</title>
+  <link rel="icon" href="favicon.ico">
+  <link rel="stylesheet" href="client/css/style.css?v=32">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+</head>
+<body>
+  <!--
+    Public page: reached by scanning the QR on the goods, or by tapping the
+    NFC tag, so it must work for someone with no login and often on a phone.
+    It loads nothing but the verification endpoint, and the endpoint answers
+    with only what a customer needs to know about their own cover.
+
+    The tag carries this address and nothing else, which is why a warranty
+    that is later cancelled or allowed to expire reports that immediately -
+    the page asks the database every time rather than reading the tag.
+  -->
+  <div class="container" style="max-width:760px;margin:0 auto;padding:24px 16px;">
+    <div class="card">
+      <div class="card-header">
+        <span class="card-title"><i class="fas fa-shield-halved"></i> Warranty Verification</span>
+      </div>
+      <div class="card-body">
+        <div id="warrantyStatus" class="mb-16"></div>
+        <div id="warrantyBody"></div>
+        <p class="fs-11 text-muted-sm" style="margin-top:18px;">
+          These details were retrieved from the warranty record held by the issuing business.
+        </p>
+      </div>
+    </div>
+  </div>
+
+  <script src="client/js/pages/warranty-verify.js?v=32"></script>
+</body>
+</html>

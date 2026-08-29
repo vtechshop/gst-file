@@ -476,6 +476,23 @@ const TABLES = {
       'warranty_period_months',
       'sort_order','created_at','updated_at']
   },
+  // Warranty register. Its own table on purpose: no Dashboard, Reports,
+  // ledger, GSTR-1 or GSTR-3B query reads it, so a warranty cannot leak into
+  // any of those by accident. Every read here is scoped to the caller's
+  // user_id by the generic layer, which is what keeps one company's
+  // warranties invisible to another.
+  warranties: {
+    columns: ['id','user_id','warranty_number','document_series',
+      'invoice_id','invoice_type','invoice_item_id','invoice_number','invoice_date',
+      'customer_id','customer_name','customer_phone',
+      'product_id','product_name','product_sku','serial_number',
+      'quantity','rate','purchase_amount','purchase_date',
+      'warranty_period_months','warranty_start_date','warranty_until','warranty_terms',
+      'status','cancelled_at','cancel_reason',
+      'extended_until','extension_reason','notes',
+      'created_at','updated_at']
+  },
+
   vendors: {
     columns: ['id','user_id','name','gstin','phone','email','address','state','district',
       // Vendor's usual GST status / what it was for THIS purchase.
