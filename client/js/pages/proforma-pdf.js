@@ -33,6 +33,19 @@ function PROFORMA_ITEM_COLUMN_STYLES(tableWidth) {
   return styles;
 }
 
+// How long the offer actually runs, read back from the two dates the row
+// already stores rather than from the 30-day default. A quotation edited to
+// 45 days has to say 45, and one whose Valid Until was typed by hand still
+// gets a truthful figure. Nothing is written back - this is display only.
+function proformaValidityDays(dateISO, untilISO) {
+  if (!dateISO || !untilISO) return null;
+  const from = new Date(String(dateISO).slice(0, 10) + 'T00:00:00');
+  const to = new Date(String(untilISO).slice(0, 10) + 'T00:00:00');
+  if (isNaN(from.getTime()) || isNaN(to.getTime())) return null;
+  const days = Math.round((to - from) / 86400000);
+  return days > 0 ? days : null;
+}
+
 // Shapes a proforma row + its items into the object the shared renderers
 // expect, so invoicePartyLines() and the money formatting need no proforma
 // special-casing.
@@ -129,9 +142,11 @@ async function buildProformaPDFDoc(row, items) {
     const soldByWrapped = doc.splitTextToSize(soldBy.join('\n'), partColW);
     soldByWrapped.forEach((l, i) => doc.text(l, partX[0], partTop + i * 4.5));
 
+    const validityDays = proformaValidityDays(inv.invoice_date, inv.valid_until);
     const meta = [
       'Proforma No: ' + (inv.invoice_number || ''),
       'Date: ' + formatDate(inv.invoice_date),
+      validityDays ? 'Validity: ' + validityDays + ' Days' : '',
       inv.valid_until ? 'Valid Until: ' + formatDate(inv.valid_until) : '',
       'Place of Supply: ' + (inv.state || ''),
       'Type: ' + (inv.type === 'b2b' ? 'B2B (Registered)' : 'B2C (Unregistered)')
@@ -215,8 +230,23 @@ async function buildProformaPDFDoc(row, items) {
   doc.text('Quoted Total', boxX, ruleY + 7);
   doc.text('Rs.' + formatNum(inv.total_amount), R, ruleY + 7, { align: 'right' });
 
-  // ── Left column: words, validity, notes, terms ──
+  // ── Left column: bank details, words, validity, notes, terms ──
   let ly = y;
+
+  // The same block the tax invoice prints, from the same source -
+  // bankDetailLines() in invoice-pdf.js. A quotation has to say where the
+  // money goes if it is accepted, and it must name the same account; a second
+  // copy of this list here would be one that could drift from the invoice's.
+  // Set in the left column level with the totals, exactly as the invoice does.
+  const bankLines = bankDetailLines(p);
+  if (bankLines.length) {
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(8.5); doc.setTextColor(...accent);
+    doc.text('Bank Details for Payment', L, ly);
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(8); doc.setTextColor(60, 60, 60);
+    bankLines.forEach((l, i) => doc.text(l, L, ly + 4.5 + i * 4, { maxWidth: boxX - 6 - L }));
+    ly += 4.5 + bankLines.length * 4 + 3;
+  }
+
   doc.setFontSize(9); doc.setFont('helvetica', 'normal'); doc.setTextColor(30, 30, 30);
   doc.text('Amount in Words:', L, ly);
   doc.setFont('helvetica', 'bold');
