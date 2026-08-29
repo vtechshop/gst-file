@@ -246,3 +246,34 @@ test('W25 no serial number is ever invented', () => {
   assert.match(CREATE, /serial_number: l\.serial \|\| null/);
   assert.match(CREATE, /placeholder="optional"/);
 });
+
+// ── the PDF's input object ──
+// The bug this guards: buildInvoicePDFDoc() draws the WARRANTY block from the
+// invoice object it is HANDED, and that object is built by fetchInvoiceRecord()
+// from a named field list, not a spread. The columns existed, saved and read
+// back correctly, but were never copied onto that object, so the block drew
+// nothing. The per-item column kept working because line rows come back through
+// select('*'), which is why the failure looked partial.
+//
+// Every earlier warranty test hand-built the invoice object with the fields
+// already on it, which is exactly why they passed while the real path was broken.
+test('W26 fetchInvoiceRecord carries the warranty header fields to the PDF', () => {
+  const PDF = rd('client', 'js', 'pages', 'invoice-pdf.js');
+  const fn = PDF.slice(PDF.indexOf('async function fetchInvoiceRecord'));
+  const body = fn.slice(0, fn.indexOf('items' + String.fromCharCode(10) + '  };'));
+  for (const f of ['warranty_period_months', 'warranty_start_date', 'warranty_until', 'warranty_terms']) {
+    assert.ok(body.includes(f + ': data.' + f),
+      'fetchInvoiceRecord must copy ' + f + ' or the WARRANTY block cannot draw');
+  }
+});
+
+// Same class of defect, one layer out: the code was right and the browser never
+// saw it. A file must not share a ?v= with an older version of itself, so these
+// four moved together when their contents last changed.
+test('W27 every asset whose contents changed carries its own cache key', () => {
+  const page = rd('invoice-list.html');
+  for (const file of ['client/js/utilities/utils.js', 'client/js/core/config.js',
+                      'client/js/pages/invoice-list.js', 'client/js/pages/invoice-pdf.js']) {
+    assert.ok(page.includes(file + '?v=33'), file + ' must be referenced at v=33, not an older key');
+  }
+});

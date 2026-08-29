@@ -109,6 +109,15 @@ async function fetchInvoiceRecord(type, id) {
     vehicle_type: data.vehicle_type || '',
     dispatch_from: data.dispatch_from || '',
     dispatch_to: data.dispatch_to || '',
+    // Warranty, as stored on the invoice. This object is built from a named
+    // list rather than spread, so a column added to the table does NOT reach
+    // the PDF until it is named here - which is why the WARRANTY block drew
+    // nothing while the data sat in the row all along. The per-item column
+    // was unaffected because the line rows come back through select('*').
+    warranty_period_months: data.warranty_period_months || null,
+    warranty_start_date: data.warranty_start_date || null,
+    warranty_until: data.warranty_until || null,
+    warranty_terms: data.warranty_terms || '',
     payment_status: data.payment_status || 'unpaid',
     amount_paid: +data.amount_paid || 0,
     items
