@@ -38,6 +38,7 @@ async function initInvoiceEntry() {
   await loadInvoiceCustomersList(user.id);
   await initInvoiceItems(user.id, 'invoice');
   setInvValue('invDate', toISO(new Date()));
+  resetWarrantyFields();
 
   const params = new URLSearchParams(window.location.search);
   const editType = params.get('type');
@@ -679,6 +680,7 @@ async function loadInvoiceForEdit(type, id) {
   onInvShipSameChange();
   setInvValue('invNum', rec.invoice_number || '');
   setInvValue('invDate', rec.invoice_date || '');
+  restoreWarrantyFields(rec);
   setInvValue('invSupply', rec.supply_type || 'intrastate');
   // An invoice saved before series existed has no source stored — it
   // came off the shop counter, which is the default.
@@ -761,6 +763,8 @@ async function loadInvoiceDuplicateDraft() {
   setInvValue('invState', draft.state || '');
   setInvValue('invNum', ''); // must be unique — left blank for auto-generate or manual entry
   setInvValue('invDate', toISO(new Date()));
+  // A duplicate copies the goods, not the warranty promised on them.
+  resetWarrantyFields();
   setInvValue('invSupply', draft.supply_type || 'intrastate');
   // A duplicate of a website order is another website order — it keeps
   // the series, and gets the next number out of that series' book.
@@ -922,6 +926,7 @@ async function saveInvoice() {
     customer_name: custName, phone, address, state,
     ...buildInvShipTo(),
     invoice_number: invNum, invoice_date: invDate, supply_type: supply,
+    ...collectWarrantyHeader(),
     invoice_source: source,
     gst_category: gstCategory,
     reverse_charge: reverseCharge,
@@ -1087,6 +1092,8 @@ function clearInvoiceFormFields() {
   if (shipSameReset) shipSameReset.checked = true;   // default is same as billing
   onInvShipSameChange();
   setInvValue('invDate', toISO(new Date()));
+  // Cover is per sale: the next invoice must not inherit this one's.
+  resetWarrantyFields();
   setInvValue('invSupply', 'intrastate');
   // Back to the default series, same as every other field here returns
   // to its default. generateInvoiceNo() below then previews the offline
@@ -1447,4 +1454,91 @@ async function verifyInvoiceGstin() {
 function canonicalDistrictFor(state, district) {
   if (typeof IndiaDistricts === 'undefined') return String(district || '').trim();
   return IndiaDistricts.canonicalDistrict(state, district) || '';
+}
+
+// ── Warranty ───────────────────────────────────────
+// Optional throughout. Nothing here touches taxable value, GST, the total,
+// the numbering or any return - leaving the block empty leaves the invoice
+// exactly as it was before the feature existed.
+//
+// Until is derived from Start + Period, but a date the user typed is theirs:
+// once edited by hand it is not recomputed, so a negotiated end date is not
+// silently overwritten by changing the period.
+let warrantyUntilEdited = false;
+
+function onWarrantyUntilEdited() {
+  warrantyUntilEdited = !!getInvText("invWarrantyUntil");
+  renderWarrantyNote();
+}
+
+function recomputeWarrantyUntil(force) {
+  const months = parseInt(document.getElementById("invWarrantyPeriod")?.value, 10) || 0;
+  const start = getInvText("invWarrantyStart");
+  if (!months || !start) {
+    // No period or no start: nothing to derive. An end date the user typed
+    // themselves is left alone even here.
+    if (!warrantyUntilEdited) setInvValue("invWarrantyUntil", "");
+    renderWarrantyNote();
+    return;
+  }
+  if (force || !warrantyUntilEdited) {
+    setInvValue("invWarrantyUntil", warrantyUntil(start, months));
+    warrantyUntilEdited = false;
+  }
+  renderWarrantyNote();
+}
+
+function onWarrantyPeriodChange() {
+  // Choosing a period is an explicit act, so it re-derives the end date even
+  // if one was typed earlier - otherwise picking 6 Months would appear to do
+  // nothing. The terms textarea is never touched.
+  const start = getInvText("invWarrantyStart");
+  if (!start) setInvValue("invWarrantyStart", getInvText("invDate"));
+  recomputeWarrantyUntil(true);
+}
+
+function onWarrantyStartChange() { recomputeWarrantyUntil(false); }
+
+function renderWarrantyNote() {
+  const el = document.getElementById("invWarrantyNote");
+  if (!el) return;
+  const start = getInvText("invWarrantyStart");
+  const until = getInvText("invWarrantyUntil");
+  if (start && until && until < start) { el.textContent = "End date is before the start date."; el.className = "fs-11 text-danger"; return; }
+  el.className = "fs-11 text-muted-sm";
+  el.textContent = warrantyUntilEdited && until ? "Set manually." : "";
+}
+
+// Blank on a new invoice: a warranty must never be implied by a default.
+function resetWarrantyFields() {
+  populateWarrantySelect("invWarrantyPeriod", "");
+  setInvValue("invWarrantyStart", "");
+  setInvValue("invWarrantyUntil", "");
+  setInvValue("invWarrantyTerms", "");
+  warrantyUntilEdited = false;
+  renderWarrantyNote();
+}
+
+function collectWarrantyHeader() {
+  const months = parseInt(document.getElementById("invWarrantyPeriod")?.value, 10) || null;
+  const start = getInvText("invWarrantyStart") || null;
+  const until = getInvText("invWarrantyUntil") || null;
+  const terms = getInvText("invWarrantyTerms") || null;
+  return {
+    warranty_period_months: months && months > 0 ? months : null,
+    warranty_start_date: start,
+    warranty_until: until,
+    warranty_terms: terms
+  };
+}
+
+function restoreWarrantyFields(rec) {
+  populateWarrantySelect("invWarrantyPeriod", rec?.warranty_period_months || "");
+  setInvValue("invWarrantyStart", (rec?.warranty_start_date || "").toString().slice(0, 10));
+  setInvValue("invWarrantyUntil", (rec?.warranty_until || "").toString().slice(0, 10));
+  setInvValue("invWarrantyTerms", rec?.warranty_terms || "");
+  // Treat a stored end date as the user's own, so re-saving an edited
+  // invoice cannot quietly move it.
+  warrantyUntilEdited = !!rec?.warranty_until;
+  renderWarrantyNote();
 }

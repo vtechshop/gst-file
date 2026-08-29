@@ -230,10 +230,17 @@ test('P22 schema.sql carries the same two tables', () => {
   assert.match(SCHEMA, /CREATE TABLE IF NOT EXISTS proforma_invoice_items/);
 });
 
-test('P23 the migration is registered in the manifest, last', () => {
+test('P23 the migration is registered in the manifest, after the schema it needs', () => {
   const manifest = JSON.parse(fs.readFileSync(
     path.join(ROOT, 'server', 'db', 'migrations', '_manifest.json'), 'utf8'));
-  assert.equal(manifest.order[manifest.order.length - 1], 'migration_proforma_invoices.sql');
+  const at = manifest.order.indexOf('migration_proforma_invoices.sql');
+  assert.ok(at > -1, 'the proforma migration is not registered');
+  // This used to assert it was the LAST entry, which pinned the end of the
+  // manifest rather than this migration's own position - so the next feature
+  // to add any migration failed a proforma test. What matters is that it runs
+  // after the invoice tables it references already exist.
+  const needs = manifest.order.indexOf('migration_invoice_shipping_address.sql');
+  if (needs > -1) assert.ok(at > needs, 'proforma must run after earlier invoice migrations');
   assert.ok(fs.existsSync(path.join(ROOT, 'server', 'db', 'migrations', 'migration_proforma_invoices.sql')));
 });
 

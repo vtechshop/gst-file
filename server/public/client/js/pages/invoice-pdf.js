@@ -286,15 +286,29 @@ const INVOICE_ITEM_COLUMN_WEIGHTS = [
 ];
 
 
-function INVOICE_ITEM_COLUMN_STYLES(tableWidth) {
-  const total = INVOICE_ITEM_COLUMN_WEIGHTS.reduce((a, b) => a + b, 0);
+// Warranty sits between IGST and Total, and ONLY when some line on this
+// invoice actually carries cover. An invoice without it keeps the ten
+// columns it has always had, at the widths it has always had - which is what
+// makes every invoice raised before this feature render unchanged.
+const INVOICE_WARRANTY_COLUMN_WEIGHT = 26;   // fits "12 Months / 1 Year"
+
+function invoiceItemColumnWeights(hasWarranty) {
+  if (!hasWarranty) return INVOICE_ITEM_COLUMN_WEIGHTS;
+  const w = INVOICE_ITEM_COLUMN_WEIGHTS.slice();
+  w.splice(w.length - 1, 0, INVOICE_WARRANTY_COLUMN_WEIGHT);
+  return w;
+}
+
+function INVOICE_ITEM_COLUMN_STYLES(tableWidth, hasWarranty) {
+  const weights = invoiceItemColumnWeights(hasWarranty);
+  const total = weights.reduce((a, b) => a + b, 0);
   const styles = {};
-  INVOICE_ITEM_COLUMN_WEIGHTS.forEach((w, i) => {
+  weights.forEach((w, i) => {
     styles[i] = { cellWidth: tableWidth * w / total };
   });
   // Product name and line total stay bold, exactly as before.
   styles[1].fontStyle = 'bold';
-  styles[9].fontStyle = 'bold';
+  styles[weights.length - 1].fontStyle = 'bold';
   return styles;
 }
 
@@ -346,6 +360,27 @@ function parseTermsTable(text) {
     pairs.push([m[1].trim(), m[2].trim()]);
   }
   return pairs.length >= 2 ? pairs : null;
+}
+
+// The warranty block, as lines. Empty when the invoice carries none, which
+// is every invoice raised before the feature existed - and an empty list
+// draws nothing, so those documents are unchanged.
+//
+// Terms are printed as given: they are the seller's own wording and a
+// warranty argued later turns on it.
+function warrantyDetailLines(inv) {
+  if (!inv) return [];
+  const period = warrantyLabel(inv.warranty_period_months);
+  const start = inv.warranty_start_date ? formatDate(inv.warranty_start_date) : '';
+  const until = inv.warranty_until ? formatDate(inv.warranty_until) : '';
+  const terms = (inv.warranty_terms || '').trim();
+  if (!period && !start && !until && !terms) return [];
+  return [
+    period ? 'Warranty Period: ' + period : '',
+    start ? 'Warranty Start: ' + start : '',
+    until ? 'Warranty Until: ' + until : '',
+    terms ? 'Terms: ' + terms : ''
+  ].filter(Boolean);
 }
 
 function bankDetailLines(p) {
@@ -526,27 +561,36 @@ async function buildInvoicePDFDoc(inv) {
     // ── Item table — Product Name / HSN / Unit / Qty / Rate / GST% /
     // Taxable Value / CGST / SGST / IGST / Line Total, sourced directly
     // from the invoice's product line items (Product Master HSN/GST%/Unit) ──
-    const pdfItemRows = inv.items
-      ? inv.items.map((it, i) => [
-          String(i + 1), it.product_name, it.hsn_code || '-', formatNum(it.quantity), formatNum(it.rate),
-          it.gst_percentage + '%',
-          it.cgst > 0 ? formatNum(it.cgst) : '-', it.sgst > 0 ? formatNum(it.sgst) : '-',
-          it.igst > 0 ? formatNum(it.igst) : '-', formatNum(it.total_amount)
-        ])
-      : [[
-          '1', 'Taxable Supply', '-', '1', formatNum(inv.taxable_amount),
-          inv.gst_percentage + '%',
-          inv.cgst > 0 ? formatNum(inv.cgst) : '-', inv.sgst > 0 ? formatNum(inv.sgst) : '-',
-          inv.igst > 0 ? formatNum(inv.igst) : '-', formatNum(inv.total_amount)
-        ]];
+    // Only worth a column if some line actually carries cover; without it the
+      // table keeps exactly the shape every earlier invoice had.
+      const hasItemWarranty = !!(inv.items || []).some(it => parseInt(it.warranty_period_months, 10) > 0);
+      const withWarranty = (cells, value) => {
+        if (!hasItemWarranty) return cells;
+        const out = cells.slice();
+        out.splice(out.length - 1, 0, value);   // between IGST and Total
+        return out;
+      };
+      const pdfItemRows = inv.items
+        ? inv.items.map((it, i) => withWarranty([
+            String(i + 1), it.product_name, it.hsn_code || '-', formatNum(it.quantity), formatNum(it.rate),
+            it.gst_percentage + '%',
+            it.cgst > 0 ? formatNum(it.cgst) : '-', it.sgst > 0 ? formatNum(it.sgst) : '-',
+            it.igst > 0 ? formatNum(it.igst) : '-', formatNum(it.total_amount)
+          ], warrantyLabel(it.warranty_period_months) || '-'))
+        : [withWarranty([
+            '1', 'Taxable Supply', '-', '1', formatNum(inv.taxable_amount),
+            inv.gst_percentage + '%',
+            inv.cgst > 0 ? formatNum(inv.cgst) : '-', inv.sgst > 0 ? formatNum(inv.sgst) : '-',
+            inv.igst > 0 ? formatNum(inv.igst) : '-', formatNum(inv.total_amount)
+          ], '-')];
     doc.autoTable({
       startY: y,
-      head: [['#', 'Product Name', 'HSN', 'Qty', 'Rate', 'GST%', 'CGST', 'SGST', 'IGST', 'Total']],
+      head: [withWarranty(['#', 'Product Name', 'HSN', 'Qty', 'Rate', 'GST%', 'CGST', 'SGST', 'IGST', 'Total'], 'Warranty')],
       body: pdfItemRows,
       theme: 'grid',
       headStyles: { fillColor: [Math.min(accent[0]+224,255), Math.min(accent[1]+165,255), Math.min(accent[2]+177,255)], textColor: accent, fontStyle: 'bold', fontSize: 7.5, lineColor: [178, 223, 219] },
       bodyStyles: { fontSize: 8, textColor: [40, 40, 40] },
-      columnStyles: INVOICE_ITEM_COLUMN_STYLES(R - L),
+      columnStyles: INVOICE_ITEM_COLUMN_STYLES(R - L, hasItemWarranty),
       // top margin keeps every continuation page clear of the repeated header;
       // page 1 starts at startY, which is already below it.
       margin: { left: L, right: L, top: HEADER_BOTTOM },
@@ -578,6 +622,12 @@ async function buildInvoicePDFDoc(inv) {
     if (inv.igst > 0) totalsRows.push([`IGST (${inv.gst_percentage}%)`, formatNum(inv.igst)]);
     if (Math.abs(inv.round_off) >= 0.005) totalsRows.push(['Round Off', (inv.round_off >= 0 ? '+' : '') + formatNum(inv.round_off)]);
     const bankLines = bankDetailLines(p);
+    // Wrapped HERE, once, because the space the close needs decides whether
+    // the totals fit on this page at all - and the terms are the one line
+    // that can run to several. Measuring the unwrapped list would
+    // under-reserve and let the block run into the signature.
+    const warrantyLines = warrantyDetailLines(inv).flatMap(
+      (line) => doc.splitTextToSize(line, boxX - 6 - L));
 
     const SEAL = 26;                       // mm across the visible stamp
     const sealReserveH = sealData ? SEAL : (signatureData ? 18 : 14);
@@ -594,7 +644,11 @@ async function buildInvoicePDFDoc(inv) {
     // under.
     const closingNeed = Math.max(
       totalsRows.length * 5.5 + 11,                                     // right
-      (bankLines.length ? 4.5 + bankLines.length * 4 + 3 : 0) + 18      // left
+      (bankLines.length ? 4.5 + bankLines.length * 4 + 3 : 0)
+        // Warranty sits under the bank block in the same column, so its
+        // height counts too or the close could run into the signature.
+        + (warrantyLines.length ? 4 + 4.5 + warrantyLines.length * 4 : 0)
+        + 18      // left
     );
 
     // The footer, measured now rather than after the close is drawn, because
@@ -655,6 +709,21 @@ async function buildInvoicePDFDoc(inv) {
       doc.setFont('helvetica', 'normal'); doc.setFontSize(8); doc.setTextColor(60, 60, 60);
       bankLines.forEach((l, i) => doc.text(l, L, totalsTop + 4.5 + i * 4, { maxWidth: boxX - 6 - L }));
       bankBottom = totalsTop + 4.5 + bankLines.length * 4;
+    }
+
+    // ── Warranty ──
+    // Same left column, directly under the bank block. Descriptive only: it
+    // is drawn after every total is settled and changes none of them. Absent
+    // entirely when the invoice carries no warranty.
+    if (warrantyLines.length) {
+      const wy = bankBottom + (bankLines.length ? 4 : 0);
+      doc.setFont('helvetica', 'bold'); doc.setFontSize(8.5); doc.setTextColor(...accent);
+      doc.text('WARRANTY', L, wy);
+      doc.setFont('helvetica', 'normal'); doc.setFontSize(8); doc.setTextColor(60, 60, 60);
+      let wl = wy + 4.5;
+      // Already wrapped above, so fit and drawing cannot disagree.
+      warrantyLines.forEach((t) => { doc.text(t, L, wl); wl += 4; });
+      bankBottom = wl;
     }
 
     // Where the totals column ends. The signature goes under it, in the same

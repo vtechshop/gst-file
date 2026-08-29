@@ -173,7 +173,15 @@ CREATE TABLE IF NOT EXISTS b2b_invoices (
   -- A vehicle bought and leased before 1 July 2017 attracts GST at 65% of
   -- the applicable rate, reported as diff_percent 0.65. Stored as a
   -- boolean because 0.65 is the only value the schema accepts.
-  differential_65 BOOLEAN NOT NULL DEFAULT FALSE
+  differential_65 BOOLEAN NOT NULL DEFAULT FALSE,
+
+  -- Warranty. Descriptive only - read by no return, total or sequence.
+  -- NULL on every invoice raised before the feature existed, and the PDF
+  -- prints the block only when there is something to print.
+  warranty_period_months INTEGER,
+  warranty_start_date DATE,
+  warranty_until DATE,
+  warranty_terms TEXT
 );
 
 -- ── B2C Invoices ─────────────────────────────────────
@@ -250,7 +258,15 @@ CREATE TABLE IF NOT EXISTS b2c_invoices (
   -- A vehicle bought and leased before 1 July 2017 attracts GST at 65% of
   -- the applicable rate, reported as diff_percent 0.65. Stored as a
   -- boolean because 0.65 is the only value the schema accepts.
-  differential_65 BOOLEAN NOT NULL DEFAULT FALSE
+  differential_65 BOOLEAN NOT NULL DEFAULT FALSE,
+
+  -- Warranty. Descriptive only - read by no return, total or sequence.
+  -- NULL on every invoice raised before the feature existed, and the PDF
+  -- prints the block only when there is something to print.
+  warranty_period_months INTEGER,
+  warranty_start_date DATE,
+  warranty_until DATE,
+  warranty_terms TEXT
 );
 
 -- No two invoices may share a number WITHIN A SERIES — a real DB-level
@@ -488,6 +504,10 @@ CREATE TABLE IF NOT EXISTS invoice_items (
   cess_rate DECIMAL(6,3) NOT NULL DEFAULT 0,
   cess_amount DECIMAL(15,2) NOT NULL DEFAULT 0,
   sort_order INTEGER NOT NULL DEFAULT 0,
+
+  -- Cover for this line, in months. The start date is the invoice's own,
+  -- so it is not copied here where it could disagree with it.
+  warranty_period_months INTEGER,
   created_at TIMESTAMPTZ DEFAULT NOW(),
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );

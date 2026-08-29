@@ -603,6 +603,32 @@ table.data-table {
 .items-table-fixed th:nth-child(9),  .items-table-fixed td:nth-child(9)  { width: 100px; }  /* Cess %         */
 .items-table-fixed th:nth-child(10), .items-table-fixed td:nth-child(10) { width: 170px; }  /* Taxable Value  */
 .items-table-fixed th:nth-child(11), .items-table-fixed td:nth-child(11) { width: 170px; }  /* Total          */
+/* Warranty variant: the tax invoice grid carries one extra column between
+   Taxable Value and Total. Proforma Entry mounts the SAME component without
+   it, so the widths above stay as they are and only this variant shifts -
+   these rules match the base ones in specificity and win on source order.
+   With table-layout:fixed a column with no width collapses to nothing, so
+   every position from 11 on is restated here rather than inherited. */
+.items-table-fixed.items-table-warranty { width: 1834px; }
+.items-table-warranty th:nth-child(11), .items-table-warranty td:nth-child(11) { width: 140px; }  /* Warranty */
+.items-table-warranty th:nth-child(12), .items-table-warranty td:nth-child(12) { width: 170px; }  /* Total    */
+.items-table-warranty th:nth-child(13), .items-table-warranty td:nth-child(13) { width: 64px;  }  /* Delete   */
+
+/* Total keeps the no-wrap the money columns rely on; Warranty holds a select
+   and must not inherit it. */
+.items-table-warranty td:nth-child(11) { white-space: normal; }
+.items-table-warranty td:nth-child(12) { white-space: nowrap; }
+
+/* Delete alignment follows the column, not the number 12. */
+.items-table-warranty th:nth-child(13),
+#itemsTable.items-table-warranty td:nth-child(13) { text-align: center; }
+#itemsTable.items-table-warranty td:nth-child(13) { vertical-align: middle; }
+#itemsTable.items-table-warranty td:nth-child(12) { text-align: right; vertical-align: top; }
+/* The base rule centres column 12 because that is Delete in the 12-column
+   grid; here 12 is Total, and it is declared after this block, so both the
+   header and the cell need a selector that outranks it. */
+.items-table-fixed.items-table-warranty th:nth-child(12) { text-align: right; }
+
 .items-table-fixed th:nth-child(12), .items-table-fixed td:nth-child(12) { width: 64px;  }  /* Delete         */
 
 /* The two money columns carry the longest values on the row —

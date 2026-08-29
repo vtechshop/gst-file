@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>New Invoice - GST Management System</title>
-  <link rel="stylesheet" href="client/css/style.css?v=29">
+  <link rel="stylesheet" href="client/css/style.css?v=32">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.31/jspdf.plugin.autotable.min.js"></script>
@@ -15,15 +15,15 @@
   <script src="client/js/core/config.js?v=29"></script>
   <script src="client/js/api/product-sync.js?v=29"></script>
   <script src="client/js/core/auth.js?v=29"></script>
-  <script src="client/js/utilities/utils.js?v=29"></script>
+  <script src="client/js/utilities/utils.js?v=32"></script>
   <script src="client/js/core/search.js?v=29"></script>
   <script src="client/js/pages/profile.js?v=29"></script>
   <script src="client/js/pages/products.js?v=29"></script>
   <script src="client/js/core/drafts.js?v=29"></script>
-  <script src="client/js/pages/invoice-items.js?v=29"></script>
-  <script src="client/js/pages/invoice-pdf.js?v=29"></script>
+  <script src="client/js/pages/invoice-items.js?v=32"></script>
+  <script src="client/js/pages/invoice-pdf.js?v=32"></script>
   <script src="client/js/pages/payments.js?v=29"></script>
-  <script src="client/js/pages/invoice-entry.js?v=29"></script>
+  <script src="client/js/pages/invoice-entry.js?v=32"></script>
   <!-- Invoice scanner. Uploads to /api/invoice-scan, which calls Gemini
        with a server-held key; no OCR library is loaded in the browser. -->
   <script src="client/js/pages/invoice-scan.js?v=29"></script>
@@ -290,6 +290,33 @@
 
           <!-- Products -->
           <div id="itemsSection"></div>
+
+          <!-- Warranty (optional) -->
+          <!-- Descriptive only: nothing here reaches the taxable value, the
+               GST columns, the total, the numbering or any return. Left blank,
+               the whole block is simply absent from the PDF. -->
+          <div class="section-title mb-14 mt-20">Warranty</div>
+          <div class="form-grid cols-3 mb-16">
+            <div class="form-group">
+              <label for="invWarrantyPeriod">Warranty Period</label>
+              <select id="invWarrantyPeriod" class="form-control" onchange="onWarrantyPeriodChange()"></select>
+            </div>
+            <div class="form-group">
+              <label for="invWarrantyStart">Warranty Start Date</label>
+              <input type="date" id="invWarrantyStart" class="form-control" onchange="onWarrantyStartChange()">
+              <span class="fs-11 text-muted-sm">Defaults to the invoice date.</span>
+            </div>
+            <div class="form-group">
+              <label for="invWarrantyUntil">Warranty Until</label>
+              <input type="date" id="invWarrantyUntil" class="form-control" onchange="onWarrantyUntilEdited()">
+              <span class="fs-11 text-muted-sm" id="invWarrantyNote"></span>
+            </div>
+          </div>
+          <div class="form-group mb-16">
+            <label for="invWarrantyTerms">Warranty Terms / Notes</label>
+            <textarea id="invWarrantyTerms" class="form-control" rows="2"
+              placeholder="e.g. Motor warranty 1 year. Physical damage not covered."></textarea>
+          </div>
 
           <!-- Transport (optional) -->
           <div class="section-title mb-14 mt-20 d-flex align-center gap-14">

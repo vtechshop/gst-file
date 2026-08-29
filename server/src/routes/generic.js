@@ -403,7 +403,10 @@ const TABLES = {
       'export_type','shipping_bill_number','shipping_bill_date','port_code',
       'cess_amount','ecom_gstin','ecom_supply_type',
       'sez_recipient_type','export_of','lut_number',
-      'differential_65'],
+      'differential_65',
+      // Warranty on the sale. Descriptive only - no return, total or
+      // sequence reads these, and they stay NULL on older invoices.
+      'warranty_period_months','warranty_start_date','warranty_until','warranty_terms'],
     validate: makeDistrictValidator([['state', 'district'], ['shipping_state', 'shipping_district']])
   },
   b2c_invoices: {
@@ -420,7 +423,10 @@ const TABLES = {
       'export_type','shipping_bill_number','shipping_bill_date','port_code',
       'cess_amount','ecom_gstin','ecom_supply_type',
       'sez_recipient_type','export_of','lut_number',
-      'differential_65'],
+      'differential_65',
+      // Warranty on the sale. Descriptive only - no return, total or
+      // sequence reads these, and they stay NULL on older invoices.
+      'warranty_period_months','warranty_start_date','warranty_until','warranty_terms'],
     validate: makeDistrictValidator([['state', 'district'], ['shipping_state', 'shipping_district']])
   },
   // Quotations. Separate tables on purpose: no Dashboard, Reports, ledger,
@@ -466,6 +472,8 @@ const TABLES = {
       'taxable_value','gst_amount','igst','cgst','sgst','total_amount',
       // GST treatment (Phase 2, Module 3)
       'gst_treatment','cess_rate','cess_amount',
+      // Cover for this line, in months. Descriptive only.
+      'warranty_period_months',
       'sort_order','created_at','updated_at']
   },
   vendors: {

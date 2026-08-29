@@ -2040,3 +2040,76 @@ function takeListReturnState(key) {
   try { sessionStorage.removeItem(key); } catch { /* ignore */ }
   return state;
 }
+
+// ── Warranty ───────────────────────────────────────
+// Descriptive only. Nothing here touches taxable value, GST, totals,
+// numbering, stock or any return - a warranty is a promise about the goods,
+// not a number on the tax document.
+//
+// Stored as a month count so the period survives a start-date change: a row
+// saying "6" still means six months if the invoice is re-dated, where a
+// stored end-date would quietly become wrong.
+const WARRANTY_PERIOD_OPTIONS = [
+  { months: 1, label: '1 Month' },
+  { months: 2, label: '2 Months' },
+  { months: 3, label: '3 Months' },
+  { months: 4, label: '4 Months' },
+  { months: 5, label: '5 Months' },
+  { months: 6, label: '6 Months' },
+  { months: 7, label: '7 Months' },
+  { months: 8, label: '8 Months' },
+  { months: 9, label: '9 Months' },
+  { months: 10, label: '10 Months' },
+  { months: 11, label: '11 Months' },
+  { months: 12, label: '12 Months / 1 Year' }
+];
+
+function warrantyLabel(months) {
+  const n = parseInt(months, 10);
+  if (!n || n < 1) return '';
+  const found = WARRANTY_PERIOD_OPTIONS.find(o => o.months === n);
+  return found ? found.label : n + (n === 1 ? ' Month' : ' Months');
+}
+
+// Start + N months, minus a day: cover that begins on the 29th and runs six
+// months ends on the 28th, not the 29th - the last covered day is the one
+// before the anniversary.
+//
+// Built from date PARTS, never from a UTC timestamp, because a Date parsed
+// from 'YYYY-MM-DD' is midnight UTC and rendering it in IST shifts it back a
+// day. The same reason toISO() reads getFullYear/getMonth/getDate.
+//
+// A shorter month clamps: 31 Jan + 1 month is 28 Feb, so the end date is the
+// 27th rather than a rolled-over 2 March.
+function warrantyUntil(startISO, months) {
+  const n = parseInt(months, 10);
+  if (!startISO || !n || n < 1) return '';
+  const s = String(startISO).slice(0, 10);
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s);
+  if (!m) return '';
+  const y = +m[1], mo = +m[2] - 1, d = +m[3];
+  const target = new Date(y, mo + n, 1);                // the target month
+  const lastDay = new Date(target.getFullYear(), target.getMonth() + 1, 0).getDate();
+  if (d > lastDay) {
+    // The anniversary does not exist - 29 August plus six months would be
+    // 29 February. Cover then runs to the end of that month, which is the
+    // last day it can run to; stepping back a further day would end it early
+    // for a reason no customer could follow.
+    target.setDate(lastDay);
+    return toISO(target);
+  }
+  // The anniversary exists, so the last covered day is the one before it.
+  target.setDate(d);
+  target.setDate(target.getDate() - 1);
+  return toISO(target);
+}
+
+// Blank first: a warranty is optional and must not be implied by a default.
+function populateWarrantySelect(selectId, value) {
+  const el = document.getElementById(selectId);
+  if (!el) return;
+  el.innerHTML = '<option value="">No warranty</option>'
+    + WARRANTY_PERIOD_OPTIONS.map(o =>
+        `<option value="${o.months}">${escItemHtml(o.label)}</option>`).join('');
+  el.value = value == null || value === '' ? '' : String(parseInt(value, 10) || '');
+}

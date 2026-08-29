@@ -13,6 +13,21 @@ let itemsRowSeq = 0;
 let quickAddTargetRowId = null;
 
 // ── Init ──────────────────────────────────────────
+// This grid is shared with Proforma Entry, which mounts it with the
+// 'proforma' prefix. Warranty belongs to a sale, not to a quotation, so the
+// column exists only on the tax invoice - the proforma grid keeps exactly
+// the columns it had.
+function itemsWarrantyEnabled() {
+  return itemsFormPrefix === 'invoice';
+}
+
+// Blank first: warranty is optional and must never be implied by a default.
+function warrantyOptionsHtml(selected) {
+  const sel = parseInt(selected, 10) || '';
+  return '<option value="">-</option>' + WARRANTY_PERIOD_OPTIONS.map(o =>
+    `<option value="${o.months}"${String(sel) === String(o.months) ? ' selected' : ''}>${escItemHtml(o.label)}</option>`).join('');
+}
+
 async function initInvoiceItems(userId, formPrefix) {
   itemsUserId = userId;
   itemsFormPrefix = formPrefix;
@@ -76,7 +91,7 @@ function renderItemsSectionShell(containerId) {
     <div class="section-title mb-14">Products</div>
     <div id="productSyncNotice" class="fs-12 text-muted-sm mb-10"></div>
     <div class="table-wrapper items-table-wrapper mb-16">
-      <table class="data-table items-table-fixed" id="itemsTable">
+      <table class="data-table items-table-fixed${itemsWarrantyEnabled() ? ' items-table-warranty' : ''}" id="itemsTable">
         <thead>
           <tr>
             <th>Product <span class="text-required">*</span></th>
@@ -89,6 +104,7 @@ function renderItemsSectionShell(containerId) {
             <th class="text-center">GST %</th>
             <th class="text-center">Cess %</th>
             <th class="text-right">Taxable Value</th>
+            ${itemsWarrantyEnabled() ? '<th class="text-center">Warranty</th>' : ''}
             <th class="text-right">Total</th>
             <th></th>
           </tr>
@@ -152,7 +168,7 @@ function blankRow() {
     // Compensation cess, charged on top of GST on a short list of goods.
     // The rate comes from the product master and is editable per line, the
     // same arrangement the GST rate has.
-    cess_rate: 0, cess_amount: 0,
+    cess_rate: 0, cess_amount: 0, warranty_period_months: null,
     taxable_value: 0, gst_amount: 0, igst: 0, cgst: 0, sgst: 0, total_amount: 0, locked: false
   };
 }
@@ -261,6 +277,7 @@ function renderItemsTable() {
           title="Compensation cess — auto-filled from Product Master. Charged on the taxable value, not on the GST."
           oninput="onItemFieldChange('${row.rowId}','cess_rate',this.value)"></td>
       <td class="text-right fw-600 item-taxable-cell">&#8377;${formatNum(row.taxable_value)}</td>
+      ${itemsWarrantyEnabled() ? `<td><select class="form-control text-center item-warranty-cell" onchange="onItemFieldChange('${row.rowId}','warranty_period_months',this.value)">${warrantyOptionsHtml(row.warranty_period_months)}</select></td>` : ''}
       <td class="text-right fw-700 item-total-cell">&#8377;${formatNum(row.total_amount)}</td>
       <td><button type="button" class="btn btn-danger btn-sm btn-icon" onclick="removeItemRow('${row.rowId}')" title="Remove row"><i class="fas fa-trash"></i></button></td>
     </tr>`).join('');
@@ -616,6 +633,11 @@ function onItemFieldChange(rowId, field, value) {
   if (!row) return;
   if (field === 'unit') {
     row[field] = value;
+  } else if (field === 'warranty_period_months') {
+    // A month count, and blank means no warranty. The numeric branch
+    // below would turn "" into 0 and store a warranty of zero months.
+    const n = parseInt(value, 10);
+    row[field] = n > 0 ? n : null;
   } else if (field === 'discount_percentage' || field === 'gst_percentage') {
     // Same 0-100 clamp as Discount — a manually overridden GST % never
     // breaks the math, it just can't go negative or above 100. This is
@@ -955,6 +977,10 @@ async function saveInvoiceWithItems(type, headerBase, editId, userId) {
       taxable_value: r.taxable_value, gst_amount: r.gst_amount,
       gst_treatment: r.gst_treatment || 'taxable', igst: r.igst, cgst: r.cgst, sgst: r.sgst,
       cess_rate: r.cess_rate || 0, cess_amount: r.cess_amount || 0,
+      // Null, not 0, when the row has no warranty: the column is nullable
+      // and zero months would read as a warranty that was actually given.
+      warranty_period_months: parseInt(r.warranty_period_months, 10) > 0
+        ? parseInt(r.warranty_period_months, 10) : null,
       total_amount: r.total_amount
     }));
 
