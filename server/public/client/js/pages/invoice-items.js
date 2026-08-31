@@ -985,10 +985,23 @@ async function saveInvoiceWithItems(type, headerBase, editId, userId) {
     }));
 
   try {
-    const { invoiceId } = await apiFetch(`/invoices/${type}/save-with-items`, {
+    const { invoiceId, warranty } = await apiFetch(`/invoices/${type}/save-with-items`, {
       method: 'POST',
       body: JSON.stringify({ editId, header, items })
     });
+    // The register is written by the SAME transaction as the invoice, so
+    // this only reports what already happened - it never has to ask for it,
+    // and a failure there would have failed the save rather than passing
+    // quietly.
+    if (warranty && (warranty.created?.length || warranty.cancelled)) {
+      const parts = [];
+      if (warranty.created?.length) {
+        parts.push(warranty.created.length + ' warranty record'
+          + (warranty.created.length === 1 ? '' : 's') + ' registered: ' + warranty.created.join(', '));
+      }
+      if (warranty.cancelled) parts.push(warranty.cancelled + ' cancelled (cover removed)');
+      showToast(parts.join(' - '), 'success');
+    }
     return invoiceId;
   } catch (error) {
     handleApiError(error, 'Could not save the invoice');

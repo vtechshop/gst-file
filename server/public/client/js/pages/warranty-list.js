@@ -29,6 +29,12 @@ async function initWarrantyList() {
       + WARRANTY_STATUSES.concat(['expired']).map(s =>
           `<option value="${escHtmlAttr(s)}">${escItemHtml(WARRANTY_STATUS_LABELS[s])}</option>`).join('');
   }
+  // Arriving from an invoice's View action: show that invoice's warranties
+  // rather than making the user search for them.
+  const wanted = new URLSearchParams(window.location.search).get('invoice');
+  const box = document.getElementById('wrSearch');
+  if (wanted && box) box.value = wanted;
+
   await loadWarranties(user.id);
 }
 
@@ -67,7 +73,8 @@ function renderWarrantyList() {
 
   if (!page.length) {
     body.innerHTML = '<tr><td colspan="10" class="text-center text-muted-sm">'
-      + 'No warranties yet. Create one from an invoice that has warranty on a product.</td></tr>';
+      + 'No warranties yet. They are registered automatically when you save an '
+      + 'invoice with a warranty period on a product line.</td></tr>';
     renderWarrantyPagination(rows.length);
     return;
   }

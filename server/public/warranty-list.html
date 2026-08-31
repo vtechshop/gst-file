@@ -19,7 +19,7 @@
   <script src="client/js/core/search.js?v=29"></script>
   <script src="client/js/pages/profile.js?v=29"></script>
   <script src="client/js/pages/products.js?v=29"></script>
-  <script src="client/js/pages/warranty-list.js?v=32"></script>
+  <script src="client/js/pages/warranty-list.js?v=34"></script>
 </head>
 <body>
 <div class="app-layout">
@@ -99,8 +99,8 @@
           <span class="card-title"><i class="fas fa-shield-halved"></i> Warranty Register</span>
         </div>
         <div class="card-body">
-          <!-- A warranty is created from an invoice, never typed from nothing,
-               so there is no "New" button here. -->
+          <!-- Registered automatically when an invoice with warranty is saved,
+               so there is no "New" button here and no manual create step. -->
           <div class="form-grid cols-3 mb-16">
             <div class="form-group">
               <label for="wrSearch">Search</label>

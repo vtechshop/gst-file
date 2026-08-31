@@ -135,51 +135,61 @@ async function writeAudit(client, userId, type, table, id, number, action, chang
 // Deliberately separate from POST /invoices/reserve-number: that one
 // counts invoices per invoice_source and must keep doing exactly that.
 // This counts documents per document type, from its own columns on
-// profiles, and cannot move an invoice counter by a single digit.
-router.post('/reserve-number', asyncRoute(async (req, res) => {
-  const { table, series } = docSpec(req.body && req.body.documentType);
-  const type = String(req.body.documentType).trim().toLowerCase();
+// The numbering core, on a caller-supplied client so it can run INSIDE
+// someone else's transaction. Auto-registering a warranty during an invoice
+// save has to draw its number in that same transaction: a number taken and
+// then rolled back would leave a hole in the book, and one taken outside it
+// could survive an invoice that never committed.
+//
+// The profile row is locked first - the same ordering the invoice reservation
+// uses, so two simultaneous saves cannot read the same "next" number.
+async function reserveDocumentNumberOn(client, userId, documentType) {
+  const { table, series } = docSpec(documentType);
+  const type = String(documentType).trim().toLowerCase();
 
+  const { rows: prof } = await client.query(
+    `SELECT document_series_sequences, document_series_formats
+       FROM profiles WHERE id = $1 FOR UPDATE`, [userId]);
+  const seqs = prof[0]?.document_series_sequences || {};
+  const formats = prof[0]?.document_series_formats || {};
+  const format = (formats[series] && String(formats[series]).trim())
+    || DEFAULT_DOCUMENT_FORMATS[series] || DEFAULT_DOCUMENT_FORMATS[type] || 'DOC-#####';
+  let seq = Math.max(1, parseInt(seqs[series], 10) || 1);
+
+  // Only this book's numbers are taken. Most books number a column called
+  // document_number; the warranty register calls its own warranty_number,
+  // and the name comes from the fixed spec, never from the request.
+  const numberCol = docSpec(type).numberCol || 'document_number';
+  const { rows: taken } = await client.query(
+    `SELECT ${numberCol} AS document_number FROM ${table} WHERE user_id = $1 AND document_series = $2`,
+    [userId, series]);
+  const used = new Set(taken.map(r => (r.document_number || '').toUpperCase()));
+
+  let candidate = applyInvoiceNumberFormat(format, seq);
+  let guard = 0;
+  while (used.has(candidate.toUpperCase()) && guard < 100000) {
+    seq++; candidate = applyInvoiceNumberFormat(format, seq); guard++;
+  }
+
+  await client.query(
+    `UPDATE profiles
+        SET document_series_sequences =
+            COALESCE(document_series_sequences, '{}'::jsonb) || jsonb_build_object($1::text, $2::int)
+      WHERE id = $3`, [series, seq + 1, userId]);
+  return { documentNumber: candidate, series, format };
+}
+
+// ── 1) Reserve the next number for a document type ──
+//
+// Deliberately separate from POST /invoices/reserve-number: that one counts
+// invoices per invoice_source and must keep doing exactly that. This counts
+// documents per document type and cannot move an invoice counter.
+router.post('/reserve-number', asyncRoute(async (req, res) => {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
-    // Lock the profile row first, so two simultaneous saves cannot both
-    // read the same "next" number — the same ordering the invoice
-    // reservation uses, and for the same reason.
-    const { rows: prof } = await client.query(
-      `SELECT document_series_sequences, document_series_formats
-         FROM profiles WHERE id = $1 FOR UPDATE`, [req.userId]);
-    const seqs = prof[0]?.document_series_sequences || {};
-    const formats = prof[0]?.document_series_formats || {};
-    // Series first: the numbering book decides the format. Where a type's
-    // series and key are the same word — every voucher — this reads
-    // exactly as it did before; where they differ, the book still wins.
-    const format = (formats[series] && String(formats[series]).trim())
-      || DEFAULT_DOCUMENT_FORMATS[series] || DEFAULT_DOCUMENT_FORMATS[type] || 'DOC-#####';
-    let seq = Math.max(1, parseInt(seqs[series], 10) || 1);
-
-    // Only this book's numbers are taken. A receipt voucher numbered 5
-    // does not stop a payment voucher being numbered 5.
-    // Most books number a column called document_number; the warranty
-    // register calls its own warranty_number. The name comes from the
-    // fixed spec above, never from anything the request supplied.
-    const numberCol = docSpec(type).numberCol || 'document_number';
-    const { rows: taken } = await client.query(
-      `SELECT ${numberCol} AS document_number FROM ${table} WHERE user_id = $1 AND document_series = $2`,
-      [req.userId, series]);
-    const used = new Set(taken.map(r => (r.document_number || '').toUpperCase()));
-
-    let candidate = applyInvoiceNumberFormat(format, seq);
-    let guard = 0;
-    while (used.has(candidate.toUpperCase()) && guard < 100000) {
-      seq++; candidate = applyInvoiceNumberFormat(format, seq); guard++;
-    }
-
-    await client.query(
-      `UPDATE profiles
-          SET document_series_sequences =
-              COALESCE(document_series_sequences, '{}'::jsonb) || jsonb_build_object($1::text, $2::int)
-        WHERE id = $3`, [series, seq + 1, req.userId]);
+    const { documentNumber: candidate, series, format } =
+      await reserveDocumentNumberOn(client, req.userId, req.body && req.body.documentType);
     await client.query('COMMIT');
     res.json({ documentNumber: candidate, series, format });
   } catch (err) {
@@ -377,3 +387,7 @@ router.delete('/:type/:id', asyncRoute(async (req, res) => {
 module.exports = router;
 module.exports.DOCUMENT_TABLES = DOCUMENT_TABLES;
 module.exports.DEFAULT_DOCUMENT_FORMATS = DEFAULT_DOCUMENT_FORMATS;
+// Exported so the invoice save can draw a warranty number inside its own
+// transaction rather than over HTTP - one numbering implementation, two
+// callers.
+module.exports.reserveDocumentNumberOn = reserveDocumentNumberOn;

@@ -393,7 +393,7 @@ function renderInvoiceListPage() {
           <button type="button" class="btn btn-secondary btn-sm btn-icon" onclick="printInvoice('${r.type}','${r.id}')" title="Print"><i class="fas fa-print"></i></button>
           <button type="button" class="btn btn-success btn-sm btn-icon" onclick="shareInvoiceWhatsApp('${r.type}','${r.id}')" title="Share via WhatsApp"><i class="fab fa-whatsapp"></i></button>
           <button type="button" class="btn btn-info btn-sm btn-icon btn-info-alt" onclick="emailInvoicePDF('${r.type}','${r.id}')" title="Email PDF"><i class="fas fa-envelope"></i></button>
-          <button type="button" class="btn btn-secondary btn-sm btn-icon" onclick="openCreateWarranty('${r.type}','${r.id}')" title="Create warranty"><i class="fas fa-shield-halved"></i></button>
+          <button type="button" class="btn btn-secondary btn-sm btn-icon" onclick="viewInvoiceWarranties('${escHtmlAttr(r.invoice_number || '')}')" title="View warranties for this invoice"><i class="fas fa-shield-halved"></i></button>
           <button type="button" class="btn btn-danger btn-sm btn-icon" onclick="deleteInvoiceFromList('${r.type}','${r.id}')" title="Delete"><i class="fas fa-trash"></i></button>
         </div>
       </td>
@@ -617,4 +617,12 @@ function renderInvListPagination() {
     container.appendChild(button(String(i), i, { active: i === invListPage }));
   }
   container.appendChild(button('›', invListPage + 1, { disabled: invListPage === pages }));
+}
+
+// Warranties are registered automatically when the invoice saves, so there
+// is nothing to create here - this only shows what that produced. Two ways
+// to create the same record is how duplicates get made.
+function viewInvoiceWarranties(invoiceNumber) {
+  window.location.href = 'warranty-list.html'
+    + (invoiceNumber ? '?invoice=' + encodeURIComponent(invoiceNumber) : '');
 }

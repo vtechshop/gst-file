@@ -12,7 +12,9 @@ const rd = (...p) => fs.readFileSync(path.join(ROOT, ...p), 'utf8');
 
 const UTILS = rd('client', 'js', 'utilities', 'utils.js');
 const CONFIG = rd('client', 'js', 'core', 'config.js');
-const CREATE = rd('client', 'js', 'pages', 'warranty-create.js');
+// The manual create page was removed when registration became automatic;
+// its guarantees now live in the server-side sync (see warranty-auto.test.js).
+const CREATE = rd('server', 'src', 'services', 'warranty-sync.js');
 const DETAIL = rd('client', 'js', 'pages', 'warranty-detail.js');
 const LIST = rd('client', 'js', 'pages', 'warranty-list.js');
 const PUBLIC = rd('client', 'js', 'pages', 'warranty-verify.js');
@@ -26,8 +28,8 @@ const SCHEMA = rd('server', 'db', 'schema', 'schema.sql');
 test('W1 warranty draws from its own book, never the invoice series', () => {
   assert.match(DOCS, /warranty:\s*\{\s*table:\s*'warranties',\s*series:\s*'warranty'/);
   assert.match(DOCS, /warranty:\s*'WAR-#+'/);
-  const fn = CREATE.slice(CREATE.indexOf('async function saveWarrantiesFromInvoice'));
-  assert.match(fn, /documentType:\s*'warranty'/);
+  assert.ok(CREATE.includes("reserveNumber(client, userId, 'warranty')"),
+    'the sync must draw from the warranty book');
   // The invoice reservation endpoint is a different route and must not appear.
   assert.equal(/\/invoices\/reserve-number/.test(CREATE), false);
 });
@@ -64,22 +66,25 @@ test('W5 no reporting surface reads the warranties table', () => {
 
 // ── one record per warranted line ──
 test('W6 records are created per invoice LINE, and only where cover exists', () => {
-  assert.match(CREATE, /warranty_period_months,\s*10\)\s*>\s*0/);
-  assert.match(CREATE, /invoice_item_id:\s*l\.item\.id/);
+  assert.ok(CREATE.includes('.filter(it => monthsOf(it.warranty_period_months))'),
+    'only lines that carry cover may produce a record');
+  assert.ok(CREATE.includes('invoice_item_id'), 'the line id is recorded');
 });
 
 test('W7 a line already registered cannot be created twice', () => {
-  assert.match(CREATE, /wcExisting\.find\(w\s*=>\s*w\.invoice_item_id\s*===\s*it\.id\)/);
-  assert.match(CREATE, /\.filter\(l\s*=>\s*l\.selected\s*&&\s*!l\.already\)/);
+  // A line is matched by product across saves, because save-with-items
+  // re-creates every row with a new id (see A6).
+  assert.match(CREATE, /function lineKey\(row\)/);
+  assert.match(CREATE, /claimed\.has\(w\.id\)/);
   // and the database refuses it even if the UI is bypassed
   assert.match(MIGRATION, /CREATE UNIQUE INDEX IF NOT EXISTS uq_warranties_invoice_item/);
   assert.match(MIGRATION, /WHERE invoice_item_id IS NOT NULL/);
 });
 
-test('W8 opening the dialog writes nothing', () => {
-  const open = CREATE.slice(CREATE.indexOf('async function openCreateWarranty'),
-                            CREATE.indexOf('function renderCreateWarrantyBody'));
-  assert.equal(/\.insert\(|\.update\(|reserve-number/.test(open), false);
+test('W8 the register is only written by a save that reached the database', () => {
+  // Nothing runs before the invoice exists: the sync takes the caller's
+  // transaction and never opens one of its own.
+  assert.equal(/pool\.connect\(\)|BEGIN|COMMIT/.test(CREATE), false);
 });
 
 // ── status ──
@@ -243,8 +248,8 @@ test('W24 the tax invoice PDF keeps its three copies and its warranty block', ()
 
 test('W25 no serial number is ever invented', () => {
   assert.equal(/generateSerial|makeSerial|randomSerial/.test(CREATE + DETAIL), false);
-  assert.match(CREATE, /serial_number: l\.serial \|\| null/);
-  assert.match(CREATE, /placeholder="optional"/);
+  const ins = CREATE.slice(CREATE.indexOf('INSERT INTO warranties'));
+  assert.ok(ins.includes(',NULL,'), 'serial must be inserted as NULL');
 });
 
 // ── the PDF's input object ──
@@ -272,8 +277,12 @@ test('W26 fetchInvoiceRecord carries the warranty header fields to the PDF', () 
 // four moved together when their contents last changed.
 test('W27 every asset whose contents changed carries its own cache key', () => {
   const page = rd('invoice-list.html');
-  for (const file of ['client/js/utilities/utils.js', 'client/js/core/config.js',
-                      'client/js/pages/invoice-list.js', 'client/js/pages/invoice-pdf.js']) {
-    assert.ok(page.includes(file + '?v=33'), file + ' must be referenced at v=33, not an older key');
+  // Each pinned to the version its CURRENT contents were published under.
+  for (const [file, want] of [['client/js/utilities/utils.js', 33],
+                              ['client/js/core/config.js', 33],
+                              ['client/js/pages/invoice-pdf.js', 33],
+                              ['client/js/pages/invoice-list.js', 34],
+                              ['client/js/pages/invoice-items.js', 34]]) {
+    assert.ok(page.includes(file + '?v=' + want), file + ' must be referenced at v=' + want);
   }
 });

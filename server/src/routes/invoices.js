@@ -13,6 +13,8 @@
 // reserveNextInvoiceNumber().
 const express = require('express');
 const pool = require('../config/pool');
+const { syncWarrantiesForInvoice } = require('../services/warranty-sync');
+const { reserveDocumentNumberOn } = require('./documents');
 const { requireAuth } = require('../middleware/auth');
 const { asyncRoute } = require('../middleware/errorHandler');
 const { applyInvoiceNumberFormat, invoiceSeriesFormat } = require('../utils/invoiceNumberFormat');
@@ -113,13 +115,18 @@ router.post('/:type/save-with-items', asyncRoute(async (req, res) => {
 
     await client.query('DELETE FROM invoice_items WHERE invoice_id = $1 AND invoice_type = $2 AND user_id = $3', [invoiceId, type, req.userId]);
 
+    const savedItems = [];
     const newQtyByProduct = {};
     for (let i = 0; i < items.length; i++) {
       const payload = { ...items[i], user_id: req.userId, invoice_id: invoiceId, invoice_type: type, sort_order: i };
       const cols = itemCols.concat(['user_id', 'invoice_id', 'invoice_type', 'sort_order']).filter(c => Object.prototype.hasOwnProperty.call(payload, c));
       const placeholders = cols.map((_, j) => `$${j + 1}`).join(',');
       const values = cols.map(c => payload[c]);
-      await client.query(`INSERT INTO invoice_items (${cols.join(',')}) VALUES (${placeholders})`, values);
+      const { rows: itemRows } = await client.query(
+        `INSERT INTO invoice_items (${cols.join(',')}) VALUES (${placeholders}) RETURNING id`, values);
+      // Kept for the warranty sync below: the register stores the line's id,
+      // and every save re-creates these rows with new ones.
+      savedItems.push({ ...payload, id: itemRows[0].id });
       if (payload.product_id) newQtyByProduct[payload.product_id] = (newQtyByProduct[payload.product_id] || 0) + (+payload.quantity || 0);
     }
 
@@ -135,8 +142,19 @@ router.post('/:type/save-with-items', asyncRoute(async (req, res) => {
       if (delta) await applyStockDelta(client, req.userId, pid, -delta);
     }
 
+    // ── Warranty register ──
+    // Inside the transaction and after the lines exist, so a warranty can
+    // only survive if the invoice did, and a number drawn here rolls back
+    // with it. Reconciles rather than inserts, so saving the same invoice
+    // twice cannot produce a second record for a line.
+    //
+    // Descriptive only: it reads the lines and writes to warranties, and
+    // moves no total, tax column, sequence, payment or stock quantity.
+    const warranty = await syncWarrantiesForInvoice(
+      client, req.userId, type, invoiceId, header, savedItems, reserveDocumentNumberOn);
+
     await client.query('COMMIT');
-    res.json({ invoiceId });
+    res.json({ invoiceId, warranty });
   } catch (err) {
     await client.query('ROLLBACK');
     throw err;
