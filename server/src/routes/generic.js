@@ -482,6 +482,12 @@ const TABLES = {
   // user_id by the generic layer, which is what keeps one company's
   // warranties invisible to another.
   warranties: {
+    // Created only by the two endpoints that own the numbering book: the
+    // invoice save (services/warranty-sync.js) and POST /api/warranties/manual.
+    // A direct insert here could carry any warranty_number the browser chose,
+    // which would put a record in the register outside the WAR-##### series.
+    // Reads, and the existing cancel PATCH, are deliberately unaffected.
+    insertable: false,
     columns: ['id','user_id','warranty_number','document_series',
       'invoice_id','invoice_type','invoice_item_id','invoice_number','invoice_date',
       'customer_id','customer_name','customer_phone',

@@ -19,7 +19,7 @@
   <script src="client/js/core/search.js?v=29"></script>
   <script src="client/js/pages/profile.js?v=29"></script>
   <script src="client/js/pages/products.js?v=29"></script>
-  <script src="client/js/pages/warranty-list.js?v=34"></script>
+  <script src="client/js/pages/warranty-list.js?v=36"></script>
 </head>
 <body>
 <div class="app-layout">
@@ -97,10 +97,13 @@
       <div class="card">
         <div class="card-header">
           <span class="card-title"><i class="fas fa-shield-halved"></i> Warranty Register</span>
+          <button type="button" class="btn btn-primary btn-sm" onclick="openAddWarranty()"><i class="fas fa-plus"></i> Add Warranty</button>
         </div>
         <div class="card-body">
-          <!-- Registered automatically when an invoice with warranty is saved,
-               so there is no "New" button here and no manual create step. -->
+          <!-- Two ways in, both real: an invoice carrying cover registers its
+               lines automatically on save, and + Add Warranty registers one by
+               hand without opening Invoice Entry. Both write the same table and
+               the same WAR-##### book. -->
           <div class="form-grid cols-3 mb-16">
             <div class="form-group">
               <label for="wrSearch">Search</label>
@@ -121,7 +124,9 @@
                   <th>Valid Until</th><th>Status</th><th>Actions</th>
                 </tr>
               </thead>
-              <tbody id="wrTableBody"></tbody>
+              <tbody id="wrTableBody">
+                <tr><td colspan="10" class="text-center text-muted-sm">Loading warranties&hellip;</td></tr>
+              </tbody>
             </table>
           </div>
           <div id="wrPagination" class="pagination"></div>
@@ -133,6 +138,105 @@
   <script>
 document.addEventListener('DOMContentLoaded', initWarrantyList);
 </script>
+
+
+<!-- Create / edit one warranty. The customer -> invoice -> product cascade
+     offers only records this user owns, and the server revalidates the whole
+     chain on save (server/src/routes/warranties.js) - the browser's choice is
+     never what authorises the write. -->
+<div class="modal-overlay" id="wrFormModal">
+  <div class="modal modal-lg">
+    <div class="modal-header">
+      <span class="modal-title" id="wrFormTitle"><i class="fas fa-shield-halved"></i> Add Warranty</span>
+      <button type="button" class="modal-close" onclick="closeWarrantyForm()" aria-label="Close"><i class="fas fa-times"></i></button>
+    </div>
+    <div class="modal-body">
+      <div id="wrFormLockedNote" class="text-muted-sm mb-16 d-none"></div>
+
+      <div id="wrFormLinked">
+        <p class="text-muted-sm mb-16"><i class="fas fa-info-circle"></i>
+          Pick the customer, then the invoice they bought on, then the product from
+          that invoice. A warranty is always a promise about goods on a real invoice.</p>
+        <div class="form-grid cols-3 mb-16">
+          <div class="form-group">
+            <label for="wrFormCustomer">Customer <span class="text-required">*</span></label>
+            <select id="wrFormCustomer" class="form-control" onchange="wrOnCustomerChange()">
+              <option value="">Loading&hellip;</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label for="wrFormInvoice">Invoice <span class="text-required">*</span></label>
+            <select id="wrFormInvoice" class="form-control" onchange="wrOnInvoiceChange()">
+              <option value="">Select a customer first</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label for="wrFormProduct">Product <span class="text-required">*</span></label>
+            <select id="wrFormProduct" class="form-control" onchange="wrOnProductChange()">
+              <option value="">Select an invoice first</option>
+            </select>
+          </div>
+        </div>
+      </div>
+
+      <div class="form-grid cols-3 mb-16">
+        <div class="form-group">
+          <label for="wrFormSerial">Serial Number</label>
+          <input type="text" id="wrFormSerial" class="form-control" placeholder="Blank is normal">
+        </div>
+        <div class="form-group">
+          <label for="wrFormQty">Quantity</label>
+          <input type="number" id="wrFormQty" class="form-control" min="0.001" step="any">
+        </div>
+        <div class="form-group">
+          <label for="wrFormPeriod">Warranty Period</label>
+          <select id="wrFormPeriod" class="form-control" onchange="wrRecalcUntil()"></select>
+        </div>
+      </div>
+
+      <div class="form-grid cols-2 mb-16">
+        <div class="form-group">
+          <label for="wrFormStart">Warranty Start Date</label>
+          <input type="date" id="wrFormStart" class="form-control" onchange="wrRecalcUntil()">
+        </div>
+        <div class="form-group">
+          <label for="wrFormUntil">Valid Until</label>
+          <input type="date" id="wrFormUntil" class="form-control">
+          <div class="fs-11 text-muted-sm mt-8">Filled from the period and start date. Editable.</div>
+        </div>
+      </div>
+
+      <div class="form-group">
+        <label for="wrFormTerms">Warranty Terms</label>
+        <textarea id="wrFormTerms" class="form-control" rows="3" placeholder="What the cover includes and excludes"></textarea>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button type="button" class="btn btn-secondary" onclick="closeWarrantyForm()">Cancel</button>
+      <button type="button" class="btn btn-primary" id="wrFormSaveBtn" onclick="saveWarrantyForm()">
+        <i class="fas fa-check"></i> Save Warranty</button>
+    </div>
+  </div>
+</div>
+
+<!-- The QR carries the verification address and nothing else, so a status
+     change never needs a tag or a printed code reissued. -->
+<div class="modal-overlay" id="wrQrModal">
+  <div class="modal">
+    <div class="modal-header">
+      <span class="modal-title"><i class="fas fa-qrcode"></i> <span id="wrQrLabel"></span></span>
+      <button type="button" class="modal-close" onclick="closeWarrantyQr()" aria-label="Close"><i class="fas fa-times"></i></button>
+    </div>
+    <div class="modal-body text-center">
+      <canvas id="wrQrCanvas" width="200" height="200"></canvas>
+      <p class="fs-11 text-muted-sm mt-8" style="word-break:break-all;">
+        <a id="wrQrLink" href="#" target="_blank" rel="noopener"></a></p>
+    </div>
+    <div class="modal-footer">
+      <button type="button" class="btn btn-secondary" onclick="closeWarrantyQr()">Close</button>
+    </div>
+  </div>
+</div>
 
 <!-- Global Search Modal -->
 <div class="modal-overlay" id="globalSearchModal">

@@ -76,6 +76,7 @@ async function syncWarrantiesForInvoice(client, userId, type, invoiceId, header,
     `SELECT id, invoice_item_id, product_id, product_name, serial_number, status, cancel_reason
        FROM warranties
       WHERE user_id = $1 AND invoice_type = $2 AND invoice_id = $3
+        AND invoice_item_id IS NOT NULL
       ORDER BY warranty_number`,
     [userId, type, invoiceId]);
 

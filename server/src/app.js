@@ -28,6 +28,7 @@ const billScanRoutes = require('./routes/bill-scan');
 const invoiceScanRoutes = require('./routes/invoice-scan');
 const gstVerifyRoutes = require('./routes/gst-verify');
 const verifyRoutes = require('./routes/verify');
+const warrantyRoutes = require('./routes/warranties');
 const { mountGenericRoutes } = require('./routes/generic');
 const { errorHandler } = require('./middleware/errorHandler');
 
@@ -143,6 +144,12 @@ app.use('/api/gst', gstVerifyRoutes);
 // fields already printed on the document they are holding, and is covered
 // by the /api rate limiter mounted above. See routes/verify.js.
 app.use('/api/verify', verifyRoutes);
+// Warranty register writes. Mounted BEFORE the generic routes so
+// POST /manual and PATCH /:id are served here, while the list read and the
+// existing cancel (PATCH with a query filter) still fall through to the
+// generic layer below. See routes/warranties.js for why a hand-made record
+// stores no invoice_item_id.
+app.use('/api/warranties', warrantyRoutes);
 mountGenericRoutes(app);
 
 // ── Frontend, only where it is deployed beside the API ───
