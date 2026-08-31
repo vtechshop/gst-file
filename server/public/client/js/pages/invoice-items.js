@@ -13,6 +13,34 @@ let itemsRowSeq = 0;
 let quickAddTargetRowId = null;
 
 // ── Init ──────────────────────────────────────────
+// The invoice-level Warranty Period is the DEFAULT for every line. A line
+// follows it until someone changes that line's own dropdown, after which the
+// line is authoritative and a later change to the header leaves it alone.
+//
+// `warranty_overridden` is what separates the two, and it is set by an actual
+// edit rather than inferred from the number - two rows can legitimately both
+// read 12 Months, one because it inherited and one because it was chosen.
+let itemsHeaderWarrantyMonths = null;
+
+function setItemsHeaderWarrantyDefault(months) {
+  const n = parseInt(months, 10);
+  itemsHeaderWarrantyMonths = n > 0 ? n : null;
+}
+
+// Called when the header period changes. Only rows still following the header
+// move; an explicit 6 Months or No Warranty stays exactly as chosen.
+function applyHeaderWarrantyToItems(months) {
+  setItemsHeaderWarrantyDefault(months);
+  if (!itemsWarrantyEnabled()) return;
+  let changed = 0;
+  currentItems.forEach(row => {
+    if (row.warranty_overridden) return;
+    if (row.warranty_period_months !== itemsHeaderWarrantyMonths) changed++;
+    row.warranty_period_months = itemsHeaderWarrantyMonths;
+  });
+  if (changed) { renderItemsTable(); persistItemsDraft(); }
+}
+
 // This grid is shared with Proforma Entry, which mounts it with the
 // 'proforma' prefix. Warranty belongs to a sale, not to a quotation, so the
 // column exists only on the tax invoice - the proforma grid keeps exactly
@@ -168,7 +196,10 @@ function blankRow() {
     // Compensation cess, charged on top of GST on a short list of goods.
     // The rate comes from the product master and is editable per line, the
     // same arrangement the GST rate has.
-    cess_rate: 0, cess_amount: 0, warranty_period_months: null,
+    cess_rate: 0, cess_amount: 0,
+    // A row added after the header was set inherits it, and is still
+    // following it until the user says otherwise.
+    warranty_period_months: itemsHeaderWarrantyMonths, warranty_overridden: false,
     taxable_value: 0, gst_amount: 0, igst: 0, cgst: 0, sgst: 0, total_amount: 0, locked: false
   };
 }
@@ -203,6 +234,20 @@ function loadItemsIntoTable(rows) {
       cess_rate: +r.cess_rate || 0, cess_amount: +r.cess_amount || 0,
       taxable_value: +r.taxable_value || 0, gst_amount: +r.gst_amount || 0, igst: +r.igst || 0,
       cgst: +r.cgst || 0, sgst: +r.sgst || 0, total_amount: +r.total_amount || 0,
+      // Reopening an invoice must not drop the cover each line was sold with.
+      // NULL stays null rather than becoming 0, so the row reads as 'no
+      // warranty' rather than a warranty of zero months.
+      warranty_period_months: parseInt(r.warranty_period_months, 10) > 0
+        ? parseInt(r.warranty_period_months, 10) : null,
+      // The database records what each line WAS, not whether it was following
+      // the header. The one honest reading is that a line matching the header
+      // was inheriting and any other value was deliberate - so changing the
+      // header still moves the followers and leaves a 6-month or No-Warranty
+      // line alone. Within a session it is a real edit, never this inference,
+      // that marks a row overridden.
+      warranty_overridden:
+        (parseInt(r.warranty_period_months, 10) > 0
+          ? parseInt(r.warranty_period_months, 10) : null) !== itemsHeaderWarrantyMonths,
       // A line saved before treatments existed is taxable, which is what
       // it was reported as.
       gst_treatment: gstTreatmentOf(r),
@@ -634,6 +679,8 @@ function onItemFieldChange(rowId, field, value) {
   if (field === 'unit') {
     row[field] = value;
   } else if (field === 'warranty_period_months') {
+    // Chosen by hand from now on: a later header change must not undo it.
+    row.warranty_overridden = true;
     // A month count, and blank means no warranty. The numeric branch
     // below would turn "" into 0 and store a warranty of zero months.
     const n = parseInt(value, 10);

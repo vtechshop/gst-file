@@ -13,6 +13,7 @@ const INVOICES = rd('server', 'src', 'routes', 'invoices.js');
 const DOCS = rd('server', 'src', 'routes', 'documents.js');
 const LIST = rd('client', 'js', 'pages', 'invoice-list.js');
 const ITEMS = rd('client', 'js', 'pages', 'invoice-items.js');
+const ENTRY = rd('client', 'js', 'pages', 'invoice-entry.js');
 const { warrantyUntilFrom } = require('../src/services/warranty-sync');
 
 // ── where it runs ──
@@ -144,4 +145,57 @@ test('A15 registration moves no total, tax figure, sequence, stock or payment', 
   // it writes to exactly one table
   const writes = [...code.matchAll(/(INSERT INTO|UPDATE)\s+(\w+)/g)].map(m => m[2]);
   assert.deepEqual([...new Set(writes)], ['warranties'], 'writes: ' + writes.join(', '));
+});
+
+// ── the invoice-level period is the default for the lines ──
+// The bug this guards: the header warranty saved and printed correctly while
+// every invoice_items.warranty_period_months stayed NULL, so the register -
+// which registers per line - had nothing to create. Five real invoices carried
+// header cover and not one line did.
+test('A16 the header period is pushed down to the lines that follow it', () => {
+  assert.ok(ITEMS.includes('function applyHeaderWarrantyToItems'),
+    'a header change must reach the product rows');
+  const fn = ITEMS.slice(ITEMS.indexOf('function applyHeaderWarrantyToItems'));
+  const body = fn.slice(0, fn.indexOf('persistItemsDraft'));
+  assert.ok(body.includes('if (row.warranty_overridden) return;'),
+    'a row the user set themselves must not be overwritten');
+  // and the header calls it
+  assert.ok(ENTRY.includes('applyHeaderWarrantyToItems('),
+    'onWarrantyPeriodChange must cascade to the lines');
+});
+
+test('A17 an explicit row choice is recorded as an override, not inferred', () => {
+  const fn = ITEMS.slice(ITEMS.indexOf("} else if (field === 'warranty_period_months')"));
+  const body = fn.slice(0, fn.indexOf("discount_percentage'"));
+  assert.ok(body.includes('row.warranty_overridden = true;'),
+    'editing the row dropdown is what marks it authoritative');
+  // No Warranty stores null, never 0 - a zero-month warranty is not a thing
+  assert.ok(body.includes('n > 0 ? n : null'));
+});
+
+test('A18 a row added later inherits the current header period', () => {
+  assert.ok(ITEMS.includes('warranty_period_months: itemsHeaderWarrantyMonths, warranty_overridden: false'),
+    'a new row starts on the header default and following it');
+});
+
+test('A19 reopening an invoice restores the line cover', () => {
+  const fn = ITEMS.slice(ITEMS.indexOf('function loadItemsIntoTable'));
+  const body = fn.slice(0, fn.indexOf('renderItemsTable'));
+  assert.ok(body.includes('warranty_period_months:'),
+    'editing an invoice must not drop the cover each line was sold with');
+  assert.ok(body.includes('warranty_overridden:'),
+    'and must reconstruct which rows were following the header');
+});
+
+test('A20 the header default is seeded before the lines load', () => {
+  // loadItemsIntoTable() compares each line against it, so it has to be set
+  // first or every row would look like an override.
+  // Execution order, not definition order: restoreWarrantyFields() is
+  // defined at the end of the file but CALLED before the lines load.
+  const seedAt = ENTRY.indexOf('restoreWarrantyFields(rec);');
+  const loadAt = ENTRY.indexOf('loadItemsIntoTable(activeItems)');
+  assert.ok(seedAt > -1, 'restoreWarrantyFields must run on edit load');
+  assert.ok(ENTRY.includes('setItemsHeaderWarrantyDefault(rec?.warranty_period_months'),
+    'and it must seed the header default');
+  assert.ok(loadAt > -1 && seedAt < loadAt, 'it must be called before the lines load');
 });

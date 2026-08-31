@@ -610,9 +610,13 @@ table.data-table {
    With table-layout:fixed a column with no width collapses to nothing, so
    every position from 11 on is restated here rather than inherited. */
 .items-table-fixed.items-table-warranty { width: 1834px; }
-.items-table-warranty th:nth-child(11), .items-table-warranty td:nth-child(11) { width: 140px; }  /* Warranty */
-.items-table-warranty th:nth-child(12), .items-table-warranty td:nth-child(12) { width: 170px; }  /* Total    */
-.items-table-warranty th:nth-child(13), .items-table-warranty td:nth-child(13) { width: 64px;  }  /* Delete   */
+/* Qualified with .items-table-fixed so these beat the base nth-child widths on
+   specificity rather than on source order: the base rule for column 12 is
+   declared further down, and an equal-specificity variant lost to it - which
+   squeezed Total to the Delete column's 64px. */
+.items-table-fixed.items-table-warranty th:nth-child(11), .items-table-fixed.items-table-warranty td:nth-child(11) { width: 140px; }  /* Warranty */
+.items-table-fixed.items-table-warranty th:nth-child(12), .items-table-fixed.items-table-warranty td:nth-child(12) { width: 170px; }  /* Total    */
+.items-table-fixed.items-table-warranty th:nth-child(13), .items-table-fixed.items-table-warranty td:nth-child(13) { width: 64px; }  /* Delete   */
 
 /* Total keeps the no-wrap the money columns rely on; Warranty holds a select
    and must not inherit it. */

@@ -1495,6 +1495,11 @@ function onWarrantyPeriodChange() {
   const start = getInvText("invWarrantyStart");
   if (!start) setInvValue("invWarrantyStart", getInvText("invDate"));
   recomputeWarrantyUntil(true);
+  // The header period is the default for the product lines: rows still
+  // following it move, rows the user set themselves do not. Without this the
+  // header was saved and printed while every line stayed NULL, so the register
+  // - which registers per line - had nothing to create.
+  applyHeaderWarrantyToItems(document.getElementById("invWarrantyPeriod")?.value);
 }
 
 function onWarrantyStartChange() { recomputeWarrantyUntil(false); }
@@ -1512,6 +1517,7 @@ function renderWarrantyNote() {
 // Blank on a new invoice: a warranty must never be implied by a default.
 function resetWarrantyFields() {
   populateWarrantySelect("invWarrantyPeriod", "");
+  setItemsHeaderWarrantyDefault(null);
   setInvValue("invWarrantyStart", "");
   setInvValue("invWarrantyUntil", "");
   setInvValue("invWarrantyTerms", "");
@@ -1534,6 +1540,9 @@ function collectWarrantyHeader() {
 
 function restoreWarrantyFields(rec) {
   populateWarrantySelect("invWarrantyPeriod", rec?.warranty_period_months || "");
+  // Seeded before loadItemsIntoTable() runs, so each line can be read as
+  // following the header or as deliberately different from it.
+  setItemsHeaderWarrantyDefault(rec?.warranty_period_months || null);
   setInvValue("invWarrantyStart", (rec?.warranty_start_date || "").toString().slice(0, 10));
   setInvValue("invWarrantyUntil", (rec?.warranty_until || "").toString().slice(0, 10));
   setInvValue("invWarrantyTerms", rec?.warranty_terms || "");
