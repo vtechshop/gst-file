@@ -193,6 +193,55 @@ router.post('/manual', asyncRoute(async (req, res) => {
   }
 }));
 
+// ── Read the register, optionally searched ──
+//
+// The ONE read the Warranty List uses, searched or not, so there is a single
+// place where "which warranties can this person see" is decided. An empty q
+// returns the whole register; a q filters it in SQL rather than in the
+// browser, so a match is found whether or not its row happens to be loaded.
+//
+// Scoped on req.userId from the verified JWT and nothing else. The term is
+// bound as a parameter, never concatenated, and its ILIKE wildcards are
+// escaped so a typed '%' searches for a percent sign instead of matching
+// every row.
+router.get('/search', asyncRoute(async (req, res) => {
+  const q = String(req.query.q || '').trim();
+  const params = [req.userId];
+  let where = 'user_id = $1';
+
+  if (q) {
+    const esc = q.replace(/[!%_]/g, c => '!' + c);
+    params.push('%' + esc + '%');
+    const like = '$' + params.length;
+    const clauses = [
+      `warranty_number ILIKE ${like} ESCAPE '!'`,
+      `customer_name   ILIKE ${like} ESCAPE '!'`,
+      `customer_phone  ILIKE ${like} ESCAPE '!'`,
+      `product_name    ILIKE ${like} ESCAPE '!'`,
+      `invoice_number  ILIKE ${like} ESCAPE '!'`,
+      `serial_number   ILIKE ${like} ESCAPE '!'`
+    ];
+
+    // A phone number is almost never typed the way it was stored:
+    // '98765 43210', '+91-98765-43210' and '9876543210' are one number. The
+    // plain ILIKE above already covers the case where they happen to match,
+    // so this compares digits to digits as well - which is what makes the
+    // number a customer reads off their phone actually find the record.
+    // Three digits is the floor, below which it matches almost everything.
+    const digits = q.replace(/\D/g, '');
+    if (digits.length >= 3) {
+      params.push('%' + digits + '%');
+      clauses.push(
+        `regexp_replace(COALESCE(customer_phone, ''), '[^0-9]', '', 'g') LIKE $${params.length}`);
+    }
+    where += ' AND (' + clauses.join(' OR ') + ')';
+  }
+
+  const { rows } = await pool.query(
+    `SELECT * FROM warranties WHERE ${where} ORDER BY warranty_number DESC`, params);
+  res.json(rows);
+}));
+
 // ── Edit one warranty ──
 //
 // Updates the record in place, so editing never mints a second number for one

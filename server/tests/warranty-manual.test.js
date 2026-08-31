@@ -30,9 +30,11 @@ const CONFIG = strip(rd('client', 'js', 'core', 'config.js'));
 const MIGRATION = rd('server', 'db', 'migrations', 'migration_warranty_register.sql');
 const PAGE = rd('warranty-list.html');
 
-// The two halves of the new route, sliced so an assertion about creating
-// cannot be satisfied by something in the edit handler and vice versa.
-const CREATE_FN = ROUTE.slice(ROUTE.indexOf("router.post('/manual'"), ROUTE.indexOf("router.patch('/:id'"));
+// The three handlers, sliced so an assertion about one cannot be satisfied
+// by something in another. The boundaries follow the file's order:
+// POST /manual, then GET /search, then PATCH /:id.
+const CREATE_FN = ROUTE.slice(ROUTE.indexOf("router.post('/manual'"), ROUTE.indexOf("router.get('/search'"));
+const SEARCH_FN = ROUTE.slice(ROUTE.indexOf("router.get('/search'"), ROUTE.indexOf("router.patch('/:id'"));
 const EDIT_FN = ROUTE.slice(ROUTE.indexOf("router.patch('/:id'"));
 
 // ── 1. manual creation exists and is reachable ──
@@ -76,7 +78,9 @@ test('M3 a saved warranty refreshes the register in place', () => {
 
 // ── 4. persistence: the row comes from the database, every time ──
 test('M4 the register is read from the database, never from browser storage', () => {
-  assert.match(LIST, /_supabase\.from\('warranties'\)\.select\('\*'\)\.eq\('user_id', userId\)/);
+  // One endpoint serves the searched and the unsearched read alike, so the
+  // rows on screen always came from the database on this load.
+  assert.match(LIST, /apiFetch\('\/warranties\/search'/);
   for (const bad of ['localStorage', 'sessionStorage']) {
     assert.equal(LIST.includes(bad), false, 'the register must not read ' + bad);
   }
@@ -100,12 +104,53 @@ test('M5 editing updates the record and mints no second number', () => {
 });
 
 // ── 6. search ──
-test('M6 search covers warranty no, customer, product, invoice and serial', () => {
-  const fn = LIST.slice(LIST.indexOf('function warrantyMatchesFilters'), LIST.indexOf('function warrantyStatusBadge'));
-  for (const f of ['warranty_number', 'customer_name', 'product_name', 'invoice_number', 'serial_number']) {
-    assert.ok(fn.includes('row.' + f), 'search must cover ' + f);
+test('M6 search covers customer, mobile, warranty no, product, invoice and serial', () => {
+  // Searched in SQL, so a match is found whether or not its row was loaded.
+  for (const col of ['warranty_number', 'customer_name', 'customer_phone',
+                     'product_name', 'invoice_number', 'serial_number']) {
+    assert.ok(new RegExp(col + '\\s+ILIKE').test(SEARCH_FN), 'search must cover ' + col);
   }
   assert.match(PAGE, /id="wrSearch"/);
+  assert.match(PAGE, /placeholder="Customer name, mobile, warranty no, invoice, product or serial"/);
+
+  // ONE search system: the browser must not also filter rows by the term,
+  // which would silently disagree with the server.
+  const filters = LIST.slice(LIST.indexOf('function warrantyMatchesFilters'),
+                             LIST.indexOf('function warrantyStatusBadge'));
+  for (const f of ['customer_name', 'product_name', 'invoice_number', 'serial_number', 'customer_phone']) {
+    assert.equal(filters.includes('row.' + f), false,
+      'the client must not re-filter on ' + f + '; the server owns the search');
+  }
+});
+
+test('M6b a typed mobile number matches however it was stored', () => {
+  // '98765 43210', '+91-98765-43210' and '9876543210' are one number, so the
+  // stored value is reduced to digits and compared to the typed digits.
+  assert.match(SEARCH_FN, /regexp_replace\(COALESCE\(customer_phone, ''\), '\[\^0-9\]', '', 'g'\)/);
+  assert.match(SEARCH_FN, /const digits = q\.replace\(\/\\D\/g, ''\)/);
+  assert.match(SEARCH_FN, /digits\.length >= 3/);
+});
+
+test('M6c the search term is bound and its wildcards escaped', () => {
+  // Never concatenated into SQL.
+  assert.equal(/\$\{q\}|' \+ q \+ '|\$\{req\.query/.test(SEARCH_FN), false,
+    'the term must never be interpolated into SQL');
+  assert.match(SEARCH_FN, /params\.push\('%' \+ esc \+ '%'\)/);
+  // A typed % or _ searches for that character instead of matching everything.
+  assert.match(SEARCH_FN, /q\.replace\(\/\[!%_\]\/g/);
+  assert.match(SEARCH_FN, /ESCAPE '!'/);
+});
+
+test('M6d typing is debounced, and the term drives a fresh read', () => {
+  assert.match(PAGE, /oninput="onWarrantySearchInput\(\)"/);
+  assert.match(LIST, /function onWarrantySearchInput\(\)/);
+  const fn = LIST.slice(LIST.indexOf('function onWarrantySearchInput'),
+                        LIST.indexOf('function warrantyMatchesFilters'));
+  assert.match(fn, /clearTimeout\(wrSearchTimer\)/);
+  assert.match(fn, /setTimeout\(/);
+  assert.match(fn, /loadWarranties\(\)/);
+  // and a new term starts at page 1 rather than stranding the user on page 4
+  assert.match(fn, /warrantyPage = 1/);
 });
 
 // ── 7. status filter ──
@@ -190,16 +235,30 @@ test('M12 neither path can register the same cover twice', () => {
 // ── 13. tenant isolation ──
 test('M13 every read and write is scoped to the verified user', () => {
   const queries = ROUTE.match(/client\.query\(|pool\.query\(/g) || [];
-  assert.ok(queries.length >= 4, 'expected several queries');
-  // no query in this file touches warranties or an invoice without user_id
-  for (const m of ROUTE.matchAll(/(FROM|INTO|UPDATE)\s+(warranties|invoice_items|\$\{INVOICE_TABLES\[type\]\})/g)) {
-    const after = ROUTE.slice(m.index, m.index + 420);
-    assert.ok(/user_id/.test(after), 'query near "' + m[0] + '" must be scoped by user_id');
+  assert.ok(queries.length >= 5, 'expected several queries');
+  // Every handler scopes on the JWT's user, and filters on the column.
+  for (const [name, fn] of [['create', CREATE_FN], ['search', SEARCH_FN], ['edit', EDIT_FN]]) {
+    assert.ok(/req\.userId/.test(fn), name + ' must take its owner from req.userId');
+    assert.ok(/user_id/.test(fn), name + ' must filter on user_id');
   }
   // and never on anything the browser sent
   assert.equal(/req\.body\.user_id|b\.user_id|workshopId|workshop_id|tenantId/.test(ROUTE), false,
     'ownership must never come from the request body');
   assert.match(EDIT_FN, /WHERE id = \$1 AND user_id = \$2/);
+  // The search's owner clause is the FIRST thing in its WHERE, and is not
+  // something a query string can remove.
+  assert.match(SEARCH_FN, /let where = 'user_id = \$1'/);
+  assert.match(SEARCH_FN, /const params = \[req\.userId\]/);
+});
+
+test('M13b the search endpoint cannot widen the public verification response', () => {
+  // The internal list may carry the phone; the public QR answer may not.
+  const pub = VERIFY.slice(VERIFY.indexOf("router.get('/warranty/:id'"));
+  const body = pub.slice(pub.indexOf('res.json({'));
+  assert.equal(body.includes('customer_phone'), false,
+    'the public endpoint must never expose customer_phone');
+  // and the public route is not what the list search calls
+  assert.equal(/warranties\/search/.test(VERIFY), false);
 });
 
 // ── 14. the automatic path still works ──
@@ -287,8 +346,8 @@ test('M18 no migration, no altered table, no relaxed constraint', () => {
 
 // ── the changed assets carry their own cache keys ──
 test('M19 every asset whose contents changed carries a new cache key', () => {
-  assert.ok(PAGE.includes('client/js/pages/warranty-list.js?v=37'),
-    'warranty-list.js must be referenced at v=37');
+  assert.ok(PAGE.includes('client/js/pages/warranty-list.js?v=38'),
+    'warranty-list.js must be referenced at v=38');
   assert.ok(rd('warranty.html').includes('client/js/pages/warranty-detail.js?v=37'),
     'warranty-detail.js must be referenced at v=37');
 });

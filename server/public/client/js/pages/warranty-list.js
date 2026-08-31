@@ -20,9 +20,12 @@
 // invoice number or attach a product that was never sold on it. See
 // server/src/routes/warranties.js.
 //
-// Every read goes through the generic route, which scopes on the user_id in
-// the verified JWT - never on anything this page could send - so one
-// company's warranties are invisible to another.
+// The list itself is read from GET /api/warranties/search - one endpoint for
+// the searched and unsearched case alike, so there is a single place that
+// decides what a search term matches and a single place that decides whose
+// warranties these are. It scopes on the user_id in the verified JWT, never
+// on anything this page could send, so one company's warranties are
+// invisible to another.
 let warrantyRows = [];
 let warrantyPage = 1;
 const WARRANTY_PAGE_SIZE = 15;
@@ -65,7 +68,7 @@ async function initWarrantyList() {
 
   populateWarrantySelect('wrFormPeriod', '');
 
-  await loadWarranties(user.id);
+  await loadWarranties();
 
   // Deep link from the Warranty Details page's Edit button, so the one editor
   // lives here rather than being written a second time on that page.
@@ -73,37 +76,59 @@ async function initWarrantyList() {
   if (editId) openEditWarranty(editId);
 }
 
-async function loadWarranties(userId) {
+function warrantySearchTerm() {
+  return (document.getElementById('wrSearch')?.value || '').trim();
+}
+
+// The one read this page performs, searched or not. The term goes to the
+// server (GET /api/warranties/search), so a customer name or a mobile number
+// is matched against every persisted row rather than only the rows this
+// browser happens to be holding - and the answer is the same after a reload.
+// Ownership is decided there from the verified JWT; nothing this page sends
+// says who the caller is.
+async function loadWarranties() {
+  const q = warrantySearchTerm();
   warrantyListState = 'loading';
   renderWarrantyList();
   try {
-    const res = await _supabase.from('warranties').select('*').eq('user_id', userId);
-    if (res && res.error) throw res.error;
-    warrantyRows = (res.data || []).slice()
-      .sort((a, b) => String(b.warranty_number).localeCompare(String(a.warranty_number)));
+    const rows = await apiFetch('/warranties/search' + (q ? '?q=' + encodeURIComponent(q) : ''));
+    // Already ordered by the server; the browser does not re-sort it.
+    warrantyRows = rows || [];
     warrantyListState = 'ready';
   } catch (err) {
     // The rows already on screen are not replaced with an empty array: a
-    // failed refresh must not look like a register that lost its records.
+    // failed request must not look like a register that lost its records,
+    // and must never be rendered as "no warranties".
     warrantyListState = 'error';
     handleApiError(err, 'Could not load Warranty List');
   }
   renderWarrantyList();
 }
 
-async function reloadWarranties() {
-  const user = await getCurrentUser();
-  if (user) await loadWarranties(user.id);
+async function reloadWarranties() { await loadWarranties(); }
+
+// Typing now costs a request, so the keystrokes are allowed to settle first.
+// The Invoice List filters an already-loaded array and needs no such wait;
+// this searches the database, which is what lets it find a row that was
+// never loaded.
+let wrSearchTimer = null;
+const WARRANTY_SEARCH_DEBOUNCE_MS = 250;
+function onWarrantySearchInput() {
+  clearTimeout(wrSearchTimer);
+  wrSearchTimer = setTimeout(() => {
+    warrantyPage = 1;
+    loadWarranties();
+  }, WARRANTY_SEARCH_DEBOUNCE_MS);
 }
 
+// Status only. The search itself is the server's job (see loadWarranties), so
+// there is exactly one place that decides what matches a search term; status
+// stays here because 'expired' is derived from the date when the row is read
+// rather than stored.
 function warrantyMatchesFilters(row) {
-  const q = (document.getElementById('wrSearch')?.value || '').trim().toLowerCase();
   const want = document.getElementById('wrStatusFilter')?.value || '';
   if (want && warrantyEffectiveStatus(row) !== want) return false;
-  if (!q) return true;
-  return [row.warranty_number, row.customer_name, row.product_name,
-          row.invoice_number, row.serial_number]
-    .some(v => String(v || '').toLowerCase().includes(q));
+  return true;
 }
 
 function warrantyStatusBadge(row) {
@@ -143,9 +168,13 @@ function renderWarrantyList() {
   const page = rows.slice(start, start + WARRANTY_PAGE_SIZE);
 
   if (!page.length) {
-    // Only ever reached with a successful read behind it.
+    // Only ever reached with a successful read behind it. "Nothing matched"
+    // and "nothing exists" are told apart by whether anything was ASKED for,
+    // not by the row count: the server now returns no rows for a search that
+    // matched nothing, and calling that an empty register would be a lie.
+    const asked = !!warrantySearchTerm() || !!document.getElementById('wrStatusFilter')?.value;
     body.innerHTML = '<tr><td colspan="10" class="text-center text-muted-sm">'
-      + (warrantyRows.length
+      + (asked
           ? 'No warranties match this search or status.'
           : 'No warranties yet. Use <b>+ Add Warranty</b> to register one, or save an '
             + 'invoice with a warranty period on a product line.')
@@ -416,7 +445,7 @@ async function saveWarrantyForm() {
     await reloadWarranties();
     // The row is the point of the save, so it is made visible rather than
     // left hidden behind whatever filter happened to be set.
-    wrRevealRow(saved);
+    await wrRevealRow(saved);
   } catch (err) {
     handleApiError(err, 'Could not save the warranty');
   } finally {
@@ -425,14 +454,21 @@ async function saveWarrantyForm() {
   }
 }
 
-function wrRevealRow(row) {
+// The saved row is the point of the save, so it is made visible rather than
+// left hidden behind whatever search or filter happened to be set. Clearing
+// the box has to re-read, because the search now runs on the server and the
+// rows in hand are only the ones that matched the old term.
+async function wrRevealRow(row) {
   if (!row) return;
-  const fresh = warrantyRows.find(x => x.id === row.id) || row;
-  if (!warrantyMatchesFilters(fresh)) {
-    const box = wrForm('wrSearch');
-    const filter = wrForm('wrStatusFilter');
+  const box = wrForm('wrSearch');
+  const filter = wrForm('wrStatusFilter');
+  const hidden = warrantySearchTerm() || (filter && filter.value);
+  if (hidden) {
     if (box) box.value = '';
     if (filter) filter.value = '';
+    warrantyPage = 1;
+    await loadWarranties();
+    return;
   }
   warrantyPage = 1;
   renderWarrantyList();
