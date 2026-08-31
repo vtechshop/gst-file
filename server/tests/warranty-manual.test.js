@@ -263,7 +263,7 @@ test('M17 an API failure is reported as a failure, never as "no warranties"', ()
 
   const render = LIST.slice(LIST.indexOf('function renderWarrantyList'), LIST.indexOf('function renderWarrantyPagination'));
   assert.match(render, /Loading warranties/);
-  assert.match(render, /Could not load Warranty Register\. Please try again\./);
+  assert.match(render, /Could not load Warranty List\. Please try again\./);
   assert.match(render, /No warranties yet/);
   // "No warranties yet" is only reachable once the read succeeded
   const emptyAt = render.indexOf('No warranties yet');
@@ -287,10 +287,10 @@ test('M18 no migration, no altered table, no relaxed constraint', () => {
 
 // ── the changed assets carry their own cache keys ──
 test('M19 every asset whose contents changed carries a new cache key', () => {
-  assert.ok(PAGE.includes('client/js/pages/warranty-list.js?v=36'),
-    'warranty-list.js must be referenced at v=36');
-  assert.ok(rd('warranty.html').includes('client/js/pages/warranty-detail.js?v=36'),
-    'warranty-detail.js must be referenced at v=36');
+  assert.ok(PAGE.includes('client/js/pages/warranty-list.js?v=37'),
+    'warranty-list.js must be referenced at v=37');
+  assert.ok(rd('warranty.html').includes('client/js/pages/warranty-detail.js?v=37'),
+    'warranty-detail.js must be referenced at v=37');
 });
 
 // ── the detail page routes Edit to the one editor ──

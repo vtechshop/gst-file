@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Warranty Register - GST Management System</title>
+  <title>Warranty List - GST Management System</title>
   <link rel="stylesheet" href="client/css/style.css?v=35">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
@@ -19,7 +19,7 @@
   <script src="client/js/core/search.js?v=29"></script>
   <script src="client/js/pages/profile.js?v=29"></script>
   <script src="client/js/pages/products.js?v=29"></script>
-  <script src="client/js/pages/warranty-list.js?v=36"></script>
+  <script src="client/js/pages/warranty-list.js?v=37"></script>
 </head>
 <body>
 <div class="app-layout">
@@ -47,7 +47,7 @@
       <a href="challans.html" class="menu-item"><i class="fas fa-file-signature"></i> Delivery Challans</a>
       <a href="amendments.html" class="menu-item"><i class="fas fa-pen-to-square"></i> Amendments</a>
       <div class="menu-section">Warranty</div>
-      <a href="warranty-list.html" class="menu-item"><i class="fas fa-shield-halved"></i> Warranty Register</a>
+      <a href="warranty-list.html" class="menu-item"><i class="fas fa-shield-halved"></i> Warranty List</a>
       <div class="menu-section">Purchases</div>
       <a href="vendors.html" class="menu-item"><i class="fas fa-truck"></i> Vendors</a>
       <a href="vendor-ledger.html" class="menu-item"><i class="fas fa-book"></i> Vendor Ledger</a>
@@ -87,7 +87,7 @@
   <div class="main-content">
     <div class="top-bar">
       <button type="button" class="menu-toggle" id="menuToggle" aria-label="Toggle sidebar menu"><i class="fas fa-bars"></i></button>
-      <span class="page-title"><i class="fas fa-shield-halved"></i>Warranty Register</span>
+      <span class="page-title"><i class="fas fa-shield-halved"></i>Warranty List</span>
       <div class="ml-auto d-flex gap-10">
         <button type="button" class="btn btn-secondary btn-sm btn-icon" onclick="openGlobalSearch()" title="Search everywhere (Ctrl+K)" aria-label="Global search"><i class="fas fa-search"></i></button>
       </div>
@@ -96,7 +96,7 @@
     <div class="content">
       <div class="card">
         <div class="card-header">
-          <span class="card-title"><i class="fas fa-shield-halved"></i> Warranty Register</span>
+          <span class="card-title"><i class="fas fa-shield-halved"></i> Warranty List</span>
           <button type="button" class="btn btn-primary btn-sm" onclick="openAddWarranty()"><i class="fas fa-plus"></i> Add Warranty</button>
         </div>
         <div class="card-body">

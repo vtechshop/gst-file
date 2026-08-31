@@ -86,7 +86,7 @@ async function loadWarranties(userId) {
     // The rows already on screen are not replaced with an empty array: a
     // failed refresh must not look like a register that lost its records.
     warrantyListState = 'error';
-    handleApiError(err, 'Could not load Warranty Register');
+    handleApiError(err, 'Could not load Warranty List');
   }
   renderWarrantyList();
 }
@@ -131,7 +131,7 @@ function renderWarrantyList() {
   }
   if (warrantyListState === 'error') {
     body.innerHTML = '<tr><td colspan="10" class="text-center">'
-      + '<div class="mb-8">Could not load Warranty Register. Please try again.</div>'
+      + '<div class="mb-8">Could not load Warranty List. Please try again.</div>'
       + '<button type="button" class="btn btn-secondary btn-sm" onclick="reloadWarranties()">'
       + '<i class="fas fa-rotate-right"></i> Retry</button></td></tr>';
     renderWarrantyPagination(0);

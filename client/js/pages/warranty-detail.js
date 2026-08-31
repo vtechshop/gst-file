@@ -110,7 +110,7 @@ function renderWarrantyDetail() {
         </div>` : ''}
 
         <div class="d-flex gap-10 mt-20" style="flex-wrap:wrap;">
-          <a class="btn btn-secondary btn-sm" href="warranty-list.html"><i class="fas fa-arrow-left"></i> Back to register</a>
+          <a class="btn btn-secondary btn-sm" href="warranty-list.html"><i class="fas fa-arrow-left"></i> Back to Warranty List</a>
           <a class="btn btn-secondary btn-sm" href="warranty-list.html?edit=${encodeURIComponent(r.id)}"><i class="fas fa-pen-to-square"></i> Edit warranty</a>
           <button type="button" class="btn btn-secondary btn-sm" onclick="editWarrantySerial()"><i class="fas fa-pen"></i> Edit serial number</button>
         </div>
