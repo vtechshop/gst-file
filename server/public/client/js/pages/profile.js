@@ -1193,6 +1193,11 @@ async function saveProductSyncConfig(body) {
       // apiErrorFrom() handles either shape anyway.
       throw apiErrorFrom(res, errBody);
     }
+    // The background sync caches "is this company configured" per tab
+    // (js/api/product-sync.js). Clearing it here is what makes turning
+    // Product Sync on take effect on the next page load rather than only in
+    // a new tab - and turning it off stop probing just as promptly.
+    if (typeof forgetCompanyProductSyncConfigured === 'function') forgetCompanyProductSyncConfigured();
     return { ok: true };
   } catch (err) {
     return { ok: false, error: err, message: err.message };

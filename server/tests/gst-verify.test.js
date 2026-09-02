@@ -234,3 +234,37 @@ test('A12 the fetched state and district are a pair the app would accept', async
   const { isValidStateDistrict } = require('../../shared/india-districts');
   assert.strictEqual(isValidStateDistrict('Tamil Nadu', 'Coimbatore'), true);
 });
+
+// The route's own rate limiter keys on the caller. requireAuth runs first so
+// req.userId is normally there, but the IP fallback has to go through
+// express-rate-limit's ipKeyGenerator: a raw req.ip lets an IPv6 client move
+// to a fresh address and start a new bucket, which is no limit at all. The
+// library detects the mistake and raises ERR_ERL_KEY_GEN_IPV6 rather than
+// failing silently, so this asserts the fix and not the symptom.
+test('A13 the limiter keys IPv6 callers by subnet, not by raw address', () => {
+  const fs = require('fs');
+  const path = require('path');
+  const src = fs.readFileSync(
+    path.join(__dirname, '..', 'src', 'routes', 'gst-verify.js'), 'utf8');
+  const code = src.split('\n').filter(l => !/^\s*\/\//.test(l)).join('\n');
+
+  assert.match(code, /ipKeyGenerator/, 'ipKeyGenerator must be imported');
+  assert.match(code, /keyGenerator: req => req\.userId \|\| ipKeyGenerator\(req\.ip\)/);
+  // the raw form the library rejects must be gone
+  assert.equal(/keyGenerator: req => req\.userId \|\| req\.ip\s*[,}]/.test(code), false,
+    'a bare req.ip fallback is what raises ERR_ERL_KEY_GEN_IPV6');
+  // and the validation must not simply be switched off instead
+  assert.equal(/validate:\s*(false|\{[^}]*keyGeneratorIpFallback:\s*false)/.test(code), false,
+    'the validation must not be disabled to silence the warning');
+
+  // Two addresses in one subnet must land on one key, or hopping still works.
+  const { ipKeyGenerator } = require('express-rate-limit');
+  assert.strictEqual(
+    ipKeyGenerator('2001:db8:1234:5678::1'),
+    ipKeyGenerator('2001:db8:1234:5678:ffff:ffff:ffff:ffff'));
+  assert.notStrictEqual(
+    ipKeyGenerator('2001:db8:1234:5678::1'),
+    ipKeyGenerator('2001:db8:9999:5678::1'));
+  // IPv4 is untouched, so existing behaviour is unchanged.
+  assert.strictEqual(ipKeyGenerator('203.0.113.9'), '203.0.113.9');
+});

@@ -26,6 +26,9 @@
 // =============================================
 
 const PRODUCT_SYNC_LAST_ATTEMPT_KEY = 'gst_sync_last_attempt_at';
+// Whether this company has a Product API URL at all. Per tab, because it
+// changes only when the Business Profile is saved.
+const PRODUCT_SYNC_CONFIGURED_KEY = 'gst_product_sync_configured';
 const PRODUCT_SYNC_META_KEY = 'gst_product_sync_meta';
 const PRODUCT_SYNC_MAX_AGE_MS = 24 * 60 * 60 * 1000; // auto-refresh threshold
 const PRODUCT_SYNC_RETRY_COOLDOWN_MS = 60 * 1000; // throttle repeat attempts, but never lock out for the whole tab session
@@ -125,8 +128,60 @@ async function syncProductsIfNeeded(userId) {
   const lastAttemptAt = +sessionStorage.getItem(PRODUCT_SYNC_LAST_ATTEMPT_KEY) || 0;
   if (Date.now() - lastAttemptAt < PRODUCT_SYNC_RETRY_COOLDOWN_MS) return;
 
+  // Only a company that has actually set a Product API URL is worth syncing.
+  // Asked HERE rather than at the top of the function on purpose: this is the
+  // last gate before a network call, so a company that is configured pays one
+  // cached lookup and a company that is not never issues the sync request at
+  // all - which is what stops a 503 not_configured appearing in the Network
+  // panel on every page load. See isCompanyProductSyncConfigured().
+  if (!(await isCompanyProductSyncConfigured())) return;
+
   sessionStorage.setItem(PRODUCT_SYNC_LAST_ATTEMPT_KEY, String(Date.now()));
   syncProducts(userId);
+}
+
+// Has THIS company configured Product Sync?
+//
+// Answered by the backend from the profiles row it reads under the verified
+// JWT (GET /api/product-sync/config, server/src/routes/product-sync.js) - the
+// browser never says which company it is asking about, and the answer cannot
+// be influenced by anything held here. The key is never part of it; the
+// endpoint reports has_key, never the key itself.
+//
+// Cached per tab because the answer changes only when someone saves the
+// Business Profile, which clears it (forgetCompanyProductSyncConfigured(),
+// called from js/pages/profile.js). Without the cache this would simply trade
+// a 503 on every page load for a 200 on every page load.
+async function isCompanyProductSyncConfigured() {
+  if (!IS_PRODUCT_SYNC_CONFIGURED) return false;
+
+  const cached = sessionStorage.getItem(PRODUCT_SYNC_CONFIGURED_KEY);
+  if (cached === 'yes') return true;
+  if (cached === 'no') return false;
+
+  try {
+    const token = localStorage.getItem('gst_jwt');
+    const res = await fetch(PRODUCT_SYNC_BACKEND_URL + '/config', {
+      headers: { Accept: 'application/json', ...(token ? { Authorization: 'Bearer ' + token } : {}) }
+    });
+    // A failed read says nothing about whether the company is configured, so
+    // it is NOT cached and NOT announced: this is a background probe, and a
+    // toast here would be noise the user can neither act on nor connect to
+    // anything they did. The next page load asks again.
+    if (!res.ok) return false;
+    const cfg = await res.json();
+    const configured = !!String((cfg && cfg.product_api_url) || '').trim();
+    sessionStorage.setItem(PRODUCT_SYNC_CONFIGURED_KEY, configured ? 'yes' : 'no');
+    return configured;
+  } catch {
+    return false;
+  }
+}
+
+// Called after the Product Sync settings are saved, so turning sync ON takes
+// effect on the very next page load instead of waiting for a new tab.
+function forgetCompanyProductSyncConfigured() {
+  try { sessionStorage.removeItem(PRODUCT_SYNC_CONFIGURED_KEY); } catch { /* private mode */ }
 }
 
 // Also called directly by the "Sync Now" button on products.html,

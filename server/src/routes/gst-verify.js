@@ -23,7 +23,7 @@
 // answer is the form's business.
 // =============================================
 const express = require('express');
-const rateLimit = require('express-rate-limit');
+const { rateLimit, ipKeyGenerator } = require('express-rate-limit');
 const { requireAuth } = require('../middleware/auth');
 const { asyncRoute, AppError } = require('../middleware/errorHandler');
 const { validateGstin } = require('../utils/validation');
@@ -42,7 +42,11 @@ const lookupLimiter = rateLimit({
   limit: parseInt(process.env.APPYFLOW_LOOKUP_LIMIT, 10) || 60,
   standardHeaders: true,
   legacyHeaders: false,
-  keyGenerator: req => req.userId || req.ip,
+  // requireAuth runs first, so req.userId is normally present; the IP
+  // fallback goes through ipKeyGenerator because a raw req.ip lets an IPv6
+  // client hop addresses inside its own /64 and evade the limit entirely.
+  // Same reason, and the same helper, as makeScanLimiter() in scanUpload.js.
+  keyGenerator: req => req.userId || ipKeyGenerator(req.ip),
   message: { error: { message: 'Too many GST lookups. Try again in a few minutes.', code: 'rate_limited' } }
 });
 
