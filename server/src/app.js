@@ -179,8 +179,47 @@ mountGenericRoutes(app);
 // The assets the page references are deliberately left alone. They carry
 // ?v=NN, so the query IS their cache key - a changed asset arrives under a
 // URL nothing has cached, and an unchanged one stays cacheable at the CDN.
+// ── Content-Security-Policy for the PAGES ──────────
+//
+// helmet's default policy is written for an API: `script-src 'self'` and
+// `script-src-attr 'none'`. These pages are classic multi-page HTML and
+// break both rules by design — every page boots from a small inline
+// <script>, controls carry inline onclick/onchange/oninput, and three
+// libraries load from a CDN. Under the default policy the pages render and
+// then do nothing: the Invoice State dropdown stays empty because the
+// bootstrap that fills it never executes.
+//
+// So the policy is relaxed to describe what this frontend actually is, and
+// ONLY for the frontend. It is applied through express.static's setHeaders,
+// which runs solely for files served off disk — every /api response keeps
+// helmet's default policy untouched, because those responses never reach
+// this function.
+//
+// Built from helmet's own defaults so the directives we are NOT changing
+// cannot drift from it, and the two CDN hosts are named rather than opening
+// script-src to https:. The honest cost: 'unsafe-inline' means an injected
+// <script> or handler would run, so the app's existing output escaping
+// (escItemHtml/escHtmlAttr) is what carries XSS defence on these pages —
+// removing the inline handlers would be the way to earn the stricter policy
+// back, and that is a refactor across 34 pages, not a header change.
+const FRONTEND_CSP = (() => {
+  const d = { ...helmet.contentSecurityPolicy.getDefaultDirectives() };
+  d['script-src'] = ["'self'", "'unsafe-inline'",
+    'https://cdnjs.cloudflare.com', 'https://cdn.jsdelivr.net'];
+  d['script-src-attr'] = ["'unsafe-inline'"];
+  return Object.entries(d)
+    .map(([name, values]) => (values.length ? `${name} ${values.join(' ')}` : name))
+    .join(';');
+})();
+
 function cacheControlForStatic(res, filePath) {
-  if (filePath.endsWith('.html')) res.setHeader('Cache-Control', 'no-cache, must-revalidate');
+  if (filePath.endsWith('.html')) {
+    res.setHeader('Cache-Control', 'no-cache, must-revalidate');
+    // Replaces the header helmet set earlier in the chain, for this response
+    // only. Set on the HTML because a document's own policy is what governs
+    // the inline scripts and handlers inside it.
+    res.setHeader('Content-Security-Policy', FRONTEND_CSP);
+  }
 }
 
 if (process.env.SERVE_CLIENT === '1') {
