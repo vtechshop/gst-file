@@ -72,8 +72,24 @@ function proformaToRenderable(row, items) {
     igst: +row.igst || 0,
     cgst: +row.cgst || 0,
     sgst: +row.sgst || 0,
-    round_off: 0,
-    total_amount: +row.total_amount || 0,
+    // Round-off is DERIVED here, not stored: proforma_invoices keeps the
+    // calculated total and this only decides what the quotation prints. The
+    // taxable value and every tax column above are passed through untouched,
+    // so nothing that feeds a return or a converted invoice moves.
+    //
+    // It exists because numberToWordsINR() already rounds
+    // (Math.round(Math.abs(n))), so a total of 138900.16 printed as
+    // "...Nine Hundred Rupees Only" beside a numeral of 138900.16 - the words
+    // and the figure disagreed on the same line of the same document.
+    //
+    // round2() on the difference keeps binary floating point out of the
+    // print: 138900 - 138900.16 is -0.15999999999417923, and -0.16 is what a
+    // quotation has to show.
+    ...(() => {
+      const calculated = +row.total_amount || 0;
+      const rounded = Math.round(calculated);
+      return { round_off: round2(rounded - calculated), total_amount: rounded };
+    })(),
     notes: row.notes || '',
     terms: row.terms || '',
     status: row.status,
@@ -212,6 +228,11 @@ async function buildProformaPDFDoc(row, items) {
   if (inv.cgst > 0) totalsRows.push(['CGST', formatNum(inv.cgst)]);
   if (inv.sgst > 0) totalsRows.push(['SGST', formatNum(inv.sgst)]);
   if (inv.igst > 0) totalsRows.push(['IGST', formatNum(inv.igst)]);
+  // Shown only when it is worth a line. Same threshold and same signed format
+  // the tax invoice uses, so the two documents read alike.
+  if (Math.abs(inv.round_off) >= 0.005) {
+    totalsRows.push(['Round Off', (inv.round_off >= 0 ? '+' : '') + formatNum(inv.round_off)]);
+  }
 
   if (y + totalsRows.length * 5.5 + 60 > doc.internal.pageSize.height - 12) {
     doc.addPage();

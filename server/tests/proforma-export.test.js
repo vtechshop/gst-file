@@ -189,9 +189,12 @@ test('X9 the Proforma PDF and the Invoice export flow are untouched', () => {
 test('X10 the changed script carries a new cache key', () => {
   assert.ok(PF_HTML.includes('client/js/pages/proforma-entry.js?v=40'),
     'proforma-entry.js must be referenced at v=40');
-  // and nothing unrelated was bumped along with it
-  assert.ok(PF_HTML.includes('client/js/pages/proforma-pdf.js?v=31'),
-    'proforma-pdf.js did not change, so its key must not move');
+  // and nothing unrelated was bumped along with it. proforma-pdf.js is pinned
+  // by proforma-roundoff.test.js instead, which is the change that moved it —
+  // asserting it here too would make one asset's version the business of two
+  // unrelated tests.
   assert.ok(PF_HTML.includes('client/js/utilities/utils.js?v=33'),
     'utils.js did not change, so its key must not move');
+  assert.ok(PF_HTML.includes('client/js/api/apiClient.js?v=29'),
+    'apiClient.js did not change, so its key must not move');
 });
