@@ -438,6 +438,10 @@ const TABLES = {
       'address','state','district','shipping_address','shipping_state','shipping_district',
       'supply_type','gst_category','taxable_amount','gst_percentage','gst_amount',
       'igst','cgst','sgst','total_amount','notes','terms',
+      // Exports. Same columns the invoice tables carry, so a proforma
+      // converted into an invoice is a copy rather than a translation.
+      'export_type','shipping_bill_number','shipping_bill_date','port_code',
+      'export_of','sez_recipient_type','lut_number','differential_65',
       'converted_invoice_id','converted_invoice_type','cancelled_at','cancel_reason',
       'created_at','updated_at'],
     validate: makeDistrictValidator([['state', 'district'], ['shipping_state', 'shipping_district']])

@@ -24,6 +24,10 @@ async function initProformaEntry() {
 
   populateProformaStateOptions();
   populateGstCategorySelect('pfGstCategory', GST_CUSTOMER_CATEGORY_DEFAULT);
+  // A fresh proforma is not an export: the toggle starts off, the fields
+  // start hidden and carry the same defaults Invoice Entry uses.
+  restoreProformaExportFields(null);
+  onProformaGstCategoryChange();
   populateProformaStatusOptions();
   onProformaShipSameChange();          // start disabled + mirroring, the default
 
@@ -265,7 +269,8 @@ async function saveProforma() {
     sgst: items.reduce((a, r) => a + r.sgst, 0),
     total_amount: taxable + gst,
     notes: getProformaText('pfNotes') || null,
-    terms: getProformaText('pfTerms') || null
+    terms: getProformaText('pfTerms') || null,
+    ...buildProformaExport()
   };
 
   // document_number is NOT NULL, and the save route does not invent one -
@@ -330,6 +335,10 @@ async function loadProformaForEdit(id) {
   setProformaValue('pfNotes', rec.notes);
   setProformaValue('pfTerms', rec.terms);
   populateGstCategorySelect('pfGstCategory', rec.gst_category);
+  // Before the category sync below, so a restored export does not have its
+  // State cleared by a sync that ran against the previous category.
+  restoreProformaExportFields(rec);
+  onProformaGstCategoryChange();
   const st = document.getElementById('pfStatus');
   if (st) st.value = proformaStatus(rec);
 
@@ -353,4 +362,81 @@ async function loadProformaForEdit(id) {
 
   const title = document.getElementById('pfNumber');
   if (title) title.readOnly = true;   // the number is issued once
+}
+
+
+// ── Export (mirrors invoice-entry.js) ───────────────────────
+// Two independent things, exactly as on New Invoice:
+//
+//   1. the GST Category. Choosing "Export (overseas)" is what switches State
+//      and District to "Not Applicable" - not the toggle below. This is the
+//      behaviour syncExportStateDistrict() already implements for Invoice
+//      Entry and Customer Master, reused here rather than rewritten.
+//
+//   2. the Export Invoice toggle, which reveals the shipping-bill fields.
+//
+// They are deliberately not wired to each other, because the invoice does not
+// wire them either: an SEZ supply is domestic-but-zero-rated and needs the
+// fields without the export category, and an overseas service export needs
+// the category without a shipping bill.
+function onProformaGstCategoryChange() {
+  const value = document.getElementById('pfGstCategory')?.value || GST_CUSTOMER_CATEGORY_DEFAULT;
+  // clearState is true, the same as Invoice Entry: State is optional on this
+  // form, so an Indian state left over from a domestic category is cleared
+  // outright rather than silently submitted with an export.
+  syncExportStateDistrict(gstIsExportCategory(value),
+    'pfState', 'pfDistrict', 'pfDistrictList', 'pfDistrictError', true);
+}
+
+function onProformaExportToggleChange() {
+  const on = !!document.getElementById('pfExportToggle')?.checked;
+  document.getElementById('pfExportFields')?.classList.toggle('d-none', !on);
+  const lbl = document.getElementById('pfExportToggleLabel');
+  if (lbl) {
+    lbl.textContent = on ? 'Yes' : 'No';
+    lbl.classList.toggle('text-gray-mid', !on);
+  }
+}
+
+// Called when an existing proforma is opened, so an export stays an export.
+// Passing null resets the form to its not-an-export defaults.
+function restoreProformaExportFields(rec) {
+  const t = document.getElementById('pfExportToggle');
+  if (!t) return;
+  // A stored export_type IS the record of "the toggle was on", the same test
+  // invoice-entry.js makes. There is no separate boolean to drift from it.
+  t.checked = !!(rec && rec.export_type);
+  const set = (id, v) => { const e = document.getElementById(id); if (e) e.value = v == null ? '' : v; };
+  set('pfExportType', (rec && rec.export_type) || 'WPAY');
+  set('pfPortCode', rec && rec.port_code);
+  set('pfShippingBillNo', rec && rec.shipping_bill_number);
+  set('pfShippingBillDate', rec && rec.shipping_bill_date);
+  set('pfExportOf', (rec && rec.export_of) || 'goods');
+  set('pfSezRecipient', (rec && rec.sez_recipient_type) || '');
+  const d65 = document.getElementById('pfDifferential65');
+  if (d65) d65.checked = !!(rec && rec.differential_65);
+  onProformaExportToggleChange();
+}
+
+// The columns written on save. Every rule here is invoice-entry.js's rule:
+// the shipping-bill group is nulled when the toggle is off, while
+// sez_recipient_type and differential_65 are NOT gated on it - an SEZ supply
+// and a 65% leased vehicle are both domestic, and the invoice records them
+// whether or not the export toggle is on.
+function buildProformaExport() {
+  const isExport = !!document.getElementById('pfExportToggle')?.checked;
+  return {
+    export_type: isExport ? (document.getElementById('pfExportType')?.value || 'WPAY') : null,
+    port_code: isExport ? (getProformaText('pfPortCode').toUpperCase() || null) : null,
+    shipping_bill_number: isExport ? (getProformaText('pfShippingBillNo') || null) : null,
+    shipping_bill_date: isExport ? (getProformaText('pfShippingBillDate') || null) : null,
+    export_of: isExport ? (document.getElementById('pfExportOf')?.value || 'goods') : null,
+    sez_recipient_type: document.getElementById('pfSezRecipient')?.value || null,
+    differential_65: !!document.getElementById('pfDifferential65')?.checked,
+    // The LUT in force when this proforma was raised, copied onto it. The
+    // profile's LUT can be replaced next year; a quotation already sent must
+    // not change because of that. Same source as the invoice - the cached
+    // profile, never anything the browser typed.
+    lut_number: (typeof getCachedProfile === 'function' ? (getCachedProfile()?.lut_number || null) : null)
+  };
 }

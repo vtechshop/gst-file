@@ -1502,7 +1502,19 @@ CREATE TABLE IF NOT EXISTS proforma_invoices (
   cancelled_at TIMESTAMPTZ,
   cancel_reason TEXT,
   created_at TIMESTAMPTZ DEFAULT NOW(),
-  updated_at TIMESTAMPTZ DEFAULT NOW()
+  updated_at TIMESTAMPTZ DEFAULT NOW(),
+
+  -- Exports. Mirrors b2b_invoices/b2c_invoices column for column, so a
+  -- proforma converted into an invoice is copied rather than translated.
+  -- NULL export_type means the proforma is not an export.
+  export_type TEXT,
+  shipping_bill_number TEXT,
+  shipping_bill_date DATE,
+  port_code TEXT,
+  export_of TEXT,
+  sez_recipient_type TEXT,
+  lut_number TEXT,
+  differential_65 BOOLEAN NOT NULL DEFAULT FALSE
 );
 
 CREATE TABLE IF NOT EXISTS proforma_invoice_items (
