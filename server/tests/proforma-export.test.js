@@ -23,6 +23,7 @@ const GENERIC = strip(rd('server', 'src', 'routes', 'generic.js'));
 const SCHEMA = rd('server', 'db', 'schema', 'schema.sql');
 const MIGRATION = rd('server', 'db', 'migrations', 'migration_proforma_export.sql');
 const MANIFEST = JSON.parse(rd('server', 'db', 'migrations', '_manifest.json'));
+const UTILS_SRC = strip(rd('client', 'js', 'utilities', 'utils.js'));
 
 const EXPORT_COLS = ['export_type', 'shipping_bill_number', 'shipping_bill_date',
   'port_code', 'export_of', 'sez_recipient_type', 'lut_number', 'differential_65'];
@@ -80,19 +81,60 @@ test('X3 the API will actually accept the new columns', () => {
 });
 
 // ── the two mechanisms, as Invoice implements them ──
-test('X4 the GST category — not the toggle — drives State and District', () => {
-  const fn = PF_JS.slice(PF_JS.indexOf('function onProformaGstCategoryChange'),
-                         PF_JS.indexOf('function onProformaExportToggleChange'));
-  assert.match(fn, /syncExportStateDistrict\(gstIsExportCategory\(value\)/);
-  assert.match(fn, /'pfState', 'pfDistrict', 'pfDistrictList', 'pfDistrictError', true/);
-  // and the page is wired to call it
+// EITHER signal puts the form in export mode. This is the one place Proforma
+// deliberately differs from Invoice Entry, whose toggle reveals the export
+// fields and nothing else: a quotation is written before the place of supply
+// is settled, so switching Export on has to take State and District with it
+// without the user also knowing to change the GST Category.
+test('X4 both the GST category and the toggle drive State and District', () => {
+  const mode = PF_JS.slice(PF_JS.indexOf('function proformaIsExportMode'),
+                           PF_JS.indexOf('function syncProformaExportStateDistrict'));
+  assert.match(mode, /gstIsExportCategory\(category\)/, 'the category must count');
+  assert.match(mode, /getElementById\('pfExportToggle'\)\?\.checked/, 'the toggle must count');
+  assert.match(mode, /return toggled \|\| gstIsExportCategory\(category\)/,
+    'either one alone must be enough');
+
+  // The work is done by the shared helper, not a second implementation.
+  const sync = PF_JS.slice(PF_JS.indexOf('function syncProformaExportStateDistrict'),
+                           PF_JS.indexOf('function onProformaGstCategoryChange'));
+  assert.match(sync, /syncExportStateDistrict\(proformaIsExportMode\(\)/);
+  assert.match(sync, /'pfState', 'pfDistrict', 'pfDistrictList', 'pfDistrictError', true/);
+  assert.match(UTILS_SRC, /function syncExportStateDistrict\(isExport, stateId, districtId/);
+
+  // Both handlers route through that one function, so they cannot disagree.
+  const cat = PF_JS.slice(PF_JS.indexOf('function onProformaGstCategoryChange'),
+                          PF_JS.indexOf('function onProformaExportToggleChange'));
+  assert.match(cat, /syncProformaExportStateDistrict\(\)/);
+  const toggle = PF_JS.slice(PF_JS.indexOf('function onProformaExportToggleChange'),
+                             PF_JS.indexOf('function restoreProformaExportFields'));
+  assert.match(toggle, /syncProformaExportStateDistrict\(\)/);
+  // neither handler reaches for the elements itself
+  assert.equal(/getElementById\('pfState'\)|getElementById\('pfDistrict'\)/.test(cat + toggle), false,
+    'State/District must only be touched through the shared helper');
+
+  // and the page is wired to call both
   assert.match(PF_HTML, /id="pfGstCategory"[^>]*onchange="onProformaGstCategoryChange\(\)"/);
-  // the toggle must NOT be what changes State/District - that would be a
-  // behaviour Invoice does not have
-  const toggleFn = PF_JS.slice(PF_JS.indexOf('function onProformaExportToggleChange'),
-                               PF_JS.indexOf('function restoreProformaExportFields'));
-  assert.equal(/syncExportStateDistrict|pfState|pfDistrict/.test(toggleFn), false,
-    'the export toggle must not touch State/District');
+  assert.match(PF_HTML, /id="pfExportToggle"[^>]*onchange="onProformaExportToggleChange\(\)"/);
+});
+
+test('X4b the Invoice toggle is deliberately left alone', () => {
+  // Proforma diverging must not drag Invoice Entry with it: a tax invoice
+  // still takes its place of supply from the category only.
+  const invToggle = INV_JS.slice(INV_JS.indexOf('function onExportToggleChange'),
+                                 INV_JS.indexOf('function restoreExportFields'));
+  assert.equal(/syncExportStateDistrict|invState|invDistrict/.test(invToggle), false,
+    'the Invoice export toggle must still not touch State/District');
+});
+
+test('X4c export mode is re-applied on load and on edit', () => {
+  // A saved export must come back with State/District already Not Applicable,
+  // and a fresh form must come back enabled.
+  assert.match(PF_JS, /restoreProformaExportFields\(null\);\s*\n\s*onProformaGstCategoryChange\(\)/);
+  assert.match(PF_JS, /restoreProformaExportFields\(rec\);\s*\n\s*onProformaGstCategoryChange\(\)/);
+  // restoring the toggle itself also syncs, through onProformaExportToggleChange
+  const restore = PF_JS.slice(PF_JS.indexOf('function restoreProformaExportFields'),
+                              PF_JS.indexOf('function buildProformaExport'));
+  assert.match(restore, /onProformaExportToggleChange\(\)/);
 });
 
 test('X5 the toggle reveals the fields, exactly as Invoice does', () => {

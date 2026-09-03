@@ -379,13 +379,42 @@ async function loadProformaForEdit(id) {
 // wire them either: an SEZ supply is domestic-but-zero-rated and needs the
 // fields without the export category, and an overseas service export needs
 // the category without a shipping bill.
-function onProformaGstCategoryChange() {
-  const value = document.getElementById('pfGstCategory')?.value || GST_CUSTOMER_CATEGORY_DEFAULT;
-  // clearState is true, the same as Invoice Entry: State is optional on this
-  // form, so an Indian state left over from a domestic category is cleared
-  // outright rather than silently submitted with an export.
-  syncExportStateDistrict(gstIsExportCategory(value),
+// Is this quotation an export? TWO controls can say so, and either is
+// enough:
+//
+//   * the GST Category set to "Export (overseas)", which is the single signal
+//     Invoice Entry uses (onInvGstCategoryChange), and
+//   * this page's Export Invoice toggle.
+//
+// Invoice Entry has only the first because a tax invoice's place of supply is
+// settled by the category by the time it is raised. A proforma is quoted
+// earlier, when the toggle is the plainer statement of intent - so a user who
+// switches Export on must see State and District go Not Applicable there too,
+// without having to also know to change the category.
+function proformaIsExportMode() {
+  const category = document.getElementById('pfGstCategory')?.value || GST_CUSTOMER_CATEGORY_DEFAULT;
+  const toggled = !!document.getElementById('pfExportToggle')?.checked;
+  return toggled || gstIsExportCategory(category);
+}
+
+// One place decides what State and District look like, so the toggle and the
+// category can never leave them in disagreeing states. The work itself is
+// syncExportStateDistrict() - the same helper Invoice Entry and Customer
+// Master already share, not a second implementation.
+//
+// clearState is true, exactly as Invoice Entry passes it: State is optional on
+// this form, and an Indian state left over from a domestic category has no
+// meaning on an export, so it is emptied rather than silently saved against
+// one. The cost is real - flipping the toggle on and off again does not bring
+// a typed State back - and it is the established Invoice behaviour rather than
+// something new introduced here.
+function syncProformaExportStateDistrict() {
+  syncExportStateDistrict(proformaIsExportMode(),
     'pfState', 'pfDistrict', 'pfDistrictList', 'pfDistrictError', true);
+}
+
+function onProformaGstCategoryChange() {
+  syncProformaExportStateDistrict();
 }
 
 function onProformaExportToggleChange() {
@@ -396,6 +425,10 @@ function onProformaExportToggleChange() {
     lbl.textContent = on ? 'Yes' : 'No';
     lbl.classList.toggle('text-gray-mid', !on);
   }
+  // The toggle is half of what decides export mode, so State and District
+  // follow it. This is where Proforma deliberately differs from Invoice Entry,
+  // whose toggle reveals the fields and nothing else.
+  syncProformaExportStateDistrict();
 }
 
 // Called when an existing proforma is opened, so an export stays an export.
