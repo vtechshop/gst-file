@@ -146,8 +146,8 @@ test('P8 no calculation was touched', () => {
 });
 
 test('P9 warranty, QR, bank and signature all survive', () => {
-  assert.match(PDF, /const INVOICE_WARRANTY_COLUMN_WEIGHT = \d+/);
-  assert.match(PDF, /warrantyLabel\(it\.warranty_period_months\)/);
+  // The per-line warranty COLUMN is gone by instruction, but the invoice-level
+  // warranty block below the table is a different thing and stays.
   assert.match(PDF, /doc\.text\('WARRANTY', L, wy\)/);
   assert.match(PDF, /invoiceVerifyUrl\(inv\.type, inv\.id\)/);
   assert.match(PDF, /Bank Details for Payment/);
@@ -155,25 +155,37 @@ test('P9 warranty, QR, bank and signature all survive', () => {
   assert.match(PDF, /Amount in Words:/);
 });
 
-test('P10 the product table carries the reference\'s seven columns', () => {
-  assert.match(PDF, /'SrNo', 'Product Name', 'HSN\/SAC', 'Qty', 'Rate',\s*\n?\s*\(inv\.igst > 0 \? 'IGST %' : 'GST %'\), 'Amount'/);
-  const weights = PDF.match(/const INVOICE_ITEM_COLUMN_WEIGHTS = \[([\s\S]*?)\];/);
-  assert.ok(weights, 'weights must exist');
-  const nums = weights[1].split('\n').filter(l => /^\s*\d/.test(l)).length;
-  assert.strictEqual(nums, 7, 'seven columns, got ' + nums);
+test('P10 the GST columns are generated from the invoice, not fixed', () => {
+  // Two column sets, one per regime. An invoice carries one or the other, so
+  // the columns of the other regime are never built at all.
+  const igst = PDF.match(/const INVOICE_ITEM_COLUMNS_IGST = \[([\s\S]*?)\];/);
+  const dom = PDF.match(/const INVOICE_ITEM_COLUMNS_CGST_SGST = \[([\s\S]*?)\];/);
+  assert.ok(igst, 'the IGST column set must exist');
+  assert.ok(dom, 'the CGST+SGST column set must exist');
+  const heads = (b) => [...b.matchAll(/head: '([^']+)'/g)].map(m => m[1]);
+  assert.deepStrictEqual(heads(igst[1]),
+    ['SrNo', 'Product Name', 'HSN/SAC', 'Qty', 'Rate', 'IGST %', 'Amount']);
+  assert.deepStrictEqual(heads(dom[1]),
+    ['SrNo', 'Product Name', 'HSN/SAC', 'Qty', 'Rate', 'GST %', 'CGST', 'SGST', 'Amount']);
+  // The head is the column set itself, so a column cannot be headed here and
+  // missing from the rows below.
+  assert.match(PDF, /head: \[itemColumns\.map\(c => c\.head\)\]/);
+  assert.equal(/withWarranty/.test(PDF), false, 'the warranty column must be gone');
 });
 
-test('P10b the three GST AMOUNT columns are gone from the table', () => {
-  const rows = PDF.slice(PDF.indexOf('const pdfItemRows'), PDF.indexOf('doc.autoTable({'));
-  // On any invoice two of the three were "-" on every row, so they spent a
-  // third of the table saying nothing. The per-line tax is still derivable
-  // from the rate and amount printed on the row.
-  for (const gone of ['it.cgst', 'it.sgst', 'it.igst']) {
-    assert.equal(rows.includes(gone), false, gone + ' must not be a table cell');
-  }
-  // ...and the table head names none of them as a column
-  const head = PDF.slice(PDF.indexOf('head: [withWarranty('), PDF.indexOf('body: pdfItemRows'));
-  assert.equal(/'CGST'|'SGST'|'IGST'/.test(head), false, 'no GST amount column may remain');
+test('P10b the non-applicable GST columns are absent, not blank', () => {
+  const igst = PDF.match(/const INVOICE_ITEM_COLUMNS_IGST = \[([\s\S]*?)\];/)[1];
+  const dom = PDF.match(/const INVOICE_ITEM_COLUMNS_CGST_SGST = \[([\s\S]*?)\];/)[1];
+  assert.equal(/'CGST'|'SGST'/.test(igst), false, 'an IGST invoice must not carry CGST/SGST columns');
+  assert.equal(/'IGST/.test(dom), false, 'a domestic invoice must not carry an IGST column');
+  // The row builder branches on the same flag as the head, so head and body
+  // can never disagree about the column count.
+  assert.match(PDF, /const isIgstInvoice = inv\.igst > 0;/);
+  assert.match(PDF, /const itemColumns = invoiceItemColumns\(isIgstInvoice\);/);
+  assert.match(PDF, /isIgstInvoice\s*\n?\s*\? \[sr, name, hsn, qty, rate, pct, amount\]\s*\n?\s*: \[sr, name, hsn, qty, rate, pct, cgst, sgst, amount\]/);
+  assert.match(PDF, /columnStyles: INVOICE_ITEM_COLUMN_STYLES\(R - L, isIgstInvoice\)/);
+  // Neither Unit nor Warranty is a column in either set.
+  assert.equal(/'Unit'|'Warranty'/.test(igst + dom), false);
 });
 
 test('P10c every GST figure still appears in the totals', () => {
@@ -186,21 +198,47 @@ test('P10c every GST figure still appears in the totals', () => {
   assert.match(PDF, /doc\.text\('Grand Total', boxX, ruleY \+ 7\)/);
 });
 
-test('P10d figures are right-aligned and the heading fits', () => {
-  assert.match(PDF, /styles\[0\]\.halign = 'right'/);
-  assert.match(PDF, /styles\[2\]\.halign = 'center'/);
-  assert.match(PDF, /for \(let i = 3; i < weights\.length; i\+\+\) styles\[i\]\.halign = 'right'/);
+test('P10d per-line tax is read, never recomputed', () => {
+  const rows = PDF.slice(PDF.indexOf('const itemCells'), PDF.indexOf('const boxW'));
+  // The CGST and SGST cells print the STORED per-line figures. No arithmetic
+  // appears in the row builder at all: no rate x taxable, no halving.
+  assert.match(rows, /it\.cgst > 0 \? formatNum\(it\.cgst\) : '-'/);
+  assert.match(rows, /it\.sgst > 0 \? formatNum\(it\.sgst\) : '-'/);
+  assert.match(rows, /it\.gst_percentage \+ '%'/);
+  assert.equal(/\/\s*2|\*\s*0\.|rate\s*\*/.test(rows), false, 'the row builder must not compute tax');
+});
+
+test('P10e alignment and widths come from the column descriptors', () => {
+  assert.match(PDF, /if \(c\.halign\) styles\[i\]\.halign = c\.halign;/);
+  assert.match(PDF, /if \(c\.bold\) styles\[i\]\.fontStyle = 'bold';/);
+  assert.match(PDF, /cellWidth: tableWidth \* c\.weight \/ total/);
   // "SrNo" at 6.8pt needs ~8.4mm; 7 units gave 7.1mm and split the heading
   // across two lines, which made the whole header row taller.
-  const weights = PDF.match(/const INVOICE_ITEM_COLUMN_WEIGHTS = \[([\s\S]*?)\];/)[1];
-  const first = parseInt(weights.split('\n').find(l => /^\s*\d/.test(l)).trim(), 10);
-  assert.ok(first >= 10, 'the SrNo column must be wide enough not to wrap, got ' + first);
+  for (const set of ['INVOICE_ITEM_COLUMNS_IGST', 'INVOICE_ITEM_COLUMNS_CGST_SGST']) {
+    const body = PDF.match(new RegExp('const ' + set + ' = \\[([\\s\\S]*?)\\];'))[1];
+    const srno = parseInt(body.match(/head: 'SrNo',\s*weight: (\d+)/)[1], 10);
+    assert.ok(srno >= 10, set + ': SrNo must be wide enough not to wrap, got ' + srno);
+  }
+});
+
+test('P10f the HTML print view follows the same rule', () => {
+  const H = PDF.slice(PDF.indexOf('async function buildInvoiceHTML'));
+  assert.match(H, /const isIgstInvoice = \(\+inv\.igst \|\| 0\) > 0;/);
+  assert.match(H, /\? ''\s*\n?\s*: `<td class="r">\$\{amt\(row\.cgst\)\}<\/td><td class="r">\$\{amt\(row\.sgst\)\}<\/td>`/);
+  assert.match(H, /\? `<th>IGST %<\/th>`\s*\n?\s*: `<th>GST %<\/th><th>CGST<\/th><th>SGST<\/th>`/);
+  // Unit and the per-column tax RATES are gone from the print view too.
+  assert.equal(/<th>Unit<\/th>|<th>CGST %<\/th>|<th>SGST %<\/th>/.test(H), false);
+  assert.equal(/splitOf/.test(H), false, 'the per-row rate split is no longer rendered');
+  // ...and its totals block is untouched.
+  assert.match(H, /<td>CGST<\/td>/);
+  assert.match(H, /<td>SGST<\/td>/);
+  assert.match(H, /<td>IGST<\/td>/);
 });
 
 test('P11 the changed asset carries one new cache key on every page that loads it', () => {
   for (const p of PAGES) {
-    assert.ok(rd(p).includes('client/js/pages/invoice-pdf.js?v=44'),
-      p + ' must reference invoice-pdf.js at v=44');
+    assert.ok(rd(p).includes('client/js/pages/invoice-pdf.js?v=45'),
+      p + ' must reference invoice-pdf.js at v=45');
   }
   // and nothing unrelated moved with it
   assert.ok(rd('invoice.html').includes('client/js/utilities/utils.js?v=33'));

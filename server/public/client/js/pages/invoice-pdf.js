@@ -288,67 +288,64 @@ function placeInk(ink, wantW, cx, topY) {
 // A value column is sized from its widest plausible content at 7pt, not from
 // its heading: "1,47,000.00" is 11 characters and fits 19mm, where the old
 // 24 units would have spent 24mm on it.
-// The seven columns a commercial bill prints, and no more. The CGST, SGST and
-// IGST AMOUNT columns are gone from the table: on any given invoice two of the
-// three are "-" on every row, so they spent ~54 of 190 units - a third of the
-// table - saying nothing. Every one of those figures still appears, totalled,
-// in the closing block, which is where a reader adds them up anyway.
+// The GST columns are DYNAMIC: they are generated from the tax the invoice
+// actually carries, and the column that does not apply is absent from the
+// table rather than present and blank.
 //
-// What is removed is presentation, not information: the per-line tax is
-// taxable x rate, both of which are still printed on the row, and the invoice
-// total of each tax is printed below.
-const INVOICE_ITEM_COLUMN_WEIGHTS = [
-  10,   // SrNo           wide enough that the heading does not wrap:
-        //                "SrNo" at 6.8pt needs ~8.4mm, and 7 units gave 7.1mm,
-        //                which split the heading over two lines and made the
-        //                whole header row taller.
-  85,   // Product Name   — the only column that wraps; takes the slack
-  20,   // HSN/SAC        an 8-digit code
-  14,   // Qty
-  22,   // Rate
-  14,   // GST%
-  25    // Amount
+//   IGST supply      SrNo | Product Name | HSN/SAC | Qty | Rate | IGST % | Amount
+//   CGST+SGST supply SrNo | Product Name | HSN/SAC | Qty | Rate | GST % | CGST | SGST | Amount
+//
+// An invoice carries one regime or the other, never both, so the columns of
+// the other regime could only ever hold "-" on every row. The old fixed table
+// printed all three amount columns and spent about a third of its width on
+// cells that said nothing; keeping them permanently is what that cost.
+//
+// Widths are relative, normalised to whatever width the table is given, and
+// sized from the widest plausible VALUE at 7pt rather than from the heading:
+// "1,47,000.00" is 11 characters and needs ~16mm with padding. Product Name
+// is the only column that wraps, so it takes the slack - which is why the
+// two-tax layout gives it less: the CGST and SGST columns come out of it.
+// Nothing clips - autoTable wraps - so the cost of a narrow column is an
+// extra line, never a lost digit.
+const INVOICE_ITEM_COLUMNS_IGST = [
+  { head: 'SrNo',         weight: 10, halign: 'right' },
+  { head: 'Product Name', weight: 88, bold: true },
+  { head: 'HSN/SAC',      weight: 20, halign: 'center' },
+  { head: 'Qty',          weight: 14, halign: 'right' },
+  { head: 'Rate',         weight: 24, halign: 'right' },
+  { head: 'IGST %',       weight: 16, halign: 'right' },
+  { head: 'Amount',       weight: 26, halign: 'right', bold: true }
 ];
 
+const INVOICE_ITEM_COLUMNS_CGST_SGST = [
+  { head: 'SrNo',         weight: 10, halign: 'right' },
+  { head: 'Product Name', weight: 61, bold: true },
+  { head: 'HSN/SAC',      weight: 19, halign: 'center' },
+  { head: 'Qty',          weight: 13, halign: 'right' },
+  { head: 'Rate',         weight: 21, halign: 'right' },
+  { head: 'GST %',        weight: 15, halign: 'right' },
+  { head: 'CGST',         weight: 20, halign: 'right' },
+  { head: 'SGST',         weight: 20, halign: 'right' },
+  { head: 'Amount',       weight: 23, halign: 'right', bold: true }
+];
 
-// Warranty sits between IGST and Total, and ONLY when some line on this
-// invoice actually carries cover. An invoice without it keeps the ten
-// columns it has always had, at the widths it has always had - which is what
-// makes every invoice raised before this feature render unchanged.
-// Warranty is NOT one of the columns the simplification removes, and it is
-// kept deliberately. warrantyDetailLines() below reads the INVOICE-level
-// warranty fields only, so the closing block can say "12 Months" for the
-// whole document but cannot say that line 1 carries twelve months and line 2
-// carries six. This column is the only place per-line cover is printed, and
-// the register behind it is per line. It still appears only when some line
-// actually carries cover.
-const INVOICE_WARRANTY_COLUMN_WEIGHT = 20;   // fits "12 Months / 1 Year"
-
-function invoiceItemColumnWeights(hasWarranty) {
-  if (!hasWarranty) return INVOICE_ITEM_COLUMN_WEIGHTS;
-  const w = INVOICE_ITEM_COLUMN_WEIGHTS.slice();
-  w.splice(w.length - 1, 0, INVOICE_WARRANTY_COLUMN_WEIGHT);
-  return w;
+// One predicate decides the shape of the table, and it is the SAME expression
+// the heading label and the totals block already use - inv.igst > 0 - so the
+// table and the totals below it can never disagree about which tax this
+// invoice carries. It reads existing invoice state; it computes no tax.
+function invoiceItemColumns(isIgst) {
+  return isIgst ? INVOICE_ITEM_COLUMNS_IGST : INVOICE_ITEM_COLUMNS_CGST_SGST;
 }
 
-function INVOICE_ITEM_COLUMN_STYLES(tableWidth, hasWarranty) {
-  const weights = invoiceItemColumnWeights(hasWarranty);
-  const total = weights.reduce((a, b) => a + b, 0);
+function INVOICE_ITEM_COLUMN_STYLES(tableWidth, isIgst) {
+  const columns = invoiceItemColumns(isIgst);
+  const total = columns.reduce((a, c) => a + c.weight, 0);
   const styles = {};
-  weights.forEach((w, i) => {
-    styles[i] = { cellWidth: tableWidth * w / total };
+  columns.forEach((c, i) => {
+    styles[i] = { cellWidth: tableWidth * c.weight / total };
+    if (c.halign) styles[i].halign = c.halign;
+    if (c.bold) styles[i].fontStyle = 'bold';
   });
-  // Product name and the line amount stay bold, exactly as before.
-  styles[1].fontStyle = 'bold';
-  styles[weights.length - 1].fontStyle = 'bold';
-  // Figures right-aligned and the code centred, the way the reference sets
-  // them: a column of right-aligned amounts can be read down at a glance,
-  // where left-aligned ones cannot.
-  styles[0].halign = 'right';                     // #
-  styles[2].halign = 'center';                    // HSN/SAC
-  for (let i = 3; i < weights.length; i++) styles[i].halign = 'right';
-  // Warranty is a label, not a figure, so it reads centred like the code.
-  if (hasWarranty) styles[weights.length - 2].halign = 'center';
   return styles;
 }
 
@@ -684,26 +681,34 @@ async function buildInvoicePDFDoc(inv) {
     // ── Item table — Product Name / HSN / Unit / Qty / Rate / GST% /
     // Taxable Value / CGST / SGST / IGST / Line Total, sourced directly
     // from the invoice's product line items (Product Master HSN/GST%/Unit) ──
-    // Only worth a column if some line actually carries cover; without it the
-      // table keeps exactly the shape every earlier invoice had.
-      const hasItemWarranty = !!(inv.items || []).some(it => parseInt(it.warranty_period_months, 10) > 0);
-      const withWarranty = (cells, value) => {
-        if (!hasItemWarranty) return cells;
-        const out = cells.slice();
-        out.splice(out.length - 1, 0, value);   // between IGST and Total
-        return out;
-      };
-      // The rate column is the GST RATE, unchanged - it is read straight off
-      // the line, exactly as before. Only the three tax-amount cells are gone.
-      const pdfItemRows = inv.items
-        ? inv.items.map((it, i) => withWarranty([
-            String(i + 1), it.product_name, it.hsn_code || '-', formatNum(it.quantity), formatNum(it.rate),
-            it.gst_percentage + '%', formatNum(it.total_amount)
-          ], warrantyLabel(it.warranty_period_months) || '-'))
-        : [withWarranty([
-            '1', 'Taxable Supply', '-', '1', formatNum(inv.taxable_amount),
-            inv.gst_percentage + '%', formatNum(inv.total_amount)
-          ], '-')];
+    // Which regime this invoice carries decides the columns. Read off the
+    // invoice, not recomputed: inv.igst is the value the invoice was saved
+    // with, and no figure below is derived here either - quantity, rate, GST
+    // rate, per-line CGST, per-line SGST and the line amount are each printed
+    // exactly as stored.
+    const isIgstInvoice = inv.igst > 0;
+    const itemColumns = invoiceItemColumns(isIgstInvoice);
+
+    // The single place a row is assembled, so the body can never fall out of
+    // step with the head: both are built from the same regime flag.
+    const itemCells = (sr, name, hsn, qty, rate, pct, cgst, sgst, amount) =>
+      isIgstInvoice
+        ? [sr, name, hsn, qty, rate, pct, amount]
+        : [sr, name, hsn, qty, rate, pct, cgst, sgst, amount];
+
+    const pdfItemRows = inv.items
+      ? inv.items.map((it, i) => itemCells(
+          String(i + 1), it.product_name, it.hsn_code || '-',
+          formatNum(it.quantity), formatNum(it.rate), it.gst_percentage + '%',
+          it.cgst > 0 ? formatNum(it.cgst) : '-',
+          it.sgst > 0 ? formatNum(it.sgst) : '-',
+          formatNum(it.total_amount)))
+      : [itemCells(
+          '1', 'Taxable Supply', '-', '1', formatNum(inv.taxable_amount),
+          inv.gst_percentage + '%',
+          inv.cgst > 0 ? formatNum(inv.cgst) : '-',
+          inv.sgst > 0 ? formatNum(inv.sgst) : '-',
+          formatNum(inv.total_amount))];
     // Measured BEFORE the table, because the table now has to keep clear of
     // the seal/signature band that repeats at the foot of every page. Nothing
     // in here depends on where the table ends, so hoisting it changes no value
@@ -760,16 +765,14 @@ async function buildInvoicePDFDoc(inv) {
 
     doc.autoTable({
       startY: y,
-      // "IGST %" on an interstate supply, "GST %" otherwise - the heading
-      // names the tax the rate belongs to, the way the reference does. The
-      // VALUE is the same gst_percentage either way; only the label moves.
-      head: [withWarranty(['SrNo', 'Product Name', 'HSN/SAC', 'Qty', 'Rate',
-        (inv.igst > 0 ? 'IGST %' : 'GST %'), 'Amount'], 'Warranty')],
+      // The head is the dynamic column set itself, so a column can never be
+      // headed here and missing from the rows below.
+      head: [itemColumns.map(c => c.head)],
       body: pdfItemRows,
       theme: 'grid',
       headStyles: { fillColor: [Math.min(accent[0]+224,255), Math.min(accent[1]+165,255), Math.min(accent[2]+177,255)], textColor: accent, fontStyle: 'bold', fontSize: 6.8, lineColor: [178, 223, 219] },
       bodyStyles: { fontSize: 7, textColor: [40, 40, 40] },
-      columnStyles: INVOICE_ITEM_COLUMN_STYLES(R - L, hasItemWarranty),
+      columnStyles: INVOICE_ITEM_COLUMN_STYLES(R - L, isIgstInvoice),
       // top margin keeps every continuation page clear of the repeated header;
       // page 1 starts at startY, which is already below it.
       // top keeps continuation pages clear of the repeated invoice header;
@@ -1157,32 +1160,27 @@ async function buildInvoiceHTML(inv, opts) {
   const contactLine = [p?.email, p?.phone].filter(Boolean).join(' &middot; ');
   const bankLines = bankDetailLines(p);
 
-  // The tax split a line was raised at, for display only. The AMOUNTS are
-  // the stored ones — nothing here recomputes tax. An intra-state supply
-  // splits its rate across CGST and SGST; an inter-state one carries it
-  // all as IGST. Which of the two it is comes from the line's own stored
-  // figures, so a corrected invoice prints what it was actually raised at.
-  const splitOf = (row) => {
-    const rate = +row.gst_percentage || 0;
-    const inter = (+row.igst || 0) > 0 || ((+row.cgst || 0) === 0 && (+row.sgst || 0) === 0 && inv.supply_type === 'interstate');
-    return inter ? { cg: 0, sg: 0, ig: rate } : { cg: rate / 2, sg: rate / 2, ig: 0 };
-  };
-  const pct = v => v ? (Math.round(v * 100) / 100) + '%' : '-';
+  // Which regime this invoice carries decides the columns, exactly as it does
+  // for the PDF, using the same invoice-level predicate so the two renderings
+  // of one invoice can never show different tax columns.
+  const isIgstInvoice = (+inv.igst || 0) > 0;
   const amt = v => (+v > 0 ? formatNum(v) : '-');
 
+  // The GST columns are generated, not fixed: the regime that does not apply
+  // contributes no cells at all. Nothing here recomputes tax - the GST rate,
+  // the per-line CGST and SGST and the line total are printed as stored.
   const rowHtml = (row, i) => {
-    const s = splitOf(row);
-    return `<tr>
+    const lead = `<tr>
       <td class="c">${i + 1}</td>
       <td class="desc"><b>${escHtml(row.product_name)}</b></td>
       <td class="c">${escHtml(row.hsn_code) || '-'}</td>
-      <td class="c">${escHtml(row.unit) || '-'}</td>
       <td class="r">${formatNum(row.quantity)}</td>
       <td class="r">${formatNum(row.rate)}</td>
-      <td class="r">${formatNum(row.taxable_value)}</td>
-      <td class="c">${pct(s.cg)}</td><td class="r">${amt(row.cgst)}</td>
-      <td class="c">${pct(s.sg)}</td><td class="r">${amt(row.sgst)}</td>
-      <td class="c">${pct(s.ig)}</td><td class="r">${amt(row.igst)}</td>
+      <td class="r">${(+row.gst_percentage || 0)}%</td>`;
+    const tax = isIgstInvoice
+      ? ''
+      : `<td class="r">${amt(row.cgst)}</td><td class="r">${amt(row.sgst)}</td>`;
+    return `${lead}${tax}
       <td class="r"><b>${formatNum(row.total_amount)}</b></td>
     </tr>`;
   };
@@ -1192,10 +1190,10 @@ async function buildInvoiceHTML(inv, opts) {
   const printItemRowsHtml = inv.items
     ? inv.items.map(rowHtml).join('')
     : rowHtml({
-        product_name: 'Taxable Supply', hsn_code: '', unit: '', quantity: 1,
-        rate: inv.taxable_amount, taxable_value: inv.taxable_amount,
+        product_name: 'Taxable Supply', hsn_code: '', quantity: 1,
+        rate: inv.taxable_amount,
         gst_percentage: inv.gst_percentage, cgst: inv.cgst, sgst: inv.sgst,
-        igst: inv.igst, total_amount: inv.total_amount
+        total_amount: inv.total_amount
       }, 0);
 
   const roundOffRowHtml = Math.abs(inv.round_off) >= 0.005
@@ -1363,18 +1361,20 @@ async function buildInvoiceHTML(inv, opts) {
 
   <table class="items">
     <colgroup>
-      <col style="width:3%"><col style="width:18%"><col style="width:7%"><col style="width:5%">
-      <col style="width:5%"><col style="width:8%"><col style="width:9%">
-      <col style="width:5%"><col style="width:7%">
-      <col style="width:5%"><col style="width:7%">
-      <col style="width:5%"><col style="width:7%">
-      <col style="width:9%">
+      ${isIgstInvoice
+        ? `<col style="width:4%"><col style="width:40%"><col style="width:10%">
+           <col style="width:8%"><col style="width:12%"><col style="width:10%">
+           <col style="width:16%">`
+        : `<col style="width:4%"><col style="width:28%"><col style="width:9%">
+           <col style="width:7%"><col style="width:11%"><col style="width:8%">
+           <col style="width:11%"><col style="width:11%"><col style="width:11%">`}
     </colgroup>
     <thead><tr>
-      <th>#</th><th>Product Name</th><th>HSN</th><th>Unit</th><th>Qty</th><th>Rate</th>
-      <th>Taxable Value</th>
-      <th>CGST %</th><th>CGST</th><th>SGST %</th><th>SGST</th><th>IGST %</th><th>IGST</th>
-      <th>Total</th>
+      <th>#</th><th>Product Name</th><th>HSN</th><th>Qty</th><th>Rate</th>
+      ${isIgstInvoice
+        ? `<th>IGST %</th>`
+        : `<th>GST %</th><th>CGST</th><th>SGST</th>`}
+      <th>Amount</th>
     </tr></thead>
     <tbody>${printItemRowsHtml}</tbody>
   </table>
