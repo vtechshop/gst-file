@@ -280,18 +280,26 @@ function placeInk(ink, wantW, cx, topY) {
 //
 // Nothing here ever clips — autoTable wraps. The cost of a bad width is an
 // extra line, never a lost digit.
+// Relative widths, normalised to whatever the table is given. Retuned for
+// A4 portrait: 194mm of usable width instead of landscape's 269mm, so every
+// numeric column is cut to what its longest realistic value needs and the
+// slack goes to Product Name, which is the only column that wraps.
+//
+// A value column is sized from its widest plausible content at 7pt, not from
+// its heading: "1,47,000.00" is 11 characters and fits 19mm, where the old
+// 24 units would have spent 24mm on it.
 const INVOICE_ITEM_COLUMN_WEIGHTS = [
-  9,    // #
-  100,  // Product Name   — the only column that wraps
-  22,   // HSN            an 8-digit code
-  16,   // Qty
-  24,   // Rate
-  16,   // GST%
-  22,   // CGST
-  22,   // SGST
-  22,   // IGST           sized like CGST/SGST: on an interstate invoice this
+  7,    // #
+  74,   // Product Name   — the only column that wraps
+  17,   // HSN            an 8-digit code
+  12,   // Qty
+  20,   // Rate
+  11,   // GST%
+  18,   // CGST
+  18,   // SGST
+  18,   // IGST           sized like CGST/SGST: on an interstate invoice this
         //                column carries the tax and those two carry "-"
-  24    // Total
+  21    // Total
 ];
 
 
@@ -299,7 +307,7 @@ const INVOICE_ITEM_COLUMN_WEIGHTS = [
 // invoice actually carries cover. An invoice without it keeps the ten
 // columns it has always had, at the widths it has always had - which is what
 // makes every invoice raised before this feature render unchanged.
-const INVOICE_WARRANTY_COLUMN_WEIGHT = 26;   // fits "12 Months / 1 Year"
+const INVOICE_WARRANTY_COLUMN_WEIGHT = 20;   // fits "12 Months / 1 Year"
 
 function invoiceItemColumnWeights(hasWarranty) {
   if (!hasWarranty) return INVOICE_ITEM_COLUMN_WEIGHTS;
@@ -425,14 +433,21 @@ async function buildInvoicePDFDoc(inv) {
   const p = (typeof getCachedProfile === 'function') ? getCachedProfile() : null;
   const accent = hexToRgb(p?.header_color);
   const { jsPDF } = window.jspdf;
-  // Landscape. The item table carries twelve columns; portrait gave them
-  // 182mm between them, landscape gives 269mm, which is what lets Product
-  // Name be wide enough that ordinary names stop wrapping at all.
-  const doc = new jsPDF({ unit: 'mm', format: 'a4', orientation: 'landscape' });
+  // A4 PORTRAIT, the shape a commercial bill is printed in and the shape a
+  // customer expects to be handed. Landscape bought width for the twelve
+  // columns but spent it on the wrong axis: an A4 sheet turned sideways has
+  // only 210mm of HEIGHT, and the item table is the thing that needs height.
+  // Portrait gives 297mm, which is 87mm more room for product lines.
+  //
+  // The width that costs is bought back three ways rather than by dropping a
+  // column: 8mm margins instead of 14 (194mm of table instead of 182), the
+  // numeric columns cut to their real content above, and the party band set
+  // as two rows of two rather than one row of four.
+  const doc = new jsPDF({ unit: 'mm', format: 'a4', orientation: 'portrait' });
   // Set once per copy by the render loop below; the header reads it.
   let copyLabel = INVOICE_COPY_LABELS[0];
   const pw = doc.internal.pageSize.width;
-  const L = 14, R = pw - 14;
+  const L = 8, R = pw - 8;
 
   // Resolve every branding image (now Cloudinary URLs, not base64) into
   // actual image data once, up front — see imageUrlToDataUrl() above.
@@ -457,27 +472,27 @@ async function buildInvoicePDFDoc(inv) {
     // ── Top: Logo + Company (left) / TAX INVOICE (right) ──
     let nameX = L;
     if (logoData) {
-      try { doc.addImage(logoData, 'PNG', L, 8, 14, 14); nameX = L + 18; } catch {}
+      try { doc.addImage(logoData, 'PNG', L, 7, 11, 11); nameX = L + 14; } catch {}
     }
     doc.setTextColor(20, 20, 20);
-    doc.setFontSize(19); doc.setFont('helvetica', 'bold');
-    doc.text(p?.business_name || 'Your Business Name', nameX, 15);
+    doc.setFontSize(15); doc.setFont('helvetica', 'bold');
+    doc.text(p?.business_name || 'Your Business Name', nameX, 13.5);
     if (p?.website) {
       doc.setFontSize(8.5); doc.setFont('helvetica', 'normal'); doc.setTextColor(120, 120, 120);
-      doc.text(p.website, nameX, 20.5);
+      doc.text(p.website, nameX, 18);
     }
 
     doc.setTextColor(...accent);
-    doc.setFontSize(15); doc.setFont('helvetica', 'bold');
-    doc.text('TAX INVOICE', R, 14, { align: 'right' });
-    doc.setFontSize(8.5); doc.setFont('helvetica', 'normal'); doc.setTextColor(120, 120, 120);
-    doc.text(copyLabel, R, 20, { align: 'right' });
+    doc.setFontSize(13); doc.setFont('helvetica', 'bold');
+    doc.text('TAX INVOICE', R, 12.5, { align: 'right' });
+    doc.setFontSize(7.5); doc.setFont('helvetica', 'normal'); doc.setTextColor(120, 120, 120);
+    doc.text(copyLabel, R, 17.5, { align: 'right' });
 
     // Accent divider
     doc.setFillColor(...accent);
-    doc.rect(L, 25, R - L, 1.3, 'F');
+    doc.rect(L, 20.5, R - L, 1, 'F');
 
-    let y = 34;
+    let y = 26;
 
     // ── Sold By / Invoice Details / Bill To / Ship To — ONE band ──
     //
@@ -491,18 +506,27 @@ async function buildInvoicePDFDoc(inv) {
     // Every block keeps its own content and heading — nothing is dropped or
     // abbreviated, only placed side by side.
     const parties = invoicePartyLines(inv);
+    // TWO rows of two, not one row of four. Four columns needed 269mm of
+    // landscape; on a 194mm portrait sheet each would be 45mm, which wraps an
+    // ordinary address into six lines and costs more height than the second
+    // row saves. Two columns of 94mm hold an address on two lines, and the
+    // pairing matches how a printed bill reads: who is selling and what the
+    // document is, then who is buying and where it ships.
     const PART_GAP = 6;
-    const partColW = (R - L - PART_GAP * 3) / 4;
-    const partX = [0, 1, 2, 3].map(i => L + i * (partColW + PART_GAP));
+    const partColW = (R - L - PART_GAP) / 2;
+    const partX = [L, L + partColW + PART_GAP];
+    // 3.8mm between lines rather than 4.5: at 7.5pt the glyphs are 2.6mm tall,
+    // so this is still a clear gap and it saves ~6mm across the band.
+    const LH = 3.8;
 
-    doc.setFontSize(9); doc.setFont('helvetica', 'bold'); doc.setTextColor(...accent);
-    doc.text('SOLD BY', partX[0], y);
-    doc.text('ORDER & INVOICE DETAILS', partX[1], y);
-    doc.text('BILL TO', partX[2], y);
-    doc.text('SHIP TO', partX[3], y);
-    doc.setDrawColor(178, 223, 219);
-    doc.line(L, y + 1.5, R, y + 1.5);
-    y += 6;
+    const heads = (left, right) => {
+      doc.setFontSize(8); doc.setFont('helvetica', 'bold'); doc.setTextColor(...accent);
+      doc.text(left, partX[0], y);
+      doc.text(right, partX[1], y);
+      doc.setDrawColor(178, 223, 219);
+      doc.line(L, y + 1.2, R, y + 1.2);
+      y += 4.6;
+    };
 
     const soldByLines = [
       p?.business_name || '',
@@ -519,40 +543,46 @@ async function buildInvoicePDFDoc(inv) {
       'Reverse Charge: No'
     ];
 
-    doc.setFontSize(8.5); doc.setFont('helvetica', 'normal'); doc.setTextColor(40, 40, 40);
+    // ── Row 1: SOLD BY | ORDER & INVOICE DETAILS ──
+    heads('SOLD BY', 'ORDER & INVOICE DETAILS');
+    doc.setFontSize(7.5); doc.setFont('helvetica', 'normal'); doc.setTextColor(40, 40, 40);
     const soldByWrapped = wrapLines(doc, soldByLines, partColW);
     const metaWrapped = wrapLines(doc, metaLines, partColW);
+    const row1Top = y;
+    soldByWrapped.forEach((line, i) => doc.text(line, partX[0], row1Top + i * LH, { maxWidth: partColW }));
+    metaWrapped.forEach((line, i) => doc.text(line, partX[1], row1Top + i * LH, { maxWidth: partColW }));
+    y = row1Top + Math.max(soldByWrapped.length, metaWrapped.length) * LH + 3;
+
+    // ── Row 2: BILL TO | SHIP TO ──
+    heads('BILL TO', 'SHIP TO');
+    doc.setFontSize(7.5); doc.setFont('helvetica', 'normal'); doc.setTextColor(40, 40, 40);
     const custName = inv.customer_name || '';
     const nameLines = doc.splitTextToSize(custName, partColW);
     const billWrapped = wrapLines(doc, parties.bill, partColW);
     const shipWrapped = wrapLines(doc, parties.ship, partColW);
-
     const partTop = y;
-    soldByWrapped.forEach((line, i) => doc.text(line, partX[0], partTop + i * 4.5, { maxWidth: partColW }));
-    metaWrapped.forEach((line, i) => doc.text(line, partX[1], partTop + i * 4.5, { maxWidth: partColW }));
 
     // The customer's name leads each party column in bold, as before.
     doc.setFont('helvetica', 'bold');
-    doc.text(nameLines, partX[2], partTop);
-    doc.text(nameLines, partX[3], partTop);
+    nameLines.forEach((line, i) => {
+      doc.text(line, partX[0], partTop + i * LH);
+      doc.text(line, partX[1], partTop + i * LH);
+    });
     doc.setFont('helvetica', 'normal');
-    const nameH = nameLines.length * 4.5;
-    billWrapped.forEach((line, i) => doc.text(line, partX[2], partTop + nameH + i * 4.5, { maxWidth: partColW }));
-    shipWrapped.forEach((line, i) => doc.text(line, partX[3], partTop + nameH + i * 4.5, { maxWidth: partColW }));
+    const nameH = nameLines.length * LH;
+    billWrapped.forEach((line, i) => doc.text(line, partX[0], partTop + nameH + i * LH, { maxWidth: partColW }));
+    shipWrapped.forEach((line, i) => doc.text(line, partX[1], partTop + nameH + i * LH, { maxWidth: partColW }));
 
     let partyRows = nameLines.length + Math.max(billWrapped.length, shipWrapped.length);
     if (parties.sameAddress) {
       doc.setFont('helvetica', 'italic'); doc.setTextColor(120, 120, 120);
-      doc.text('Same as billing address', partX[3], partTop + nameH + shipWrapped.length * 4.5);
+      doc.text('Same as billing address', partX[1], partTop + nameH + shipWrapped.length * LH);
       doc.setFont('helvetica', 'normal'); doc.setTextColor(40, 40, 40);
       partyRows = Math.max(partyRows, nameLines.length + shipWrapped.length + 1);
     }
 
-    // The deepest of the four columns decides where the item table starts.
-    // 3mm of clearance rather than 5: on a 210mm page the closing block leaves
-    // a five-item invoice about 3mm short of the footer, and this is plain
-    // whitespace rather than anything a reader is looking at.
-    return partTop + Math.max(soldByWrapped.length, metaWrapped.length, partyRows) * 4.5 + 3;
+    // The deeper of the two columns decides where the item table starts.
+    return partTop + partyRows * LH + 2.5;
   };
 
   // ── Three copies, one document ─────────────────────────
@@ -597,13 +627,18 @@ async function buildInvoicePDFDoc(inv) {
       head: [withWarranty(['#', 'Product Name', 'HSN', 'Qty', 'Rate', 'GST%', 'CGST', 'SGST', 'IGST', 'Total'], 'Warranty')],
       body: pdfItemRows,
       theme: 'grid',
-      headStyles: { fillColor: [Math.min(accent[0]+224,255), Math.min(accent[1]+165,255), Math.min(accent[2]+177,255)], textColor: accent, fontStyle: 'bold', fontSize: 7.5, lineColor: [178, 223, 219] },
-      bodyStyles: { fontSize: 8, textColor: [40, 40, 40] },
+      headStyles: { fillColor: [Math.min(accent[0]+224,255), Math.min(accent[1]+165,255), Math.min(accent[2]+177,255)], textColor: accent, fontStyle: 'bold', fontSize: 6.8, lineColor: [178, 223, 219] },
+      bodyStyles: { fontSize: 7, textColor: [40, 40, 40] },
       columnStyles: INVOICE_ITEM_COLUMN_STYLES(R - L, hasItemWarranty),
       // top margin keeps every continuation page clear of the repeated header;
       // page 1 starts at startY, which is already below it.
       margin: { left: L, right: L, top: HEADER_BOTTOM },
-      styles: { cellPadding: 2.5, lineColor: [225, 225, 225] },
+      // Row height is font + padding, and padding was the larger half of it:
+      // 2.5mm top AND bottom added 5mm to every line, so ten products spent
+      // 50mm on whitespace. 1.1mm still separates the rule from the glyphs.
+      // A row is now ~5.0mm instead of ~7.8mm - the single change that decides
+      // how many products reach one page.
+      styles: { cellPadding: { top: 1.1, right: 1.4, bottom: 1.1, left: 1.4 }, lineColor: [225, 225, 225], overflow: 'linebreak', valign: 'middle' },
       // The column head repeats on each page by default; this repeats the
       // invoice header with it. Page 1's was already drawn above, so only the
       // continuation pages are redrawn here — for as many as the table needs,
@@ -642,10 +677,27 @@ async function buildInvoicePDFDoc(inv) {
     const sealReserveH = sealData ? SEAL : (signatureData ? 18 : 14);
     const QR_BLOCK_H = 28;                       // 24mm code + its caption
     const SIG_BLOCK_H = 6 + sealReserveH + 5;    // gap + stamp reserve + caption
-    // Room kept for the footer: its rule, two lines and the gap above them.
-    const FOOTER_RESERVE = 18;
-    const bandTop = doc.internal.pageSize.height - 12 - FOOTER_RESERVE
-                  - Math.max(QR_BLOCK_H, SIG_BLOCK_H);
+    const bandH = Math.max(QR_BLOCK_H, SIG_BLOCK_H);
+
+    // The footer, measured BEFORE the band is placed, because the band is
+    // bottom-aligned against it. This used to be a constant FOOTER_RESERVE of
+    // 18mm, and a constant can disagree with the footer that actually gets
+    // drawn: a profile carrying footer_text measures 22.6mm, which put the
+    // band 4.6mm lower than the page could hold. The floor test below then
+    // failed for EVERY invoice - one item or fifteen - and each copy opened a
+    // second sheet carrying nothing but the closing block.
+    //
+    // Measuring first removes the disagreement by construction: the band is
+    // placed against the footer that will be drawn, not against a guess at it.
+    doc.setFontSize(7.5);
+    const footerLines = p?.footer_text ? doc.splitTextToSize(p.footer_text, R - L) : [];
+    const footerH =
+      6                                                   // rule + gap
+      + (footerLines.length ? footerLines.length * 3.6 + 5 : 0)
+      + 4 + 4;                                            // generated line + contact
+    // The page number sits 8mm from the bottom, so the footer finishes above that.
+    const PAGE_BOTTOM = doc.internal.pageSize.height - 12;
+    const bandTop = PAGE_BOTTOM - footerH - bandH;
 
     // How far the two columns of the close reach below y: totals down to the
     // Grand Total rule on the right, bank details + Amount in Words + the GST
@@ -660,17 +712,6 @@ async function buildInvoicePDFDoc(inv) {
         + 18      // left
     );
 
-    // The footer, measured now rather than after the close is drawn, because
-    // the decision below depends on it. Drawn later, unchanged.
-    doc.setFontSize(7.5);
-    const footerLines = p?.footer_text ? doc.splitTextToSize(p.footer_text, R - L) : [];
-    const footerH =
-      6                                                   // rule + gap
-      + (footerLines.length ? footerLines.length * 3.6 + 5 : 0)
-      + 4 + 4;                                            // generated line + contact
-    // The page number sits 8mm from the bottom, so the footer finishes above that.
-    const PAGE_BOTTOM = doc.internal.pageSize.height - 12;
-
     // Where the QR/signature band will actually land, and where the page will
     // therefore end. The band normally sits at bandTop with the footer's space
     // already held clear beneath it; on a fuller invoice the content above
@@ -682,7 +723,6 @@ async function buildInvoicePDFDoc(inv) {
     // nothing but a header and a contact line. So the test is whether the close
     // AND its footer still fit, which is the thing that actually has to be true,
     // rather than a fixed 62mm guess at how tall the close might be.
-    const bandH = Math.max(QR_BLOCK_H, SIG_BLOCK_H);
     if (Math.max(y + closingNeed, bandTop) + bandH + footerH > PAGE_BOTTOM) {
       // The closing block gets its own sheet — and that sheet is still a page of
       // this invoice, so it carries the header like every other one.
