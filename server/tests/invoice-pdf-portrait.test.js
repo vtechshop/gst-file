@@ -78,7 +78,55 @@ test('P6 the three copies are untouched', () => {
 test('P7 every continuation page still repeats the header and the column head', () => {
   assert.match(PDF, /showHead: 'everyPage'/);
   assert.match(PDF, /didDrawPage: \(d\) => \{ if \(d\.pageNumber > 1\) drawInvoiceHeader\(\); \}/);
-  assert.match(PDF, /margin: \{ left: L, right: L, top: HEADER_BOTTOM \}/);
+  assert.match(PDF, /margin: \{ left: L, right: L, top: HEADER_BOTTOM, bottom: TABLE_BOTTOM_RESERVE \}/);
+});
+
+// ── the seal / signature block on every page ──
+test('P13 the signature block is a renderer, not an inline one-off', () => {
+  // Same architecture as drawInvoiceHeader(): one function, called per page,
+  // so the copies and pages cannot drift apart.
+  assert.match(PDF, /const drawSignatureBlock = \(topY\) => \{/);
+  // and it is defined ONCE
+  assert.strictEqual((PDF.match(/const drawSignatureBlock =/g) || []).length, 1);
+  // the images are decoded once for the whole document, not per draw
+  assert.match(PDF, /const \[sealInk, sigInk\] = await Promise\.all\(\[inkBoundsOf\(sealData\), inkBoundsOf\(signatureData\)\]\)/);
+  assert.strictEqual((PDF.match(/inkBoundsOf\(sealData\)/g) || []).length, 1);
+});
+
+test('P14 every page of every copy is signed', () => {
+  // The page loop that numbers the pages now signs them too, skipping only
+  // the page the closing block already signed in flow.
+  assert.match(PDF, /if \(!signedPages\.has\(i\)\) drawSignatureBlock\(bandTop\);/);
+  assert.match(PDF, /const signedPages = new Set\(\);/);
+  assert.match(PDF, /signedPages\.add\(doc\.internal\.getNumberOfPages\(\)\);/);
+  // signedPages is declared INSIDE the copy loop, so each copy tracks its own
+  const loop = PDF.slice(PDF.indexOf('for (let copyIndex = 0;'));
+  assert.ok(loop.indexOf('const signedPages') < loop.indexOf('drawSignatureBlock(bandTop)'),
+    'each copy must have its own signed-page set');
+  // the final page keeps its in-flow block
+  assert.match(PDF, /const signBlockBottom = drawSignatureBlock\(sigBlockY\);/);
+});
+
+test('P15 the table reserves the band it must not run into', () => {
+  assert.match(PDF, /const TABLE_BOTTOM_RESERVE = doc\.internal\.pageSize\.height - bandTop \+ 2;/);
+  // Measured from the sheet edge, which is the datum autoTable uses. Reserving
+  // bandH + footerH instead under-reserved by the 12mm PAGE_BOTTOM excludes,
+  // and rows landed 2mm inside the block.
+  assert.equal(/bottom: bandH \+ footerH/.test(PDF), false,
+    'the reserve must not be measured from PAGE_BOTTOM');
+  // and it is computed before the table uses it
+  assert.ok(PDF.indexOf('const TABLE_BOTTOM_RESERVE') < PDF.indexOf('bottom: TABLE_BOTTOM_RESERVE'));
+});
+
+test('P16 an unconfigured seal or signature draws no image', () => {
+  const fn = PDF.slice(PDF.indexOf('const drawSignatureBlock'), PDF.indexOf('// ── Three copies'));
+  assert.match(fn, /if \(sealData\) \{/, 'the seal is drawn only when configured');
+  assert.match(fn, /if \(signatureData\) \{/, 'the signature is drawn only when configured');
+  // the caption and rule are unconditional, as before
+  assert.match(fn, /doc\.text\('Authorized Signatory', sealCx, authY, \{ align: 'center' \}\)/);
+  assert.match(fn, /doc\.text\('For ' \+ \(p\?\.business_name \|\| 'Us'\)/);
+  // the reserve still shrinks when there is no stamp
+  assert.match(PDF, /const sealReserveH = sealData \? SEAL : \(signatureData \? 18 : 14\);/);
 });
 
 test('P8 no calculation was touched', () => {
@@ -107,18 +155,52 @@ test('P9 warranty, QR, bank and signature all survive', () => {
   assert.match(PDF, /Amount in Words:/);
 });
 
-test('P10 all ten columns are still carried', () => {
-  assert.match(PDF, /'#', 'Product Name', 'HSN', 'Qty', 'Rate', 'GST%', 'CGST', 'SGST', 'IGST', 'Total'/);
+test('P10 the product table carries the reference\'s seven columns', () => {
+  assert.match(PDF, /'SrNo', 'Product Name', 'HSN\/SAC', 'Qty', 'Rate',\s*\n?\s*\(inv\.igst > 0 \? 'IGST %' : 'GST %'\), 'Amount'/);
   const weights = PDF.match(/const INVOICE_ITEM_COLUMN_WEIGHTS = \[([\s\S]*?)\];/);
   assert.ok(weights, 'weights must exist');
   const nums = weights[1].split('\n').filter(l => /^\s*\d/.test(l)).length;
-  assert.strictEqual(nums, 10, 'ten columns, got ' + nums);
+  assert.strictEqual(nums, 7, 'seven columns, got ' + nums);
+});
+
+test('P10b the three GST AMOUNT columns are gone from the table', () => {
+  const rows = PDF.slice(PDF.indexOf('const pdfItemRows'), PDF.indexOf('doc.autoTable({'));
+  // On any invoice two of the three were "-" on every row, so they spent a
+  // third of the table saying nothing. The per-line tax is still derivable
+  // from the rate and amount printed on the row.
+  for (const gone of ['it.cgst', 'it.sgst', 'it.igst']) {
+    assert.equal(rows.includes(gone), false, gone + ' must not be a table cell');
+  }
+  // ...and the table head names none of them as a column
+  const head = PDF.slice(PDF.indexOf('head: [withWarranty('), PDF.indexOf('body: pdfItemRows'));
+  assert.equal(/'CGST'|'SGST'|'IGST'/.test(head), false, 'no GST amount column may remain');
+});
+
+test('P10c every GST figure still appears in the totals', () => {
+  // Removing the columns must not remove the information.
+  assert.match(PDF, /totalsRows = \[\['Subtotal', formatNum\(inv\.taxable_amount\)\]\]/);
+  assert.match(PDF, /if \(inv\.cgst > 0\) totalsRows\.push\(\['CGST', formatNum\(inv\.cgst\)\]\)/);
+  assert.match(PDF, /if \(inv\.sgst > 0\) totalsRows\.push\(\['SGST', formatNum\(inv\.sgst\)\]\)/);
+  assert.match(PDF, /if \(inv\.igst > 0\) totalsRows\.push\(\[`IGST \(\$\{inv\.gst_percentage\}%\)`, formatNum\(inv\.igst\)\]\)/);
+  assert.match(PDF, /totalsRows\.push\(\['Round Off'/);
+  assert.match(PDF, /doc\.text\('Grand Total', boxX, ruleY \+ 7\)/);
+});
+
+test('P10d figures are right-aligned and the heading fits', () => {
+  assert.match(PDF, /styles\[0\]\.halign = 'right'/);
+  assert.match(PDF, /styles\[2\]\.halign = 'center'/);
+  assert.match(PDF, /for \(let i = 3; i < weights\.length; i\+\+\) styles\[i\]\.halign = 'right'/);
+  // "SrNo" at 6.8pt needs ~8.4mm; 7 units gave 7.1mm and split the heading
+  // across two lines, which made the whole header row taller.
+  const weights = PDF.match(/const INVOICE_ITEM_COLUMN_WEIGHTS = \[([\s\S]*?)\];/)[1];
+  const first = parseInt(weights.split('\n').find(l => /^\s*\d/.test(l)).trim(), 10);
+  assert.ok(first >= 10, 'the SrNo column must be wide enough not to wrap, got ' + first);
 });
 
 test('P11 the changed asset carries one new cache key on every page that loads it', () => {
   for (const p of PAGES) {
-    assert.ok(rd(p).includes('client/js/pages/invoice-pdf.js?v=42'),
-      p + ' must reference invoice-pdf.js at v=42');
+    assert.ok(rd(p).includes('client/js/pages/invoice-pdf.js?v=44'),
+      p + ' must reference invoice-pdf.js at v=44');
   }
   // and nothing unrelated moved with it
   assert.ok(rd('invoice.html').includes('client/js/utilities/utils.js?v=33'));

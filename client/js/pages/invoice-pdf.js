@@ -288,18 +288,26 @@ function placeInk(ink, wantW, cx, topY) {
 // A value column is sized from its widest plausible content at 7pt, not from
 // its heading: "1,47,000.00" is 11 characters and fits 19mm, where the old
 // 24 units would have spent 24mm on it.
+// The seven columns a commercial bill prints, and no more. The CGST, SGST and
+// IGST AMOUNT columns are gone from the table: on any given invoice two of the
+// three are "-" on every row, so they spent ~54 of 190 units - a third of the
+// table - saying nothing. Every one of those figures still appears, totalled,
+// in the closing block, which is where a reader adds them up anyway.
+//
+// What is removed is presentation, not information: the per-line tax is
+// taxable x rate, both of which are still printed on the row, and the invoice
+// total of each tax is printed below.
 const INVOICE_ITEM_COLUMN_WEIGHTS = [
-  7,    // #
-  74,   // Product Name   — the only column that wraps
-  17,   // HSN            an 8-digit code
-  12,   // Qty
-  20,   // Rate
-  11,   // GST%
-  18,   // CGST
-  18,   // SGST
-  18,   // IGST           sized like CGST/SGST: on an interstate invoice this
-        //                column carries the tax and those two carry "-"
-  21    // Total
+  10,   // SrNo           wide enough that the heading does not wrap:
+        //                "SrNo" at 6.8pt needs ~8.4mm, and 7 units gave 7.1mm,
+        //                which split the heading over two lines and made the
+        //                whole header row taller.
+  85,   // Product Name   — the only column that wraps; takes the slack
+  20,   // HSN/SAC        an 8-digit code
+  14,   // Qty
+  22,   // Rate
+  14,   // GST%
+  25    // Amount
 ];
 
 
@@ -307,6 +315,13 @@ const INVOICE_ITEM_COLUMN_WEIGHTS = [
 // invoice actually carries cover. An invoice without it keeps the ten
 // columns it has always had, at the widths it has always had - which is what
 // makes every invoice raised before this feature render unchanged.
+// Warranty is NOT one of the columns the simplification removes, and it is
+// kept deliberately. warrantyDetailLines() below reads the INVOICE-level
+// warranty fields only, so the closing block can say "12 Months" for the
+// whole document but cannot say that line 1 carries twelve months and line 2
+// carries six. This column is the only place per-line cover is printed, and
+// the register behind it is per line. It still appears only when some line
+// actually carries cover.
 const INVOICE_WARRANTY_COLUMN_WEIGHT = 20;   // fits "12 Months / 1 Year"
 
 function invoiceItemColumnWeights(hasWarranty) {
@@ -323,9 +338,17 @@ function INVOICE_ITEM_COLUMN_STYLES(tableWidth, hasWarranty) {
   weights.forEach((w, i) => {
     styles[i] = { cellWidth: tableWidth * w / total };
   });
-  // Product name and line total stay bold, exactly as before.
+  // Product name and the line amount stay bold, exactly as before.
   styles[1].fontStyle = 'bold';
   styles[weights.length - 1].fontStyle = 'bold';
+  // Figures right-aligned and the code centred, the way the reference sets
+  // them: a column of right-aligned amounts can be read down at a glance,
+  // where left-aligned ones cannot.
+  styles[0].halign = 'right';                     // #
+  styles[2].halign = 'center';                    // HSN/SAC
+  for (let i = 3; i < weights.length; i++) styles[i].halign = 'right';
+  // Warranty is a label, not a figure, so it reads centred like the code.
+  if (hasWarranty) styles[weights.length - 2].halign = 'center';
   return styles;
 }
 
@@ -585,12 +608,73 @@ async function buildInvoicePDFDoc(inv) {
     return partTop + partyRows * LH + 2.5;
   };
 
+  // The visible ink inside the seal and signature files, resolved ONCE for the
+  // whole document rather than per draw: the images do not change between
+  // copies, and the block is now drawn on every page of every copy, so
+  // measuring per draw would decode the same PNGs dozens of times.
+  const [sealInk, sigInk] = await Promise.all([inkBoundsOf(sealData), inkBoundsOf(signatureData)]);
+
+  // ── The seal / signature block, drawn on EVERY page ────
+  //
+  // It used to be drawn once, inline, wherever the closing block happened to
+  // land - which is the last page of each copy. A four-page invoice carried
+  // three unsigned sheets. It is a renderer now, for the same reason
+  // drawInvoiceHeader() is one: the page loop below calls it for each page, so
+  // every page is signed and no page can drift from the others.
+  //
+  // topY is the top of the band. Everything inside is positioned relative to
+  // it, so the same call gives the same block wherever it is placed.
+  const SEAL = 26;                       // mm across the visible stamp
+  const sealReserveH = sealData ? SEAL : (signatureData ? 18 : 14);
+  const drawSignatureBlock = (topY) => {
+    const sealCx = R - 5 - SEAL / 2;     // centre, held clear of the margin
+    const sealTop = topY + 6;            // top of the stamp; "For ..." sits above
+
+    // Fit the stamp's longer side to SEAL, so a mark that is wider than it is
+    // tall does not overshoot the space reserved for it.
+    const sb = sealInk || { w: 1, h: 1, imgW: 1, imgH: 1 };
+    const sealWantW = SEAL * sb.w / Math.max(sb.w, sb.h * (sb.imgH / sb.imgW));
+    const seal = sealData ? placeInk(sealInk, sealWantW, sealCx, sealTop)
+                          : { inkW: SEAL, inkH: sealReserveH };
+
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(9.5); doc.setTextColor(30, 30, 30);
+    doc.text('For ' + (p?.business_name || 'Us'), sealCx, sealTop - 1.8, { align: 'center' });
+
+    if (sealData) {
+      try { doc.addImage(sealData, 'PNG', seal.x, seal.y, seal.w, seal.h); } catch {}
+    }
+    if (signatureData) {
+      // Centred on the stamp's visible ink, horizontally and vertically - the
+      // mark's own bounds, not the edges of the file it arrived in.
+      const cx = sealCx, cy = sealTop + seal.inkH * 0.50;
+      let sig = placeInk(sigInk, seal.inkW * 0.62, cx, 0);
+      const maxH = seal.inkH * 0.5;
+      if (sig.inkH > maxH) {
+        const k = maxH / sig.inkH;
+        sig = placeInk(sigInk, seal.inkW * 0.62 * k, cx, 0);
+      }
+      const sb2 = sigInk || { y: 0, h: 1 };
+      sig.y = cy - sb2.y * sig.h - sig.inkH / 2;
+      try { doc.addImage(signatureData, 'PNG', sig.x, sig.y, sig.w, sig.h); } catch {}
+    }
+
+    const authY = sealTop + seal.inkH + 5;
+    doc.setDrawColor(170, 170, 170);
+    doc.line(sealCx - 22, authY - 3.5, sealCx + 22, authY - 3.5);
+    doc.setFontSize(8); doc.setTextColor(120, 120, 120);
+    doc.text('Authorized Signatory', sealCx, authY, { align: 'center' });
+    return sealTop + seal.inkH + 5;      // where the block ends
+  };
+
   // ── Three copies, one document ─────────────────────────
   // Rendered by running the same drawing code three times rather than by
   // building three documents: there is one template, so the copies cannot
   // drift apart, and only the label above changes between them.
   for (let copyIndex = 0; copyIndex < INVOICE_COPY_LABELS.length; copyIndex++) {
     copyLabel = INVOICE_COPY_LABELS[copyIndex];
+    // The page the in-flow signature landed on, so the loop below does not
+    // draw a second one over it.
+    const signedPages = new Set();
     if (copyIndex > 0) doc.addPage();
     const copyFirstPage = doc.internal.getNumberOfPages();
 
@@ -609,22 +693,78 @@ async function buildInvoicePDFDoc(inv) {
         out.splice(out.length - 1, 0, value);   // between IGST and Total
         return out;
       };
+      // The rate column is the GST RATE, unchanged - it is read straight off
+      // the line, exactly as before. Only the three tax-amount cells are gone.
       const pdfItemRows = inv.items
         ? inv.items.map((it, i) => withWarranty([
             String(i + 1), it.product_name, it.hsn_code || '-', formatNum(it.quantity), formatNum(it.rate),
-            it.gst_percentage + '%',
-            it.cgst > 0 ? formatNum(it.cgst) : '-', it.sgst > 0 ? formatNum(it.sgst) : '-',
-            it.igst > 0 ? formatNum(it.igst) : '-', formatNum(it.total_amount)
+            it.gst_percentage + '%', formatNum(it.total_amount)
           ], warrantyLabel(it.warranty_period_months) || '-'))
         : [withWarranty([
             '1', 'Taxable Supply', '-', '1', formatNum(inv.taxable_amount),
-            inv.gst_percentage + '%',
-            inv.cgst > 0 ? formatNum(inv.cgst) : '-', inv.sgst > 0 ? formatNum(inv.sgst) : '-',
-            inv.igst > 0 ? formatNum(inv.igst) : '-', formatNum(inv.total_amount)
+            inv.gst_percentage + '%', formatNum(inv.total_amount)
           ], '-')];
+    // Measured BEFORE the table, because the table now has to keep clear of
+    // the seal/signature band that repeats at the foot of every page. Nothing
+    // in here depends on where the table ends, so hoisting it changes no value
+    // - it only makes bandH and footerH available to the margin below.
+    const boxW = 80, boxX = R - boxW;
+    const totalsRows = [['Subtotal', formatNum(inv.taxable_amount)]];
+    if (inv.cgst > 0) totalsRows.push(['CGST', formatNum(inv.cgst)]);
+    if (inv.sgst > 0) totalsRows.push(['SGST', formatNum(inv.sgst)]);
+    if (inv.igst > 0) totalsRows.push([`IGST (${inv.gst_percentage}%)`, formatNum(inv.igst)]);
+    if (Math.abs(inv.round_off) >= 0.005) totalsRows.push(['Round Off', (inv.round_off >= 0 ? '+' : '') + formatNum(inv.round_off)]);
+    const bankLines = bankDetailLines(p);
+    // Wrapped HERE, once, because the space the close needs decides whether
+    // the totals fit on this page at all - and the terms are the one line
+    // that can run to several. Measuring the unwrapped list would
+    // under-reserve and let the block run into the signature.
+    const warrantyLines = warrantyDetailLines(inv).flatMap(
+      (line) => doc.splitTextToSize(line, boxX - 6 - L));
+
+    const QR_BLOCK_H = 28;                       // 24mm code + its caption
+    const SIG_BLOCK_H = 6 + sealReserveH + 5;    // gap + stamp reserve + caption
+    const bandH = Math.max(QR_BLOCK_H, SIG_BLOCK_H);
+
+    // The footer, measured BEFORE the band is placed, because the band is
+    // bottom-aligned against it. This used to be a constant FOOTER_RESERVE of
+    // 18mm, and a constant can disagree with the footer that actually gets
+    // drawn: a profile carrying footer_text measures 22.6mm, which put the
+    // band 4.6mm lower than the page could hold. The floor test below then
+    // failed for EVERY invoice - one item or fifteen - and each copy opened a
+    // second sheet carrying nothing but the closing block.
+    //
+    // Measuring first removes the disagreement by construction: the band is
+    // placed against the footer that will be drawn, not against a guess at it.
+    doc.setFontSize(7.5);
+    const footerLines = p?.footer_text ? doc.splitTextToSize(p.footer_text, R - L) : [];
+    const footerH =
+      6                                                   // rule + gap
+      + (footerLines.length ? footerLines.length * 3.6 + 5 : 0)
+      + 4 + 4;                                            // generated line + contact
+    // The page number sits 8mm from the bottom, so the footer finishes above that.
+    const PAGE_BOTTOM = doc.internal.pageSize.height - 12;
+    const bandTop = PAGE_BOTTOM - footerH - bandH;
+
+    // What the table must keep clear at the foot of EVERY page, measured from
+    // the SHEET EDGE, because that is the datum autoTable's margins use.
+    //
+    // bandTop is measured from PAGE_BOTTOM, which already excludes the bottom
+    // 12mm. Reserving bandH + footerH directly therefore under-reserved by
+    // exactly that 12mm and let rows run into the band: a product row landed
+    // at 231.8mm against a block whose first line starts at 229.6mm.
+    //
+    // 2mm of air on top, so a descender on the last row never touches the
+    // company line above the stamp.
+    const TABLE_BOTTOM_RESERVE = doc.internal.pageSize.height - bandTop + 2;
+
     doc.autoTable({
       startY: y,
-      head: [withWarranty(['#', 'Product Name', 'HSN', 'Qty', 'Rate', 'GST%', 'CGST', 'SGST', 'IGST', 'Total'], 'Warranty')],
+      // "IGST %" on an interstate supply, "GST %" otherwise - the heading
+      // names the tax the rate belongs to, the way the reference does. The
+      // VALUE is the same gst_percentage either way; only the label moves.
+      head: [withWarranty(['SrNo', 'Product Name', 'HSN/SAC', 'Qty', 'Rate',
+        (inv.igst > 0 ? 'IGST %' : 'GST %'), 'Amount'], 'Warranty')],
       body: pdfItemRows,
       theme: 'grid',
       headStyles: { fillColor: [Math.min(accent[0]+224,255), Math.min(accent[1]+165,255), Math.min(accent[2]+177,255)], textColor: accent, fontStyle: 'bold', fontSize: 6.8, lineColor: [178, 223, 219] },
@@ -632,7 +772,12 @@ async function buildInvoicePDFDoc(inv) {
       columnStyles: INVOICE_ITEM_COLUMN_STYLES(R - L, hasItemWarranty),
       // top margin keeps every continuation page clear of the repeated header;
       // page 1 starts at startY, which is already below it.
-      margin: { left: L, right: L, top: HEADER_BOTTOM },
+      // top keeps continuation pages clear of the repeated invoice header;
+      // bottom keeps EVERY page clear of the repeated seal/signature band and
+      // the footer beneath it. Without the bottom reserve a continuation page's
+      // product rows would run straight through the signature - the block would
+      // sit ON the content instead of under it.
+      margin: { left: L, right: L, top: HEADER_BOTTOM, bottom: TABLE_BOTTOM_RESERVE },
       // Row height is font + padding, and padding was the larger half of it:
       // 2.5mm top AND bottom added 5mm to every line, so ten products spent
       // 50mm on whitespace. 1.1mm still separates the rule from the glyphs.
@@ -659,45 +804,7 @@ async function buildInvoicePDFDoc(inv) {
     // drawn, because the decision to start a new page depends on how tall it
     // actually is on THIS invoice — three totals rows and no bank block is a
     // different height from five rows and six bank lines.
-    const boxW = 80, boxX = R - boxW;
-    const totalsRows = [['Subtotal', formatNum(inv.taxable_amount)]];
-    if (inv.cgst > 0) totalsRows.push(['CGST', formatNum(inv.cgst)]);
-    if (inv.sgst > 0) totalsRows.push(['SGST', formatNum(inv.sgst)]);
-    if (inv.igst > 0) totalsRows.push([`IGST (${inv.gst_percentage}%)`, formatNum(inv.igst)]);
-    if (Math.abs(inv.round_off) >= 0.005) totalsRows.push(['Round Off', (inv.round_off >= 0 ? '+' : '') + formatNum(inv.round_off)]);
-    const bankLines = bankDetailLines(p);
-    // Wrapped HERE, once, because the space the close needs decides whether
-    // the totals fit on this page at all - and the terms are the one line
-    // that can run to several. Measuring the unwrapped list would
-    // under-reserve and let the block run into the signature.
-    const warrantyLines = warrantyDetailLines(inv).flatMap(
-      (line) => doc.splitTextToSize(line, boxX - 6 - L));
 
-    const SEAL = 26;                       // mm across the visible stamp
-    const sealReserveH = sealData ? SEAL : (signatureData ? 18 : 14);
-    const QR_BLOCK_H = 28;                       // 24mm code + its caption
-    const SIG_BLOCK_H = 6 + sealReserveH + 5;    // gap + stamp reserve + caption
-    const bandH = Math.max(QR_BLOCK_H, SIG_BLOCK_H);
-
-    // The footer, measured BEFORE the band is placed, because the band is
-    // bottom-aligned against it. This used to be a constant FOOTER_RESERVE of
-    // 18mm, and a constant can disagree with the footer that actually gets
-    // drawn: a profile carrying footer_text measures 22.6mm, which put the
-    // band 4.6mm lower than the page could hold. The floor test below then
-    // failed for EVERY invoice - one item or fifteen - and each copy opened a
-    // second sheet carrying nothing but the closing block.
-    //
-    // Measuring first removes the disagreement by construction: the band is
-    // placed against the footer that will be drawn, not against a guess at it.
-    doc.setFontSize(7.5);
-    const footerLines = p?.footer_text ? doc.splitTextToSize(p.footer_text, R - L) : [];
-    const footerH =
-      6                                                   // rule + gap
-      + (footerLines.length ? footerLines.length * 3.6 + 5 : 0)
-      + 4 + 4;                                            // generated line + contact
-    // The page number sits 8mm from the bottom, so the footer finishes above that.
-    const PAGE_BOTTOM = doc.internal.pageSize.height - 12;
-    const bandTop = PAGE_BOTTOM - footerH - bandH;
 
     // How far the two columns of the close reach below y: totals down to the
     // Grand Total rule on the right, bank details + Amount in Words + the GST
@@ -859,49 +966,12 @@ async function buildInvoicePDFDoc(inv) {
     // Every measurement below is of the ink inside each file, never of the
     // file's edges — see inkBoundsOf(). SEAL is therefore the size of the
     // stamp a reader sees, not of the PNG it came in.
-    const [sealInk, sigInk] = await Promise.all([inkBoundsOf(sealData), inkBoundsOf(signatureData)]);
-
-    const sealCx = R - 5 - SEAL / 2;       // centre, held clear of the margin
-    const sealTop = sigBlockY + 6;         // top of the stamp; "For ..." sits above
-
-    // Fit the stamp's longer side to SEAL, so a mark that is wider than it is
-    // tall does not overshoot the space reserved for it.
-    const sb = sealInk || { w: 1, h: 1, imgW: 1, imgH: 1 };
-    const sealWantW = SEAL * sb.w / Math.max(sb.w, sb.h * (sb.imgH / sb.imgW));
-    const seal = sealData ? placeInk(sealInk, sealWantW, sealCx, sealTop)
-                          : { inkW: SEAL, inkH: sealReserveH };
-
-    doc.setFont('helvetica', 'normal'); doc.setFontSize(9.5); doc.setTextColor(30, 30, 30);
-    doc.text('For ' + (p?.business_name || 'Us'), sealCx, sealTop - 1.8, { align: 'center' });
-
-    if (sealData) {
-      try { doc.addImage(sealData, 'PNG', seal.x, seal.y, seal.w, seal.h); } catch {}
-    }
-    if (signatureData) {
-      // Centred on the stamp's visible ink, horizontally and vertically —
-      // the mark's own bounds, not the edges of the file it arrived in.
-      // Width is taken from the stamp the reader sees; the height that
-      // follows from the signature's own shape is capped so a tall scan
-      // cannot spill out of it.
-      const cx = sealCx, cy = sealTop + seal.inkH * 0.50;
-      let sig = placeInk(sigInk, seal.inkW * 0.62, cx, 0);
-      const maxH = seal.inkH * 0.5;
-      if (sig.inkH > maxH) {
-        const k = maxH / sig.inkH;
-        sig = placeInk(sigInk, seal.inkW * 0.62 * k, cx, 0);
-      }
-      // placeInk aligns the ink's top; the block wants its centre.
-      const sb2 = sigInk || { y: 0, h: 1 };
-      sig.y = cy - sb2.y * sig.h - sig.inkH / 2;
-      try { doc.addImage(signatureData, 'PNG', sig.x, sig.y, sig.w, sig.h); } catch {}
-    }
-
-    const authY = sealTop + seal.inkH + 5;
-    doc.setDrawColor(170, 170, 170);
-    doc.line(sealCx - 22, authY - 3.5, sealCx + 22, authY - 3.5);
-    doc.setFontSize(8); doc.setTextColor(120, 120, 120);
-    doc.text('Authorized Signatory', sealCx, authY, { align: 'center' });
-    const signBlockBottom = sealTop + seal.inkH + 5;
+    // One call to the renderer above, on the page the closing block landed on.
+    // The other pages of this copy get the same call from the page loop at the
+    // end, so every page carries the same block in the same place.
+    const sealCx = R - 5 - SEAL / 2;       // the Terms column below reads this
+    const signBlockBottom = drawSignatureBlock(sigBlockY);
+    signedPages.add(doc.internal.getNumberOfPages());
 
     // ── Terms & Conditions ──
     // Set in the left column, alongside the seal rather than underneath it.
@@ -1039,6 +1109,14 @@ async function buildInvoicePDFDoc(inv) {
     const copyPageCount = copyLastPage - copyFirstPage + 1;
     for (let i = copyFirstPage; i <= copyLastPage; i++) {
       doc.setPage(i);
+      // Every page of this copy carries the seal and signature, not just the
+      // one the closing block finished on. The page the flow already signed is
+      // skipped so nothing is drawn twice.
+      //
+      // bandTop is the same figure the closing block bottom-aligns against, so
+      // a continuation page's block sits exactly where the final page's does,
+      // and the table's bottom margin has already held that space clear.
+      if (!signedPages.has(i)) drawSignatureBlock(bandTop);
       doc.setFontSize(7); doc.setTextColor(180);
       doc.text(`Page ${i - copyFirstPage + 1} of ${copyPageCount}`, L, doc.internal.pageSize.height - 8);
     }
