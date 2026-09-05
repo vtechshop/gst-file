@@ -238,8 +238,8 @@ test('P10f the HTML print view follows the same rule', () => {
 
 test('P11 the changed asset carries one new cache key on every page that loads it', () => {
   for (const p of PAGES) {
-    assert.ok(rd(p).includes('client/js/pages/invoice-pdf.js?v=48'),
-      p + ' must reference invoice-pdf.js at v=48');
+    assert.ok(rd(p).includes('client/js/pages/invoice-pdf.js?v=49'),
+      p + ' must reference invoice-pdf.js at v=49');
   }
   // and nothing unrelated moved with it
   assert.ok(rd('invoice.html').includes('client/js/utilities/utils.js?v=33'));
@@ -258,7 +258,7 @@ test('P17 the closing block is a bordered grid, bottom-anchored', () => {
   assert.match(PDF, /const ROW_D_Y = ROW_C_Y \+ ROW_C_H;/);
   assert.match(PDF, /const CLOSE_H = ROW_A_H \+ ROW_B_H \+ ROW_C_H \+ ROW_D_H;/);
   // the borders themselves
-  assert.match(PDF, /doc\.setLineWidth\(0\.5\);/);
+  assert.match(PDF, /doc\.setLineWidth\(RULE_BOLD\);/);
   assert.match(PDF, /doc\.rect\(L, ROW_A_Y, R - L, CLOSE_END - ROW_A_Y\)/);
   assert.match(PDF, /doc\.line\(SPLIT, ROW_A_Y, SPLIT, CLOSE_END\)/);
   for (const rule of ['ROW_B_Y', 'ROW_C_Y', 'ROW_D_Y']) {
@@ -332,6 +332,48 @@ test('P20 the seal band sits at the signature row on every page', () => {
   assert.match(PDF, /const bandTop = ROW_D_Y;/);
   assert.match(PDF, /const sigBlockY = ROW_D_Y;/);
   assert.match(PDF, /if \(!signedPages\.has\(i\)\) drawSignatureBlock\(bandTop\)/);
+});
+
+test('P21 one ink and two weights rule the whole sheet', () => {
+  // The bands used to be ruled in pale teal hairlines, which vanish on a laser
+  // print and made each block look unrelated to the next.
+  assert.match(PDF, /const RULE_INK = \[0, 0, 0\];/);
+  assert.match(PDF, /const RULE_BOLD = 0\.5;/);
+  assert.match(PDF, /const RULE_CELL = 0\.25;/);
+  assert.equal(/setDrawColor\(178, 223, 219\)/.test(PDF), false, 'the teal hairline must be gone');
+  assert.equal(/lineColor: \[225, 225, 225\]/.test(PDF), false, 'the pale cell rule must be gone');
+  assert.equal(/lineColor: \[178, 223, 219\]/.test(PDF), false, 'the teal head rule must be gone');
+});
+
+test('P21b the sheet is framed on every page', () => {
+  assert.match(PDF, /const FRAME_TOP = 5;/);
+  assert.match(PDF, /doc\.rect\(L, FRAME_TOP, R - L, CLOSE_END - FRAME_TOP\)/);
+  // Drawn in the per-page loop, so a continuation page is framed like the
+  // first, and on the same x as the table and the closing grid.
+  const loop = PDF.slice(PDF.indexOf('for (let i = copyFirstPage'));
+  assert.match(loop, /doc\.rect\(L, FRAME_TOP, R - L, CLOSE_END - FRAME_TOP\)/);
+});
+
+test('P21c the section separators and column dividers are bold', () => {
+  assert.match(PDF, /doc\.setDrawColor\(\.\.\.RULE_INK\);\s*\n?\s*doc\.setLineWidth\(RULE_BOLD\);\s*\n?\s*doc\.line\(L, y \+ 1\.2, R, y \+ 1\.2\)/);
+  assert.match(PDF, /const columnDivider = \(topY, bottomY\) => \{/);
+  assert.match(PDF, /doc\.line\(partX\[1\] - PART_GAP \/ 2, topY, partX\[1\] - PART_GAP \/ 2, bottomY\)/);
+  // one divider per party band
+  assert.equal((PDF.match(/columnDivider\(sectionRuleY,/g) || []).length, 2);
+});
+
+test('P21d the item table is ruled dark, with a bold header row', () => {
+  assert.match(PDF, /lineColor: RULE_INK, lineWidth: RULE_CELL/);
+  assert.match(PDF, /fontStyle: 'bold', fontSize: 6\.8, lineColor: RULE_INK, lineWidth: RULE_BOLD/);
+  // the ruled empty area matches the cells above it
+  assert.match(PDF, /doc\.setDrawColor\(\.\.\.RULE_INK\);\s*\/\/[^\n]*\n\s*doc\.setLineWidth\(RULE_CELL\);/);
+});
+
+test('P21e the signature rule stays inside the frame', () => {
+  // At the full 22mm half-width this ran to x=206 against a 202mm right
+  // margin - 4mm outside the sheet, invisible until the frame was drawn.
+  assert.match(PDF, /const authW = Math\.min\(22, R - 3 - sealCx\);/);
+  assert.match(PDF, /doc\.line\(sealCx - authW, authY - 3\.5, sealCx \+ authW, authY - 3\.5\)/);
 });
 
 test('P12 the Proforma PDF was not dragged into this', () => {

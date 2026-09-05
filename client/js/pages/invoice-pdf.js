@@ -337,6 +337,18 @@ function invoiceItemColumns(isIgst) {
   return isIgst ? INVOICE_ITEM_COLUMNS_IGST : INVOICE_ITEM_COLUMNS_CGST_SGST;
 }
 
+// Every rule on the invoice is drawn in this ink at one of these two weights,
+// so the sheet reads as a single grid instead of as a stack of separately
+// styled blocks. The pale teal hairlines the sections used before were
+// invisible on a laser print and made each band look unrelated to the next.
+//
+// BOLD frames the sheet and divides one section from the next; CELL rules the
+// columns inside the item table, where a heavier line between every row would
+// crowd 7pt figures.
+const RULE_INK = [0, 0, 0];
+const RULE_BOLD = 0.5;
+const RULE_CELL = 0.25;
+
 // The x of every column boundary, left edge through right edge. Derived from
 // the SAME weights the cells are sized from, so the rules that continue below
 // the last product line up with the rules beside it.
@@ -500,6 +512,9 @@ async function buildInvoicePDFDoc(inv) {
   //
   // It returns where it ends, which is both where page 1 continues and the
   // top margin the table must keep clear on every later page.
+  // The top of the sheet's frame - above the logo at y=7, which is the
+  // highest thing any page draws.
+  const FRAME_TOP = 5;
   const drawInvoiceHeader = () => {
     // ── Top: Logo + Company (left) / TAX INVOICE (right) ──
     let nameX = L;
@@ -555,9 +570,19 @@ async function buildInvoicePDFDoc(inv) {
       doc.setFontSize(8); doc.setFont('helvetica', 'bold'); doc.setTextColor(...accent);
       doc.text(left, partX[0], y);
       doc.text(right, partX[1], y);
-      doc.setDrawColor(178, 223, 219);
+      doc.setDrawColor(...RULE_INK);
+      doc.setLineWidth(RULE_BOLD);
       doc.line(L, y + 1.2, R, y + 1.2);
+      sectionRuleY = y + 1.2;
       y += 4.6;
+    };
+    // The rule each band was headed with, so the divider between its two
+    // columns can be dropped from it down to the band's foot.
+    let sectionRuleY = 0;
+    const columnDivider = (topY, bottomY) => {
+      doc.setDrawColor(...RULE_INK);
+      doc.setLineWidth(RULE_BOLD);
+      doc.line(partX[1] - PART_GAP / 2, topY, partX[1] - PART_GAP / 2, bottomY);
     };
 
     const soldByLines = [
@@ -584,6 +609,7 @@ async function buildInvoicePDFDoc(inv) {
     soldByWrapped.forEach((line, i) => doc.text(line, partX[0], row1Top + i * LH, { maxWidth: partColW }));
     metaWrapped.forEach((line, i) => doc.text(line, partX[1], row1Top + i * LH, { maxWidth: partColW }));
     y = row1Top + Math.max(soldByWrapped.length, metaWrapped.length) * LH + 3;
+    columnDivider(sectionRuleY, y - 3 + 1);
 
     // ── Row 2: BILL TO | SHIP TO ──
     heads('BILL TO', 'SHIP TO');
@@ -614,6 +640,7 @@ async function buildInvoicePDFDoc(inv) {
     }
 
     // The deeper of the two columns decides where the item table starts.
+    columnDivider(sectionRuleY, partTop + partyRows * LH + 1);
     return partTop + partyRows * LH + 2.5;
   };
 
@@ -668,8 +695,13 @@ async function buildInvoicePDFDoc(inv) {
     }
 
     const authY = sealTop + seal.inkH + 5;
-    doc.setDrawColor(170, 170, 170);
-    doc.line(sealCx - 22, authY - 3.5, sealCx + 22, authY - 3.5);
+    // Held inside the sheet's frame. At the full 22mm half-width this rule
+    // ran to x=206 on a 202mm right margin - 4mm outside the page's own
+    // border, which only became visible once the border was drawn.
+    const authW = Math.min(22, R - 3 - sealCx);
+    doc.setDrawColor(...RULE_INK);
+    doc.setLineWidth(RULE_CELL);
+    doc.line(sealCx - authW, authY - 3.5, sealCx + authW, authY - 3.5);
     doc.setFontSize(8); doc.setTextColor(120, 120, 120);
     doc.text('Authorized Signatory', sealCx, authY, { align: 'center' });
     return sealTop + seal.inkH + 5;      // where the block ends
@@ -834,7 +866,7 @@ async function buildInvoicePDFDoc(inv) {
       head: [itemColumns.map(c => c.head)],
       body: pdfItemRows,
       theme: 'grid',
-      headStyles: { fillColor: [Math.min(accent[0]+224,255), Math.min(accent[1]+165,255), Math.min(accent[2]+177,255)], textColor: accent, fontStyle: 'bold', fontSize: 6.8, lineColor: [178, 223, 219] },
+      headStyles: { fillColor: [Math.min(accent[0]+224,255), Math.min(accent[1]+165,255), Math.min(accent[2]+177,255)], textColor: accent, fontStyle: 'bold', fontSize: 6.8, lineColor: RULE_INK, lineWidth: RULE_BOLD },
       bodyStyles: { fontSize: 7, textColor: [40, 40, 40] },
       columnStyles: INVOICE_ITEM_COLUMN_STYLES(R - L, isIgstInvoice),
       // top margin keeps every continuation page clear of the repeated header;
@@ -849,7 +881,9 @@ async function buildInvoicePDFDoc(inv) {
       // 50mm on whitespace. 1.1mm still separates the rule from the glyphs.
       // A row is now ~5.0mm instead of ~7.8mm - the single change that decides
       // how many products reach one page.
-      styles: { cellPadding: { top: 1.1, right: 1.4, bottom: 1.1, left: 1.4 }, lineColor: [225, 225, 225], overflow: 'linebreak', valign: 'middle' },
+      // lineWidth changes what is drawn, never how tall a row is, so the
+      // fixed geometry above is untouched by darkening the rules.
+      styles: { cellPadding: { top: 1.1, right: 1.4, bottom: 1.1, left: 1.4 }, lineColor: RULE_INK, lineWidth: RULE_CELL, overflow: 'linebreak', valign: 'middle' },
       // The column head repeats on each page by default; this repeats the
       // invoice header with it. Page 1's was already drawn above, so only the
       // continuation pages are redrawn here — for as many as the table needs,
@@ -873,8 +907,8 @@ async function buildInvoicePDFDoc(inv) {
     // not there.
     const tableFoot = doc.lastAutoTable.finalY;
     if (tableFoot < TABLE_FIXED_BOTTOM - 0.2) {
-      doc.setDrawColor(225, 225, 225);      // the body rules' own colour
-      doc.setLineWidth(0.1);                // autoTable's own width
+      doc.setDrawColor(...RULE_INK);        // the body rules' own ink
+      doc.setLineWidth(RULE_CELL);          // and their own weight
       invoiceItemColumnEdges(R - L, isIgstInvoice, L)
         .forEach((x) => doc.line(x, tableFoot, x, TABLE_FIXED_BOTTOM));
       doc.line(L, TABLE_FIXED_BOTTOM, R, TABLE_FIXED_BOTTOM);
@@ -890,8 +924,8 @@ async function buildInvoicePDFDoc(inv) {
     // Grand Total box exactly as before.
     const cellMoney = (v) => 'Rs.' + v;
 
-    doc.setDrawColor(0, 0, 0);
-    doc.setLineWidth(0.5);                       // bold, the way a bill prints
+    doc.setDrawColor(...RULE_INK);
+    doc.setLineWidth(RULE_BOLD);                 // the same weight as the table
     doc.rect(L, ROW_A_Y, R - L, CLOSE_END - ROW_A_Y);
     doc.line(L, ROW_B_Y, R, ROW_B_Y);
     doc.line(L, ROW_C_Y, R, ROW_C_Y);
@@ -1059,7 +1093,11 @@ async function buildInvoicePDFDoc(inv) {
       y = Math.max(y, PAGE_BOTTOM - footerH);
     }
 
-    doc.setDrawColor(178, 223, 219);
+    // The rule between the closing grid and the footer. y here is exactly
+    // CLOSE_END, so this lands on the frame's bottom edge and has to be drawn
+    // in the same ink and weight or the frame appears to change colour there.
+    doc.setDrawColor(...RULE_INK);
+    doc.setLineWidth(RULE_BOLD);
     doc.line(L, y, R, y);
     y += 6;
 
@@ -1094,6 +1132,13 @@ async function buildInvoicePDFDoc(inv) {
       // a continuation page's block sits exactly where the final page's does,
       // and the table's bottom margin has already held that space clear.
       if (!signedPages.has(i)) drawSignatureBlock(bandTop);
+      // One border around the whole sheet, drawn on EVERY page so a
+      // continuation page is framed like the first. It runs down the same x as
+      // the item table and the closing grid, so the three share one continuous
+      // line rather than stacking parallel rules.
+      doc.setDrawColor(...RULE_INK);
+      doc.setLineWidth(RULE_BOLD);
+      doc.rect(L, FRAME_TOP, R - L, CLOSE_END - FRAME_TOP);
       doc.setFontSize(7); doc.setTextColor(180);
       doc.text(`Page ${i - copyFirstPage + 1} of ${copyPageCount}`, L, doc.internal.pageSize.height - 8);
     }
