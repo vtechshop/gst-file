@@ -184,11 +184,25 @@ function populateItemsProductDatalist() {
   if (dl) dl.innerHTML = itemsProductsList.map(p => `<option value="${escItemHtml(p.name)}"></option>`).join('');
 }
 
+// The unit a fresh line starts on. Typing an invoice is the common case and
+// almost every line is counted in pieces, so the row opens on PCS instead of
+// on "Select Unit" and the user changes it only when it is something else.
+//
+// It applies to NEW BLANK rows only. A row loaded from a saved invoice keeps
+// whatever it was saved with - including nothing - and a row filled from the
+// Product Master takes that product's unit, empty or not: the master is what
+// says how a product is counted, and defaulting over its silence would put a
+// unit on a GSTR-1 line that nobody chose.
+//
+// PCS is one of the UQCs the GSTR-1 export can emit (GSTR1_UQC_MAP), so a
+// line left on the default still files.
+const DEFAULT_ITEM_UNIT = 'PCS';
+
 // ── Row lifecycle ─────────────────────────────────
 function blankRow() {
   itemsRowSeq++;
   return {
-    rowId: 'row' + itemsRowSeq, product_id: null, product_name: '', hsn_code: '', unit: '',
+    rowId: 'row' + itemsRowSeq, product_id: null, product_name: '', hsn_code: '', unit: DEFAULT_ITEM_UNIT,
     quantity: 1, rate: 0, discount_percentage: 0, gst_percentage: 0,
     // Nil-rated / exempt / non-GST lines are reported in GSTR-1 table 8,
     // not as taxable supplies. 'taxable' is every line raised before this.
