@@ -108,7 +108,7 @@ test('P14 every page of every copy is signed', () => {
 });
 
 test('P15 the table reserves the band it must not run into', () => {
-  assert.match(PDF, /const TABLE_BOTTOM_RESERVE = doc\.internal\.pageSize\.height - bandTop \+ 2;/);
+  assert.match(PDF, /const TABLE_BOTTOM_RESERVE = doc\.internal\.pageSize\.height - TABLE_FIXED_BOTTOM;/);
   // Measured from the sheet edge, which is the datum autoTable uses. Reserving
   // bandH + footerH instead under-reserved by the 12mm PAGE_BOTTOM excludes,
   // and rows landed 2mm inside the block.
@@ -237,8 +237,8 @@ test('P10f the HTML print view follows the same rule', () => {
 
 test('P11 the changed asset carries one new cache key on every page that loads it', () => {
   for (const p of PAGES) {
-    assert.ok(rd(p).includes('client/js/pages/invoice-pdf.js?v=46'),
-      p + ' must reference invoice-pdf.js at v=46');
+    assert.ok(rd(p).includes('client/js/pages/invoice-pdf.js?v=47'),
+      p + ' must reference invoice-pdf.js at v=47');
   }
   // and nothing unrelated moved with it
   assert.ok(rd('invoice.html').includes('client/js/utilities/utils.js?v=33'));
@@ -246,18 +246,49 @@ test('P11 the changed asset carries one new cache key on every page that loads i
   assert.ok(rd('proforma.html').includes('client/js/pages/proforma-entry.js?v=40'));
 });
 
-test('P17 the closing band follows the content instead of the page foot', () => {
-  // It was Math.max against bandTop, which PINNED the band to the foot: a
-  // one-item invoice printed its Grand Total at 112mm and then 118mm of blank
-  // paper before the signature. Math.min lets it rise to the content and still
-  // never fall past the foot.
-  assert.match(PDF, /const bandY = Math\.min\(Math\.max\(tcBottom \+ 3, totalsBottom\), bandTop\);/);
-  assert.match(PDF, /const qrY = bandY;/);
-  assert.match(PDF, /let sigBlockY = bandY;/);
-  assert.equal(/Math\.max\(ly, bandTop\)/.test(PDF), false, 'the QR must not be pinned to the foot');
-  assert.equal(/Math\.max\(totalsBottom, bandTop\)/.test(PDF), false, 'the signature must not be pinned to the foot');
-  // Continuation pages, whose table fills them, still get the band at the foot.
-  assert.match(PDF, /if \(!signedPages\.has\(i\)\) drawSignatureBlock\(bandTop\)/);
+test('P17 the table bottom and the close are fixed, not flowing', () => {
+  // A printed invoice book has one ruled table on every sheet: the rows fill it
+  // from the top and the totals are always in the same place. So the close is
+  // bottom-anchored and the table stops just above it - the same rectangle on
+  // every page of every invoice, whatever the item count.
+  assert.match(PDF, /const CLOSE_TOP = bandTop - closingNeed;/);
+  assert.match(PDF, /const TABLE_FIXED_BOTTOM = Math\.max\(CLOSE_TOP - 4, HEADER_BOTTOM \+ 30\);/);
+  assert.match(PDF, /y = Math\.max\(CLOSE_TOP, TABLE_FIXED_BOTTOM \+ 4\);/);
+  // ...and the band sits at its fixed height, needing no negotiation.
+  assert.match(PDF, /const bandY = bandTop;/);
+  assert.equal(/Math\.min\(Math\.max\(tcBottom \+ 3, totalsBottom\), bandTop\)/.test(PDF), false,
+    'the flowing band must be gone');
+  assert.equal(/y = doc\.lastAutoTable\.finalY \+ 4/.test(PDF), false,
+    'the close must not start under the last row');
+});
+
+test('P17b the close is measured before the table that depends on it', () => {
+  // The table's bottom edge is derived from the close, so the close has to be
+  // known first. This ordering is the whole mechanism.
+  const need = PDF.indexOf('const closingNeed =');
+  const closeTop = PDF.indexOf('const CLOSE_TOP =');
+  const reserve = PDF.indexOf('const TABLE_BOTTOM_RESERVE =');
+  const table = PDF.indexOf('doc.autoTable({');
+  assert.ok(need > 0 && need < closeTop, 'closingNeed before CLOSE_TOP');
+  assert.ok(closeTop < reserve, 'CLOSE_TOP before the reserve');
+  assert.ok(reserve < table, 'the reserve before the table that uses it');
+});
+
+test('P17c the unused part of the table is ruled, not left blank', () => {
+  // The rows stop where the products stop; the TABLE does not. Its border and
+  // column separators carry on to the fixed bottom, so the empty area sits
+  // inside the table rather than as blank paper under it.
+  assert.match(PDF, /function invoiceItemColumnEdges\(tableWidth, isIgst, left\)/);
+  assert.match(PDF, /invoiceItemColumnEdges\(R - L, isIgstInvoice, L\)\s*\n?\s*\.forEach\(\(x\) => doc\.line\(x, tableFoot, x, TABLE_FIXED_BOTTOM\)\)/);
+  assert.match(PDF, /doc\.line\(L, TABLE_FIXED_BOTTOM, R, TABLE_FIXED_BOTTOM\)/);
+  // Only when there is room left - a full page must not be over-ruled.
+  assert.match(PDF, /if \(tableFoot < TABLE_FIXED_BOTTOM - 0\.2\)/);
+  // The edges come from the same weights the cells are sized from, so the
+  // rules below the last product line up with the rules beside it.
+  const fn = PDF.slice(PDF.indexOf('function invoiceItemColumnEdges'),
+    PDF.indexOf('function INVOICE_ITEM_COLUMN_STYLES'));
+  assert.match(fn, /invoiceItemColumns\(isIgst\)/);
+  assert.match(fn, /tableWidth \* c\.weight \/ total/);
 });
 
 test('P18 the terms are measured before the band that now depends on them', () => {
@@ -283,10 +314,14 @@ test('P19 the close ends below the QR now that the QR is back in the flow', () =
   assert.match(PDF, /leftBottom = qrY \+ 30;/);
 });
 
-test('P20 the table and the totals stay hard against each other', () => {
-  // The totals were already dynamic; this change must not loosen them.
-  assert.match(PDF, /y = doc\.lastAutoTable\.finalY \+ 4;/);
+test('P20 the totals block keeps its shape at the fixed position', () => {
+  // Where it sits changed; what it is did not.
   assert.match(PDF, /const totalsTop = y, closeTop = y;/);
+  assert.match(PDF, /doc\.text\('Grand Total', boxX, ruleY \+ 7\)/);
+  // Bank details, warranty and Amount in Words still run down the left of it.
+  assert.match(PDF, /doc\.text\('Bank Details for Payment', L, totalsTop\)/);
+  assert.match(PDF, /doc\.text\('WARRANTY', L, wy\)/);
+  assert.match(PDF, /doc\.text\('Amount in Words:', L, ly\)/);
 });
 
 test('P12 the Proforma PDF was not dragged into this', () => {

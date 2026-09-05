@@ -337,6 +337,18 @@ function invoiceItemColumns(isIgst) {
   return isIgst ? INVOICE_ITEM_COLUMNS_IGST : INVOICE_ITEM_COLUMNS_CGST_SGST;
 }
 
+// The x of every column boundary, left edge through right edge. Derived from
+// the SAME weights the cells are sized from, so the rules that continue below
+// the last product line up with the rules beside it.
+function invoiceItemColumnEdges(tableWidth, isIgst, left) {
+  const columns = invoiceItemColumns(isIgst);
+  const total = columns.reduce((a, c) => a + c.weight, 0);
+  const edges = [left];
+  let x = left;
+  for (const c of columns) { x += tableWidth * c.weight / total; edges.push(x); }
+  return edges;
+}
+
 function INVOICE_ITEM_COLUMN_STYLES(tableWidth, isIgst) {
   const columns = invoiceItemColumns(isIgst);
   const total = columns.reduce((a, c) => a + c.weight, 0);
@@ -765,17 +777,52 @@ async function buildInvoicePDFDoc(inv) {
     const PAGE_BOTTOM = doc.internal.pageSize.height - 12;
     const bandTop = PAGE_BOTTOM - footerH - bandH;
 
-    // What the table must keep clear at the foot of EVERY page, measured from
-    // the SHEET EDGE, because that is the datum autoTable's margins use.
+    // ── The fixed geometry of a traditional GST invoice ──
     //
-    // bandTop is measured from PAGE_BOTTOM, which already excludes the bottom
-    // 12mm. Reserving bandH + footerH directly therefore under-reserved by
-    // exactly that 12mm and let rows run into the band: a product row landed
-    // at 231.8mm against a block whose first line starts at 229.6mm.
+    // A printed invoice book has ONE ruled table on every sheet: the rows fill
+    // it from the top, whatever is left stays ruled and empty, and the totals
+    // are always in the same place on the page. That is what this section
+    // fixes, and it is the reason the close is measured HERE rather than after
+    // the table: the table's bottom edge is derived from the close, so the
+    // close has to be known first.
     //
-    // 2mm of air on top, so a descender on the last row never touches the
-    // company line above the stamp.
-    const TABLE_BOTTOM_RESERVE = doc.internal.pageSize.height - bandTop + 2;
+    // How far the two columns of the close reach: totals down to the Grand
+    // Total rule on the right, bank details + warranty + Amount in Words + the
+    // notes + the terms on the left. Whichever is taller is what the QR and
+    // signature sit under.
+    const closingNeed = Math.max(
+      totalsRows.length * 5.5 + 11,                                     // right
+      (bankLines.length ? 4.5 + bankLines.length * 4 + 3 : 0)
+        // Warranty sits under the bank block in the same column, so its
+        // height counts too or the close could run into the signature.
+        + (warrantyLines.length ? 4 + 4.5 + warrantyLines.length * 4 : 0)
+        + 18
+      // The gap between the left column and the band, plus the terms that sit
+      // in that column above it.
+      + 3
+      + (termsProse.length ? 6 + termsProse.length * 3.4 : 0)   // left
+    );
+
+    // The close is bottom-anchored: it ends exactly where the band begins, so
+    // Subtotal, the tax lines, Round Off and Grand Total land on the same
+    // millimetre whether the invoice carries one product or fifteen. It moves
+    // only with the PROFILE — more bank lines, longer terms — never with the
+    // item count.
+    const CLOSE_TOP = bandTop - closingNeed;
+
+    // ...and the table stops just above it, on every page. This is the whole
+    // difference from a flowing table: margin.bottom is a constant, so the
+    // ruled area is the same rectangle on every sheet of every invoice, and
+    // short invoices leave it empty rather than pulling the totals up.
+    //
+    // The floor keeps a usable table even if a profile's close were absurdly
+    // tall; in normal use it never binds.
+    const TABLE_FIXED_BOTTOM = Math.max(CLOSE_TOP - 4, HEADER_BOTTOM + 30);
+
+    // autoTable measures its margins from the SHEET EDGE, not from a derived
+    // page-bottom, so the reserve is the distance from the sheet's foot up to
+    // the fixed bottom edge.
+    const TABLE_BOTTOM_RESERVE = doc.internal.pageSize.height - TABLE_FIXED_BOTTOM;
 
     doc.autoTable({
       startY: y,
@@ -790,10 +837,9 @@ async function buildInvoicePDFDoc(inv) {
       // top margin keeps every continuation page clear of the repeated header;
       // page 1 starts at startY, which is already below it.
       // top keeps continuation pages clear of the repeated invoice header;
-      // bottom keeps EVERY page clear of the repeated seal/signature band and
-      // the footer beneath it. Without the bottom reserve a continuation page's
-      // product rows would run straight through the signature - the block would
-      // sit ON the content instead of under it.
+      // bottom is the FIXED bottom edge - the same on every page of every
+      // invoice - so the ruled area is one constant rectangle and the close
+      // below it can never be run into.
       margin: { left: L, right: L, top: HEADER_BOTTOM, bottom: TABLE_BOTTOM_RESERVE },
       // Row height is font + padding, and padding was the larger half of it:
       // 2.5mm top AND bottom added 5mm to every line, so ten products spent
@@ -808,57 +854,31 @@ async function buildInvoicePDFDoc(inv) {
       showHead: 'everyPage',
       didDrawPage: (d) => { if (d.pageNumber > 1) drawInvoiceHeader(); }
     });
-    // 4mm rather than 6, for the same reason as the party band above.
-    y = doc.lastAutoTable.finalY + 4;
-
-    // Room for the whole closing block, measured from what it actually draws:
-    // the right column runs totals 24.5mm then the seal/signature 37mm, the
-    // left runs Amount in Words and notes 18mm then the QR 30mm, and the two
-    // run side by side — so the block is about 62mm, not the 88.5mm it cost
-    // when they were stacked. Written against the page's own height so it
-    // means the same thing on either orientation.
-    // Everything the closing block is made of, measured before any of it is
-    // drawn, because the decision to start a new page depends on how tall it
-    // actually is on THIS invoice — three totals rows and no bank block is a
-    // different height from five rows and six bank lines.
-
-
-    // How far the two columns of the close reach below y: totals down to the
-    // Grand Total rule on the right, bank details + Amount in Words + the GST
-    // notes on the left. Whichever is taller is what the QR and signature sit
-    // under.
-    const closingNeed = Math.max(
-      totalsRows.length * 5.5 + 11,                                     // right
-      (bankLines.length ? 4.5 + bankLines.length * 4 + 3 : 0)
-        // Warranty sits under the bank block in the same column, so its
-        // height counts too or the close could run into the signature.
-        + (warrantyLines.length ? 4 + 4.5 + warrantyLines.length * 4 : 0)
-        + 18
-      // The gap between the left column and the band, plus the terms that now
-      // sit in that column above it. Without these the flowing band position
-      // could exceed bandTop and the clamp below would pull it back up ONTO
-      // the terms.
-      + 3
-      + (termsProse.length ? 6 + termsProse.length * 3.4 : 0)   // left
-    );
-
-    // Where the QR/signature band will actually land, and where the page will
-    // therefore end. The band normally sits at bandTop with the footer's space
-    // already held clear beneath it; on a fuller invoice the content above
-    // reaches past bandTop and the band gives way to it, which is intended and
-    // is what keeps ordinary invoices on one sheet.
+    // ── Rule the unused part of the table ──
     //
-    // What is NOT intended is the band giving way so far that the footer no
-    // longer fits — that pushed the footer onto a sheet of its own carrying
-    // nothing but a header and a contact line. So the test is whether the close
-    // AND its footer still fit, which is the thing that actually has to be true,
-    // rather than a fixed 62mm guess at how tall the close might be.
-    if (Math.max(y + closingNeed, bandTop) + bandH + footerH > PAGE_BOTTOM) {
-      // The closing block gets its own sheet — and that sheet is still a page of
-      // this invoice, so it carries the header like every other one.
-      doc.addPage();
-      y = drawInvoiceHeader();
+    // The rows stop where the products stop, but the TABLE does not: its
+    // border and column separators carry on to the fixed bottom edge, so a
+    // two-line invoice prints the same ruled box as a fifteen-line one and the
+    // empty area sits INSIDE the table rather than as blank paper below it.
+    //
+    // Only the last page of the table needs this. Earlier pages are full, so
+    // their rows already reach the fixed bottom and finalY equals it.
+    //
+    // No horizontal rules are drawn in the empty part: a printed book rules
+    // the columns down the page and leaves the rows to be written in, and
+    // drawing row lines under the last product would suggest rows that are
+    // not there.
+    const tableFoot = doc.lastAutoTable.finalY;
+    if (tableFoot < TABLE_FIXED_BOTTOM - 0.2) {
+      doc.setDrawColor(225, 225, 225);      // the body rules' own colour
+      doc.setLineWidth(0.1);                // autoTable's own width
+      invoiceItemColumnEdges(R - L, isIgstInvoice, L)
+        .forEach((x) => doc.line(x, tableFoot, x, TABLE_FIXED_BOTTOM));
+      doc.line(L, TABLE_FIXED_BOTTOM, R, TABLE_FIXED_BOTTOM);
     }
+
+    // The close starts at its fixed height, not under the last row.
+    y = Math.max(CLOSE_TOP, TABLE_FIXED_BOTTOM + 4);
 
     // ── Totals (right-aligned, ruled Grand Total — no filled box) ──
 
@@ -1004,7 +1024,12 @@ async function buildInvoicePDFDoc(inv) {
     // and closingNeed accounts for both columns, the terms included. So the
     // flowing position is never below bandTop, and the clamp only ever holds
     // on the page where the two already agree.
-    const bandY = Math.min(Math.max(tcBottom + 3, totalsBottom), bandTop);
+    // Fixed, like everything else in the close: closingNeed was measured so
+    // that the close ends exactly here, so the band needs no negotiation with
+    // the content above it. Every page of every copy carries it at the same
+    // height, which is also what the page loop below draws on pages the close
+    // did not land on.
+    const bandY = bandTop;
     const qrY = bandY;
     let sigBlockY = bandY;
     let leftBottom = bandY;
