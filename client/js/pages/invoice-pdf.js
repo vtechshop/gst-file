@@ -721,11 +721,20 @@ async function buildInvoicePDFDoc(inv) {
           inv.cgst > 0 ? formatNum(inv.cgst) : '-',
           inv.sgst > 0 ? formatNum(inv.sgst) : '-',
           formatNum(inv.total_amount))];
-    // Measured BEFORE the table, because the table now has to keep clear of
-    // the seal/signature band that repeats at the foot of every page. Nothing
-    // in here depends on where the table ends, so hoisting it changes no value
-    // - it only makes bandH and footerH available to the margin below.
-    const boxW = 80, boxX = R - boxW;
+    // Measured BEFORE the table, because the table's bottom edge is the top
+    // edge of the closing grid below. Nothing in here depends on where the
+    // table ends, so measuring first changes no value - it only makes the
+    // grid's height available to the table's bottom margin.
+    //
+    // SPLIT divides the grid: the left cell carries the bank block, the QR,
+    // the warranty and the terms; the right carries the totals and the
+    // signature. It is declared here because everything wrapped below is
+    // wrapped to a cell width derived from it - wrapping to one width and
+    // drawing at another would re-wrap at draw time and overflow the row that
+    // was reserved for it.
+    const SPLIT = L + 122;                       // left cell 122mm, right 72mm
+    const CELL_TEXT_W = SPLIT - 32 - L;          // clear of the QR on its right
+    const boxX = R - 80;
     const totalsRows = [['Subtotal', formatNum(inv.taxable_amount)]];
     if (inv.cgst > 0) totalsRows.push(['CGST', formatNum(inv.cgst)]);
     if (inv.sgst > 0) totalsRows.push(['SGST', formatNum(inv.sgst)]);
@@ -737,7 +746,7 @@ async function buildInvoicePDFDoc(inv) {
     // that can run to several. Measuring the unwrapped list would
     // under-reserve and let the block run into the signature.
     const warrantyLines = warrantyDetailLines(inv).flatMap(
-      (line) => doc.splitTextToSize(line, boxX - 6 - L));
+      (line) => doc.splitTextToSize(line, CELL_TEXT_W));
 
     // Terms are wrapped here for the same reason as the warranty lines above:
     // the closing block's height is what decides whether it fits on this page,
@@ -745,28 +754,26 @@ async function buildInvoicePDFDoc(inv) {
     // unwrapped text would under-reserve — and now that the band follows the
     // content rather than sitting at a fixed height, under-reserving would put
     // the seal on top of the terms instead of merely low on the page.
-    const SEAL_CX = R - 5 - SEAL / 2;
-    const TC_WIDTH = (SEAL_CX - SEAL / 2 - 6) - L;
+    const TC_WIDTH = SPLIT - 4 - L;
     const termsPairs = parseTermsTable(p?.terms_conditions);
     doc.setFontSize(7.5);
     const termsProse = (p?.terms_conditions && !termsPairs && TC_WIDTH > 40)
       ? doc.splitTextToSize(p.terms_conditions, TC_WIDTH)
       : [];
 
-    const QR_BLOCK_H = 28;                       // 24mm code + its caption
-    const SIG_BLOCK_H = 6 + sealReserveH + 5;    // gap + stamp reserve + caption
-    const bandH = Math.max(QR_BLOCK_H, SIG_BLOCK_H);
-
-    // The footer, measured BEFORE the band is placed, because the band is
-    // bottom-aligned against it. This used to be a constant FOOTER_RESERVE of
-    // 18mm, and a constant can disagree with the footer that actually gets
-    // drawn: a profile carrying footer_text measures 22.6mm, which put the
-    // band 4.6mm lower than the page could hold. The floor test below then
-    // failed for EVERY invoice - one item or fifteen - and each copy opened a
-    // second sheet carrying nothing but the closing block.
+    // ── The closing grid's geometry ──
     //
-    // Measuring first removes the disagreement by construction: the band is
-    // placed against the footer that will be drawn, not against a guess at it.
+    // A billing machine prints the close as a bordered grid rather than as free
+    // text: a Sub Total strip, then bank details beside the tax summary, then
+    // the amount in words beside the Grand Total, then the terms beside the
+    // signature. Every row is measured HERE so the grid can be bottom-anchored
+    // and the table above it given a fixed bottom edge - the two share a rule.
+    const SIG_BLOCK_H = 6 + sealReserveH + 5;    // gap + stamp reserve + caption
+
+    // The footer, measured first, because the grid is bottom-aligned against
+    // it. This was a constant once, and a constant can disagree with the footer
+    // that actually gets drawn: a profile carrying footer_text measures 22.6mm
+    // where the guess said 18, which pushed the close 4.6mm past the page.
     doc.setFontSize(7.5);
     const footerLines = p?.footer_text ? doc.splitTextToSize(p.footer_text, R - L) : [];
     const footerH =
@@ -775,49 +782,45 @@ async function buildInvoicePDFDoc(inv) {
       + 4 + 4;                                            // generated line + contact
     // The page number sits 8mm from the bottom, so the footer finishes above that.
     const PAGE_BOTTOM = doc.internal.pageSize.height - 12;
-    const bandTop = PAGE_BOTTOM - footerH - bandH;
 
-    // ── The fixed geometry of a traditional GST invoice ──
-    //
-    // A printed invoice book has ONE ruled table on every sheet: the rows fill
-    // it from the top, whatever is left stays ruled and empty, and the totals
-    // are always in the same place on the page. That is what this section
-    // fixes, and it is the reason the close is measured HERE rather than after
-    // the table: the table's bottom edge is derived from the close, so the
-    // close has to be known first.
-    //
-    // How far the two columns of the close reach: totals down to the Grand
-    // Total rule on the right, bank details + warranty + Amount in Words + the
-    // notes + the terms on the left. Whichever is taller is what the QR and
-    // signature sit under.
-    const closingNeed = Math.max(
-      totalsRows.length * 5.5 + 11,                                     // right
-      (bankLines.length ? 4.5 + bankLines.length * 4 + 3 : 0)
-        // Warranty sits under the bank block in the same column, so its
-        // height counts too or the close could run into the signature.
-        + (warrantyLines.length ? 4 + 4.5 + warrantyLines.length * 4 : 0)
-        + 18
-      // The gap between the left column and the band, plus the terms that sit
-      // in that column above it.
-      + 3
-      + (termsProse.length ? 6 + termsProse.length * 3.4 : 0)   // left
-    );
+    // Each row's height comes from what it actually draws, so a profile with
+    // six bank lines or a long warranty gets the room it needs instead of a
+    // guess that could clip it.
+    const ROW_A_H = 7;                                    // GSTIN | Sub Total
+    const bankBlockH = bankLines.length ? 4 + bankLines.length * 3.8 : 0;
+    const warrantyBlockH = warrantyLines.length ? 5 + warrantyLines.length * 3.8 : 0;
+    const QR_BLOCK_H = 26;                                // 22mm code + caption
+    // totalsRows[0] is the Subtotal, which has its own strip above; everything
+    // after it - the taxes and any round off - is the tax summary. Read, not
+    // rebuilt: the list itself is exactly as it was constructed.
+    const taxLines = totalsRows.slice(1);
+    const ROW_B_H = Math.max(
+      bankBlockH + warrantyBlockH,                        // left, stacked
+      QR_BLOCK_H,                                         // left, alongside
+      5 + (1 + taxLines.length) * 4.6                     // right
+    ) + 4;
+    const ROW_C_H = 9;                                    // Bill Amount | Grand Total
+    // A schedule of terms is a table and needs its own room; prose is wrapped
+    // lines. Whichever this profile carries, the signature must still fit.
+    const termsTableH = termsPairs ? 6 + Math.ceil(termsPairs.length / 2) * 4.6 : 0;
+    const termsProseH = termsProse.length ? 4 + termsProse.length * 3.4 : 0;
+    const ROW_D_H = Math.max(SIG_BLOCK_H + 3, termsProseH + termsTableH + 12);
 
-    // The close is bottom-anchored: it ends exactly where the band begins, so
-    // Subtotal, the tax lines, Round Off and Grand Total land on the same
-    // millimetre whether the invoice carries one product or fifteen. It moves
-    // only with the PROFILE — more bank lines, longer terms — never with the
-    // item count.
-    const CLOSE_TOP = bandTop - closingNeed;
+    const CLOSE_H = ROW_A_H + ROW_B_H + ROW_C_H + ROW_D_H;
+    const ROW_A_Y = PAGE_BOTTOM - footerH - CLOSE_H;
+    const ROW_B_Y = ROW_A_Y + ROW_A_H;
+    const ROW_C_Y = ROW_B_Y + ROW_B_H;
+    const ROW_D_Y = ROW_C_Y + ROW_C_H;
+    const CLOSE_END = ROW_D_Y + ROW_D_H;
 
-    // ...and the table stops just above it, on every page. This is the whole
-    // difference from a flowing table: margin.bottom is a constant, so the
-    // ruled area is the same rectangle on every sheet of every invoice, and
-    // short invoices leave it empty rather than pulling the totals up.
-    //
-    // The floor keeps a usable table even if a profile's close were absurdly
-    // tall; in normal use it never binds.
-    const TABLE_FIXED_BOTTOM = Math.max(CLOSE_TOP - 4, HEADER_BOTTOM + 30);
+    // The signature row's top. The page loop repeats the block here on pages
+    // the close did not land on, so every page carries it at the same height.
+    const bandTop = ROW_D_Y;
+
+    // The table's bottom edge IS the grid's top edge. The floor keeps a usable
+    // table even if a profile's close were absurdly tall; it never binds in
+    // normal use.
+    const TABLE_FIXED_BOTTOM = Math.max(ROW_A_Y, HEADER_BOTTOM + 30);
 
     // autoTable measures its margins from the SHEET EDGE, not from a derived
     // page-bottom, so the reserve is the distance from the sheet's foot up to
@@ -877,192 +880,107 @@ async function buildInvoicePDFDoc(inv) {
       doc.line(L, TABLE_FIXED_BOTTOM, R, TABLE_FIXED_BOTTOM);
     }
 
-    // The close starts at its fixed height, not under the last row.
-    y = Math.max(CLOSE_TOP, TABLE_FIXED_BOTTOM + 4);
 
-    // ── Totals (right-aligned, ruled Grand Total — no filled box) ──
+    // ── The closing grid ──
+    //
+    // Every figure sits in a ruled cell, so a reader finds it in the same place
+    // on every invoice. Nothing here computes anything: totalsRows was built
+    // above and is only READ, row by row, into the cells - the Subtotal into
+    // the strip, the taxes into the summary, and inv.total_amount into the
+    // Grand Total box exactly as before.
+    const cellMoney = (v) => 'Rs.' + v;
 
-    const totalsTop = y, closeTop = y;
-    doc.setFontSize(9); doc.setFont('helvetica', 'normal'); doc.setTextColor(60, 60, 60);
-    totalsRows.forEach((r, i) => {
-      doc.text(r[0], boxX, y + i * 5.5);
-      doc.text('Rs.' + r[1], R, y + i * 5.5, { align: 'right' });
-    });
-    const ruleY = y + totalsRows.length * 5.5 + 1;
-    doc.setDrawColor(60, 60, 60);
-    doc.line(boxX, ruleY, R, ruleY);
-    doc.setFontSize(12); doc.setFont('helvetica', 'bold'); doc.setTextColor(...accent);
-    doc.text('Grand Total', boxX, ruleY + 7);
-    doc.text('Rs.' + formatNum(inv.total_amount), R, ruleY + 7, { align: 'right' });
+    doc.setDrawColor(0, 0, 0);
+    doc.setLineWidth(0.5);                       // bold, the way a bill prints
+    doc.rect(L, ROW_A_Y, R - L, CLOSE_END - ROW_A_Y);
+    doc.line(L, ROW_B_Y, R, ROW_B_Y);
+    doc.line(L, ROW_C_Y, R, ROW_C_Y);
+    doc.line(L, ROW_D_Y, R, ROW_D_Y);
+    doc.line(SPLIT, ROW_A_Y, SPLIT, CLOSE_END);
 
-    // ── Bank / UPI details ──
-    // In the left column, level with the totals. The totals are only 80mm
-    // wide and right-aligned, so everything to their left was empty while
-    // the bank block sat underneath and pushed the rest of the invoice down
-    // — about 20mm spent on nothing. Same reclamation as Terms beside the
-    // seal further down.
-    let bankBottom = totalsTop;
+    // ── Row A: GSTIN | Sub Total ──
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(9); doc.setTextColor(0, 0, 0);
+    doc.text('GSTIN No.: ' + (p?.gstin || '-'), L + 2, ROW_A_Y + 4.9);
+    doc.text(totalsRows[0][0], SPLIT + 2, ROW_A_Y + 4.9);
+    doc.text(cellMoney(totalsRows[0][1]), R - 2, ROW_A_Y + 4.9, { align: 'right' });
+
+    // ── Row B left: bank details, with the QR in the same cell ──
+    let bankY = ROW_B_Y + 5;
     if (bankLines.length) {
-      doc.setFont('helvetica', 'bold'); doc.setFontSize(8.5); doc.setTextColor(...accent);
-      doc.text('Bank Details for Payment', L, totalsTop);
-      doc.setFont('helvetica', 'normal'); doc.setFontSize(8); doc.setTextColor(60, 60, 60);
-      bankLines.forEach((l, i) => doc.text(l, L, totalsTop + 4.5 + i * 4, { maxWidth: boxX - 6 - L }));
-      bankBottom = totalsTop + 4.5 + bankLines.length * 4;
+      doc.setFont('helvetica', 'bold'); doc.setFontSize(8); doc.setTextColor(0, 0, 0);
+      doc.text('Bank Details for Payment', L + 2, bankY);
+      doc.setFont('helvetica', 'normal'); doc.setFontSize(7.8); doc.setTextColor(40, 40, 40);
+      bankLines.forEach((l, i) => doc.text(l, L + 2, bankY + 4 + i * 3.8, { maxWidth: CELL_TEXT_W }));
+      bankY += 4 + bankLines.length * 3.8;
     }
-
-    // ── Warranty ──
-    // Same left column, directly under the bank block. Descriptive only: it
-    // is drawn after every total is settled and changes none of them. Absent
-    // entirely when the invoice carries no warranty.
+    // Warranty keeps its place under the bank block, in the same cell.
     if (warrantyLines.length) {
-      const wy = bankBottom + (bankLines.length ? 4 : 0);
-      doc.setFont('helvetica', 'bold'); doc.setFontSize(8.5); doc.setTextColor(...accent);
-      doc.text('WARRANTY', L, wy);
-      doc.setFont('helvetica', 'normal'); doc.setFontSize(8); doc.setTextColor(60, 60, 60);
-      let wl = wy + 4.5;
-      // Already wrapped above, so fit and drawing cannot disagree.
-      warrantyLines.forEach((t) => { doc.text(t, L, wl); wl += 4; });
-      bankBottom = wl;
+      doc.setFont('helvetica', 'bold'); doc.setFontSize(8); doc.setTextColor(0, 0, 0);
+      doc.text('WARRANTY', L + 2, bankY + 1);
+      doc.setFont('helvetica', 'normal'); doc.setFontSize(7.8); doc.setTextColor(40, 40, 40);
+      warrantyLines.forEach((t, i) => doc.text(t, L + 2, bankY + 5 + i * 3.8, { maxWidth: CELL_TEXT_W }));
     }
 
-    // Where the totals column ends. The signature goes under it, in the same
-    // right-hand column, rather than under the whole invoice.
-    const totalsBottom = ruleY + 10;
-
-    // ── Amount in words + notes — LEFT column, level with the totals ──
-    //
-    // These used to sit under the totals, across the full width, and on a
-    // landscape page that was the difference between one page and two: the
-    // closing block measured 88.5mm of a 210mm page, and a three-item invoice
-    // pushed the totals, QR and signature onto a second sheet with 76mm of
-    // blank paper left behind on the first.
-    //
-    // The totals are 80mm wide and hard against the right margin, so the
-    // 180mm to their left was empty. Amount in Words, the GST notes and the QR
-    // now run down that empty column while the totals and signature run down
-    // the right — the same two-column close a printed bill uses, and the same
-    // reclamation the bank details above and the Terms beside the seal below
-    // already do. The block goes from 88.5mm to about 61mm and the ordinary
-    // invoice fits on one page again.
-    let ly = Math.max(bankBottom + 3, closeTop);
-    doc.setFontSize(9); doc.setFont('helvetica', 'normal'); doc.setTextColor(30, 30, 30);
-    doc.text('Amount in Words:', L, ly);
-    doc.setFont('helvetica', 'bold');
-    // Held clear of the totals column so a long amount cannot run under it.
-    doc.text(numberToWordsINR(inv.total_amount), L, ly + 5, { maxWidth: boxX - 6 - L });
-    ly += 9;
-
-    doc.setFont('helvetica', 'italic'); doc.setFontSize(8); doc.setTextColor(110, 110, 110);
-    doc.text('* GST has been charged separately as shown above.', L, ly);
-    doc.text('Whether tax is payable under reverse charge: No', L, ly + 4);
-    ly += 9;
-
-    // The left column continues into the QR below; the right column continues
-    // into the seal and signature. `y` is settled once both have been drawn.
-
-    // ── QR (left) + Seal + Signature (right) ──
-    // The QR carries the verification ADDRESS, not the invoice. Encoding the
-    // figures would let the paper verify against itself; an id sends the
-    // reader to the record instead. The same URL is on all three copies,
-    // because it is the same invoice.
+    // The QR carries the verification ADDRESS, not the invoice - unchanged.
+    // Encoding the figures would let the paper verify against itself; an id
+    // sends the reader to the record instead. Only where it sits has moved:
+    // into the bank cell, where a printed bill puts its pay-by-scan code.
     const qrSource = qrCustomData || await generateQRDataUrl(invoiceVerifyUrl(inv.type, inv.id), p?.header_color);
     const qrIsCustom = !!qrCustomData;
-    // Stamp size, and how much HEIGHT to hold for it. A business with a seal
-    // gets the full 26mm, unchanged. A business with none was getting 26mm of
-    // empty paper. With a signature but no seal the signature draws at half the
-    // box, so 18mm still holds it; with neither, 14mm leaves a normal signing
-    // gap between the company name and the ruled line.
-    //
-    // Only the height varies — inkW stays SEAL, because the signature's width
-    // is taken from it and narrowing that would shrink the signature itself.
-    // Declared here because the bottom band below needs the block's height.
-
-    // Both sit in the SAME bottom band: QR hard left, seal and signature hard
-    // right, just above the footer — where a printed bill carries them.
-    //
-    // The band is bottom-aligned rather than left to float up under whichever
-    // column happened to finish higher. `Math.max` against the flowing position
-    // is what keeps that safe: on a long invoice the content above already
-    // reaches past the band, the band gives way to it, and nothing is pushed
-    // onto another page. Only the two blocks move — totals, Amount in Words,
-    // the notes, the table, the header and the footer all stay where they are.
-
-    // ── Terms & Conditions ──
-    // Drawn HERE, before the band, and measured before that again: the band
-    // below no longer sits at a fixed height, so it has to know where this
-    // column actually ends.
-    //
-    // Left-aligned, because a paragraph of conditions is read, not admired;
-    // centring it made the ragged edges hard to follow.
-    const tcTop = ly + 2;
-    let tcBottom = ly;
-    if (termsProse.length) {
-      doc.setFont('helvetica', 'bold'); doc.setFontSize(7.5); doc.setTextColor(...accent);
-      doc.text('Terms & Conditions', L, tcTop);
-      doc.setFont('helvetica', 'normal'); doc.setTextColor(100, 100, 100);
-      // Already wrapped above, so the height that was reserved and the height
-      // that is drawn cannot disagree.
-      doc.text(termsProse, L, tcTop + 4);
-      tcBottom = tcTop + 4 + termsProse.length * 3.4;
-    }
-
-    // Where the QR, the seal and the signature sit.
-    //
-    // They were pinned to bandTop — the foot of the page — with Math.max, so
-    // a one-item invoice printed its Grand Total at 112mm and then 118mm of
-    // blank paper before the signature. The reference bill fills that space
-    // by stretching the table; stretching it is exactly what was asked
-    // against, so the band comes up to the content instead.
-    //
-    // It now sits just under whichever column finished lower, and falls back
-    // to bandTop only when the invoice is long enough to reach it — so a full
-    // page still prints its band exactly where it always did.
-    //
-    // Math.min is what makes that safe rather than a guess. The page-break
-    // test above has already guaranteed y + closingNeed <= bandTop for this
-    // page — it opens a fresh sheet whenever the close would reach further —
-    // and closingNeed accounts for both columns, the terms included. So the
-    // flowing position is never below bandTop, and the clamp only ever holds
-    // on the page where the two already agree.
-    // Fixed, like everything else in the close: closingNeed was measured so
-    // that the close ends exactly here, so the band needs no negotiation with
-    // the content above it. Every page of every copy carries it at the same
-    // height, which is also what the page loop below draws on pages the close
-    // did not land on.
-    const bandY = bandTop;
-    const qrY = bandY;
-    let sigBlockY = bandY;
-    let leftBottom = bandY;
+    const qrX = SPLIT - 26, qrY = ROW_B_Y + 2;
     if (qrSource) {
       try {
-        doc.addImage(qrSource, 'PNG', L, qrY, 24, 24);
-        doc.setFontSize(7); doc.setTextColor(...accent); doc.setFont('helvetica', 'normal');
-        doc.text(qrIsCustom ? 'Scan QR' : 'Scan to verify invoice', L, qrY + 28);
-        leftBottom = qrY + 30;
+        doc.addImage(qrSource, 'PNG', qrX, qrY, 22, 22);
+        doc.setFont('helvetica', 'bold'); doc.setFontSize(6.4); doc.setTextColor(0, 0, 0);
+        doc.text(qrIsCustom ? 'SCAN QR FOR PAY' : 'Scan to verify invoice',
+          qrX + 11, qrY + 24.5, { align: 'center' });
       } catch {}
     }
 
-    // Seal and signature are one block, not two side-by-side images: the
-    // signature belongs over the centre of the seal, the way it is signed on
-    // paper. They used to be drawn 40mm apart, which printed as a small
-    // circle with a separate scribble beside it.
-    //
-    // Laid out around one centre line so the caption, the stamp and the
-    // wording underneath all share it. Matches the print/preview layout.
-    // Every measurement below is of the ink inside each file, never of the
-    // file's edges — see inkBoundsOf(). SEAL is therefore the size of the
-    // stamp a reader sees, not of the PNG it came in.
-    // One call to the renderer above, on the page the closing block landed on.
-    // The other pages of this copy get the same call from the page loop at the
-    // end, so every page carries the same block in the same place.
+    // ── Row B right: the tax summary ──
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(8.5); doc.setTextColor(0, 0, 0);
+    doc.text('Taxable Amount', SPLIT + 2, ROW_B_Y + 5.5);
+    doc.text(cellMoney(formatNum(inv.taxable_amount)), R - 2, ROW_B_Y + 5.5, { align: 'right' });
+    doc.setFont('helvetica', 'normal'); doc.setTextColor(40, 40, 40);
+    // CGST and SGST on an intra-state supply, IGST on an inter-state one, plus
+    // any round off - whatever totalsRows was built with, in its own order.
+    taxLines.forEach((r, i) => {
+      doc.text(r[0], SPLIT + 2, ROW_B_Y + 10.5 + i * 4.6);
+      doc.text(cellMoney(r[1]), R - 2, ROW_B_Y + 10.5 + i * 4.6, { align: 'right' });
+    });
+
+    // ── Row C: Bill Amount in words | Grand Total ──
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(8); doc.setTextColor(0, 0, 0);
+    doc.text('Bill Amount :', L + 2, ROW_C_Y + 5.8);
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(7.8);
+    doc.text(numberToWordsINR(inv.total_amount), L + 22, ROW_C_Y + 5.8,
+      { maxWidth: SPLIT - 24 - L });
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(11); doc.setTextColor(...accent);
+    doc.text('Grand Total', SPLIT + 2, ROW_C_Y + 6.4);
+    doc.text(cellMoney(formatNum(inv.total_amount)), R - 2, ROW_C_Y + 6.4, { align: 'right' });
+
+    // ── Row D left: terms and the GST notes ──
+    let termsY = ROW_D_Y + 4;
+    if (termsProse.length) {
+      doc.setFont('helvetica', 'bold'); doc.setFontSize(7.5); doc.setTextColor(0, 0, 0);
+      doc.text('Terms & Condition :', L + 2, termsY);
+      doc.setFont('helvetica', 'normal'); doc.setTextColor(80, 80, 80);
+      // Already wrapped above, so the height reserved and the height drawn
+      // cannot disagree.
+      doc.text(termsProse, L + 2, termsY + 3.6);
+      termsY += 3.6 + termsProse.length * 3.4;
+    }
+    doc.setFont('helvetica', 'italic'); doc.setFontSize(7); doc.setTextColor(110, 110, 110);
+    doc.text('* GST has been charged separately as shown above.', L + 2, termsY + 3);
+    doc.text('Whether tax is payable under reverse charge: '
+      + (inv.reverse_charge ? 'Yes' : 'No'), L + 2, termsY + 6.4);
+
+    // ── Row D right: the seal and signature, unchanged in what it draws ──
+    const sigBlockY = ROW_D_Y;
     const signBlockBottom = drawSignatureBlock(sigBlockY);
     signedPages.add(doc.internal.getNumberOfPages());
 
-    // The close ends below whichever ran lower: the seal and signature on the
-    // right, or the QR on the left. leftBottom is what carries the QR's height
-    // now that the QR is back in the flow rather than pinned to the foot — a
-    // schedule of terms is drawn under this, and would otherwise land on it.
-    y = Math.max(signBlockBottom, leftBottom);
+    y = CLOSE_END;
 
     // A schedule of terms is drawn full width BELOW the signature, in the
     // band that was blank, because a two-column table needs the width and
@@ -1083,11 +1001,14 @@ async function buildInvoicePDFDoc(inv) {
       // company treats as fixed.
       const TERMS_YELLOW = [255, 255, 153];
       doc.autoTable({
-        startY: y + 1,
+        // Inside the grid's left cell, not below the whole close: the grid
+        // is bottom-anchored against the footer, so anything drawn under it
+        // would land in the footer.
+        startY: ROW_D_Y + 2,
         head: [[{ content: 'Terms & condition', colSpan: 4 }]],
         body: rows,
         theme: 'grid',
-        margin: { left: L, right: pw - R },
+        margin: { left: L, right: pw - (SPLIT - 2) },
         styles: {
           fontSize: 7, cellPadding: 1,
           fillColor: TERMS_YELLOW, textColor: [0, 0, 0],
@@ -1101,10 +1022,10 @@ async function buildInvoicePDFDoc(inv) {
         },
         // Label bold on the left of each half, value toward the right of it.
         columnStyles: {
-          0: { fontStyle: 'bold', halign: 'left',  cellWidth: (R - L) * 0.25 },
-          1: { fontStyle: 'normal', halign: 'right', cellWidth: (R - L) * 0.25 },
-          2: { fontStyle: 'bold', halign: 'left',  cellWidth: (R - L) * 0.25 },
-          3: { fontStyle: 'normal', halign: 'right', cellWidth: (R - L) * 0.25 }
+          0: { fontStyle: 'bold', halign: 'left',  cellWidth: (SPLIT - 2 - L) * 0.25 },
+          1: { fontStyle: 'normal', halign: 'right', cellWidth: (SPLIT - 2 - L) * 0.25 },
+          2: { fontStyle: 'bold', halign: 'left',  cellWidth: (SPLIT - 2 - L) * 0.25 },
+          3: { fontStyle: 'normal', halign: 'right', cellWidth: (SPLIT - 2 - L) * 0.25 }
         },
         // autoTable has no underline, so the title's rule is drawn on top of
         // the header cell to match the reference sheet.
@@ -1117,7 +1038,8 @@ async function buildInvoicePDFDoc(inv) {
           doc.line(cx - w / 2, ty, cx + w / 2, ty);
         }
       });
-      y = doc.lastAutoTable.finalY + 2;
+      // The grid's own bottom still decides where the footer goes.
+      y = Math.max(y, doc.lastAutoTable.finalY + 2);
     }
 
     // ── Footer: Terms & Conditions, footer text, computer-generated line, contact ──

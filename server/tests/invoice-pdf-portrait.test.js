@@ -48,11 +48,11 @@ test('P4 the footer reserve is measured, not guessed', () => {
   // A constant reserve could disagree with the footer actually drawn, and did:
   // 18mm assumed against 22.6mm real put the band below what the page could
   // hold, so the closing block took a second sheet on EVERY invoice.
-  assert.match(PDF, /const bandTop = PAGE_BOTTOM - footerH - bandH;/);
+  assert.match(PDF, /const bandTop = ROW_D_Y;/);
   assert.equal(/const FOOTER_RESERVE = \d+/.test(PDF), false,
     'the constant reserve must not come back');
   // measured before it is used
-  assert.ok(PDF.indexOf('const footerH =') < PDF.indexOf('const bandTop ='),
+  assert.ok(PDF.indexOf('const footerH =') < PDF.indexOf('const ROW_A_Y ='),
     'the footer must be measured before the band is placed');
 });
 
@@ -148,11 +148,12 @@ test('P8 no calculation was touched', () => {
 test('P9 warranty, QR, bank and signature all survive', () => {
   // The per-line warranty COLUMN is gone by instruction, but the invoice-level
   // warranty block below the table is a different thing and stays.
-  assert.match(PDF, /doc\.text\('WARRANTY', L, wy\)/);
+  assert.match(PDF, /doc\.text\('WARRANTY', L \+ 2, bankY \+ 1\)/);
   assert.match(PDF, /invoiceVerifyUrl\(inv\.type, inv\.id\)/);
   assert.match(PDF, /Bank Details for Payment/);
   assert.match(PDF, /Authorized Signatory/);
-  assert.match(PDF, /Amount in Words:/);
+  assert.match(PDF, /doc\.text\('Bill Amount :', L \+ 2, ROW_C_Y \+ 5\.8\)/);
+  assert.match(PDF, /numberToWordsINR\(inv\.total_amount\)/);
 });
 
 test('P10 the GST columns are generated from the invoice, not fixed', () => {
@@ -195,11 +196,11 @@ test('P10c every GST figure still appears in the totals', () => {
   assert.match(PDF, /if \(inv\.sgst > 0\) totalsRows\.push\(\['SGST', formatNum\(inv\.sgst\)\]\)/);
   assert.match(PDF, /if \(inv\.igst > 0\) totalsRows\.push\(\[`IGST \(\$\{inv\.gst_percentage\}%\)`, formatNum\(inv\.igst\)\]\)/);
   assert.match(PDF, /totalsRows\.push\(\['Round Off'/);
-  assert.match(PDF, /doc\.text\('Grand Total', boxX, ruleY \+ 7\)/);
+  assert.match(PDF, /doc\.text\('Grand Total', SPLIT \+ 2, ROW_C_Y \+ 6\.4\)/);
 });
 
 test('P10d per-line tax is read, never recomputed', () => {
-  const rows = PDF.slice(PDF.indexOf('const itemCells'), PDF.indexOf('const boxW'));
+  const rows = PDF.slice(PDF.indexOf('const itemCells'), PDF.indexOf('const SPLIT ='));
   // The CGST and SGST cells print the STORED per-line figures. No arithmetic
   // appears in the row builder at all: no rate x taxable, no halving.
   assert.match(rows, /it\.cgst > 0 \? formatNum\(it\.cgst\) : '-'/);
@@ -237,8 +238,8 @@ test('P10f the HTML print view follows the same rule', () => {
 
 test('P11 the changed asset carries one new cache key on every page that loads it', () => {
   for (const p of PAGES) {
-    assert.ok(rd(p).includes('client/js/pages/invoice-pdf.js?v=47'),
-      p + ' must reference invoice-pdf.js at v=47');
+    assert.ok(rd(p).includes('client/js/pages/invoice-pdf.js?v=48'),
+      p + ' must reference invoice-pdf.js at v=48');
   }
   // and nothing unrelated moved with it
   assert.ok(rd('invoice.html').includes('client/js/utilities/utils.js?v=33'));
@@ -246,82 +247,91 @@ test('P11 the changed asset carries one new cache key on every page that loads i
   assert.ok(rd('proforma.html').includes('client/js/pages/proforma-entry.js?v=40'));
 });
 
-test('P17 the table bottom and the close are fixed, not flowing', () => {
-  // A printed invoice book has one ruled table on every sheet: the rows fill it
-  // from the top and the totals are always in the same place. So the close is
-  // bottom-anchored and the table stops just above it - the same rectangle on
-  // every page of every invoice, whatever the item count.
-  assert.match(PDF, /const CLOSE_TOP = bandTop - closingNeed;/);
-  assert.match(PDF, /const TABLE_FIXED_BOTTOM = Math\.max\(CLOSE_TOP - 4, HEADER_BOTTOM \+ 30\);/);
-  assert.match(PDF, /y = Math\.max\(CLOSE_TOP, TABLE_FIXED_BOTTOM \+ 4\);/);
-  // ...and the band sits at its fixed height, needing no negotiation.
-  assert.match(PDF, /const bandY = bandTop;/);
-  assert.equal(/Math\.min\(Math\.max\(tcBottom \+ 3, totalsBottom\), bandTop\)/.test(PDF), false,
-    'the flowing band must be gone');
-  assert.equal(/y = doc\.lastAutoTable\.finalY \+ 4/.test(PDF), false,
-    'the close must not start under the last row');
+test('P17 the closing block is a bordered grid, bottom-anchored', () => {
+  // A billing machine prints the close as ruled cells, not free text. Four
+  // rows, one divider, and the whole block held against the footer so every
+  // figure lands in the same place on every invoice.
+  assert.match(PDF, /const SPLIT = L \+ 122;/);
+  assert.match(PDF, /const ROW_A_Y = PAGE_BOTTOM - footerH - CLOSE_H;/);
+  assert.match(PDF, /const ROW_B_Y = ROW_A_Y \+ ROW_A_H;/);
+  assert.match(PDF, /const ROW_C_Y = ROW_B_Y \+ ROW_B_H;/);
+  assert.match(PDF, /const ROW_D_Y = ROW_C_Y \+ ROW_C_H;/);
+  assert.match(PDF, /const CLOSE_H = ROW_A_H \+ ROW_B_H \+ ROW_C_H \+ ROW_D_H;/);
+  // the borders themselves
+  assert.match(PDF, /doc\.setLineWidth\(0\.5\);/);
+  assert.match(PDF, /doc\.rect\(L, ROW_A_Y, R - L, CLOSE_END - ROW_A_Y\)/);
+  assert.match(PDF, /doc\.line\(SPLIT, ROW_A_Y, SPLIT, CLOSE_END\)/);
+  for (const rule of ['ROW_B_Y', 'ROW_C_Y', 'ROW_D_Y']) {
+    assert.match(PDF, new RegExp('doc\\.line\\(L, ' + rule + ', R, ' + rule + '\\)'));
+  }
+  // the table above shares the grid's top edge
+  assert.match(PDF, /const TABLE_FIXED_BOTTOM = Math\.max\(ROW_A_Y, HEADER_BOTTOM \+ 30\);/);
 });
 
-test('P17b the close is measured before the table that depends on it', () => {
-  // The table's bottom edge is derived from the close, so the close has to be
-  // known first. This ordering is the whole mechanism.
-  const need = PDF.indexOf('const closingNeed =');
-  const closeTop = PDF.indexOf('const CLOSE_TOP =');
-  const reserve = PDF.indexOf('const TABLE_BOTTOM_RESERVE =');
-  const table = PDF.indexOf('doc.autoTable({');
-  assert.ok(need > 0 && need < closeTop, 'closingNeed before CLOSE_TOP');
-  assert.ok(closeTop < reserve, 'CLOSE_TOP before the reserve');
-  assert.ok(reserve < table, 'the reserve before the table that uses it');
+test('P17b each cell carries the figure the reference puts there', () => {
+  // Row A: GSTIN left, Sub Total right.
+  assert.match(PDF, /doc\.text\('GSTIN No\.: ' \+ \(p\?\.gstin \|\| '-'\), L \+ 2, ROW_A_Y \+ 4\.9\)/);
+  assert.match(PDF, /doc\.text\(totalsRows\[0\]\[0\], SPLIT \+ 2, ROW_A_Y \+ 4\.9\)/);
+  assert.match(PDF, /doc\.text\(cellMoney\(totalsRows\[0\]\[1\]\), R - 2, ROW_A_Y \+ 4\.9, \{ align: 'right' \}\)/);
+  // Row B: bank + QR left, tax summary right.
+  assert.match(PDF, /doc\.text\('Bank Details for Payment', L \+ 2, bankY\)/);
+  assert.match(PDF, /doc\.addImage\(qrSource, 'PNG', qrX, qrY, 22, 22\)/);
+  assert.match(PDF, /doc\.text\('Taxable Amount', SPLIT \+ 2, ROW_B_Y \+ 5\.5\)/);
+  // Row C: words left, Grand Total right.
+  assert.match(PDF, /doc\.text\('Bill Amount :', L \+ 2, ROW_C_Y \+ 5\.8\)/);
+  assert.match(PDF, /doc\.text\('Grand Total', SPLIT \+ 2, ROW_C_Y \+ 6\.4\)/);
+  assert.match(PDF, /doc\.text\(cellMoney\(formatNum\(inv\.total_amount\)\), R - 2, ROW_C_Y \+ 6\.4/);
+  // Row D: terms left, signature right.
+  assert.match(PDF, /doc\.text\('Terms & Condition :', L \+ 2, termsY\)/);
+  assert.match(PDF, /const signBlockBottom = drawSignatureBlock\(sigBlockY\);/);
 });
 
-test('P17c the unused part of the table is ruled, not left blank', () => {
-  // The rows stop where the products stop; the TABLE does not. Its border and
-  // column separators carry on to the fixed bottom, so the empty area sits
-  // inside the table rather than as blank paper under it.
+test('P17c the tax summary is READ from totalsRows, never rebuilt', () => {
+  // totalsRows[0] is the Subtotal and has its own strip; everything after it
+  // is the tax summary, printed in the order the list was built.
+  assert.match(PDF, /const taxLines = totalsRows\.slice\(1\);/);
+  assert.match(PDF, /taxLines\.forEach\(\(r, i\) => \{/);
+  assert.match(PDF, /doc\.text\(r\[0\], SPLIT \+ 2, ROW_B_Y \+ 10\.5 \+ i \* 4\.6\)/);
+  assert.match(PDF, /doc\.text\(cellMoney\(r\[1\]\), R - 2, ROW_B_Y \+ 10\.5 \+ i \* 4\.6/);
+  // No tax is recomputed for the grid - the only arithmetic is layout.
+  const grid = PDF.slice(PDF.indexOf('const cellMoney'), PDF.indexOf('y = CLOSE_END'));
+  assert.equal(/inv\.cgst \*|inv\.sgst \*|inv\.igst \*|gst_percentage \*/.test(grid), false,
+    'the grid must not compute tax');
+});
+
+test('P17d the unused part of the table is ruled, not left blank', () => {
   assert.match(PDF, /function invoiceItemColumnEdges\(tableWidth, isIgst, left\)/);
   assert.match(PDF, /invoiceItemColumnEdges\(R - L, isIgstInvoice, L\)\s*\n?\s*\.forEach\(\(x\) => doc\.line\(x, tableFoot, x, TABLE_FIXED_BOTTOM\)\)/);
   assert.match(PDF, /doc\.line\(L, TABLE_FIXED_BOTTOM, R, TABLE_FIXED_BOTTOM\)/);
-  // Only when there is room left - a full page must not be over-ruled.
   assert.match(PDF, /if \(tableFoot < TABLE_FIXED_BOTTOM - 0\.2\)/);
-  // The edges come from the same weights the cells are sized from, so the
-  // rules below the last product line up with the rules beside it.
-  const fn = PDF.slice(PDF.indexOf('function invoiceItemColumnEdges'),
-    PDF.indexOf('function INVOICE_ITEM_COLUMN_STYLES'));
-  assert.match(fn, /invoiceItemColumns\(isIgst\)/);
-  assert.match(fn, /tableWidth \* c\.weight \/ total/);
 });
 
-test('P18 the terms are measured before the band that now depends on them', () => {
-  // The band sits under whichever column finished lower, so the terms have to
-  // be wrapped and reserved BEFORE it is placed - otherwise the clamp would
-  // pull the band back up onto them.
-  const wrap = PDF.indexOf('const termsProse =');
-  const band = PDF.indexOf('const bandY =');
-  assert.ok(wrap > 0 && band > 0 && wrap < band, 'terms must be wrapped before the band is placed');
+test('P18 everything is wrapped to the cell it is drawn in', () => {
+  // Wrapping to one width and drawing at another re-wraps at draw time and
+  // overflows the row that was reserved for it.
+  assert.match(PDF, /const CELL_TEXT_W = SPLIT - 32 - L;/);
+  assert.match(PDF, /doc\.splitTextToSize\(line, CELL_TEXT_W\)/);
+  assert.match(PDF, /const TC_WIDTH = SPLIT - 4 - L;/);
   assert.match(PDF, /doc\.splitTextToSize\(p\.terms_conditions, TC_WIDTH\)/);
-  // ...and that reserved height is what the page-break test spends.
-  assert.match(PDF, /\+ \(termsProse\.length \? 6 \+ termsProse\.length \* 3\.4 : 0\)/);
-  // The drawing uses the SAME wrapped lines, so fit and drawing cannot disagree.
-  assert.match(PDF, /doc\.text\(termsProse, L, tcTop \+ 4\)/);
-  assert.equal(/const tcWidth =/.test(PDF), false, 'the old late terms measurement must be gone');
+  assert.match(PDF, /\{ maxWidth: CELL_TEXT_W \}/);
+  // ...and measured before the grid whose height depends on them
+  assert.ok(PDF.indexOf('const termsProse =') < PDF.indexOf('const ROW_D_H ='));
+  assert.ok(PDF.indexOf('const warrantyLines =') < PDF.indexOf('const ROW_B_H ='));
 });
 
-test('P19 the close ends below the QR now that the QR is back in the flow', () => {
-  // The QR used to sit at the foot, so nothing below the close had to clear
-  // it. It now travels with the band, and a schedule of terms is drawn under
-  // the close - which would land on the QR if leftBottom were ignored.
-  assert.match(PDF, /y = Math\.max\(signBlockBottom, leftBottom\);/);
-  assert.match(PDF, /leftBottom = qrY \+ 30;/);
+test('P19 a schedule of terms stays inside the grid', () => {
+  // The grid is bottom-anchored against the footer, so anything drawn under
+  // it would land in the footer.
+  assert.match(PDF, /startY: ROW_D_Y \+ 2,/);
+  assert.match(PDF, /margin: \{ left: L, right: pw - \(SPLIT - 2\) \}/);
+  assert.match(PDF, /cellWidth: \(SPLIT - 2 - L\) \* 0\.25/);
+  assert.match(PDF, /const termsTableH = termsPairs \? 6 \+ Math\.ceil\(termsPairs\.length \/ 2\) \* 4\.6 : 0;/);
 });
 
-test('P20 the totals block keeps its shape at the fixed position', () => {
-  // Where it sits changed; what it is did not.
-  assert.match(PDF, /const totalsTop = y, closeTop = y;/);
-  assert.match(PDF, /doc\.text\('Grand Total', boxX, ruleY \+ 7\)/);
-  // Bank details, warranty and Amount in Words still run down the left of it.
-  assert.match(PDF, /doc\.text\('Bank Details for Payment', L, totalsTop\)/);
-  assert.match(PDF, /doc\.text\('WARRANTY', L, wy\)/);
-  assert.match(PDF, /doc\.text\('Amount in Words:', L, ly\)/);
+test('P20 the seal band sits at the signature row on every page', () => {
+  assert.match(PDF, /const bandTop = ROW_D_Y;/);
+  assert.match(PDF, /const sigBlockY = ROW_D_Y;/);
+  assert.match(PDF, /if \(!signedPages\.has\(i\)\) drawSignatureBlock\(bandTop\)/);
 });
 
 test('P12 the Proforma PDF was not dragged into this', () => {
