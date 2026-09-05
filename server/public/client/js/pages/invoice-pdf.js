@@ -765,7 +765,16 @@ async function buildInvoicePDFDoc(inv) {
     // drawing at another would re-wrap at draw time and overflow the row that
     // was reserved for it.
     const SPLIT = L + 122;                       // left cell 122mm, right 72mm
-    const CELL_TEXT_W = SPLIT - 32 - L;          // clear of the QR on its right
+    // The bank cell runs in three strips: the details on the left, the
+    // "scan" label beside the code, and the code itself hard against the
+    // divider. The label used to sit UNDER the code, which left about 66mm of
+    // the cell empty between the bank lines and the QR and pushed the caption
+    // into the row's bottom edge.
+    const QR_SIZE = 22;
+    const QR_X = SPLIT - 4 - QR_SIZE;             // 2mm of air inside the divider
+    const QR_LABEL_W = 26;                        // room for "SCAN QR FOR PAY"
+    const QR_LABEL_RIGHT = QR_X - 4;              // the label ends here
+    const CELL_TEXT_W = (QR_LABEL_RIGHT - QR_LABEL_W - 3) - (L + 2);
     const boxX = R - 80;
     const totalsRows = [['Subtotal', formatNum(inv.taxable_amount)]];
     if (inv.cgst > 0) totalsRows.push(['CGST', formatNum(inv.cgst)]);
@@ -961,13 +970,20 @@ async function buildInvoicePDFDoc(inv) {
     // into the bank cell, where a printed bill puts its pay-by-scan code.
     const qrSource = qrCustomData || await generateQRDataUrl(invoiceVerifyUrl(inv.type, inv.id), p?.header_color);
     const qrIsCustom = !!qrCustomData;
-    const qrX = SPLIT - 26, qrY = ROW_B_Y + 2;
+    // Centred on the row rather than hung 2mm from its top. The block is now
+    // the code's own 22mm - the caption moved out from under it - so centring
+    // is what puts the code level with the bank lines beside it.
+    const qrY = ROW_B_Y + (ROW_B_H - QR_SIZE) / 2;
     if (qrSource) {
       try {
-        doc.addImage(qrSource, 'PNG', qrX, qrY, 22, 22);
-        doc.setFont('helvetica', 'bold'); doc.setFontSize(6.4); doc.setTextColor(0, 0, 0);
+        doc.addImage(qrSource, 'PNG', QR_X, qrY, QR_SIZE, QR_SIZE);
+        // Beside the code, in the gap the bank lines leave, and level with the
+        // code's middle so the two read as one control rather than as a
+        // picture with a stray caption beneath it. Bigger than the 6.4pt it
+        // was, because it is an instruction and has the room to be legible.
+        doc.setFont('helvetica', 'bold'); doc.setFontSize(7.5); doc.setTextColor(0, 0, 0);
         doc.text(qrIsCustom ? 'SCAN QR FOR PAY' : 'Scan to verify invoice',
-          qrX + 11, qrY + 24.5, { align: 'center' });
+          QR_LABEL_RIGHT, qrY + QR_SIZE / 2 + 1, { align: 'right', maxWidth: QR_LABEL_W });
       } catch {}
     }
 

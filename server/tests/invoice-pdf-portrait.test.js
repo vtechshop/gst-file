@@ -238,8 +238,8 @@ test('P10f the HTML print view follows the same rule', () => {
 
 test('P11 the changed asset carries one new cache key on every page that loads it', () => {
   for (const p of PAGES) {
-    assert.ok(rd(p).includes('client/js/pages/invoice-pdf.js?v=49'),
-      p + ' must reference invoice-pdf.js at v=49');
+    assert.ok(rd(p).includes('client/js/pages/invoice-pdf.js?v=50'),
+      p + ' must reference invoice-pdf.js at v=50');
   }
   // and nothing unrelated moved with it
   assert.ok(rd('invoice.html').includes('client/js/utilities/utils.js?v=33'));
@@ -275,7 +275,7 @@ test('P17b each cell carries the figure the reference puts there', () => {
   assert.match(PDF, /doc\.text\(cellMoney\(totalsRows\[0\]\[1\]\), R - 2, ROW_A_Y \+ 4\.9, \{ align: 'right' \}\)/);
   // Row B: bank + QR left, tax summary right.
   assert.match(PDF, /doc\.text\('Bank Details for Payment', L \+ 2, bankY\)/);
-  assert.match(PDF, /doc\.addImage\(qrSource, 'PNG', qrX, qrY, 22, 22\)/);
+  assert.match(PDF, /doc\.addImage\(qrSource, 'PNG', QR_X, qrY, QR_SIZE, QR_SIZE\)/);
   assert.match(PDF, /doc\.text\('Taxable Amount', SPLIT \+ 2, ROW_B_Y \+ 5\.5\)/);
   // Row C: words left, Grand Total right.
   assert.match(PDF, /doc\.text\('Bill Amount :', L \+ 2, ROW_C_Y \+ 5\.8\)/);
@@ -309,7 +309,8 @@ test('P17d the unused part of the table is ruled, not left blank', () => {
 test('P18 everything is wrapped to the cell it is drawn in', () => {
   // Wrapping to one width and drawing at another re-wraps at draw time and
   // overflows the row that was reserved for it.
-  assert.match(PDF, /const CELL_TEXT_W = SPLIT - 32 - L;/);
+  assert.match(PDF, /const CELL_TEXT_W = \(QR_LABEL_RIGHT - QR_LABEL_W - 3\) - \(L \+ 2\);/);
+  // the three strips the bank cell is divided into
   assert.match(PDF, /doc\.splitTextToSize\(line, CELL_TEXT_W\)/);
   assert.match(PDF, /const TC_WIDTH = SPLIT - 4 - L;/);
   assert.match(PDF, /doc\.splitTextToSize\(p\.terms_conditions, TC_WIDTH\)/);
@@ -374,6 +375,34 @@ test('P21e the signature rule stays inside the frame', () => {
   // margin - 4mm outside the sheet, invisible until the frame was drawn.
   assert.match(PDF, /const authW = Math\.min\(22, R - 3 - sealCx\);/);
   assert.match(PDF, /doc\.line\(sealCx - authW, authY - 3\.5, sealCx \+ authW, authY - 3\.5\)/);
+});
+
+test('P22 the bank cell uses the space beside the code', () => {
+  // The caption used to sit UNDER the code, which left about 66mm of the cell
+  // empty between the bank lines and the QR - the bank lines end near x=38 and
+  // the code starts at x=104 - and pushed the caption into the row's edge.
+  assert.match(PDF, /const QR_SIZE = 22;/);
+  assert.match(PDF, /const QR_X = SPLIT - 4 - QR_SIZE;/);
+  assert.match(PDF, /const QR_LABEL_W = 26;/);
+  assert.match(PDF, /const QR_LABEL_RIGHT = QR_X - 4;/);
+  // the code is centred on the row, not hung from its top
+  assert.match(PDF, /const qrY = ROW_B_Y \+ \(ROW_B_H - QR_SIZE\) \/ 2;/);
+  // the caption is beside the code, right-aligned into the gap, level with it
+  assert.match(PDF, /QR_LABEL_RIGHT, qrY \+ QR_SIZE \/ 2 \+ 1, \{ align: 'right', maxWidth: QR_LABEL_W \}/);
+  assert.equal(/qrY \+ 24\.5/.test(PDF), false, 'the caption must not sit under the code');
+  // the text column is sized to clear the caption strip, so a long bank or
+  // warranty line cannot run into it
+  assert.match(PDF, /const CELL_TEXT_W = \(QR_LABEL_RIGHT - QR_LABEL_W - 3\) - \(L \+ 2\);/);
+});
+
+test('P22b the row keeps its height and the QR its logic', () => {
+  // QR_BLOCK_H is what reserves the row's vertical room; leaving it at 26
+  // is what keeps the grid below from moving when the caption came out from
+  // under the code.
+  assert.match(PDF, /const QR_BLOCK_H = 26;/);
+  // the code itself is still built the same way
+  assert.match(PDF, /const qrSource = qrCustomData \|\| await generateQRDataUrl\(invoiceVerifyUrl\(inv\.type, inv\.id\), p\?\.header_color\);/);
+  assert.match(PDF, /const qrIsCustom = !!qrCustomData;/);
 });
 
 test('P12 the Proforma PDF was not dragged into this', () => {
