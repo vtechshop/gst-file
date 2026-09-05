@@ -727,6 +727,20 @@ async function buildInvoicePDFDoc(inv) {
     const warrantyLines = warrantyDetailLines(inv).flatMap(
       (line) => doc.splitTextToSize(line, boxX - 6 - L));
 
+    // Terms are wrapped here for the same reason as the warranty lines above:
+    // the closing block's height is what decides whether it fits on this page,
+    // and a paragraph of conditions can run to several lines. Measuring the
+    // unwrapped text would under-reserve — and now that the band follows the
+    // content rather than sitting at a fixed height, under-reserving would put
+    // the seal on top of the terms instead of merely low on the page.
+    const SEAL_CX = R - 5 - SEAL / 2;
+    const TC_WIDTH = (SEAL_CX - SEAL / 2 - 6) - L;
+    const termsPairs = parseTermsTable(p?.terms_conditions);
+    doc.setFontSize(7.5);
+    const termsProse = (p?.terms_conditions && !termsPairs && TC_WIDTH > 40)
+      ? doc.splitTextToSize(p.terms_conditions, TC_WIDTH)
+      : [];
+
     const QR_BLOCK_H = 28;                       // 24mm code + its caption
     const SIG_BLOCK_H = 6 + sealReserveH + 5;    // gap + stamp reserve + caption
     const bandH = Math.max(QR_BLOCK_H, SIG_BLOCK_H);
@@ -819,7 +833,13 @@ async function buildInvoicePDFDoc(inv) {
         // Warranty sits under the bank block in the same column, so its
         // height counts too or the close could run into the signature.
         + (warrantyLines.length ? 4 + 4.5 + warrantyLines.length * 4 : 0)
-        + 18      // left
+        + 18
+      // The gap between the left column and the band, plus the terms that now
+      // sit in that column above it. Without these the flowing band position
+      // could exceed bandTop and the clamp below would pull it back up ONTO
+      // the terms.
+      + 3
+      + (termsProse.length ? 6 + termsProse.length * 3.4 : 0)   // left
     );
 
     // Where the QR/signature band will actually land, and where the page will
@@ -947,9 +967,47 @@ async function buildInvoicePDFDoc(inv) {
     // onto another page. Only the two blocks move — totals, Amount in Words,
     // the notes, the table, the header and the footer all stay where they are.
 
-    const qrY = Math.max(ly, bandTop);
-    let sigBlockY = Math.max(totalsBottom, bandTop);
-    let leftBottom = ly;
+    // ── Terms & Conditions ──
+    // Drawn HERE, before the band, and measured before that again: the band
+    // below no longer sits at a fixed height, so it has to know where this
+    // column actually ends.
+    //
+    // Left-aligned, because a paragraph of conditions is read, not admired;
+    // centring it made the ragged edges hard to follow.
+    const tcTop = ly + 2;
+    let tcBottom = ly;
+    if (termsProse.length) {
+      doc.setFont('helvetica', 'bold'); doc.setFontSize(7.5); doc.setTextColor(...accent);
+      doc.text('Terms & Conditions', L, tcTop);
+      doc.setFont('helvetica', 'normal'); doc.setTextColor(100, 100, 100);
+      // Already wrapped above, so the height that was reserved and the height
+      // that is drawn cannot disagree.
+      doc.text(termsProse, L, tcTop + 4);
+      tcBottom = tcTop + 4 + termsProse.length * 3.4;
+    }
+
+    // Where the QR, the seal and the signature sit.
+    //
+    // They were pinned to bandTop — the foot of the page — with Math.max, so
+    // a one-item invoice printed its Grand Total at 112mm and then 118mm of
+    // blank paper before the signature. The reference bill fills that space
+    // by stretching the table; stretching it is exactly what was asked
+    // against, so the band comes up to the content instead.
+    //
+    // It now sits just under whichever column finished lower, and falls back
+    // to bandTop only when the invoice is long enough to reach it — so a full
+    // page still prints its band exactly where it always did.
+    //
+    // Math.min is what makes that safe rather than a guess. The page-break
+    // test above has already guaranteed y + closingNeed <= bandTop for this
+    // page — it opens a fresh sheet whenever the close would reach further —
+    // and closingNeed accounts for both columns, the terms included. So the
+    // flowing position is never below bandTop, and the clamp only ever holds
+    // on the page where the two already agree.
+    const bandY = Math.min(Math.max(tcBottom + 3, totalsBottom), bandTop);
+    const qrY = bandY;
+    let sigBlockY = bandY;
+    let leftBottom = bandY;
     if (qrSource) {
       try {
         doc.addImage(qrSource, 'PNG', L, qrY, 24, 24);
@@ -972,45 +1030,14 @@ async function buildInvoicePDFDoc(inv) {
     // One call to the renderer above, on the page the closing block landed on.
     // The other pages of this copy get the same call from the page loop at the
     // end, so every page carries the same block in the same place.
-    const sealCx = R - 5 - SEAL / 2;       // the Terms column below reads this
     const signBlockBottom = drawSignatureBlock(sigBlockY);
     signedPages.add(doc.internal.getNumberOfPages());
 
-    // ── Terms & Conditions ──
-    // Set in the left column, alongside the seal rather than underneath it.
-    // The QR occupies roughly 30mm on the left and the stamp sits far right,
-    // which leaves the width between them empty for the height of the whole
-    // signature block — the blank band that used to sit at the foot of every
-    // invoice. Stacking Terms below that band instead is what pushed the
-    // block past the page and onto a second sheet.
-    //
-    // Left-aligned, because a paragraph of conditions is read, not admired;
-    // centring it made the ragged edges hard to follow.
-    const termsPairs = parseTermsTable(p?.terms_conditions);
-    // Continues the LEFT column, under the QR — the QR is no longer level with
-    // the seal, so its position is what this follows, not the signature's.
-    // Follows the notes in the left column. It no longer follows the QR: the QR
-    // has moved to the foot of the page, and anything anchored below it would
-    // land in the footer.
-    const tcTop = ly + 2;
-    const tcWidth = (sealCx - SEAL / 2 - 6) - L;
-    let tcBottom = tcTop;
-
-    if (p?.terms_conditions && !termsPairs && tcWidth > 40) {
-      // Prose: set in the left column, alongside the seal rather than
-      // underneath it. The QR takes about 30mm on the left and the stamp
-      // sits far right, leaving the width between them empty for the height
-      // of the signature block — the blank band that used to sit at the
-      // foot of every invoice.
-      doc.setFont('helvetica', 'bold'); doc.setFontSize(7.5); doc.setTextColor(...accent);
-      doc.text('Terms & Conditions', L, tcTop);
-      doc.setFont('helvetica', 'normal'); doc.setTextColor(100, 100, 100);
-      const tcCol = doc.splitTextToSize(p.terms_conditions, tcWidth);
-      doc.text(tcCol, L, tcTop + 4);
-      tcBottom = tcTop + 4 + tcCol.length * 3.4;
-    }
-
-    y = Math.max(signBlockBottom, tcBottom + 4);
+    // The close ends below whichever ran lower: the seal and signature on the
+    // right, or the QR on the left. leftBottom is what carries the QR's height
+    // now that the QR is back in the flow rather than pinned to the foot — a
+    // schedule of terms is drawn under this, and would otherwise land on it.
+    y = Math.max(signBlockBottom, leftBottom);
 
     // A schedule of terms is drawn full width BELOW the signature, in the
     // band that was blank, because a two-column table needs the width and

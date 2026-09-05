@@ -237,13 +237,56 @@ test('P10f the HTML print view follows the same rule', () => {
 
 test('P11 the changed asset carries one new cache key on every page that loads it', () => {
   for (const p of PAGES) {
-    assert.ok(rd(p).includes('client/js/pages/invoice-pdf.js?v=45'),
-      p + ' must reference invoice-pdf.js at v=45');
+    assert.ok(rd(p).includes('client/js/pages/invoice-pdf.js?v=46'),
+      p + ' must reference invoice-pdf.js at v=46');
   }
   // and nothing unrelated moved with it
   assert.ok(rd('invoice.html').includes('client/js/utilities/utils.js?v=33'));
   assert.ok(rd('proforma.html').includes('client/js/pages/proforma-pdf.js?v=41'));
   assert.ok(rd('proforma.html').includes('client/js/pages/proforma-entry.js?v=40'));
+});
+
+test('P17 the closing band follows the content instead of the page foot', () => {
+  // It was Math.max against bandTop, which PINNED the band to the foot: a
+  // one-item invoice printed its Grand Total at 112mm and then 118mm of blank
+  // paper before the signature. Math.min lets it rise to the content and still
+  // never fall past the foot.
+  assert.match(PDF, /const bandY = Math\.min\(Math\.max\(tcBottom \+ 3, totalsBottom\), bandTop\);/);
+  assert.match(PDF, /const qrY = bandY;/);
+  assert.match(PDF, /let sigBlockY = bandY;/);
+  assert.equal(/Math\.max\(ly, bandTop\)/.test(PDF), false, 'the QR must not be pinned to the foot');
+  assert.equal(/Math\.max\(totalsBottom, bandTop\)/.test(PDF), false, 'the signature must not be pinned to the foot');
+  // Continuation pages, whose table fills them, still get the band at the foot.
+  assert.match(PDF, /if \(!signedPages\.has\(i\)\) drawSignatureBlock\(bandTop\)/);
+});
+
+test('P18 the terms are measured before the band that now depends on them', () => {
+  // The band sits under whichever column finished lower, so the terms have to
+  // be wrapped and reserved BEFORE it is placed - otherwise the clamp would
+  // pull the band back up onto them.
+  const wrap = PDF.indexOf('const termsProse =');
+  const band = PDF.indexOf('const bandY =');
+  assert.ok(wrap > 0 && band > 0 && wrap < band, 'terms must be wrapped before the band is placed');
+  assert.match(PDF, /doc\.splitTextToSize\(p\.terms_conditions, TC_WIDTH\)/);
+  // ...and that reserved height is what the page-break test spends.
+  assert.match(PDF, /\+ \(termsProse\.length \? 6 \+ termsProse\.length \* 3\.4 : 0\)/);
+  // The drawing uses the SAME wrapped lines, so fit and drawing cannot disagree.
+  assert.match(PDF, /doc\.text\(termsProse, L, tcTop \+ 4\)/);
+  assert.equal(/const tcWidth =/.test(PDF), false, 'the old late terms measurement must be gone');
+});
+
+test('P19 the close ends below the QR now that the QR is back in the flow', () => {
+  // The QR used to sit at the foot, so nothing below the close had to clear
+  // it. It now travels with the band, and a schedule of terms is drawn under
+  // the close - which would land on the QR if leftBottom were ignored.
+  assert.match(PDF, /y = Math\.max\(signBlockBottom, leftBottom\);/);
+  assert.match(PDF, /leftBottom = qrY \+ 30;/);
+});
+
+test('P20 the table and the totals stay hard against each other', () => {
+  // The totals were already dynamic; this change must not loosen them.
+  assert.match(PDF, /y = doc\.lastAutoTable\.finalY \+ 4;/);
+  assert.match(PDF, /const totalsTop = y, closeTop = y;/);
 });
 
 test('P12 the Proforma PDF was not dragged into this', () => {
