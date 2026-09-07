@@ -35,8 +35,10 @@ function badId(id) {
 // back) — the sign applyStockDelta() is called with is this value times
 // the qty delta.
 const KIND_CONFIG = {
-  purchase: { headerTable: 'purchases', itemsTable: 'purchase_items', itemFk: 'purchase_id', stockSign: 1 },
-  return:   { headerTable: 'purchase_returns', itemsTable: 'purchase_return_items', itemFk: 'return_id', stockSign: -1 }
+  purchase: { headerTable: 'purchases', itemsTable: 'purchase_items', itemFk: 'purchase_id', stockSign: 1,
+              movementType: 'PURCHASE', sourceType: 'purchase' },
+  return:   { headerTable: 'purchase_returns', itemsTable: 'purchase_return_items', itemFk: 'return_id', stockSign: -1,
+              movementType: 'PURCHASE_RETURN', sourceType: 'purchase_return' }
 };
 
 function badKind(kind) {
@@ -47,7 +49,7 @@ function badKind(kind) {
 router.post('/:kind/save-with-items', asyncRoute(async (req, res) => {
   badKind(req.params.kind);
   const kind = req.params.kind;
-  const { headerTable, itemsTable, itemFk, stockSign } = KIND_CONFIG[kind];
+  const { headerTable, itemsTable, itemFk, stockSign, movementType, sourceType } = KIND_CONFIG[kind];
   const { editId, header, items } = req.body;
   if (!header || typeof header !== 'object' || Array.isArray(header)) {
     const e = new Error('Header is missing or malformed.'); e.status = 400; e.expose = true; throw e;
@@ -94,13 +96,19 @@ router.post('/:kind/save-with-items', asyncRoute(async (req, res) => {
     await client.query(`DELETE FROM ${itemsTable} WHERE ${itemFk} = $1 AND user_id = $2`, [headerId, req.userId]);
 
     const newQtyByProduct = {};
+    const unitByProduct = {};
+    const rateByProduct = {};
     for (let i = 0; i < items.length; i++) {
       const payload = { ...items[i], user_id: req.userId, [itemFk]: headerId, sort_order: i };
       const cols = itemCols.concat(['user_id', itemFk, 'sort_order']).filter(c => Object.prototype.hasOwnProperty.call(payload, c));
       const placeholders = cols.map((_, j) => `$${j + 1}`).join(',');
       const values = cols.map(c => payload[c]);
       await client.query(`INSERT INTO ${itemsTable} (${cols.join(',')}) VALUES (${placeholders})`, values);
-      if (payload.product_id) newQtyByProduct[payload.product_id] = (newQtyByProduct[payload.product_id] || 0) + (+payload.quantity || 0);
+      if (payload.product_id) {
+        newQtyByProduct[payload.product_id] = (newQtyByProduct[payload.product_id] || 0) + (+payload.quantity || 0);
+        unitByProduct[payload.product_id] = payload.unit;
+        rateByProduct[payload.product_id] = payload.rate;
+      }
     }
 
     const oldQtyByProduct = {};
@@ -108,8 +116,14 @@ router.post('/:kind/save-with-items', asyncRoute(async (req, res) => {
 
     const productIds = new Set([...Object.keys(oldQtyByProduct), ...Object.keys(newQtyByProduct)]);
     for (const pid of productIds) {
+      // Net change only, same reasoning as the sale: a purchase edited from
+      // 10 to 15 writes one +5 movement, and re-saving it unchanged writes
+      // nothing at all.
       const delta = (newQtyByProduct[pid] || 0) - (oldQtyByProduct[pid] || 0);
-      if (delta) await applyStockDelta(client, req.userId, pid, stockSign * delta);
+      if (delta) await applyStockDelta(client, req.userId, pid, stockSign * delta, {
+        type: movementType, sourceType, sourceId: headerId,
+        unit: unitByProduct[pid], rate: rateByProduct[pid]
+      });
     }
 
     await client.query('COMMIT');
@@ -130,19 +144,22 @@ router.post('/:kind/:id/cascade-delete', asyncRoute(async (req, res) => {
   badKind(req.params.kind);
   const { kind, id } = req.params;
   badId(id);
-  const { itemsTable, itemFk, stockSign } = KIND_CONFIG[kind];
+  const { itemsTable, itemFk, stockSign, movementType, sourceType } = KIND_CONFIG[kind];
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
     const { rows: items } = await client.query(
-      `SELECT product_id, quantity FROM ${itemsTable} WHERE ${itemFk} = $1 AND user_id = $2`,
+      `SELECT id, product_id, quantity, unit, rate FROM ${itemsTable} WHERE ${itemFk} = $1 AND user_id = $2`,
       [id, req.userId]
     );
     // Deleting a saved record un-applies its stock effect — a purchase
     // being deleted must give back the stock it added; a return being
     // deleted must give back the stock it took away. Opposite sign from
     // the original apply, same magnitude.
-    for (const it of items) await applyStockDelta(client, req.userId, it.product_id, -stockSign * (+it.quantity || 0));
+    for (const it of items) await applyStockDelta(client, req.userId, it.product_id, -stockSign * (+it.quantity || 0), {
+      type: movementType, sourceType, sourceId: id, sourceItemId: it.id,
+      unit: it.unit, rate: it.rate, reason: kind === 'purchase' ? 'Purchase deleted' : 'Purchase return deleted'
+    });
 
     await client.query(`DELETE FROM ${itemsTable} WHERE ${itemFk} = $1 AND user_id = $2`, [id, req.userId]);
     await client.query('COMMIT');

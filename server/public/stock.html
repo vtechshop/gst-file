@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Warranty List - GST Management System</title>
+  <title>Stock Summary - GST Management System</title>
   <link rel="stylesheet" href="client/css/style.css?v=35">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
@@ -19,7 +19,7 @@
   <script src="client/js/core/search.js?v=29"></script>
   <script src="client/js/pages/profile.js?v=39"></script>
   <script src="client/js/pages/products.js?v=29"></script>
-  <script src="client/js/pages/warranty-list.js?v=38"></script>
+  <script src="client/js/pages/stock-summary.js?v=1"></script>
 </head>
 <body>
 <div class="app-layout">
@@ -55,7 +55,7 @@
       <a href="purchase-list.html" class="menu-item"><i class="fas fa-boxes"></i> Purchase List</a>
       <a href="purchase-returns.html" class="menu-item"><i class="fas fa-undo"></i> Purchase Returns</a>
       <div class="menu-section">Inventory</div>
-      <a href="stock.html" class="menu-item"><i class="fas fa-warehouse"></i> Stock Summary</a>
+      <a href="stock.html" class="menu-item active"><i class="fas fa-warehouse"></i> Stock Summary</a>
       <a href="stock-ledger.html" class="menu-item"><i class="fas fa-clipboard-list"></i> Stock Ledger</a>
       <div class="menu-section">GST / Special</div>
       <a href="eway-bills.html" class="menu-item"><i class="fas fa-truck-fast"></i> E-Way Bills</a>
@@ -90,170 +90,146 @@
   <div class="main-content">
     <div class="top-bar">
       <button type="button" class="menu-toggle" id="menuToggle" aria-label="Toggle sidebar menu"><i class="fas fa-bars"></i></button>
-      <span class="page-title"><i class="fas fa-shield-halved"></i>Warranty List</span>
+      <span class="page-title"><i class="fas fa-warehouse"></i>Stock Summary</span>
       <div class="ml-auto d-flex gap-10">
+        <button type="button" class="btn btn-primary btn-sm" onclick="openOpeningStock()"><i class="fas fa-plus"></i> Opening Stock</button>
+        <button type="button" class="btn btn-secondary btn-sm" onclick="openAdjustment()"><i class="fas fa-sliders"></i> Adjust Stock</button>
         <button type="button" class="btn btn-secondary btn-sm btn-icon" onclick="openGlobalSearch()" title="Search everywhere (Ctrl+K)" aria-label="Global search"><i class="fas fa-search"></i></button>
       </div>
     </div>
 
     <div class="content">
+      <!-- Headline counters. Every figure is computed server-side from the
+           ledger; nothing here sums movements in the browser. -->
+      <div class="stats-grid mb-16" id="stockStats"></div>
+
       <div class="card">
         <div class="card-header">
-          <span class="card-title"><i class="fas fa-shield-halved"></i> Warranty List</span>
-          <button type="button" class="btn btn-primary btn-sm" onclick="openAddWarranty()"><i class="fas fa-plus"></i> Add Warranty</button>
+          <span class="card-title"><i class="fas fa-boxes-stacked"></i> Current Stock</span>
         </div>
         <div class="card-body">
-          <!-- Two ways in, both real: an invoice carrying cover registers its
-               lines automatically on save, and + Add Warranty registers one by
-               hand without opening Invoice Entry. Both write the same table and
-               the same WAR-##### book. -->
           <div class="form-grid cols-3 mb-16">
             <div class="form-group">
-              <label for="wrSearch">Search</label>
-              <input type="text" id="wrSearch" class="form-control" oninput="onWarrantySearchInput()"
-                placeholder="Customer name, mobile, warranty no, invoice, product or serial">
+              <label for="stkSearch">Search</label>
+              <input type="text" id="stkSearch" class="form-control" placeholder="Product name, SKU or HSN" oninput="stockDebouncedReload()">
             </div>
             <div class="form-group">
-              <label for="wrStatusFilter">Status</label>
-              <select id="wrStatusFilter" class="form-control" onchange="renderWarrantyList()"><option value="">All</option></select>
+              <label for="stkStatus">Status</label>
+              <select id="stkStatus" class="form-control" onchange="loadStockSummary()">
+                <option value="">All tracked products</option>
+                <option value="IN_STOCK">In stock</option>
+                <option value="LOW_STOCK">Low stock</option>
+                <option value="OUT_OF_STOCK">Out of stock</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label for="stkCategory">Category</label>
+              <input type="text" id="stkCategory" class="form-control" placeholder="Any" oninput="stockDebouncedReload()">
             </div>
           </div>
-          <div class="table-wrapper">
-            <table class="data-table">
+
+          <div class="table-responsive">
+            <table class="table">
               <thead>
                 <tr>
-                  <th>#</th><th>Warranty No</th><th>Customer</th><th>Product</th>
-                  <th>Invoice No</th><th>Purchase Date</th><th>Warranty</th>
-                  <th>Valid Until</th><th>Status</th><th>Actions</th>
+                  <th>Product</th><th>SKU</th><th>HSN</th>
+                  <th class="text-right">In Stock</th><th class="text-right">Reorder Level</th>
+                  <th>Status</th><th class="text-right">Actions</th>
                 </tr>
               </thead>
-              <tbody id="wrTableBody">
-                <tr><td colspan="10" class="text-center text-muted-sm">Loading warranties&hellip;</td></tr>
+              <tbody id="stockTableBody">
+                <tr><td colspan="7" class="text-center text-muted">Loading&hellip;</td></tr>
               </tbody>
             </table>
           </div>
-          <div id="wrPagination" class="pagination"></div>
+          <div id="stockPagination" class="pagination"></div>
         </div>
       </div>
     </div>
-
+  </div>
 
   <script>
-document.addEventListener('DOMContentLoaded', initWarrantyList);
-</script>
+document.addEventListener('DOMContentLoaded', initStockSummary);
+  </script>
 
-
-<!-- Create / edit one warranty. The customer -> invoice -> product cascade
-     offers only records this user owns, and the server revalidates the whole
-     chain on save (server/src/routes/warranties.js) - the browser's choice is
-     never what authorises the write. -->
-<div class="modal-overlay" id="wrFormModal">
-  <div class="modal modal-lg">
-    <div class="modal-header">
-      <span class="modal-title" id="wrFormTitle"><i class="fas fa-shield-halved"></i> Add Warranty</span>
-      <button type="button" class="modal-close" onclick="closeWarrantyForm()" aria-label="Close"><i class="fas fa-times"></i></button>
-    </div>
-    <div class="modal-body">
-      <div id="wrFormLockedNote" class="text-muted-sm mb-16 d-none"></div>
-
-      <div id="wrFormLinked">
+  <!-- Opening balance. Allowed once per product: after that the ledger has
+       history and a correction is an adjustment, not an opening. -->
+  <div class="modal-overlay" id="openingModal">
+    <div class="modal">
+      <div class="modal-header">
+        <span class="modal-title"><i class="fas fa-flag"></i> Opening Stock</span>
+        <button type="button" class="modal-close" onclick="closeOpeningStock()" aria-label="Close"><i class="fas fa-times"></i></button>
+      </div>
+      <div class="modal-body">
         <p class="text-muted-sm mb-16"><i class="fas fa-info-circle"></i>
-          Pick the customer, then the invoice they bought on, then the product from
-          that invoice. A warranty is always a promise about goods on a real invoice.</p>
-        <div class="form-grid cols-3 mb-16">
+          Records the quantity a product started with. This writes an OPENING entry
+          in the stock ledger and can only be done once per product.</p>
+        <div class="form-group">
+          <label for="opProduct">Product <span class="text-required">*</span></label>
+          <select id="opProduct" class="form-control"><option value="">Loading&hellip;</option></select>
+        </div>
+        <div class="form-grid cols-2">
           <div class="form-group">
-            <label for="wrFormCustomer">Customer <span class="text-required">*</span></label>
-            <select id="wrFormCustomer" class="form-control" onchange="wrOnCustomerChange()">
-              <option value="">Loading&hellip;</option>
+            <label for="opQty">Opening Quantity <span class="text-required">*</span></label>
+            <input type="number" id="opQty" class="form-control" step="0.001" min="0.001" placeholder="10">
+          </div>
+          <div class="form-group">
+            <label for="opRate">Opening Rate</label>
+            <input type="number" id="opRate" class="form-control" step="0.01" min="0" placeholder="40000">
+          </div>
+        </div>
+        <div id="opError" class="alert alert-danger d-none"></div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" onclick="closeOpeningStock()">Cancel</button>
+        <button type="button" class="btn btn-primary" id="opSave" onclick="saveOpeningStock()">Save Opening Stock</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Adjustment / damage / scrap / consumption / sample / free issue.
+       Each needs a reason: it is the only justification a movement with no
+       source document will ever carry. -->
+  <div class="modal-overlay" id="adjustModal">
+    <div class="modal">
+      <div class="modal-header">
+        <span class="modal-title"><i class="fas fa-sliders"></i> Stock Adjustment</span>
+        <button type="button" class="modal-close" onclick="closeAdjustment()" aria-label="Close"><i class="fas fa-times"></i></button>
+      </div>
+      <div class="modal-body">
+        <div class="form-group">
+          <label for="adjProduct">Product <span class="text-required">*</span></label>
+          <select id="adjProduct" class="form-control"><option value="">Loading&hellip;</option></select>
+        </div>
+        <div class="form-grid cols-2">
+          <div class="form-group">
+            <label for="adjType">Movement <span class="text-required">*</span></label>
+            <select id="adjType" class="form-control">
+              <option value="ADJUSTMENT_IN">Adjustment In (+)</option>
+              <option value="ADJUSTMENT_OUT">Adjustment Out (&minus;)</option>
+              <option value="DAMAGE">Damage (&minus;)</option>
+              <option value="SCRAP">Scrap (&minus;)</option>
+              <option value="CONSUMPTION">Internal Consumption (&minus;)</option>
+              <option value="SAMPLE">Sample (&minus;)</option>
+              <option value="FREE_ISSUE">Free Issue (&minus;)</option>
             </select>
           </div>
           <div class="form-group">
-            <label for="wrFormInvoice">Invoice <span class="text-required">*</span></label>
-            <select id="wrFormInvoice" class="form-control" onchange="wrOnInvoiceChange()">
-              <option value="">Select a customer first</option>
-            </select>
-          </div>
-          <div class="form-group">
-            <label for="wrFormProduct">Product <span class="text-required">*</span></label>
-            <select id="wrFormProduct" class="form-control" onchange="wrOnProductChange()">
-              <option value="">Select an invoice first</option>
-            </select>
+            <label for="adjQty">Quantity <span class="text-required">*</span></label>
+            <input type="number" id="adjQty" class="form-control" step="0.001" min="0.001" placeholder="1">
           </div>
         </div>
+        <div class="form-group">
+          <label for="adjReason">Reason <span class="text-required">*</span></label>
+          <input type="text" id="adjReason" class="form-control" placeholder="Physical count, water damage, demo unit&hellip;">
+        </div>
+        <div id="adjError" class="alert alert-danger d-none"></div>
       </div>
-
-      <div class="form-grid cols-3 mb-16">
-        <div class="form-group">
-          <label for="wrFormSerial">Serial Number</label>
-          <input type="text" id="wrFormSerial" class="form-control" placeholder="Blank is normal">
-        </div>
-        <div class="form-group">
-          <label for="wrFormQty">Quantity</label>
-          <input type="number" id="wrFormQty" class="form-control" min="0.001" step="any">
-        </div>
-        <div class="form-group">
-          <label for="wrFormPeriod">Warranty Period</label>
-          <select id="wrFormPeriod" class="form-control" onchange="wrRecalcUntil()"></select>
-        </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" onclick="closeAdjustment()">Cancel</button>
+        <button type="button" class="btn btn-primary" id="adjSave" onclick="saveAdjustment()">Record Movement</button>
       </div>
-
-      <div class="form-grid cols-2 mb-16">
-        <div class="form-group">
-          <label for="wrFormStart">Warranty Start Date</label>
-          <input type="date" id="wrFormStart" class="form-control" onchange="wrRecalcUntil()">
-        </div>
-        <div class="form-group">
-          <label for="wrFormUntil">Valid Until</label>
-          <input type="date" id="wrFormUntil" class="form-control">
-          <div class="fs-11 text-muted-sm mt-8">Filled from the period and start date. Editable.</div>
-        </div>
-      </div>
-
-      <div class="form-group">
-        <label for="wrFormTerms">Warranty Terms</label>
-        <textarea id="wrFormTerms" class="form-control" rows="3" placeholder="What the cover includes and excludes"></textarea>
-      </div>
-    </div>
-    <div class="modal-footer">
-      <button type="button" class="btn btn-secondary" onclick="closeWarrantyForm()">Cancel</button>
-      <button type="button" class="btn btn-primary" id="wrFormSaveBtn" onclick="saveWarrantyForm()">
-        <i class="fas fa-check"></i> Save Warranty</button>
     </div>
   </div>
-</div>
-
-<!-- The QR carries the verification address and nothing else, so a status
-     change never needs a tag or a printed code reissued. -->
-<div class="modal-overlay" id="wrQrModal">
-  <div class="modal">
-    <div class="modal-header">
-      <span class="modal-title"><i class="fas fa-qrcode"></i> <span id="wrQrLabel"></span></span>
-      <button type="button" class="modal-close" onclick="closeWarrantyQr()" aria-label="Close"><i class="fas fa-times"></i></button>
-    </div>
-    <div class="modal-body text-center">
-      <canvas id="wrQrCanvas" width="200" height="200"></canvas>
-      <p class="fs-11 text-muted-sm mt-8" style="word-break:break-all;">
-        <a id="wrQrLink" href="#" target="_blank" rel="noopener"></a></p>
-    </div>
-    <div class="modal-footer">
-      <button type="button" class="btn btn-secondary" onclick="closeWarrantyQr()">Close</button>
-    </div>
-  </div>
-</div>
-
-<!-- Global Search Modal -->
-<div class="modal-overlay" id="globalSearchModal">
-  <div class="modal modal-lg">
-    <div class="modal-header">
-      <span class="modal-title"><i class="fas fa-search"></i> Search Everywhere</span>
-      <button type="button" class="modal-close" onclick="closeGlobalSearch()" aria-label="Close"><i class="fas fa-times"></i></button>
-    </div>
-    <div class="modal-body">
-      <input type="text" id="globalSearchInput" class="form-control mb-16" oninput="onGlobalSearchInput(this.value)" aria-label="Global search input">
-      <div id="globalSearchResults"><p class="text-muted-sm">Type at least 2 characters&hellip;</p></div>
-    </div>
-  </div>
-</div>
-
 </body>
 </html>

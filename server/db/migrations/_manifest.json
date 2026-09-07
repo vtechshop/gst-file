@@ -41,6 +41,7 @@
     "migration_proforma_invoices.sql",
     "migration_invoice_warranty.sql",
     "migration_warranty_register.sql",
-    "migration_proforma_export.sql"
+    "migration_proforma_export.sql",
+    "migration_stock_ledger.sql"
   ]
 }

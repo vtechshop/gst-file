@@ -29,6 +29,7 @@ const invoiceScanRoutes = require('./routes/invoice-scan');
 const gstVerifyRoutes = require('./routes/gst-verify');
 const verifyRoutes = require('./routes/verify');
 const warrantyRoutes = require('./routes/warranties');
+const stockRoutes = require('./routes/stock');
 const { mountGenericRoutes } = require('./routes/generic');
 const { errorHandler } = require('./middleware/errorHandler');
 
@@ -120,6 +121,11 @@ app.use('/api/payments', paymentsRoutes);
 // never the bare path the generic router's own routes use.
 app.use('/api/sales_returns', salesReturnRoutes);
 app.use('/api/uploads', uploadRoutes);
+// Stock reporting plus the two manual movement entries (opening balance,
+// adjustment). Every route is requireAuth-d inside the router and scoped
+// to req.userId. Document-driven stock still moves in invoices/purchases/
+// sales-returns; nothing of that is duplicated here.
+app.use('/api/stock', stockRoutes);
 // Per-company proxy — see routes/product-sync.js header. requireAuth'd
 // internally (every sub-route), so mounted the same bare way as
 // uploadRoutes above.

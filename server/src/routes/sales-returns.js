@@ -183,13 +183,20 @@ router.post('/save-with-items', asyncRoute(async (req, res) => {
     await client.query('DELETE FROM sales_return_items WHERE return_id = $1 AND user_id = $2', [returnId, req.userId]);
 
     const newQtyByProduct = {};
+    // What the ledger records each movement was counted and priced in.
+    const unitByProduct = {};
+    const rateByProduct = {};
     for (let i = 0; i < items.length; i++) {
       const payload = { ...items[i], user_id: req.userId, return_id: returnId, sort_order: i };
       const cols = itemCols.concat(['user_id', 'return_id', 'sort_order']).filter(c => Object.prototype.hasOwnProperty.call(payload, c));
       const placeholders = cols.map((_, j) => `$${j + 1}`).join(',');
       const values = cols.map(c => payload[c]);
       await client.query(`INSERT INTO sales_return_items (${cols.join(',')}) VALUES (${placeholders})`, values);
-      if (payload.product_id) newQtyByProduct[payload.product_id] = (newQtyByProduct[payload.product_id] || 0) + (+payload.quantity || 0);
+      if (payload.product_id) {
+        newQtyByProduct[payload.product_id] = (newQtyByProduct[payload.product_id] || 0) + (+payload.quantity || 0);
+        unitByProduct[payload.product_id] = payload.unit;
+        rateByProduct[payload.product_id] = payload.rate;
+      }
     }
 
     const oldQtyByProduct = {};
@@ -201,7 +208,10 @@ router.post('/save-with-items', asyncRoute(async (req, res) => {
       // (positive = stock should go up), applied un-negated, opposite
       // sign convention from a sale (invoices.js negates its own delta).
       const delta = (newQtyByProduct[pid] || 0) - (oldQtyByProduct[pid] || 0);
-      if (delta) await applyStockDelta(client, req.userId, pid, delta);
+      if (delta) await applyStockDelta(client, req.userId, pid, delta, {
+        type: 'SALES_RETURN', sourceType: 'sales_return', sourceId: returnId,
+        unit: unitByProduct[pid], rate: rateByProduct[pid]
+      });
     }
 
     await client.query('COMMIT');
@@ -226,11 +236,14 @@ router.post('/:id/cascade-delete', asyncRoute(async (req, res) => {
   try {
     await client.query('BEGIN');
     const { rows: items } = await client.query(
-      'SELECT product_id, quantity FROM sales_return_items WHERE return_id = $1 AND user_id = $2',
+      'SELECT id, product_id, quantity, unit, rate FROM sales_return_items WHERE return_id = $1 AND user_id = $2',
       [id, req.userId]
     );
     // Deleting a saved return un-applies the stock it added back.
-    for (const it of items) await applyStockDelta(client, req.userId, it.product_id, -(+it.quantity || 0));
+    for (const it of items) await applyStockDelta(client, req.userId, it.product_id, -(+it.quantity || 0), {
+      type: 'SALES_RETURN', sourceType: 'sales_return', sourceId: id, sourceItemId: it.id,
+      unit: it.unit, rate: it.rate, reason: 'Sales return deleted'
+    });
 
     await client.query('DELETE FROM sales_return_items WHERE return_id = $1 AND user_id = $2', [id, req.userId]);
     await client.query('COMMIT');

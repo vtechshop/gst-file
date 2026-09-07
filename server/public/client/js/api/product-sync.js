@@ -280,12 +280,20 @@ function mapRemoteProduct(raw) {
     warranty: hasWarrantyText ? `${raw.warranty.duration ?? ''} ${raw.warranty.durationType ?? ''}`.trim() : '',
     description: raw.description ?? '',
     image_url: Array.isArray(raw.images) && raw.images.length ? raw.images[0] : '',
-    stock: raw.stock !== undefined && raw.stock !== null ? +raw.stock : null,
+    // The upstream stock figure is read but deliberately not carried into
+    // the payload below — see PRODUCT_SYNC_COMPARE_FIELDS. Kept off the
+    // normalised shape entirely so nothing downstream can pick it up by
+    // accident.
     active: raw.published !== undefined ? !!raw.published : true
   };
 }
 
-const PRODUCT_SYNC_COMPARE_FIELDS = ['name','sku','category','hsn_code','gst_percentage','unit','default_rate','warranty','description','image_url','stock'];
+// Deliberately WITHOUT stock. Sync owns the catalogue — names, prices,
+// descriptions — but not the quantity on hand, which is a ledger balance
+// maintained transactionally by purchases, sales and returns. Leaving it
+// in would also mark a product "changed" every time the website reported a
+// different quantity, and rewrite the whole row on the strength of it.
+const PRODUCT_SYNC_COMPARE_FIELDS = ['name','sku','category','hsn_code','gst_percentage','unit','default_rate','warranty','description','image_url'];
 
 function productPayloadChanged(existing, incoming) {
   return PRODUCT_SYNC_COMPARE_FIELDS.some(f => String(existing[f] ?? '') !== String(incoming[f] ?? ''));
@@ -335,7 +343,12 @@ async function applyProductSync(userId, remoteRaw) {
       user_id: userId, name: rp.name, sku: rp.sku, category: rp.category,
       hsn_code: rp.hsn_code, type: 'goods', gst_percentage: rp.gst_percentage, unit: rp.unit,
       default_rate: rp.default_rate, warranty: rp.warranty, description: rp.description,
-      image_url: rp.image_url, stock: rp.stock, external_id: rp.external_id, source: 'synced'
+      // stock is NOT sent. The upstream catalogue does not know what this
+      // business has actually bought, sold or returned, so writing its
+      // number here would silently discard the ledger arithmetic. The
+      // server refuses the field outright as well (products.immutable in
+      // routes/generic.js) — this is the near half of one rule.
+      image_url: rp.image_url, external_id: rp.external_id, source: 'synced'
     };
     if (match) {
       if (productPayloadChanged(match, payload)) {

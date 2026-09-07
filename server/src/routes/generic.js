@@ -143,7 +143,30 @@ function runValidate(validate, body, isInsert) {
   }
 }
 
-function makeCrudRouter(table, { columns, insertable = true, readOnly = false, ownerColumn = 'user_id', validate }) {
+// Columns a table exposes for READING but refuses to accept a write for.
+//
+// Deliberately not done by leaving the column out of `columns`: that list
+// also gates SELECT, WHERE and ORDER BY, so dropping a name from it would
+// make the value unreadable and unsortable as well as unwritable. A balance
+// the UI must display but nothing may poke is exactly the case that
+// distinction exists for.
+//
+// Refuses loudly rather than silently dropping the field: a caller that
+// thinks it just set a stock level should be told it did not.
+function refuseImmutable(body, immutable, table) {
+  if (!immutable || !immutable.length || !body || typeof body !== 'object') return;
+  const blocked = immutable.filter(c => Object.prototype.hasOwnProperty.call(body, c));
+  if (!blocked.length) return;
+  const e = new Error(
+    `${blocked.join(', ')} cannot be set directly on ${table}.`
+    + (blocked.includes('stock')
+      ? ' Stock is a ledger balance — record an opening balance or a stock adjustment instead, so the change is accounted for.'
+      : ''));
+  e.status = 400; e.expose = true;
+  throw e;
+}
+
+function makeCrudRouter(table, { columns, immutable, insertable = true, readOnly = false, ownerColumn = 'user_id', validate }) {
   const router = express.Router();
   router.use(requireAuth);
 
@@ -173,6 +196,7 @@ function makeCrudRouter(table, { columns, insertable = true, readOnly = false, o
   router.post('/', asyncRoute(async (req, res) => {
     if (readOnly) refuseWrite();
     if (!insertable) { const e = new Error(`${table} does not accept direct inserts.`); e.status = 405; e.expose = true; throw e; }
+    refuseImmutable(req.body, immutable, table);
     runValidate(validate, req.body, true);
     // Ownership is always forced from the JWT, never trusted from the
     // body — this also correctly handles `profiles`, where ownerColumn
@@ -191,6 +215,7 @@ function makeCrudRouter(table, { columns, insertable = true, readOnly = false, o
 
   router.patch('/', asyncRoute(async (req, res) => {
     if (readOnly) refuseWrite();
+    refuseImmutable(req.body, immutable, table);
     runValidate(validate, req.body, false);
     const { where, params } = buildWhere(req.query, ownerColumn, req.userId, columns);
     const patchCols = Object.keys(req.body).filter(c => columns.includes(c) && c !== ownerColumn); // ownership is never reassignable
@@ -252,11 +277,20 @@ const TABLES = {
     columns: ['id','user_id','name','hsn_code','type','gst_percentage','default_rate',
       'unit','description','sku','category','warranty','image_url','external_id',
       'source','stock',
+      // The level at or below which a tracked product reads as LOW_STOCK.
+      // Freely editable — it is a policy the user sets, not a balance.
+      'reorder_level',
       // GST treatment (Phase 2, Module 3)
       'gst_treatment','cess_rate','reverse_charge',
       // Product Master completion (Phase 2, Module 3A)
       'gst_overrides','supply_bundle','principal_gst_rate',
       'created_at','updated_at'],
+    // stock stays in `columns` above so it can still be read, filtered and
+    // ordered — but it is a ledger balance, not a field. Every legitimate
+    // change goes through services/stock-ledger.js, which writes the
+    // movement that explains it. Accepting a PATCH here would be an
+    // unauditable mutation of precisely the value the ledger accounts for.
+    immutable: ['stock'],
     // Requires a valid HSN on hand-created products only (source 'local').
     // Product Sync writes source 'synced' and is deliberately unaffected —
     // see validateProductPayload() for why.

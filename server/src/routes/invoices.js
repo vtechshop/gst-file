@@ -19,6 +19,7 @@ const { requireAuth } = require('../middleware/auth');
 const { asyncRoute } = require('../middleware/errorHandler');
 const { applyInvoiceNumberFormat, invoiceSeriesFormat } = require('../utils/invoiceNumberFormat');
 const { TABLES } = require('./generic');
+const { applyStockDelta } = require('../services/stock-ledger');
 
 const router = express.Router();
 router.use(requireAuth);
@@ -46,17 +47,11 @@ function badType(type) {
   if (type !== 'b2b' && type !== 'b2c') { const e = new Error('type must be b2b or b2c.'); e.status = 400; e.expose = true; throw e; }
 }
 
-// Row-locks the product (FOR UPDATE) before adjusting stock — this is
-// the actual race-safety upgrade over the old client-side read-then-write
-// loop, which had no way to prevent two concurrent saves from reading
-// the same stale stock value.
-async function applyStockDelta(client, userId, productId, deltaQty) {
-  if (!productId || !deltaQty) return;
-  const { rows } = await client.query('SELECT stock FROM products WHERE id = $1 AND user_id = $2 FOR UPDATE', [productId, userId]);
-  if (!rows.length || rows[0].stock === null) return; // not stock-tracked
-  const next = Math.round((+rows[0].stock + deltaQty) * 1000) / 1000;
-  await client.query('UPDATE products SET stock = $1 WHERE id = $2', [next, productId]);
-}
+// The row-locked stock helper now lives in services/stock-ledger.js, where
+// the same statement pair that moves the balance also writes the movement
+// explaining it and enforces the negative-stock guard. Re-exported at the
+// foot of this file under its original name, so purchases.js and
+// sales-returns.js keep importing it from here as they always have.
 
 // ── 1) Save invoice header + line items + stock, one transaction ──
 router.post('/:type/save-with-items', asyncRoute(async (req, res) => {
@@ -117,6 +112,10 @@ router.post('/:type/save-with-items', asyncRoute(async (req, res) => {
 
     const savedItems = [];
     const newQtyByProduct = {};
+    // What the ledger records each movement was counted and priced in,
+    // gathered from the lines as they are written.
+    const unitByProduct = {};
+    const rateByProduct = {};
     for (let i = 0; i < items.length; i++) {
       const payload = { ...items[i], user_id: req.userId, invoice_id: invoiceId, invoice_type: type, sort_order: i };
       const cols = itemCols.concat(['user_id', 'invoice_id', 'invoice_type', 'sort_order']).filter(c => Object.prototype.hasOwnProperty.call(payload, c));
@@ -127,7 +126,11 @@ router.post('/:type/save-with-items', asyncRoute(async (req, res) => {
       // Kept for the warranty sync below: the register stores the line's id,
       // and every save re-creates these rows with new ones.
       savedItems.push({ ...payload, id: itemRows[0].id });
-      if (payload.product_id) newQtyByProduct[payload.product_id] = (newQtyByProduct[payload.product_id] || 0) + (+payload.quantity || 0);
+      if (payload.product_id) {
+        newQtyByProduct[payload.product_id] = (newQtyByProduct[payload.product_id] || 0) + (+payload.quantity || 0);
+        unitByProduct[payload.product_id] = payload.unit;
+        rateByProduct[payload.product_id] = payload.rate;
+      }
     }
 
     const oldQtyByProduct = {};
@@ -139,7 +142,15 @@ router.post('/:type/save-with-items', asyncRoute(async (req, res) => {
       // stock should go down), so it's applied negated, same sign
       // convention the old client-side applyStockDeltaForSave() used.
       const delta = (newQtyByProduct[pid] || 0) - (oldQtyByProduct[pid] || 0);
-      if (delta) await applyStockDelta(client, req.userId, pid, -delta);
+      // One movement per product per save, carrying the NET change. On a
+      // first save that net IS the whole quantity; on an edit from 5 to 8
+      // it is the extra 3. Re-saving an unchanged invoice gives a delta of
+      // zero and writes no row at all - a stronger idempotency guarantee
+      // than a reversal pair that merely nets to zero.
+      if (delta) await applyStockDelta(client, req.userId, pid, -delta, {
+        type: 'SALE', sourceType: type, sourceId: invoiceId,
+        unit: unitByProduct[pid], rate: rateByProduct[pid]
+      });
     }
 
     // ── Warranty register ──
@@ -325,10 +336,16 @@ router.post('/:type/:id/cascade-delete', asyncRoute(async (req, res) => {
   try {
     await client.query('BEGIN');
     const { rows: items } = await client.query(
-      'SELECT product_id, quantity FROM invoice_items WHERE invoice_id = $1 AND invoice_type = $2 AND user_id = $3',
+      'SELECT id, product_id, quantity, unit, rate FROM invoice_items WHERE invoice_id = $1 AND invoice_type = $2 AND user_id = $3',
       [id, type, req.userId]
     );
-    for (const it of items) await applyStockDelta(client, req.userId, it.product_id, +it.quantity || 0);
+    // Deleting a sale gives back exactly what it took, once: the line rows
+    // go in the same transaction, so a repeated call finds nothing to
+    // reverse and moves nothing.
+    for (const it of items) await applyStockDelta(client, req.userId, it.product_id, +it.quantity || 0, {
+      type: 'SALE', sourceType: type, sourceId: id, sourceItemId: it.id,
+      unit: it.unit, rate: it.rate, reason: 'Invoice deleted'
+    });
 
     await client.query('DELETE FROM invoice_items WHERE invoice_id = $1 AND invoice_type = $2 AND user_id = $3', [id, type, req.userId]);
     await client.query(
