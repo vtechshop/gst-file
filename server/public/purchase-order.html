@@ -1,0 +1,242 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Purchase Order - GST Management System</title>
+<link rel="stylesheet" href="client/css/style.css?v=35">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
+  <script src="shared/india-districts.js?v=29"></script>
+  <script src="client/js/api/apiClient.js?v=29"></script>
+  <script src="client/js/api/backup.js?v=29"></script>
+  <script src="client/js/core/config.js?v=33"></script>
+  <script src="client/js/api/product-sync.js?v=39"></script>
+  <script src="client/js/core/auth.js?v=29"></script>
+  <script src="client/js/utilities/utils.js?v=33"></script>
+  <script src="client/js/core/search.js?v=29"></script>
+  <script src="client/js/pages/profile.js?v=39"></script>
+  <script src="client/js/pages/products.js?v=29"></script>
+  <script src="client/js/pages/purchase-items.js?v=29"></script>
+  <!-- Bill scanner. Uploads to /api/bill-scan, which calls Gemini with a
+       server-held key; no OCR library is loaded in the browser at all. -->
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.31/jspdf.plugin.autotable.min.js"></script>
+  <script src="client/js/pages/products.js?v=29"></script>
+  <script src="client/js/pages/purchase-items.js?v=29"></script>
+  <script src="client/js/pages/purchase-order-pdf.js?v=1"></script>
+  <script src="client/js/pages/purchase-order-entry.js?v=1"></script>
+</head>
+<body>
+<div class="app-layout">
+
+<aside class="sidebar">
+    <a class="sidebar-brand" href="dashboard.html">
+      <div class="brand-icon"><i class="fas fa-file-invoice-dollar"></i></div>
+      <span>GST Invoice<br>Management</span>
+    </a>
+    <nav class="sidebar-menu">
+      <div class="menu-section">Main</div>
+      <a href="dashboard.html" class="menu-item"><i class="fas fa-tachometer-alt"></i> Dashboard</a>
+      <div class="menu-section">Invoices / Sales</div>
+      <a href="invoice.html" class="menu-item"><i class="fas fa-plus-circle"></i> New Invoice</a>
+      <a href="invoice-list.html" class="menu-item"><i class="fas fa-list-alt"></i> Invoice List</a>
+      <a href="proforma.html" class="menu-item"><i class="fas fa-file-contract"></i> New Proforma</a>
+      <a href="proforma-list.html" class="menu-item"><i class="fas fa-folder-open"></i> Proforma Invoices</a>
+      <a href="cdnotes.html" class="menu-item"><i class="fas fa-file-minus"></i> Credit / Debit Notes</a>
+      <a href="sales-returns.html" class="menu-item"><i class="fas fa-rotate-left"></i> Sales Returns</a>
+      <a href="bill-of-supply.html" class="menu-item"><i class="fas fa-file-invoice"></i> Bill of Supply</a>
+      <a href="revised-invoice.html" class="menu-item"><i class="fas fa-file-pen"></i> Revised Invoice</a>
+      <a href="advances.html" class="menu-item"><i class="fas fa-hand-holding-dollar"></i> Advances</a>
+      <a href="vouchers.html" class="menu-item"><i class="fas fa-receipt"></i> Vouchers</a>
+      <a href="challans.html" class="menu-item"><i class="fas fa-file-signature"></i> Delivery Challans</a>
+      <a href="amendments.html" class="menu-item"><i class="fas fa-pen-to-square"></i> Amendments</a>
+      <div class="menu-section">Warranty</div>
+      <a href="warranty-list.html" class="menu-item"><i class="fas fa-shield-halved"></i> Warranty List</a>
+      <div class="menu-section">Purchases</div>
+      <a href="vendors.html" class="menu-item"><i class="fas fa-truck"></i> Vendors</a>
+      <a href="vendor-ledger.html" class="menu-item"><i class="fas fa-book"></i> Vendor Ledger</a>
+      <a href="purchase-orders.html" class="menu-item active"><i class="fas fa-file-signature"></i> Purchase Orders</a>
+      <a href="purchases.html" class="menu-item"><i class="fas fa-cart-plus"></i> New Purchase</a>
+      <a href="purchase-list.html" class="menu-item"><i class="fas fa-boxes"></i> Purchase List</a>
+      <a href="purchase-returns.html" class="menu-item"><i class="fas fa-undo"></i> Purchase Returns</a>
+      <div class="menu-section">Inventory</div>
+      <a href="stock.html" class="menu-item"><i class="fas fa-warehouse"></i> Stock Summary</a>
+      <a href="stock-ledger.html" class="menu-item"><i class="fas fa-clipboard-list"></i> Stock Ledger</a>
+      <a href="stock-locations.html" class="menu-item"><i class="fas fa-map-location-dot"></i> Locations</a>
+      <a href="stock-transfers.html" class="menu-item"><i class="fas fa-right-left"></i> Transfers</a>
+      <div class="menu-section">GST / Special</div>
+      <a href="eway-bills.html" class="menu-item"><i class="fas fa-truck-fast"></i> E-Way Bills</a>
+      <a href="challans.html#job-workers" class="menu-item"><i class="fas fa-industry"></i> Job Workers</a>
+      <div class="menu-section">HSN</div>
+      <a href="hsn.html#b2b" class="menu-item"><i class="fas fa-barcode"></i> B2B HSN</a>
+      <a href="hsn.html#b2c" class="menu-item"><i class="fas fa-tags"></i> B2C HSN</a>
+      <div class="menu-section">Masters</div>
+      <a href="customers.html" class="menu-item"><i class="fas fa-address-book"></i> Customers</a>
+      <a href="customer-ledger.html" class="menu-item"><i class="fas fa-book"></i> Customer Ledger</a>
+      <a href="products.html" class="menu-item"><i class="fas fa-box"></i> Products</a>
+      <div class="menu-section">Expenses</div>
+      <a href="expenses.html" class="menu-item"><i class="fas fa-receipt"></i> Expenses</a>
+      <div class="menu-section">Reports</div>
+      <a href="reports.html" class="menu-item"><i class="fas fa-chart-bar"></i> Reports &amp; Export</a>
+      <a href="gstr3b.html" class="menu-item"><i class="fas fa-calculator"></i> GSTR-3B Summary</a>
+      <a href="document-register.html" class="menu-item"><i class="fas fa-book-open"></i> Document Register</a>
+      <div class="menu-section">Settings</div>
+      <a href="#" class="menu-item" onclick="openProfileModal();return false;"><i class="fas fa-building"></i> Business Profile</a>
+    </nav>
+    <div class="sidebar-user">
+      <div class="user-avatar"><i class="fas fa-user"></i></div>
+      <div class="user-info" onclick="openSettingsModal()" title="Click to open settings">
+        <div class="user-name" id="navUserName">User</div>
+        <div class="user-role">GST Manager</div>
+      </div>
+      <button type="button" class="btn-logout btn-settings" onclick="openSettingsModal()" title="Settings"><i class="fas fa-cog"></i></button>
+      <button type="button" class="btn-logout" id="logoutBtn" title="Logout"><i class="fas fa-sign-out-alt"></i></button>
+    </div>
+  </aside>
+
+  <div class="main-content">
+    <div class="top-bar">
+      <button type="button" class="menu-toggle" id="menuToggle" aria-label="Toggle sidebar menu"><i class="fas fa-bars"></i></button>
+      <span class="page-title"><i class="fas fa-file-signature"></i>Purchase Order</span>
+      <div class="ml-auto d-flex gap-10">
+        <button type="button" class="btn btn-secondary btn-sm btn-icon" onclick="openGlobalSearch()" title="Search everywhere (Ctrl+K)" aria-label="Global search"><i class="fas fa-search"></i></button>
+      </div>
+    </div>
+
+    <div class="content">
+      <div class="card mb-16">
+        <div class="card-header">
+          <span class="card-title"><i class="fas fa-file-signature"></i> Order details</span>
+          <span id="poStatusBadge" class="badge badge-secondary ml-auto">Draft</span>
+        </div>
+        <div class="card-body">
+          <div class="form-grid cols-3 mb-16">
+            <div class="form-group">
+              <label for="poNumber">PO Number <span class="text-required">*</span></label>
+              <input type="text" id="poNumber" class="form-control" placeholder="Auto">
+            </div>
+            <div class="form-group">
+              <label for="poDate">PO Date <span class="text-required">*</span></label>
+              <input type="date" id="poDate" class="form-control">
+            </div>
+            <div class="form-group">
+              <label for="poExpected">Expected Delivery Date</label>
+              <input type="date" id="poExpected" class="form-control">
+            </div>
+            <div class="form-group">
+              <label for="poRep">Purchase Representative</label>
+              <input type="text" id="poRep" class="form-control">
+            </div>
+            <div class="form-group">
+              <label for="poLogistics">Logistics</label>
+              <select id="poLogistics" class="form-control">
+                <option value="">&mdash;</option>
+                <option value="By Transport">By Transport</option>
+                <option value="Courier">Courier</option>
+                <option value="Pickup">Pickup</option>
+                <option value="Other">Other</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label for="poPaymentTerms">Payment Terms</label>
+              <input type="text" id="poPaymentTerms" class="form-control" placeholder="e.g. 100% Advance">
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card mb-16">
+        <div class="card-header"><span class="card-title"><i class="fas fa-truck"></i> Supplier</span></div>
+        <div class="card-body">
+          <div class="form-grid cols-3 mb-16">
+            <div class="form-group">
+              <label for="poVendor">Vendor <span class="text-required">*</span></label>
+              <input type="text" id="poVendor" class="form-control" list="poVendorList" autocomplete="off"
+                     oninput="onPoVendorInput()" placeholder="Start typing a vendor name">
+              <datalist id="poVendorList"></datalist>
+            </div>
+            <div class="form-group">
+              <label for="poVendorGstin">Vendor GSTIN</label>
+              <input type="text" id="poVendorGstin" class="form-control" oninput="onPoGstinChange()">
+            </div>
+            <div class="form-group">
+              <label for="poVendorPhone">Phone</label>
+              <input type="text" id="poVendorPhone" class="form-control">
+            </div>
+            <div class="form-group">
+              <label for="poVendorState">State</label>
+              <select id="poVendorState" class="form-control" onchange="onPoStateChange()"></select>
+            </div>
+            <div class="form-group">
+              <label for="poVendorDistrict">District</label>
+              <input type="text" id="poVendorDistrict" class="form-control" list="poDistrictList">
+              <datalist id="poDistrictList"></datalist>
+            </div>
+            <div class="form-group">
+              <label>Supply</label>
+              <div><span id="poSupplyBadge" class="badge badge-green">Intrastate</span></div>
+              <input type="hidden" id="purchSupply" value="intrastate">
+            </div>
+          </div>
+          <div class="form-group">
+            <label for="poVendorAddress">Billing Address</label>
+            <textarea id="poVendorAddress" class="form-control" rows="2"></textarea>
+          </div>
+        </div>
+      </div>
+
+      <div class="card mb-16">
+        <div class="card-header"><span class="card-title"><i class="fas fa-location-dot"></i> Deliver to</span></div>
+        <div class="card-body">
+          <label class="checkbox-label mb-12">
+            <input type="checkbox" id="poDeliverSame" checked onchange="onPoDeliverSameChange()">
+            Deliver to our own business address
+          </label>
+          <div class="form-grid cols-3 mb-16">
+            <div class="form-group">
+              <label for="poDeliveryState">State</label>
+              <select id="poDeliveryState" class="form-control" onchange="onPoDeliveryStateChange()"></select>
+            </div>
+            <div class="form-group">
+              <label for="poDeliveryDistrict">District</label>
+              <input type="text" id="poDeliveryDistrict" class="form-control" list="poDeliveryDistrictList">
+              <datalist id="poDeliveryDistrictList"></datalist>
+            </div>
+          </div>
+          <div class="form-group">
+            <label for="poDeliveryAddress">Delivery Address</label>
+            <textarea id="poDeliveryAddress" class="form-control" rows="2"></textarea>
+          </div>
+        </div>
+      </div>
+
+      <div class="card mb-16">
+        <div class="card-body">
+          <div id="purchItemsSection"></div>
+        </div>
+      </div>
+
+      <div class="card mb-16">
+        <div class="card-header"><span class="card-title"><i class="fas fa-file-contract"></i> Terms &amp; Conditions</span></div>
+        <div class="card-body">
+          <textarea id="poTerms" class="form-control" rows="6"
+                    placeholder="Delivery, inspection, price validity, amendments, acknowledgement&hellip;"></textarea>
+          <p class="text-muted-sm mt-8">Defaults to your saved company terms. Edit freely &mdash; what you save here is what prints.</p>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-body d-flex gap-12 flex-wrap">
+          <button type="button" class="btn btn-primary" id="poSaveBtn" onclick="savePurchaseOrder()"><i class="fas fa-save"></i> Save Draft</button>
+          <button type="button" class="btn btn-success" id="poConfirmBtn" onclick="confirmPurchaseOrder()"><i class="fas fa-check"></i> Confirm PO</button>
+          <button type="button" class="btn btn-secondary" onclick="downloadPurchaseOrderPDF()"><i class="fas fa-file-pdf"></i> PDF</button>
+          <button type="button" class="btn btn-secondary" onclick="printPurchaseOrder()"><i class="fas fa-print"></i> Print</button>
+          <a href="purchase-orders.html" class="btn btn-secondary ml-auto"><i class="fas fa-list"></i> All Purchase Orders</a>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+</body>
+</html>

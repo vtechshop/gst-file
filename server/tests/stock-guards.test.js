@@ -232,15 +232,24 @@ test('G14 the migration declares tenancy, keys, constraints and indexes', () => 
 
 test('G15 the migration is registered in the manifest, last', () => {
   const manifest = JSON.parse(rd('server', 'db', 'migrations', '_manifest.json'));
-  assert.strictEqual(manifest.order[manifest.order.length - 1], 'migration_stock_locations.sql');
-  assert.strictEqual(manifest.order[manifest.order.length - 2], 'migration_stock_ledger.sql');
+  // Registered, and locations after the ledger it builds on. Their position
+  // relative to EACH OTHER is what matters; a later feature appending its
+  // own migration must not fail this.
+  const ledgerAt = manifest.order.indexOf('migration_stock_ledger.sql');
+  const locationsAt = manifest.order.indexOf('migration_stock_locations.sql');
+  assert.ok(ledgerAt > -1, 'the ledger migration must be registered');
+  assert.ok(locationsAt > ledgerAt, 'locations must come after the ledger');
   for (const f of ['migration_stock_ledger.sql', 'migration_stock_locations.sql']) {
     assert.strictEqual(manifest.order.filter(x => x === f).length, 1, `${f} listed once`);
   }
   // The backfill is NOT a migration and must never be in the manifest.
   assert.ok(!manifest.order.some(f => /backfill/i.test(f)),
     'the data backfill must not be run by the migrator');
-  assert.strictEqual(manifest.order.length, 29);
+  // Every entry is listed once and the list has no gaps. The absolute
+  // length is not asserted: later features legitimately add migrations,
+  // and that says nothing about the stock ones.
+  assert.strictEqual(new Set(manifest.order).size, manifest.order.length,
+    'no migration may be listed twice');
 });
 
 // ── No backfill ───────────────────────────────────────────────────────

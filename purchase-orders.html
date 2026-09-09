@@ -1,0 +1,217 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Purchase Orders - GST Management System</title>
+<link rel="stylesheet" href="client/css/style.css?v=35">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
+  <script src="shared/india-districts.js?v=29"></script>
+  <script src="client/js/api/apiClient.js?v=29"></script>
+  <script src="client/js/api/backup.js?v=29"></script>
+  <script src="client/js/core/config.js?v=33"></script>
+  <script src="client/js/api/product-sync.js?v=39"></script>
+  <script src="client/js/core/auth.js?v=29"></script>
+  <script src="client/js/utilities/utils.js?v=33"></script>
+  <script src="client/js/core/search.js?v=29"></script>
+  <script src="client/js/pages/profile.js?v=39"></script>
+  <script src="client/js/pages/products.js?v=29"></script>
+  <script src="client/js/pages/purchase-items.js?v=29"></script>
+  <!-- Bill scanner. Uploads to /api/bill-scan, which calls Gemini with a
+       server-held key; no OCR library is loaded in the browser at all. -->
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.31/jspdf.plugin.autotable.min.js"></script>
+  <script src="client/js/pages/purchase-order-pdf.js?v=1"></script>
+  <script src="client/js/pages/purchase-order-list.js?v=1"></script>
+</head>
+<body>
+<div class="app-layout">
+
+<aside class="sidebar">
+    <a class="sidebar-brand" href="dashboard.html">
+      <div class="brand-icon"><i class="fas fa-file-invoice-dollar"></i></div>
+      <span>GST Invoice<br>Management</span>
+    </a>
+    <nav class="sidebar-menu">
+      <div class="menu-section">Main</div>
+      <a href="dashboard.html" class="menu-item"><i class="fas fa-tachometer-alt"></i> Dashboard</a>
+      <div class="menu-section">Invoices / Sales</div>
+      <a href="invoice.html" class="menu-item"><i class="fas fa-plus-circle"></i> New Invoice</a>
+      <a href="invoice-list.html" class="menu-item"><i class="fas fa-list-alt"></i> Invoice List</a>
+      <a href="proforma.html" class="menu-item"><i class="fas fa-file-contract"></i> New Proforma</a>
+      <a href="proforma-list.html" class="menu-item"><i class="fas fa-folder-open"></i> Proforma Invoices</a>
+      <a href="cdnotes.html" class="menu-item"><i class="fas fa-file-minus"></i> Credit / Debit Notes</a>
+      <a href="sales-returns.html" class="menu-item"><i class="fas fa-rotate-left"></i> Sales Returns</a>
+      <a href="bill-of-supply.html" class="menu-item"><i class="fas fa-file-invoice"></i> Bill of Supply</a>
+      <a href="revised-invoice.html" class="menu-item"><i class="fas fa-file-pen"></i> Revised Invoice</a>
+      <a href="advances.html" class="menu-item"><i class="fas fa-hand-holding-dollar"></i> Advances</a>
+      <a href="vouchers.html" class="menu-item"><i class="fas fa-receipt"></i> Vouchers</a>
+      <a href="challans.html" class="menu-item"><i class="fas fa-file-signature"></i> Delivery Challans</a>
+      <a href="amendments.html" class="menu-item"><i class="fas fa-pen-to-square"></i> Amendments</a>
+      <div class="menu-section">Warranty</div>
+      <a href="warranty-list.html" class="menu-item"><i class="fas fa-shield-halved"></i> Warranty List</a>
+      <div class="menu-section">Purchases</div>
+      <a href="vendors.html" class="menu-item"><i class="fas fa-truck"></i> Vendors</a>
+      <a href="vendor-ledger.html" class="menu-item"><i class="fas fa-book"></i> Vendor Ledger</a>
+      <a href="purchase-orders.html" class="menu-item active"><i class="fas fa-file-signature"></i> Purchase Orders</a>
+      <a href="purchases.html" class="menu-item"><i class="fas fa-cart-plus"></i> New Purchase</a>
+      <a href="purchase-list.html" class="menu-item"><i class="fas fa-boxes"></i> Purchase List</a>
+      <a href="purchase-returns.html" class="menu-item"><i class="fas fa-undo"></i> Purchase Returns</a>
+      <div class="menu-section">Inventory</div>
+      <a href="stock.html" class="menu-item"><i class="fas fa-warehouse"></i> Stock Summary</a>
+      <a href="stock-ledger.html" class="menu-item"><i class="fas fa-clipboard-list"></i> Stock Ledger</a>
+      <a href="stock-locations.html" class="menu-item"><i class="fas fa-map-location-dot"></i> Locations</a>
+      <a href="stock-transfers.html" class="menu-item"><i class="fas fa-right-left"></i> Transfers</a>
+      <div class="menu-section">GST / Special</div>
+      <a href="eway-bills.html" class="menu-item"><i class="fas fa-truck-fast"></i> E-Way Bills</a>
+      <a href="challans.html#job-workers" class="menu-item"><i class="fas fa-industry"></i> Job Workers</a>
+      <div class="menu-section">HSN</div>
+      <a href="hsn.html#b2b" class="menu-item"><i class="fas fa-barcode"></i> B2B HSN</a>
+      <a href="hsn.html#b2c" class="menu-item"><i class="fas fa-tags"></i> B2C HSN</a>
+      <div class="menu-section">Masters</div>
+      <a href="customers.html" class="menu-item"><i class="fas fa-address-book"></i> Customers</a>
+      <a href="customer-ledger.html" class="menu-item"><i class="fas fa-book"></i> Customer Ledger</a>
+      <a href="products.html" class="menu-item"><i class="fas fa-box"></i> Products</a>
+      <div class="menu-section">Expenses</div>
+      <a href="expenses.html" class="menu-item"><i class="fas fa-receipt"></i> Expenses</a>
+      <div class="menu-section">Reports</div>
+      <a href="reports.html" class="menu-item"><i class="fas fa-chart-bar"></i> Reports &amp; Export</a>
+      <a href="gstr3b.html" class="menu-item"><i class="fas fa-calculator"></i> GSTR-3B Summary</a>
+      <a href="document-register.html" class="menu-item"><i class="fas fa-book-open"></i> Document Register</a>
+      <div class="menu-section">Settings</div>
+      <a href="#" class="menu-item" onclick="openProfileModal();return false;"><i class="fas fa-building"></i> Business Profile</a>
+    </nav>
+    <div class="sidebar-user">
+      <div class="user-avatar"><i class="fas fa-user"></i></div>
+      <div class="user-info" onclick="openSettingsModal()" title="Click to open settings">
+        <div class="user-name" id="navUserName">User</div>
+        <div class="user-role">GST Manager</div>
+      </div>
+      <button type="button" class="btn-logout btn-settings" onclick="openSettingsModal()" title="Settings"><i class="fas fa-cog"></i></button>
+      <button type="button" class="btn-logout" id="logoutBtn" title="Logout"><i class="fas fa-sign-out-alt"></i></button>
+    </div>
+  </aside>
+
+  <div class="main-content">
+    <div class="top-bar">
+      <button type="button" class="menu-toggle" id="menuToggle" aria-label="Toggle sidebar menu"><i class="fas fa-bars"></i></button>
+      <span class="page-title"><i class="fas fa-file-signature"></i>Purchase Orders</span>
+      <div class="ml-auto d-flex gap-10">
+        <button type="button" class="btn btn-secondary btn-sm btn-icon" onclick="openGlobalSearch()" title="Search everywhere (Ctrl+K)" aria-label="Global search"><i class="fas fa-search"></i></button>
+      </div>
+    </div>
+
+    <div class="content">
+      <div class="card mb-16">
+        <div class="card-header">
+          <span class="card-title"><i class="fas fa-filter"></i> Find an order</span>
+          <a href="purchase-order.html" class="btn btn-primary btn-sm ml-auto"><i class="fas fa-plus"></i> New Purchase Order</a>
+        </div>
+        <div class="card-body">
+          <div class="form-grid cols-4">
+            <div class="form-group">
+              <label for="poSearch">PO number or vendor</label>
+              <input type="text" id="poSearch" class="form-control" placeholder="Search&hellip;" oninput="poDebouncedReload()">
+            </div>
+            <div class="form-group">
+              <label for="poStatus">Status</label>
+              <select id="poStatus" class="form-control" onchange="poReload()">
+                <option value="">All statuses</option>
+                <option value="DRAFT">Draft</option>
+                <option value="SENT">Sent</option>
+                <option value="CONFIRMED">Confirmed</option>
+                <option value="PARTIALLY_RECEIVED">Partially received</option>
+                <option value="FULLY_RECEIVED">Fully received</option>
+                <option value="CANCELLED">Cancelled</option>
+                <option value="CLOSED">Closed</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label for="poFrom">Ordered from</label>
+              <input type="date" id="poFrom" class="form-control" onchange="poReload()">
+            </div>
+            <div class="form-group">
+              <label for="poTo">Ordered to</label>
+              <input type="date" id="poTo" class="form-control" onchange="poReload()">
+            </div>
+            <div class="form-group">
+              <label for="poDeliveryFrom">Delivery from</label>
+              <input type="date" id="poDeliveryFrom" class="form-control" onchange="poReload()">
+            </div>
+            <div class="form-group">
+              <label for="poDeliveryTo">Delivery to</label>
+              <input type="date" id="poDeliveryTo" class="form-control" onchange="poReload()">
+            </div>
+            <div class="form-group">
+              <label for="poPending">Receipt</label>
+              <select id="poPending" class="form-control" onchange="poReload()">
+                <option value="">Everything</option>
+                <option value="1">Still awaiting goods</option>
+              </select>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-header"><span class="card-title"><i class="fas fa-list-alt"></i> Purchase Orders</span></div>
+        <div class="card-body">
+          <div class="table-responsive">
+            <table class="table">
+              <thead>
+                <tr>
+                  <th>PO Number</th><th>Date</th><th>Vendor</th><th>Expected</th>
+                  <th class="text-right">Total</th>
+                  <th class="text-right">Ordered</th><th class="text-right">Received</th><th class="text-right">Pending</th>
+                  <th>Status</th><th class="text-right">Actions</th>
+                </tr>
+              </thead>
+              <tbody id="poListBody">
+                <tr><td colspan="10" class="text-center text-muted">Loading&hellip;</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <div id="poPagination" class="pagination"></div>
+        </div>
+      </div>
+
+      <!-- Receive goods -->
+      <div class="modal" id="poReceiveModal">
+        <div class="modal-content modal-lg">
+          <div class="modal-header">
+            <span class="modal-title"><i class="fas fa-truck-ramp-box"></i> Receive against <span id="poReceiveNumber"></span></span>
+            <button type="button" class="modal-close" onclick="closePoReceive()" aria-label="Close"><i class="fas fa-times"></i></button>
+          </div>
+          <div class="modal-body">
+            <div class="alert alert-info mb-16"><i class="fas fa-circle-info"></i>
+              Receiving creates a Purchase and adds the goods to stock. The order itself never moves stock.</div>
+            <div class="form-grid cols-2 mb-16">
+              <div class="form-group">
+                <label for="poReceiveNum">Purchase number <span class="text-required">*</span></label>
+                <input type="text" id="poReceiveNum" class="form-control">
+              </div>
+              <div class="form-group">
+                <label for="poReceiveDate">Purchase date <span class="text-required">*</span></label>
+                <input type="date" id="poReceiveDate" class="form-control">
+              </div>
+            </div>
+            <div class="table-responsive">
+              <table class="table">
+                <thead><tr><th>Product</th><th class="text-right">Ordered</th><th class="text-right">Received</th><th class="text-right">Pending</th><th class="text-right">Receive now</th></tr></thead>
+                <tbody id="poReceiveBody"></tbody>
+              </table>
+            </div>
+            <div id="poReceiveError" class="alert alert-danger mt-12 d-none"></div>
+          </div>
+          <div class="modal-footer">
+            <button type="button" class="btn btn-secondary" onclick="closePoReceive()">Cancel</button>
+            <button type="button" class="btn btn-primary" id="poReceiveSave" onclick="submitPoReceive()"><i class="fas fa-check"></i> Receive goods</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+</body>
+</html>

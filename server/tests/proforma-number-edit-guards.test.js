@@ -116,7 +116,9 @@ test('P12 conversion is keyed by id, so renumbering cannot break it', () => {
 
 test('P13 no migration was added — the column already exists', () => {
   const manifest = JSON.parse(read('server/db/migrations/_manifest.json')).order;
-  assert.strictEqual(manifest.length, 29, 'the migration count must not change');
+  // No migration of this feature's own. The absolute count is deliberately
+  // not asserted: a later, unrelated feature adding one says nothing about
+  // whether THIS change needed a schema change.
   assert.equal(manifest.some(m => /proforma_number|document_number/i.test(m)), false);
   // document_number is the existing column, on the existing table.
   const mig = read('server/db/migrations/migration_proforma_invoices.sql');

@@ -43,6 +43,8 @@
     "migration_warranty_register.sql",
     "migration_proforma_export.sql",
     "migration_stock_ledger.sql",
-    "migration_stock_locations.sql"
+    "migration_stock_locations.sql",
+    "migration_purchase_orders.sql",
+    "migration_purchase_order_line_link.sql"
   ]
 }

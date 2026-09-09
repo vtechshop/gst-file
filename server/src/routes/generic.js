@@ -466,6 +466,30 @@ const TABLES = {
   // Quotations. Separate tables on purpose: no Dashboard, Reports, ledger,
   // Invoice List or GSTR-1 query reads them, so a proforma cannot leak into
   // any of those by accident.
+  // Purchase orders. `received_quantity` is deliberately NOT writable
+  // through the generic router or the document save path: it is moved only
+  // by the receive transaction in routes/purchase-orders.js, which is the
+  // one place that can also write the purchase and its stock movement. It
+  // stays in `columns` so the list and the PDF can read it.
+  purchase_orders: {
+    columns: ['id','user_id','document_number','document_date','document_series','status',
+      'vendor_id','vendor_name','vendor_gstin','phone','address','state','district','gst_category',
+      'purchase_representative','logistics_mode','logistics_notes','payment_terms',
+      'expected_delivery_date','delivery_address','delivery_state','delivery_district',
+      'supply_type','taxable_amount','gst_percentage','gst_amount','igst','cgst','sgst',
+      'cess_amount','total_amount','terms','notes',
+      'cancelled_at','cancelled_by','cancel_reason','created_by','created_at','updated_at'],
+    immutable: ['status'],
+    validate: makeDistrictValidator([['state', 'district'], ['delivery_state', 'delivery_district']])
+  },
+  purchase_order_items: {
+    columns: ['id','user_id','purchase_order_id','product_id','product_name','hsn_code','unit',
+      'quantity','received_quantity','rate','discount_percentage','gst_percentage','taxable_value',
+      'gst_amount','igst','cgst','sgst','total_amount','gst_treatment','cess_rate','cess_amount',
+      'sort_order','created_at','updated_at'],
+    immutable: ['received_quantity']
+  },
+
   proforma_invoices: {
     columns: ['id','user_id','document_number','document_date','document_series',
       'valid_until','status','customer_id','customer_name','gst_number','phone',
@@ -556,8 +580,19 @@ const TABLES = {
   purchase_items: {
     columns: ['id','user_id','purchase_id','product_id','product_name','hsn_code','unit',
       'quantity','rate','discount_percentage','gst_percentage','taxable_value','gst_amount',
-      'igst','cgst','sgst','total_amount','sort_order',
-      'created_at','updated_at']
+      'igst','cgst','sgst','total_amount','sort_order','purchase_order_item_id',
+      'created_at','updated_at'],
+    // purchase_order_item_id says which LINE of a purchase order this line
+    // received against, and the order's received quantity is kept in step
+    // with it. It is listed above because routes/purchases.js builds its
+    // insert column list from `columns`, and an edit that dropped the
+    // column would silently sever the link every time a purchase was
+    // saved. It is immutable here because that is the only writer that may
+    // set it: through this generic router a client could otherwise point
+    // any purchase line at any order line, or quietly detach one, without
+    // the capacity check and the received-quantity reconciliation that
+    // make the link mean anything. Readable, never directly writable.
+    immutable: ['purchase_order_item_id']
   },
   purchase_returns: {
     columns: ['id','user_id','vendor_id','vendor_name','vendor_gstin','state','return_number','return_date',

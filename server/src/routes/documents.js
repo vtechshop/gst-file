@@ -58,6 +58,13 @@ const DOCUMENT_TABLES = {
   proforma_invoice: { table: 'proforma_invoices', series: 'proforma_invoice',
                      items: 'proforma_invoice_items', itemsFk: 'proforma_invoice_id' },
 
+  // An order to a supplier. It joins this registry for the numbering and
+  // the duplicate check; everything a purchase order does BEYOND being a
+  // numbered document - receiving, status, conversion - lives in
+  // routes/purchase-orders.js. It moves no stock.
+  purchase_order:  { table: 'purchase_orders', series: 'purchase_order',
+                     items: 'purchase_order_items', itemsFk: 'purchase_order_id' },
+
   // The warranty register draws its own numbers (WAR-#####) so a warranty
   // can never consume a tax invoice number. It has no line items, and its
   // number column is warranty_number rather than document_number.
@@ -100,6 +107,11 @@ const DEFAULT_DOCUMENT_FORMATS = {
   // A quotation must not be mistaken for a tax document at a glance, so it
   // gets its own visible prefix rather than the generic DOC- fallback.
   proforma_invoice: 'PI-#####',
+  // A format is only a default: document_series_formats can set anything
+  // with a # run, so a tenant wanting PO/2026/09/00001 configures
+  // 'PO/2026/09/#####'. The formatter substitutes the digits and nothing
+  // else - there are no date tokens, by design.
+  purchase_order:  'PO-#####',
   warranty:        'WAR-#####'
 };
 
@@ -107,6 +119,7 @@ const DEFAULT_DOCUMENT_FORMATS = {
 // type itself so a new document type is still legible before it is listed.
 const DOCUMENT_NUMBER_LABELS = {
   proforma_invoice: 'proforma',
+  purchase_order: 'purchase order',
   bill_of_supply: 'bill of supply',
   warranty: 'warranty',
   dc_job_work: 'delivery challan',
@@ -238,8 +251,15 @@ router.post('/:type/save', asyncRoute(async (req, res) => {
   // another book by sending a different document_series.
   if (spec.series) document.document_series = spec.series;
 
+  // A table may declare columns that exist and are readable but must not be
+  // written through a generic save - a purchase order's status and its
+  // items' received_quantity are moved only by the transaction that also
+  // writes the purchase and its stock movement. Honoured here as well as in
+  // the generic router, or this path would be a way around it.
+  const immutable = new Set(TABLES[table].immutable || []);
   const allowed = TABLES[table].columns.filter(c =>
     c !== 'id' && c !== 'user_id' && c !== 'created_at' && c !== 'updated_at' &&
+    !immutable.has(c) &&
     Object.prototype.hasOwnProperty.call(document, c));
   if (!allowed.length) {
     const e = new Error('Nothing to save.'); e.status = 400; e.expose = true; throw e;
@@ -319,8 +339,10 @@ router.post('/:type/save', asyncRoute(async (req, res) => {
     if (spec.items && Array.isArray(items)) {
       await client.query(`DELETE FROM ${spec.items} WHERE ${spec.itemsFk} = $1 AND user_id = $2`,
         [row.id, req.userId]);
+      const itemImmutable = new Set(TABLES[spec.items].immutable || []);
       const itemCols = TABLES[spec.items].columns.filter(c =>
-        c !== 'id' && c !== 'user_id' && c !== 'created_at' && c !== 'updated_at' && c !== spec.itemsFk);
+        c !== 'id' && c !== 'user_id' && c !== 'created_at' && c !== 'updated_at'
+        && c !== spec.itemsFk && !itemImmutable.has(c));
       for (let i = 0; i < items.length; i++) {
         const it = items[i] || {};
         const cols = itemCols.filter(c => Object.prototype.hasOwnProperty.call(it, c));
@@ -449,3 +471,10 @@ module.exports.DEFAULT_DOCUMENT_FORMATS = DEFAULT_DOCUMENT_FORMATS;
 // transaction rather than over HTTP - one numbering implementation, two
 // callers.
 module.exports.reserveDocumentNumberOn = reserveDocumentNumberOn;
+// Shared with routes/purchase-orders.js, which cannot use the generic save
+// path: that replaces line items wholesale, which would reset the received
+// quantity recorded against every one of them. It still needs the same
+// audit trail and the same number rules, so it borrows them rather than
+// growing a second copy.
+module.exports.writeAudit = writeAudit;
+module.exports.numberLabel = numberLabel;

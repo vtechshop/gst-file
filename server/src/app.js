@@ -31,6 +31,7 @@ const verifyRoutes = require('./routes/verify');
 const warrantyRoutes = require('./routes/warranties');
 const stockRoutes = require('./routes/stock');
 const reportsRoutes = require('./routes/reports');
+const purchaseOrderRoutes = require('./routes/purchase-orders');
 const { mountGenericRoutes } = require('./routes/generic');
 const { errorHandler } = require('./middleware/errorHandler');
 
@@ -118,6 +119,9 @@ app.use('/api/invoices', invoiceRoutes);
 // namespace, so nothing about /api/invoices changes.
 app.use('/api/documents', documentRoutes);
 app.use('/api/purchases', purchaseRoutes);
+// Purchase orders. An order moves no stock; the receive path inside this
+// router writes a purchase and posts THAT through the existing ledger.
+app.use('/api/purchase-orders', purchaseOrderRoutes);
 // Shares the /api/payments prefix with the generic router's plain
 // payments-table CRUD (still used for read-only ledger listing) —
 // no collision since these routes are all multi-segment

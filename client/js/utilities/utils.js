@@ -616,6 +616,23 @@ const GST_DOCUMENT_TYPES = [
     effectiveFrom: GST_COMMENCEMENT, effectiveTo: null, status: 'active', version: 1,
     enabled: true, proven: false },
 
+  { key: 'purchase_order', label: 'Purchase Order', portalName: null,
+    rule: null, direction: 'inward', storage: 'purchase_orders', series: 'purchase_order',
+    taxable: false, affectsTurnover: false, affectsHsn: false, affectsLiability: false,
+    affectsAmendments: false,
+    supportsCancellation: true, supportsAmendment: false,
+    supportsAutoNumbering: true, supportsManualNumbering: true, docNum: null,
+    // An order placed WITH a supplier, so its direction is inward, and it
+    // is not a supply at all: nothing has moved when one is issued, no tax
+    // is due, and docNum null keeps it out of GSTR-1 Table 13 exactly as it
+    // does for a proforma. Goods arriving against it are a purchase, and it
+    // is the purchase - not this - that moves stock.
+    sections: [],
+    requires: ['document_number', 'document_date', 'party', 'line_items'],
+    masters: ['vendor', 'product'], validations: [],
+    effectiveFrom: GST_COMMENCEMENT, effectiveTo: null, status: 'active', version: 1,
+    enabled: true, proven: false },
+
   { key: 'eway_bill', label: 'E-Way Bill', portalName: 'E-Way Bill (EWB-01)',
     rule: 'Rule 138', direction: 'outward', storage: 'eway_bills', series: null,
     taxable: false, affectsTurnover: false, affectsHsn: false, affectsLiability: false,
