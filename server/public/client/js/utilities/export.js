@@ -10,10 +10,122 @@ function exportToExcel(data, sheetName, fileName) {
   showToast('Excel exported successfully!');
 }
 
+// apiFetch parses every response as JSON, and a .xlsx is not JSON. This is
+// the same request it makes — same base URL, same bearer token, same error
+// shape — for a response that is a file.
+//
+// It lives here rather than beside apiFetch in apiClient.js deliberately:
+// apiClient.js is loaded by 34 pages and export.js by 3, so putting it here
+// keeps the cache-key bump to the pages that actually export. getToken(),
+// apiErrorFrom() and API_BASE_URL are globals from apiClient.js/config.js,
+// both of which load before this file on every page that has it.
+//
+// A failure is still JSON, so it is read and thrown exactly as apiFetch
+// would; only a successful body is taken as a blob.
+async function postForBlob(path, payload) {
+  const token = getToken();
+  const headers = { 'Content-Type': 'application/json' };
+  if (token) headers.Authorization = 'Bearer ' + token;
+
+  let res;
+  try {
+    res = await fetch(API_BASE_URL + path, { method: 'POST', headers, body: JSON.stringify(payload) });
+  } catch {
+    throw {
+      message: 'Could not reach the server — check your connection and try again.',
+      code: 'network',
+      status: 0,
+      networkError: true
+    };
+  }
+  if (!res.ok) {
+    let body = null;
+    try { body = await res.json(); } catch { /* a non-JSON error page */ }
+    throw apiErrorFrom(res, body);
+  }
+  return res.blob();
+}
+
+// Writes a workbook on the server, with ExcelJS, and downloads the result.
+//
+// The browser's SheetJS build cannot bold a header or freeze a row — both
+// are Pro features, and a freeze written through the community build emits
+// no <pane> at all. So the rows are sent up as they are and the server
+// writes the file. It reads nothing and decides nothing about the values:
+// every figure in the workbook is the one computed here.
+//
+// Sheets come in the same { name, data, widths, autofilter } shape the
+// SheetJS writer below takes, plus an optional dateColumns naming the
+// headers whose YYYY-MM-DD strings should become real Excel dates.
+async function downloadExcelWorkbook(sheets, fileName) {
+  const payload = {
+    filename: fileName,
+    sheets: sheets.map(({ name, data, widths, autofilter, dateColumns }) => {
+      // Column order is the order keys first appear, which is what
+      // XLSX.utils.json_to_sheet does — so a sheet's columns are identical
+      // whichever writer produces it.
+      const headers = [];
+      const seen = new Set();
+      for (const row of data) {
+        for (const k of Object.keys(row)) {
+          if (!seen.has(k)) { seen.add(k); headers.push(k); }
+        }
+      }
+      return {
+        name,
+        headers,
+        rows: data.map(row => headers.map(h => (row[h] === undefined ? null : row[h]))),
+        widths: widths || null,
+        autofilter: !!autofilter,
+        dateColumns: dateColumns || []
+      };
+    })
+  };
+
+  const blob = await postForBlob('/reports/workbook', payload);
+
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = fileName + '.xlsx';
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  // Revoked on the next tick: revoking immediately can cancel the download
+  // in some browsers before it has read the blob.
+  setTimeout(() => URL.revokeObjectURL(url), 10000);
+  showToast('Excel exported successfully!');
+}
+
+// A sheet may carry optional presentation hints:
+//
+//   widths     [{ wch }]  column widths
+//   autofilter true       filter dropdowns across the header row
+//
+// Both are ignored when absent, so the sheets that were passing
+// { name, data } before this existed are written exactly as they were.
+//
+// Deliberately NOT offered here, because this build cannot do them and a
+// silently ignored option is worse than none:
+//
+//   bold header   cell styling is a SheetJS Pro feature; the community
+//                 build drops any style written to a cell.
+//   freeze panes  checked against the loaded build (0.20.3) in all three
+//                 documented forms — '!freeze' as a string, '!freeze' as
+//                 {xSplit,ySplit}, and '!views' [{state:'frozen'}]. None
+//                 emits a <pane> element into the sheet XML.
+//
+// Both would need the workbook to be generated with ExcelJS instead,
+// which is a server-side change to all five sheets rather than a hint
+// passed to this writer.
 function exportMultiSheetExcel(sheets, fileName) {
   const wb = XLSX.utils.book_new();
-  sheets.forEach(({ data, name }) => {
+  sheets.forEach(({ data, name, widths, autofilter }) => {
     const ws = XLSX.utils.json_to_sheet(data);
+    if (widths) ws['!cols'] = widths;
+    if (autofilter && data.length) {
+      ws['!autofilter'] = { ref: XLSX.utils.encode_range(XLSX.utils.decode_range(ws['!ref'])) };
+    }
     XLSX.utils.book_append_sheet(wb, ws, name);
   });
   XLSX.writeFile(wb, fileName + '.xlsx');

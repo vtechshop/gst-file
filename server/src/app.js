@@ -30,6 +30,7 @@ const gstVerifyRoutes = require('./routes/gst-verify');
 const verifyRoutes = require('./routes/verify');
 const warrantyRoutes = require('./routes/warranties');
 const stockRoutes = require('./routes/stock');
+const reportsRoutes = require('./routes/reports');
 const { mountGenericRoutes } = require('./routes/generic');
 const { errorHandler } = require('./middleware/errorHandler');
 
@@ -75,7 +76,15 @@ app.use(cors({
     callback(new Error('Origin not allowed: ' + origin));
   }
 }));
-app.use(express.json());
+// One route sends a whole workbook's rows up to be written as .xlsx, which
+// is legitimately larger than the 100kb express.json() allows by default.
+// That route parses its own body with its own limit (see routes/reports.js),
+// so the global parser has to step aside for it — raising the limit here
+// instead would hand every other endpoint in the API the same 25mb budget
+// for no reason.
+const parseJson = express.json();
+app.use((req, res, next) =>
+  (req.path === '/api/reports/workbook' ? next() : parseJson(req, res, next)));
 
 // Gentle, general defense-in-depth across the whole API. A much tighter
 // limit specifically on login/register/forgot-password (the genuinely
@@ -126,6 +135,9 @@ app.use('/api/uploads', uploadRoutes);
 // to req.userId. Document-driven stock still moves in invoices/purchases/
 // sales-returns; nothing of that is duplicated here.
 app.use('/api/stock', stockRoutes);
+// Report exports assembled in Postgres rather than the browser — see
+// routes/reports.js. requireAuth'd inside the router, like stockRoutes.
+app.use('/api/reports', reportsRoutes);
 // Per-company proxy — see routes/product-sync.js header. requireAuth'd
 // internally (every sub-route), so mounted the same bare way as
 // uploadRoutes above.

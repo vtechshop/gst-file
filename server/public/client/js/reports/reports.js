@@ -618,7 +618,122 @@ function renderHSNReport() {
     </tr>`).join('');
 }
 
-function exportFullGSTR1() {
+// ── Complete Invoice Details (sheet 5) ──────────────────────────────
+//
+// One row per invoice LINE, B2B and B2C together, for the selected
+// period. The rows come from GET /api/reports/invoice-details, which does
+// the join in Postgres — not from repB2B/repB2C, and not from anything
+// the page happens to be displaying. That is the whole point: this sheet
+// must contain every matching invoice whether or not the browser ever
+// loaded it, so it cannot be built from the four existing arrays.
+//
+// Place of Supply and Round Off are DERIVED here using the definitions
+// that already exist in this codebase, rather than second copies:
+//   POS       gstr1PosRegistered / getStateCode — the filing's own rule.
+//   Round Off total - (taxable + gst). There is no round_off column; see
+//             the note above gstr1TotalMatches() in gstr1-export.js.
+// One width per column, in column order. Qty is 10 rather than the 9 it
+// reads best at: ExcelJS treats a width of exactly 9 as Excel's own default
+// and omits it, so that one column would arrive unsized while every other
+// carried the width asked for.
+const COMPLETE_DETAIL_WIDTHS = [
+  16, 12, 10, 26, 18, 14, 16, 16, 8, 34, 16, 16, 34, 14, 8, 12,
+  6, 30, 12, 14, 10, 8, 12, 10, 8, 12, 12, 12, 10, 14, 14,
+  16, 12, 12, 12, 10, 10, 14, 14, 12, 12, 12
+].map(wch => ({ wch }));
+
+function completeInvoicePlaceOfSupply(row) {
+  const gstin = (row.gst_number || '').trim();
+  // Registered customer: the customer's own GSTIN decides POS. Only fall
+  // back to the state for a genuinely unregistered one.
+  if (gstin) return gstin.toUpperCase().slice(0, 2);
+  const code = getStateCode(row.state);
+  return code === '99' ? '' : code;
+}
+
+function buildCompleteInvoiceRows(rows) {
+  // Sr No restarts per invoice, so a reader can see "line 3 of 5" rather
+  // than a running number across the whole sheet.
+  const seen = new Map();
+  return rows.map(r => {
+    const key = r.category + ':' + r.invoice_number;
+    const srNo = (seen.get(key) || 0) + 1;
+    seen.set(key, srNo);
+
+    const invTaxable = +r.inv_taxable_amount || 0;
+    const invGst = +r.inv_gst_amount || 0;
+    const grand = +r.inv_total_amount || 0;
+    const roundOff = round2(grand - (invTaxable + invGst));
+
+    // Kept as the plain YYYY-MM-DD the API sends, and turned into a real
+    // Excel date by the writer. A JS Date here would be serialised to UTC
+    // on its way to the server and could land the invoice on the previous
+    // day; the string cannot drift, and 'Invoice Date' is declared in
+    // dateColumns so the cell is still a date, not text.
+    const invoiceDate = /^\d{4}-\d{2}-\d{2}$/.test(String(r.invoice_date || ''))
+      ? String(r.invoice_date) : '';
+
+    return {
+      'Invoice Number': r.invoice_number || '',
+      'Invoice Date': invoiceDate,
+      'Category': r.category,
+      'Customer Name': r.customer_name || '',
+      'Customer GSTIN': r.gst_number || '',
+      'Customer Phone': r.phone || '',
+      'Customer State': r.state || '',
+      'Customer District': r.district || '',
+      'Place of Supply': completeInvoicePlaceOfSupply(r),
+      'Customer Address': r.address || '',
+      'Ship-To State': r.shipping_state || '',
+      'Ship-To District': r.shipping_district || '',
+      'Ship-To Address': r.shipping_address || '',
+      'GST Category': r.gst_category || '',
+      'Reverse Charge': r.reverse_charge ? 'Yes' : 'No',
+      'Supply Type': r.supply_type || '',
+      'Sr No': srNo,
+      'Product Name': r.product_name || '',
+      'HSN/SAC': r.hsn_code || '',
+      'SKU': r.sku || '',
+      'Qty': +r.quantity || 0,
+      'Unit': r.unit || '',
+      'Rate': +r.rate || 0,
+      'Discount %': +r.discount_percentage || 0,
+      'GST %': +r.gst_percentage || 0,
+      'CGST': +r.cgst || 0,
+      'SGST': +r.sgst || 0,
+      'IGST': +r.igst || 0,
+      'Cess': +r.cess_amount || 0,
+      'Taxable Value': +r.taxable_value || 0,
+      'Line Total': +r.total_amount || 0,
+      'Invoice Taxable Amount': invTaxable,
+      'Invoice CGST': +r.inv_cgst || 0,
+      'Invoice SGST': +r.inv_sgst || 0,
+      'Invoice IGST': +r.inv_igst || 0,
+      'Invoice Cess': +r.inv_cess_amount || 0,
+      'Round Off': roundOff,
+      'Grand Total': grand,
+      'Payment Status': r.payment_status || '',
+      'Amount Paid': +r.amount_paid || 0,
+      'Invoice Source': r.invoice_source || '',
+      'Export Type': r.export_type || ''
+    };
+  });
+}
+
+// Fetches the detail rows for the period currently selected on the page,
+// plus the Category and Sort controls beside the export button.
+async function fetchCompleteInvoiceDetails() {
+  const period = document.getElementById('reportMonth')?.value || 'current';
+  const { start, end } = getReportDateRange(period);
+  const category = document.getElementById('repDetailCategory')?.value || 'all';
+  const sort = document.getElementById('repDetailSort')?.value || 'asc';
+  const qs = new URLSearchParams({ start, end, category, sort });
+  return apiFetch('/reports/invoice-details?' + qs.toString());
+}
+
+async function exportFullGSTR1() {
+  // The four existing sheets are built exactly as before, from the arrays
+  // this page already holds. Nothing below changes them.
   const sheets = [
     {
       name: 'B2B Invoices',
@@ -637,7 +752,53 @@ function exportFullGSTR1() {
       data: repB2CHSN.map((r,i) => ({ 'S.No': i+1, 'HSN': r.hsn_code, 'Product': r.product_name, 'Type': r.type, 'Taxable': r.taxable_value, 'GST%': r.gst_percentage, 'IGST': r.igst, 'CGST': r.cgst, 'SGST': r.sgst, 'Total GST': r.total_gst, 'Total Inv': r.total_invoice_value }))
     }
   ];
-  exportMultiSheetExcel(sheets, 'GSTR1_Complete_Report');
+
+  // Sheet 5 is the only one that needs the server. If that read fails the
+  // workbook is not written at all: a GSTR-1 export that quietly came back
+  // with four sheets instead of five looks exactly like a period with no
+  // invoices, and the person filing cannot tell the difference.
+  let detail;
+  try {
+    detail = await fetchCompleteInvoiceDetails();
+  } catch (err) {
+    handleApiError(err, 'loading the complete invoice details');
+    return;
+  }
+
+  const detailRows = buildCompleteInvoiceRows(detail.rows);
+
+  if (!detailRows.length) {
+    showToast('No invoices found for the selected period/category.', 'warning');
+    return;
+  }
+
+  // What the database counted, against what is about to be written. These
+  // cannot disagree unless something dropped rows on the way here, which
+  // is worth saying out loud rather than shipping a short workbook.
+  const writtenInvoices = new Set(detailRows.map(r => r['Category'] + ':' + r['Invoice Number'])).size;
+  if (writtenInvoices !== detail.invoice_count || detailRows.length !== detail.item_count) {
+    showToast(`Export mismatch: database has ${detail.invoice_count} invoices / `
+      + `${detail.item_count} lines, sheet has ${writtenInvoices} / ${detailRows.length}. `
+      + 'Nothing was exported.', 'error');
+    return;
+  }
+
+  sheets.push({
+    name: 'Complete Invoice Details',
+    data: detailRows,
+    widths: COMPLETE_DETAIL_WIDTHS,
+    autofilter: true,
+    dateColumns: ['Invoice Date']
+  });
+
+  // Written on the server with ExcelJS: a bold header row and a frozen
+  // first row are the two things the browser's SheetJS build cannot do.
+  // The rows above are unchanged — the server formats them, nothing else.
+  try {
+    await downloadExcelWorkbook(sheets, 'GSTR1_Complete_Report');
+  } catch (err) {
+    handleApiError(err, 'building the GSTR-1 workbook');
+  }
 }
 
 function exportSummaryPDF() {

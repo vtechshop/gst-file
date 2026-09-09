@@ -18,9 +18,9 @@
   <script src="client/js/utilities/utils.js?v=33"></script>
   <script src="client/js/core/search.js?v=29"></script>
   <script src="client/js/pages/profile.js?v=39"></script>
-  <script src="client/js/utilities/export.js?v=29"></script>
+  <script src="client/js/utilities/export.js?v=30"></script>
   <script src="client/js/utilities/future.js?v=29"></script>
-  <script src="client/js/reports/reports.js?v=29"></script>
+  <script src="client/js/reports/reports.js?v=30"></script>
   <script src="client/js/gst/gstr1-export.js?v=29"></script>
 </head>
 <body>
@@ -141,6 +141,19 @@
         </div>
         <div class="card-body d-flex gap-12 flex-wrap">
           <button type="button" class="btn btn-primary" onclick="exportGSTR1JSON()" title="Generates the GSTR-1 return in GST portal JSON format from your saved invoices"><i class="fas fa-file-signature"></i> Generate Return</button>
+          <!-- Period comes from the Month picker in the top bar — the one
+               control this page already has. Only the two settings that
+               did not exist are added here, beside the button they
+               affect. -->
+          <select class="form-control toolbar-select" id="repDetailCategory" aria-label="Category for the Complete Invoice Details sheet" title="Category for the Complete Invoice Details sheet">
+            <option value="all">All (B2B + B2C)</option>
+            <option value="b2b">B2B only</option>
+            <option value="b2c">B2C only</option>
+          </select>
+          <select class="form-control toolbar-select" id="repDetailSort" aria-label="Sort order for the Complete Invoice Details sheet" title="Sort order for the Complete Invoice Details sheet">
+            <option value="asc">Oldest &rarr; Newest</option>
+            <option value="desc">Newest &rarr; Oldest</option>
+          </select>
           <button type="button" class="btn btn-success" onclick="exportFullGSTR1()"><i class="fas fa-file-excel"></i> Export Full GSTR-1 (Excel)</button>
           <button type="button" class="btn btn-danger"  onclick="exportSummaryPDF()"><i class="fas fa-file-pdf"></i> Export Summary (PDF)</button>
           <button type="button" class="btn btn-primary" onclick="exportB2BExcel(repB2B)"><i class="fas fa-file-excel"></i> B2B Excel</button>
