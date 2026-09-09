@@ -229,8 +229,14 @@ test('X9 the Proforma PDF and the Invoice export flow are untouched', () => {
 });
 
 test('X10 the changed script carries a new cache key', () => {
-  assert.ok(PF_HTML.includes('client/js/pages/proforma-entry.js?v=40'),
-    'proforma-entry.js must be referenced at v=40');
+  // At least v=40: that is the key this change moved it to, and a later
+  // change to the same file must be free to move it on again. Pinning the
+  // exact number made every future edit of proforma-entry.js fail here,
+  // which says nothing about whether THIS change bumped it.
+  const pfEntry = PF_HTML.match(/client\/js\/pages\/proforma-entry\.js\?v=(\d+)/);
+  assert.ok(pfEntry, 'proforma-entry.js must be referenced with a cache key');
+  assert.ok(Number(pfEntry[1]) >= 40,
+    `proforma-entry.js must be referenced at v=40 or later, found v=${pfEntry[1]}`);
   // and nothing unrelated was bumped along with it. proforma-pdf.js is pinned
   // by proforma-roundoff.test.js instead, which is the change that moved it —
   // asserting it here too would make one asset's version the business of two

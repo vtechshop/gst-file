@@ -273,6 +273,15 @@ async function saveProforma() {
     ...buildProformaExport()
   };
 
+  // Blank means "issue me one" only while the proforma is still new. On one
+  // that already has a number, an empty field is a mistake, and reserving a
+  // fresh number for it would silently renumber a saved offer the customer
+  // may already be holding. So this is checked BEFORE the reservation below.
+  if (proformaEditId && !document_.document_number) {
+    showToast('Proforma number is required.', 'error');
+    return;
+  }
+
   // document_number is NOT NULL, and the save route does not invent one -
   // numbering is a separate, locked step so two saves cannot take the same
   // number. Left blank on the form means auto, so reserve from the proforma
@@ -292,7 +301,6 @@ async function saveProforma() {
     showToast('Could not issue a proforma number.', 'error');
     return;
   }
-
   const btn = document.getElementById('pfSaveBtn');
   if (btn) btn.disabled = true;
   try {
@@ -303,8 +311,13 @@ async function saveProforma() {
       body: JSON.stringify({ editId: proformaEditId || undefined, document: document_, items })
     });
     showToast(proformaEditId ? 'Proforma updated.' : 'Proforma saved.', 'success');
-    if (res && res.id) proformaEditId = res.id;
-    if (res && res.document_number) setProformaValue('pfNumber', res.document_number);
+    // The route answers { document, items }. This read the fields off the
+    // envelope instead of off the document, so both were undefined: after
+    // saving a NEW proforma the page never learned its id, and pressing
+    // Save again wrote a second row instead of updating the first.
+    const saved = res && res.document;
+    if (saved && saved.id) proformaEditId = saved.id;
+    if (saved && saved.document_number) setProformaValue('pfNumber', saved.document_number);
   } catch (err) {
     handleApiError(err, 'Could not save the proforma');
   } finally {
@@ -360,8 +373,11 @@ async function loadProformaForEdit(id) {
   populateDistrictList('pfDistrictList', rec.state || '');
   renderProformaValidityNote();
 
-  const title = document.getElementById('pfNumber');
-  if (title) title.readOnly = true;   // the number is issued once
+  // The number stays editable. It used to be locked here on the grounds
+  // that it is "issued once", but a proforma is an offer, not a filed tax
+  // document: correcting PI-00002 to PI-00025 is an ordinary edit of the
+  // same offer. The server keeps it honest — it refuses a blank number and
+  // refuses one another proforma in this book already has.
 }
 
 

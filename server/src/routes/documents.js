@@ -103,6 +103,22 @@ const DEFAULT_DOCUMENT_FORMATS = {
   warranty:        'WAR-#####'
 };
 
+// What to call the number in a message a person reads. Falls back to the
+// type itself so a new document type is still legible before it is listed.
+const DOCUMENT_NUMBER_LABELS = {
+  proforma_invoice: 'proforma',
+  bill_of_supply: 'bill of supply',
+  warranty: 'warranty',
+  dc_job_work: 'delivery challan',
+  dc_supply_on_approval: 'delivery challan',
+  dc_liquid_gas: 'delivery challan',
+  dc_other: 'delivery challan'
+};
+function numberLabel(type, capitalise) {
+  const label = DOCUMENT_NUMBER_LABELS[type] || String(type || 'document').replace(/_/g, ' ');
+  return capitalise ? label.charAt(0).toUpperCase() + label.slice(1) : label;
+}
+
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 function docSpec(type) {
@@ -232,6 +248,48 @@ router.post('/:type/save', asyncRoute(async (req, res) => {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
+
+    // ── The document number ──
+    //
+    // A number can be typed, and on an existing document it can be changed:
+    // a proforma saved as PI-00002 and later corrected to PI-00025 is the
+    // same offer, so it stays the same row. Two things have to hold for
+    // that to be safe, and neither did before:
+    //
+    //   - it cannot be blank. The column is NOT NULL, but "   " satisfies
+    //     that and leaves a document nobody can find.
+    //   - it cannot be a number another document in the same book already
+    //     has. Without this, renaming one document onto another's number
+    //     silently produced two rows claiming to be the same document.
+    //
+    // Checked inside the transaction, and the book is scoped by user_id and
+    // document_series exactly as reserveDocumentNumberOn() scopes it, so
+    // another tenant using the same number is not a conflict.
+    const numberCol = spec.numberCol || 'document_number';
+    if (Object.prototype.hasOwnProperty.call(document, numberCol)) {
+      const number = String(document[numberCol] == null ? '' : document[numberCol]).trim();
+      if (!number) {
+        const e = new Error(`A ${numberLabel(type)} number is required.`);
+        e.status = 400; e.expose = true; throw e;
+      }
+      // Written back trimmed, so a stray space cannot make two numbers that
+      // look identical fail to match each other later.
+      document[numberCol] = number;
+
+      // The row being edited is not its own duplicate: saving PI-00002
+      // unchanged has to keep working.
+      const params = [req.userId, number];
+      let where = `user_id = $1 AND UPPER(${numberCol}) = UPPER($2)`;
+      if (spec.series) { params.push(spec.series); where += ` AND document_series = $${params.length}`; }
+      if (editId) { params.push(editId); where += ` AND id <> $${params.length}`; }
+      const { rows: clash } = await client.query(
+        `SELECT 1 FROM ${table} WHERE ${where} LIMIT 1`, params);
+      if (clash.length) {
+        const e = new Error(`${numberLabel(type, true)} number already exists.`);
+        e.status = 409; e.expose = true; throw e;
+      }
+    }
+
     let row;
     if (editId) {
       const setClause = allowed.map((c, i) => `${c} = $${i + 1}`).join(',');

@@ -244,7 +244,9 @@ test('P11 the changed asset carries one new cache key on every page that loads i
   // and nothing unrelated moved with it
   assert.ok(rd('invoice.html').includes('client/js/utilities/utils.js?v=33'));
   assert.ok(rd('proforma.html').includes('client/js/pages/proforma-pdf.js?v=41'));
-  assert.ok(rd('proforma.html').includes('client/js/pages/proforma-entry.js?v=40'));
+  // Checked as "still versioned" rather than pinned: proforma-entry.js is
+  // not this change's asset, and later work on it moves the key.
+  assert.match(rd('proforma.html'), /client\/js\/pages\/proforma-entry\.js\?v=\d+/);
 });
 
 test('P17 the closing block is a bordered grid, bottom-anchored', () => {
