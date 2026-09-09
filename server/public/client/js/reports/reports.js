@@ -637,14 +637,12 @@ function renderHSNReport() {
 // and omits it, so that one column would arrive unsized while every other
 // carried the width asked for.
 const COMPLETE_DETAIL_WIDTHS = [
-  // Invoice Number, Date, Category, Customer Name, GSTIN, Phone, State,
-  // District, Place of Supply, Customer Address
-  16, 12, 10, 26, 18, 14, 16, 16, 8, 34,
-  // Product Name, HSN/SAC, GST %, CGST, SGST, IGST, Taxable Value, Line Total
-  30, 12, 8, 12, 12, 12, 14, 14,
-  // Invoice Taxable Amount, Invoice CGST, Invoice SGST, Invoice IGST,
-  // Grand Total, Amount Paid
-  16, 12, 12, 12, 14, 12
+  // Sl.no., Date, Bill Number, GST NUMBER, HSN code, State, Bill Address,
+  // Item, Amount, GST%, SGST, CGST, IGST, Total Rs.
+  //
+  // HSN code and Item are wider than a single value needs: both can hold
+  // every distinct value on a multi-product invoice.
+  7, 12, 16, 18, 22, 16, 34, 34, 14, 14, 12, 12, 12, 14
 ].map(wch => ({ wch }));
 
 function completeInvoicePlaceOfSupply(row) {
@@ -656,57 +654,99 @@ function completeInvoicePlaceOfSupply(row) {
   return code === '99' ? '' : code;
 }
 
+// The distinct rates on an invoice, ascending, as "5%, 18%".
+//
+// Rates are DECIMAL(5,2) in the database, so 18.00 must read as 18 and
+// 2.50 as 2.5 - a column of "18.00%" would be noise. Sorted numerically,
+// not as text, or 5 would follow 18.
+function formatGstRateList(rates) {
+  return [...rates]
+    .sort((a, b) => a - b)
+    .map(v => String(Math.round(v * 100) / 100) + '%')
+    .join(', ');
+}
+
+// One row per INVOICE, in the fourteen columns the finished sheet shows.
+//
+// The endpoint returns one row per invoice LINE, because that is what the
+// join produces and what its counts are checked against. This sheet is an
+// invoice-level document, so the lines of an invoice collapse into the one
+// row they all describe.
+//
+// Grouped by invoice id, not by invoice number: numbers are unique per
+// (user, invoice_source, number), so two invoices raised under different
+// sources may legitimately share one, and grouping on the number would
+// merge two real invoices into a single row.
+//
+// Where a value belongs to the invoice it is taken from the invoice
+// (Amount, GST%, SGST, CGST, IGST, Total Rs. are the stored header
+// figures, not a line's, and not recomputed here). Where a value belongs
+// to the lines, every distinct one is listed so nothing is dropped:
+//
+//   HSN code  every distinct HSN on the invoice, comma separated
+//   Item      every distinct product name, separated by " | " because a
+//             product name may itself contain a comma
+//
+// GST% is a DISPLAY SUMMARY of the rates actually on the invoice's lines,
+// not the invoice header's single gst_percentage. An invoice really can
+// carry products at 5% and 18% at once, and one number cannot say so: it
+// reads "5%, 18%". A single-rate invoice reads "18%".
+//
+// That makes the cell text rather than a number, which is the price of
+// being able to state two rates in one cell. It is a label only - no GST
+// amount is derived from it. SGST, CGST, IGST, Amount and Total Rs. remain
+// the stored invoice figures, untouched and unrecalculated.
 function buildCompleteInvoiceRows(rows) {
-  return rows.map(r => {
-    const invTaxable = +r.inv_taxable_amount || 0;
-    const grand = +r.inv_total_amount || 0;
+  const byInvoice = new Map();
+  for (const r of rows) {
+    const key = r.invoice_id || (r.category + ':' + r.invoice_number);
+    let g = byInvoice.get(key);
+    // Insertion order is the order the server sorted by, so the sheet keeps
+    // the Oldest/Newest choice the user made.
+    if (!g) { g = { first: r, hsn: [], items: [], rates: new Set() }; byInvoice.set(key, g); }
+    const hsn = String(r.hsn_code == null ? '' : r.hsn_code).trim();
+    if (hsn && !g.hsn.includes(hsn)) g.hsn.push(hsn);
+    const item = String(r.product_name == null ? '' : r.product_name).trim();
+    if (item && !g.items.includes(item)) g.items.push(item);
+    // Read from the LINE, never from the invoice header: the header cannot
+    // describe an invoice whose lines differ.
+    if (r.gst_percentage != null && r.gst_percentage !== '' && Number.isFinite(+r.gst_percentage)) {
+      g.rates.add(+r.gst_percentage);
+    }
+  }
+
+  let slNo = 0;
+  const out = [...byInvoice.values()].map(g => {
+    const r = g.first;
+    slNo++;
 
     // Kept as the plain YYYY-MM-DD the API sends, and turned into a real
     // Excel date by the writer. A JS Date here would be serialised to UTC
     // on its way to the server and could land the invoice on the previous
-    // day; the string cannot drift, and 'Invoice Date' is declared in
-    // dateColumns so the cell is still a date, not text.
+    // day; the string cannot drift, and 'Date' is declared in dateColumns
+    // so the cell is still a date, not text.
     const invoiceDate = /^\d{4}-\d{2}-\d{2}$/.test(String(r.invoice_date || ''))
       ? String(r.invoice_date) : '';
 
     return {
-      'Invoice Number': r.invoice_number || '',
-      'Invoice Date': invoiceDate,
-      'Category': r.category,
-      'Customer Name': r.customer_name || '',
-      'Customer GSTIN': r.gst_number || '',
-      'Customer Phone': r.phone || '',
-      'Customer State': r.state || '',
-      'Customer District': r.district || '',
-      'Place of Supply': completeInvoicePlaceOfSupply(r),
-      'Customer Address': r.address || '',
-      // Eighteen fields the query still returns are deliberately not
-      // columns here: Ship-To State/District/Address, GST Category,
-      // Reverse Charge, Supply Type, Sr No, SKU, Qty, Unit, Rate,
-      // Discount %, Cess, Invoice Cess, Round Off, Payment Status,
-      // Invoice Source and Export Type. The sheet is for tracing money to
-      // an invoice line, and those are read elsewhere. Nothing was removed
-      // from the query, so restoring any of them is one line here.
-      //
-      // Dropping Qty, Rate and Sr No removes COLUMNS, never rows: an
-      // invoice with five products still contributes five lines, each with
-      // its own Product Name, HSN, taxable value and line total.
-      'Product Name': r.product_name || '',
-      'HSN/SAC': r.hsn_code || '',
-      'GST %': +r.gst_percentage || 0,
-      'CGST': +r.cgst || 0,
-      'SGST': +r.sgst || 0,
-      'IGST': +r.igst || 0,
-      'Taxable Value': +r.taxable_value || 0,
-      'Line Total': +r.total_amount || 0,
-      'Invoice Taxable Amount': invTaxable,
-      'Invoice CGST': +r.inv_cgst || 0,
-      'Invoice SGST': +r.inv_sgst || 0,
-      'Invoice IGST': +r.inv_igst || 0,
-      'Grand Total': grand,
-      'Amount Paid': +r.amount_paid || 0
+      'Sl.no.': slNo,
+      'Date': invoiceDate,
+      'Bill Number': r.invoice_number || '',
+      'GST NUMBER': r.gst_number || '',
+      'HSN code': g.hsn.join(', '),
+      'State': r.state || '',
+      'Bill Address': r.address || '',
+      'Item': g.items.join(' | '),
+      'Amount': +r.inv_taxable_amount || 0,
+      'GST%': formatGstRateList(g.rates),
+      'SGST': +r.inv_sgst || 0,
+      'CGST': +r.inv_cgst || 0,
+      'IGST': +r.inv_igst || 0,
+      'Total Rs.': +r.inv_total_amount || 0
     };
   });
+
+  return out;
 }
 
 // Fetches the detail rows for the period currently selected on the page,
@@ -761,13 +801,14 @@ async function exportFullGSTR1() {
     return;
   }
 
-  // What the database counted, against what is about to be written. These
-  // cannot disagree unless something dropped rows on the way here, which
-  // is worth saying out loud rather than shipping a short workbook.
-  const writtenInvoices = new Set(detailRows.map(r => r['Category'] + ':' + r['Invoice Number'])).size;
-  if (writtenInvoices !== detail.invoice_count || detailRows.length !== detail.item_count) {
-    showToast(`Export mismatch: database has ${detail.invoice_count} invoices / `
-      + `${detail.item_count} lines, sheet has ${writtenInvoices} / ${detailRows.length}. `
+  // What the database counted, against what is about to be written. The
+  // sheet is one row per invoice now, so the row count must equal the
+  // invoice count exactly — one short means an invoice was dropped on the
+  // way here, one over means one was written twice. Either is worth
+  // refusing to export rather than shipping a workbook nobody can trust.
+  if (detailRows.length !== detail.invoice_count) {
+    showToast(`Export mismatch: the database has ${detail.invoice_count} invoices `
+      + `for this period but the sheet has ${detailRows.length} rows. `
       + 'Nothing was exported.', 'error');
     return;
   }
@@ -777,7 +818,7 @@ async function exportFullGSTR1() {
     data: detailRows,
     widths: COMPLETE_DETAIL_WIDTHS,
     autofilter: true,
-    dateColumns: ['Invoice Date']
+    dateColumns: ['Date']
   });
 
   // Written on the server with ExcelJS: a bold header row and a frozen

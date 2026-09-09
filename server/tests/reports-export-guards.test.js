@@ -119,9 +119,11 @@ test('G10 the new sheet is fetched from the server, not from page state', () => 
 test('G11 the export refuses to write a workbook it cannot vouch for', () => {
   // A failed read aborts rather than silently writing four sheets.
   assert.match(REPORTS_JS, /handleApiError\(err, 'loading the complete invoice details'\)/);
-  // Counts are checked against what the database reported.
+  // The row count is checked against what the database reported. The sheet
+  // is one row per invoice, so it is invoice_count that must match — the
+  // line count no longer describes the sheet's shape.
   assert.match(REPORTS_JS, /detail\.invoice_count/);
-  assert.match(REPORTS_JS, /detail\.item_count/);
+  assert.match(REPORTS_JS, /if \(detailRows\.length !== detail\.invoice_count\)/);
   assert.match(REPORTS_JS, /No invoices found for the selected period\/category\./);
 });
 
@@ -176,7 +178,7 @@ test('G17 the workbook route formats rows, it does not compute them', () => {
   // The date column crosses as YYYY-MM-DD and becomes a UTC-midnight date,
   // so no zone can move an invoice onto the day before.
   assert.match(ROUTE, /new Date\(Date\.UTC\(\+m\[1\], \+m\[2\] - 1, \+m\[3\]\)\)/);
-  assert.match(REPORTS_JS, /dateColumns: \['Invoice Date'\]/);
+  assert.match(REPORTS_JS, /dateColumns: \['Date'\]/);
   assert.equal(/new Date\(y, m - 1, d\)/.test(REPORTS_JS), false,
     'a local Date must not be built for transport — it serialises to UTC');
 });
@@ -186,7 +188,7 @@ test('G18 every detail column is sized, with no width ExcelJS would drop', () =>
   assert.ok(widths, 'the width table must exist');
   const values = widths[1].replace(/\/\/[^\n]*/g, '').split(',')
     .map(v => Number(v.trim())).filter(v => Number.isFinite(v));
-  assert.strictEqual(values.length, 24, 'one width per column');
+  assert.strictEqual(values.length, 14, 'one width per column');
   assert.ok(values.every(v => v >= 6), 'no column may be unusably narrow');
   // A width of exactly 9 is Excel's own default, and ExcelJS emits no
   // customWidth for it — that column arrives unsized while every other
@@ -195,7 +197,7 @@ test('G18 every detail column is sized, with no width ExcelJS would drop', () =>
     'a width of exactly 9 is dropped by ExcelJS — use 8.43, 9.14 or 10');
 });
 
-test('G19 the detail sheet carries exactly the 24 agreed columns', () => {
+test('G19 the detail sheet carries exactly the 14 agreed columns', () => {
   // Read straight off the object buildCompleteInvoiceRows returns, which is
   // what decides the sheet's columns and their order.
   const body = REPORTS_JS.slice(
@@ -204,32 +206,100 @@ test('G19 the detail sheet carries exactly the 24 agreed columns', () => {
   const keys = [...body.matchAll(/^\s{6}'([^']+)':/gm)].map(m => m[1]);
 
   const EXPECTED = [
-    'Invoice Number', 'Invoice Date', 'Category', 'Customer Name', 'Customer GSTIN',
-    'Customer Phone', 'Customer State', 'Customer District', 'Place of Supply',
-    'Customer Address', 'Product Name', 'HSN/SAC', 'GST %', 'CGST', 'SGST', 'IGST',
-    'Taxable Value', 'Line Total', 'Invoice Taxable Amount', 'Invoice CGST',
-    'Invoice SGST', 'Invoice IGST', 'Grand Total', 'Amount Paid'
+    'Sl.no.', 'Date', 'Bill Number', 'GST NUMBER', 'HSN code', 'State',
+    'Bill Address', 'Item', 'Amount', 'GST%', 'SGST', 'CGST', 'IGST', 'Total Rs.'
   ];
   assert.deepStrictEqual(keys, EXPECTED, 'the column set or its order changed');
-  assert.strictEqual(keys.length, 24);
+  assert.strictEqual(keys.length, 14);
 });
 
-test('G20 the eighteen removed columns are gone, and the rows are not', () => {
+test('G20 no column outside the final fourteen is emitted', () => {
   const body = REPORTS_JS.slice(
     REPORTS_JS.indexOf('function buildCompleteInvoiceRows'),
-    REPORTS_JS.indexOf('async function fetchCompleteInvoiceDetails'));
-  for (const gone of ['Ship-To State', 'Ship-To District', 'Ship-To Address',
-    'GST Category', 'Reverse Charge', 'Supply Type', 'Sr No', 'SKU', 'Qty', 'Unit',
-    'Rate', 'Discount %', 'Cess', 'Invoice Cess', 'Round Off', 'Payment Status',
-    'Invoice Source', 'Export Type']) {
+    REPORTS_JS.indexOf('// Fetches the detail rows for the period currently selected'));
+  for (const gone of ['Invoice Number', 'Invoice Date', 'Category', 'Customer Name',
+    'Customer Phone', 'Customer District', 'Place of Supply', 'Customer Address',
+    'Customer GSTIN', 'Customer State', 'Product Name', 'HSN/SAC', 'SKU', 'Qty',
+    'Unit', 'Rate', 'Discount %', 'Cess', 'Taxable Value', 'Line Total',
+    'Invoice Taxable Amount', 'Invoice CGST', 'Invoice SGST', 'Invoice IGST',
+    'Invoice Cess', 'Round Off', 'Grand Total', 'Payment Status', 'Amount Paid',
+    'Invoice Source', 'Export Type', 'Ship-To State', 'Ship-To District',
+    'Ship-To Address', 'GST Category', 'Reverse Charge', 'Supply Type', 'Sr No']) {
     assert.equal(body.includes(`'${gone}':`), false,
       `${gone} must not be emitted as a column`);
   }
-  // Dropping Sr No removes a column, never a line: the builder still maps
-  // one output row per input row, with nothing filtered.
-  assert.match(body, /return rows\.map\(r => \{/);
-  assert.equal(/\.filter\(|\.slice\(|\.reduce\(/.test(body), false,
-    'the row builder must not drop or fold any line');
+});
+
+test('G21 lines are grouped into one row per invoice, by invoice id', () => {
+  const body = REPORTS_JS.slice(
+    REPORTS_JS.indexOf('function buildCompleteInvoiceRows'),
+    REPORTS_JS.indexOf('// Fetches the detail rows for the period currently selected'));
+  assert.match(body, /const byInvoice = new Map\(\);/);
+  assert.match(body, /\[\.\.\.byInvoice\.values\(\)\]\.map/);
+  // Keyed on the invoice's own id: numbers are unique per
+  // (user, invoice_source, number), so two invoices can share one.
+  assert.match(body, /r\.invoice_id \|\| \(r\.category \+ ':' \+ r\.invoice_number\)/);
+  assert.match(ROUTE, /inv\.id AS invoice_id/);
+  assert.match(ROUTE, /new Set\(rows\.map\(r => r\.invoice_id\)\)/);
+  assert.match(REPORTS_JS, /if \(detailRows\.length !== detail\.invoice_count\)/);
+});
+
+test('G22 multi-product invoices keep every HSN and every item name', () => {
+  const body = REPORTS_JS.slice(
+    REPORTS_JS.indexOf('function buildCompleteInvoiceRows'),
+    REPORTS_JS.indexOf('// Fetches the detail rows for the period currently selected'));
+  // Collected across all of an invoice's lines, not taken from the first.
+  assert.match(body, /if \(hsn && !g\.hsn\.includes\(hsn\)\) g\.hsn\.push\(hsn\)/);
+  assert.match(body, /if \(item && !g\.items\.includes\(item\)\) g\.items\.push\(item\)/);
+  assert.match(body, /'HSN code': g\.hsn\.join\(', '\)/);
+  // " | " for names, because a product name may contain a comma.
+  assert.match(body, /'Item': g\.items\.join\(' \| '\)/);
+});
+
+test('G23 the money columns are stored invoice figures, never recomputed', () => {
+  const body = REPORTS_JS.slice(
+    REPORTS_JS.indexOf('function buildCompleteInvoiceRows'),
+    REPORTS_JS.indexOf('// Fetches the detail rows for the period currently selected'));
+  assert.match(body, /'Amount': \+r\.inv_taxable_amount/);
+  assert.match(body, /'SGST': \+r\.inv_sgst/);
+  assert.match(body, /'CGST': \+r\.inv_cgst/);
+  assert.match(body, /'IGST': \+r\.inv_igst/);
+  assert.match(body, /'Total Rs\.': \+r\.inv_total_amount/);
+  assert.match(body, /'GST%': formatGstRateList\(g\.rates\)/);
+  // No arithmetic builds these cells.
+  assert.equal(/round2\(|\* 0\.5|\/ 2/.test(body), false,
+    'the money columns must be stored values, not calculations');
+});
+
+test('G24 GST% lists the distinct rates on the invoice lines, ascending', () => {
+  const body = REPORTS_JS.slice(
+    REPORTS_JS.indexOf('function formatGstRateList'),
+    REPORTS_JS.indexOf('// Fetches the detail rows for the period currently selected'));
+  // Read from the LINE, not the invoice header: an invoice whose lines
+  // carry 5% and 18% cannot be described by a single header rate.
+  assert.match(body, /g\.rates\.add\(\+r\.gst_percentage\)/);
+  assert.equal(/inv_gst_percentage/.test(body), false,
+    'the header rate must not decide what GST% shows');
+  // Distinct (a Set), numerically sorted, and suffixed.
+  assert.match(body, /rates: new Set\(\)/);
+  assert.match(body, /\.sort\(\(a, b\) => a - b\)/);
+  assert.match(body, /String\(Math\.round\(v \* 100\) \/ 100\) \+ '%'/);
+  assert.match(body, /\.join\(', '\)/);
+  // A mixed rate is not an error, so nothing warns about one any more.
+  assert.equal(/mixedRateInvoices/.test(REPORTS_JS), false,
+    'the mixed-rate warning is obsolete now the cell states the rates');
+});
+
+test('G25 the tax amounts are untouched by the GST% change', () => {
+  const body = REPORTS_JS.slice(
+    REPORTS_JS.indexOf('function buildCompleteInvoiceRows'),
+    REPORTS_JS.indexOf('// Fetches the detail rows for the period currently selected'));
+  // GST% is a label. Every money cell is still the stored invoice figure.
+  assert.match(body, /'Amount': \+r\.inv_taxable_amount/);
+  assert.match(body, /'SGST': \+r\.inv_sgst/);
+  assert.match(body, /'CGST': \+r\.inv_cgst/);
+  assert.match(body, /'IGST': \+r\.inv_igst/);
+  assert.match(body, /'Total Rs\.': \+r\.inv_total_amount/);
 });
 
 test('G14 no migration was added for this feature', () => {
@@ -241,10 +311,10 @@ test('G14 no migration was added for this feature', () => {
 
 test('G15 cache keys were bumped for both changed scripts', () => {
   // ?v= is the only cache mechanism these pages have.
-  // reports.js moved to 31 when the detail sheet's columns changed: v=30 is
-  // already live, so the same key would have served the old 42-column build
-  // to anyone who had loaded the page. export.js did not change again and
-  // stays where it is.
-  assert.match(REPORTS_HTML, /client\/js\/reports\/reports\.js\?v=31/);
+  // reports.js moves with every change to its content, because ?v= is the
+  // only cache mechanism these pages have and the previous key is already
+  // live: v=31 is serving the 24-column build right now, so the 16-column
+  // one needs its own. export.js has not changed since v=30.
+  assert.match(REPORTS_HTML, /client\/js\/reports\/reports\.js\?v=32/);
   assert.match(REPORTS_HTML, /client\/js\/utilities\/export\.js\?v=30/);
 });

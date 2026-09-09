@@ -118,6 +118,12 @@ router.get('/invoice-details', asyncRoute(async (req, res) => {
       ${branches.join('\n    UNION ALL\n')}
     )
     SELECT
+      -- The invoice's own id, so a caller can group lines by the invoice
+      -- itself. Numbers are unique per (user, invoice_source, number), NOT
+      -- per user — two invoices in different sources may legitimately share
+      -- a number, and grouping on the number alone would silently merge
+      -- them into one.
+      inv.id AS invoice_id,
       inv.category, inv.invoice_number,
       -- Formatted in SQL, deliberately. node-postgres turns a DATE into a
       -- JS Date at LOCAL midnight, and res.json() then serialises that to
@@ -163,8 +169,10 @@ router.get('/invoice-details', asyncRoute(async (req, res) => {
   }
 
   // Counted from the same rows the caller receives, so the caller can
-  // check its sheet against them without a second round trip.
-  const invoiceKeys = new Set(rows.map(r => r.category + ':' + r.invoice_number));
+  // check its sheet against them without a second round trip. Counted by
+  // invoice id rather than by number, for the reason given above the
+  // projection: two invoices can share a number across sources.
+  const invoiceKeys = new Set(rows.map(r => r.invoice_id));
 
   res.json({
     rows,
