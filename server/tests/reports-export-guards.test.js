@@ -186,13 +186,50 @@ test('G18 every detail column is sized, with no width ExcelJS would drop', () =>
   assert.ok(widths, 'the width table must exist');
   const values = widths[1].replace(/\/\/[^\n]*/g, '').split(',')
     .map(v => Number(v.trim())).filter(v => Number.isFinite(v));
-  assert.strictEqual(values.length, 42, 'one width per column');
+  assert.strictEqual(values.length, 24, 'one width per column');
   assert.ok(values.every(v => v >= 6), 'no column may be unusably narrow');
   // A width of exactly 9 is Excel's own default, and ExcelJS emits no
   // customWidth for it — that column arrives unsized while every other
   // carries what was asked for. Verified against the library, not assumed.
   assert.ok(!values.includes(9),
     'a width of exactly 9 is dropped by ExcelJS — use 8.43, 9.14 or 10');
+});
+
+test('G19 the detail sheet carries exactly the 24 agreed columns', () => {
+  // Read straight off the object buildCompleteInvoiceRows returns, which is
+  // what decides the sheet's columns and their order.
+  const body = REPORTS_JS.slice(
+    REPORTS_JS.indexOf('function buildCompleteInvoiceRows'),
+    REPORTS_JS.indexOf('async function fetchCompleteInvoiceDetails'));
+  const keys = [...body.matchAll(/^\s{6}'([^']+)':/gm)].map(m => m[1]);
+
+  const EXPECTED = [
+    'Invoice Number', 'Invoice Date', 'Category', 'Customer Name', 'Customer GSTIN',
+    'Customer Phone', 'Customer State', 'Customer District', 'Place of Supply',
+    'Customer Address', 'Product Name', 'HSN/SAC', 'GST %', 'CGST', 'SGST', 'IGST',
+    'Taxable Value', 'Line Total', 'Invoice Taxable Amount', 'Invoice CGST',
+    'Invoice SGST', 'Invoice IGST', 'Grand Total', 'Amount Paid'
+  ];
+  assert.deepStrictEqual(keys, EXPECTED, 'the column set or its order changed');
+  assert.strictEqual(keys.length, 24);
+});
+
+test('G20 the eighteen removed columns are gone, and the rows are not', () => {
+  const body = REPORTS_JS.slice(
+    REPORTS_JS.indexOf('function buildCompleteInvoiceRows'),
+    REPORTS_JS.indexOf('async function fetchCompleteInvoiceDetails'));
+  for (const gone of ['Ship-To State', 'Ship-To District', 'Ship-To Address',
+    'GST Category', 'Reverse Charge', 'Supply Type', 'Sr No', 'SKU', 'Qty', 'Unit',
+    'Rate', 'Discount %', 'Cess', 'Invoice Cess', 'Round Off', 'Payment Status',
+    'Invoice Source', 'Export Type']) {
+    assert.equal(body.includes(`'${gone}':`), false,
+      `${gone} must not be emitted as a column`);
+  }
+  // Dropping Sr No removes a column, never a line: the builder still maps
+  // one output row per input row, with nothing filtered.
+  assert.match(body, /return rows\.map\(r => \{/);
+  assert.equal(/\.filter\(|\.slice\(|\.reduce\(/.test(body), false,
+    'the row builder must not drop or fold any line');
 });
 
 test('G14 no migration was added for this feature', () => {
@@ -204,6 +241,10 @@ test('G14 no migration was added for this feature', () => {
 
 test('G15 cache keys were bumped for both changed scripts', () => {
   // ?v= is the only cache mechanism these pages have.
-  assert.match(REPORTS_HTML, /client\/js\/reports\/reports\.js\?v=30/);
+  // reports.js moved to 31 when the detail sheet's columns changed: v=30 is
+  // already live, so the same key would have served the old 42-column build
+  // to anyone who had loaded the page. export.js did not change again and
+  // stays where it is.
+  assert.match(REPORTS_HTML, /client\/js\/reports\/reports\.js\?v=31/);
   assert.match(REPORTS_HTML, /client\/js\/utilities\/export\.js\?v=30/);
 });

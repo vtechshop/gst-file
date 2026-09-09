@@ -637,9 +637,14 @@ function renderHSNReport() {
 // and omits it, so that one column would arrive unsized while every other
 // carried the width asked for.
 const COMPLETE_DETAIL_WIDTHS = [
-  16, 12, 10, 26, 18, 14, 16, 16, 8, 34, 16, 16, 34, 14, 8, 12,
-  6, 30, 12, 14, 10, 8, 12, 10, 8, 12, 12, 12, 10, 14, 14,
-  16, 12, 12, 12, 10, 10, 14, 14, 12, 12, 12
+  // Invoice Number, Date, Category, Customer Name, GSTIN, Phone, State,
+  // District, Place of Supply, Customer Address
+  16, 12, 10, 26, 18, 14, 16, 16, 8, 34,
+  // Product Name, HSN/SAC, GST %, CGST, SGST, IGST, Taxable Value, Line Total
+  30, 12, 8, 12, 12, 12, 14, 14,
+  // Invoice Taxable Amount, Invoice CGST, Invoice SGST, Invoice IGST,
+  // Grand Total, Amount Paid
+  16, 12, 12, 12, 14, 12
 ].map(wch => ({ wch }));
 
 function completeInvoicePlaceOfSupply(row) {
@@ -652,18 +657,9 @@ function completeInvoicePlaceOfSupply(row) {
 }
 
 function buildCompleteInvoiceRows(rows) {
-  // Sr No restarts per invoice, so a reader can see "line 3 of 5" rather
-  // than a running number across the whole sheet.
-  const seen = new Map();
   return rows.map(r => {
-    const key = r.category + ':' + r.invoice_number;
-    const srNo = (seen.get(key) || 0) + 1;
-    seen.set(key, srNo);
-
     const invTaxable = +r.inv_taxable_amount || 0;
-    const invGst = +r.inv_gst_amount || 0;
     const grand = +r.inv_total_amount || 0;
-    const roundOff = round2(grand - (invTaxable + invGst));
 
     // Kept as the plain YYYY-MM-DD the API sends, and turned into a real
     // Excel date by the writer. A JS Date here would be serialised to UTC
@@ -684,38 +680,31 @@ function buildCompleteInvoiceRows(rows) {
       'Customer District': r.district || '',
       'Place of Supply': completeInvoicePlaceOfSupply(r),
       'Customer Address': r.address || '',
-      'Ship-To State': r.shipping_state || '',
-      'Ship-To District': r.shipping_district || '',
-      'Ship-To Address': r.shipping_address || '',
-      'GST Category': r.gst_category || '',
-      'Reverse Charge': r.reverse_charge ? 'Yes' : 'No',
-      'Supply Type': r.supply_type || '',
-      'Sr No': srNo,
+      // Eighteen fields the query still returns are deliberately not
+      // columns here: Ship-To State/District/Address, GST Category,
+      // Reverse Charge, Supply Type, Sr No, SKU, Qty, Unit, Rate,
+      // Discount %, Cess, Invoice Cess, Round Off, Payment Status,
+      // Invoice Source and Export Type. The sheet is for tracing money to
+      // an invoice line, and those are read elsewhere. Nothing was removed
+      // from the query, so restoring any of them is one line here.
+      //
+      // Dropping Qty, Rate and Sr No removes COLUMNS, never rows: an
+      // invoice with five products still contributes five lines, each with
+      // its own Product Name, HSN, taxable value and line total.
       'Product Name': r.product_name || '',
       'HSN/SAC': r.hsn_code || '',
-      'SKU': r.sku || '',
-      'Qty': +r.quantity || 0,
-      'Unit': r.unit || '',
-      'Rate': +r.rate || 0,
-      'Discount %': +r.discount_percentage || 0,
       'GST %': +r.gst_percentage || 0,
       'CGST': +r.cgst || 0,
       'SGST': +r.sgst || 0,
       'IGST': +r.igst || 0,
-      'Cess': +r.cess_amount || 0,
       'Taxable Value': +r.taxable_value || 0,
       'Line Total': +r.total_amount || 0,
       'Invoice Taxable Amount': invTaxable,
       'Invoice CGST': +r.inv_cgst || 0,
       'Invoice SGST': +r.inv_sgst || 0,
       'Invoice IGST': +r.inv_igst || 0,
-      'Invoice Cess': +r.inv_cess_amount || 0,
-      'Round Off': roundOff,
       'Grand Total': grand,
-      'Payment Status': r.payment_status || '',
-      'Amount Paid': +r.amount_paid || 0,
-      'Invoice Source': r.invoice_source || '',
-      'Export Type': r.export_type || ''
+      'Amount Paid': +r.amount_paid || 0
     };
   });
 }
