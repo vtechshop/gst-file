@@ -77,7 +77,8 @@ async function loadStockSummary() {
           <td><b>${escStock(r.name)}</b></td>
           <td>${escStock(r.sku) || '—'}</td>
           <td>${escStock(r.hsn_code) || '—'}</td>
-          <td class="text-right">${formatStockQty(r.stock)} ${escStock(r.unit) || ''}</td>
+          <td class="text-right">${formatStockQty(r.stock)} ${escStock(r.unit) || ''}
+            ${locationBreakdown(r)}</td>
           <td class="text-right">${r.reorder_level === null ? '—' : formatStockQty(r.reorder_level)}</td>
           <td><span class="badge ${s.cls}">${s.text}</span></td>
           <td class="text-right">
@@ -107,6 +108,21 @@ function renderStockPagination(res) {
       onclick="stockGoTo(${stockPage + 1})"><i class="fas fa-chevron-right"></i></button>`;
 }
 function stockGoTo(p) { stockPage = Math.max(0, p); loadStockSummary(); }
+
+// Where the total actually is. The server aggregates this in SQL and sends
+// it with the row; nothing here re-sums balances.
+//
+// A product with no breakdown is not an error: it means the tenant has no
+// locations, or this product's stock has not been placed in one. Saying
+// nothing is the honest rendering of that, rather than implying it is all
+// sitting somewhere.
+function locationBreakdown(row) {
+  const at = Array.isArray(row.locations) ? row.locations : [];
+  if (!at.length) return '';
+  return '<div class="text-muted-sm mt-4">'
+    + at.map(l => `${escStock(l.location)} ${formatStockQty(l.quantity)}`).join(' &middot; ')
+    + '</div>';
+}
 
 // ── Product pickers ───────────────────────────────────────────────────
 // Cached for the life of the page: both modals need the same list, and it

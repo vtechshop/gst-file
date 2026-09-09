@@ -21,30 +21,47 @@ const PURCHASES = rd('server', 'src', 'routes', 'purchases.js');
 const RETURNS = rd('server', 'src', 'routes', 'sales-returns.js');
 const SYNC = rd('client', 'js', 'api', 'product-sync.js');
 const MIGRATION = rd('server', 'db', 'migrations', 'migration_stock_ledger.sql');
+const MIGRATION2 = rd('server', 'db', 'migrations', 'migration_stock_locations.sql');
+const BACKFILL = rd('server', 'db', 'backfill', 'backfill_default_location.sql');
 
 const { MOVEMENT_TYPES, MANUAL_MOVEMENT_DIRECTION, round3 } =
   require(path.join(__dirname, '..', 'src', 'services', 'stock-ledger'));
 
 // ── The movement vocabulary ───────────────────────────────────────────
-test('G1 the movement types are exactly the approved Phase 1 set', () => {
+test('G1 the movement types are exactly the approved set', () => {
+  // Phase 2 adds the two transfer halves and nothing else.
   assert.deepStrictEqual([...MOVEMENT_TYPES].sort(), [
     'ADJUSTMENT_IN', 'ADJUSTMENT_OUT', 'CONSUMPTION', 'DAMAGE', 'FREE_ISSUE',
     'OPENING', 'PURCHASE', 'PURCHASE_RETURN', 'SALE', 'SALES_RETURN',
-    'SAMPLE', 'SCRAP'
+    'SAMPLE', 'SCRAP', 'TRANSFER_IN', 'TRANSFER_OUT'
   ]);
-  // Location/transfer types are a later phase and must not appear yet.
-  for (const deferred of ['TRANSFER_IN', 'TRANSFER_OUT']) {
-    assert.ok(!MOVEMENT_TYPES.includes(deferred), `${deferred} is deferred to a later phase`);
-    assert.ok(!MIGRATION.includes(`'${deferred}'`), `${deferred} must not be in the CHECK constraint`);
+  // Phase 1's migration must still describe only Phase 1's types: it is
+  // already applied in production and may not be rewritten.
+  for (const later of ['TRANSFER_IN', 'TRANSFER_OUT']) {
+    assert.ok(!MIGRATION.includes(`'${later}'`),
+      `${later} belongs in the Phase 2 migration, not the applied Phase 1 one`);
+    assert.ok(MIGRATION2.includes(`'${later}'`), `${later} must be in the Phase 2 CHECK`);
+  }
+  // Serial types remain out of scope entirely.
+  for (const deferred of ['SERIAL_IN', 'SERIAL_OUT']) {
+    assert.ok(!MOVEMENT_TYPES.includes(deferred), `${deferred} is a later phase`);
   }
 });
 
-test('G2 the database CHECK matches the code allow-list exactly', () => {
-  const check = MIGRATION.slice(MIGRATION.indexOf('movement_type TEXT NOT NULL CHECK'),
-    MIGRATION.indexOf('direction TEXT NOT NULL'));
+test('G2 the live database CHECK matches the code allow-list exactly', () => {
+  // The Phase 2 migration REPLACES the constraint, so that one is the
+  // authority on what the database will accept.
+  const check = MIGRATION2.slice(MIGRATION2.indexOf('ADD CONSTRAINT stock_movements_movement_type_check'),
+    MIGRATION2.indexOf('-- A transfer must name both ends'));
   const inSql = [...check.matchAll(/'([A-Z_]+)'/g)].map(m => m[1]).sort();
   assert.deepStrictEqual(inSql, [...MOVEMENT_TYPES].sort(),
     'a type the code accepts but the database rejects would fail at runtime, and vice versa');
+  // Widened, never narrowed: every Phase 1 type survives.
+  const phase1 = MIGRATION.slice(MIGRATION.indexOf('movement_type TEXT NOT NULL CHECK'),
+    MIGRATION.indexOf('direction TEXT NOT NULL'));
+  for (const t of [...phase1.matchAll(/'([A-Z_]+)'/g)].map(m => m[1])) {
+    assert.ok(inSql.includes(t), `${t} was allowed before and must still be allowed`);
+  }
 });
 
 test('G3 every manual movement type has a direction and is a real type', () => {
@@ -215,10 +232,15 @@ test('G14 the migration declares tenancy, keys, constraints and indexes', () => 
 
 test('G15 the migration is registered in the manifest, last', () => {
   const manifest = JSON.parse(rd('server', 'db', 'migrations', '_manifest.json'));
-  assert.strictEqual(manifest.order[manifest.order.length - 1], 'migration_stock_ledger.sql');
-  assert.strictEqual(manifest.order.filter(f => f === 'migration_stock_ledger.sql').length, 1);
-  // and no already-applied migration was edited
-  assert.strictEqual(manifest.order.length, 28);
+  assert.strictEqual(manifest.order[manifest.order.length - 1], 'migration_stock_locations.sql');
+  assert.strictEqual(manifest.order[manifest.order.length - 2], 'migration_stock_ledger.sql');
+  for (const f of ['migration_stock_ledger.sql', 'migration_stock_locations.sql']) {
+    assert.strictEqual(manifest.order.filter(x => x === f).length, 1, `${f} listed once`);
+  }
+  // The backfill is NOT a migration and must never be in the manifest.
+  assert.ok(!manifest.order.some(f => /backfill/i.test(f)),
+    'the data backfill must not be run by the migrator');
+  assert.strictEqual(manifest.order.length, 29);
 });
 
 // ── No backfill ───────────────────────────────────────────────────────

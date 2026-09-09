@@ -272,8 +272,14 @@ test('S9 the database refuses a malformed movement even if code tried', async ()
   const ins = (type, dir, qty) => q(
     `INSERT INTO stock_movements (user_id,product_id,movement_type,direction,quantity,balance_after)
      VALUES ($1,$2,$3,$4,$5,0)`, [USER_A, p, type, dir, qty]);
-  await assert.rejects(() => ins('TRANSFER_IN', 'IN', 1), /movement_type_check/,
+  await assert.rejects(() => ins('TELEPORTED', 'IN', 1), /movement_type_check/,
     'a type outside the allow-list must be refused');
+  // TRANSFER_IN and TRANSFER_OUT joined the allow-list in Phase 2, so a
+  // transfer half is no longer refused for its name. It is refused for its
+  // shape: half a transfer that names neither its other end nor the transfer
+  // it belongs to is not a transfer, and the database says so.
+  await assert.rejects(() => ins('TRANSFER_IN', 'IN', 1), /transfer_shape_check/,
+    'a transfer half must carry its other end and its pairing id');
   await assert.rejects(() => ins('SALE', 'SIDEWAYS', 1), /direction_check/);
   await assert.rejects(() => ins('SALE', 'OUT', -1), /quantity_check/,
     'quantity is a magnitude; the sign lives in direction');

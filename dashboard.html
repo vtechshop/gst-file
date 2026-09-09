@@ -54,6 +54,8 @@
       <div class="menu-section">Inventory</div>
       <a href="stock.html" class="menu-item"><i class="fas fa-warehouse"></i> Stock Summary</a>
       <a href="stock-ledger.html" class="menu-item"><i class="fas fa-clipboard-list"></i> Stock Ledger</a>
+      <a href="stock-locations.html" class="menu-item"><i class="fas fa-map-location-dot"></i> Locations</a>
+      <a href="stock-transfers.html" class="menu-item"><i class="fas fa-right-left"></i> Transfers</a>
       <div class="menu-section">GST / Special</div>
       <a href="eway-bills.html" class="menu-item"><i class="fas fa-truck-fast"></i> E-Way Bills</a>
       <a href="challans.html#job-workers" class="menu-item"><i class="fas fa-industry"></i> Job Workers</a>
@@ -636,13 +638,28 @@ async function loadRecentActivity(userId) {
 }
 
 // ── Inventory Intelligence ──────────────────────────────
-// Threshold and window are simple, sensible defaults — not configurable
-// yet: Low Stock is <=10 units remaining, Fast/Slow Moving looks at
-// quantity sold in the last 30 days. Only products with stock actually
-// tracked (products.stock !== null — i.e. synced-from-website items
-// with a real stock figure) are considered; untracked/service items
-// have nothing meaningful to show here.
-const LOW_STOCK_THRESHOLD = 10;
+// Low Stock is decided by each product's own reorder_level, which is the
+// application's single authoritative threshold — the same rule the Stock
+// module applies in SQL (STOCK_STATUS_SQL in
+// server/src/services/stock-ledger.js).
+//
+// It used to be a flat "<= 10 units" computed here, which meant this
+// dashboard and the Stock Summary could call the same product two
+// different things. A product with no reorder_level set can be IN_STOCK or
+// OUT_OF_STOCK but never LOW_STOCK — deliberately not the same as having a
+// reorder level of 0.
+//
+// Fast/Slow Moving still looks at quantity sold in the last 30 days. Only
+// products with stock actually tracked (products.stock !== null) are
+// considered; untracked/service items have nothing to show here.
+function dashStockStatus(p) {
+  const qty = +p.stock;
+  if (!(qty > 0)) return 'OUT_OF_STOCK';
+  const reorder = (p.reorder_level === null || p.reorder_level === undefined)
+    ? null : +p.reorder_level;
+  if (reorder !== null && qty <= reorder) return 'LOW_STOCK';
+  return 'IN_STOCK';
+}
 
 // Reads the shared cache — issues no network request of its own.
 async function loadInventoryIntelligence(userId) {
@@ -650,8 +667,8 @@ async function loadInventoryIntelligence(userId) {
   if (!cache) return;
   const tracked = cache.products.filter(p => p.stock !== null && p.stock !== undefined);
 
-  const outOfStock = tracked.filter(p => +p.stock <= 0);
-  const lowStock = tracked.filter(p => +p.stock > 0 && +p.stock <= LOW_STOCK_THRESHOLD).sort((a, b) => a.stock - b.stock);
+  const outOfStock = tracked.filter(p => dashStockStatus(p) === 'OUT_OF_STOCK');
+  const lowStock = tracked.filter(p => dashStockStatus(p) === 'LOW_STOCK').sort((a, b) => a.stock - b.stock);
 
   const set = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
   set('statLowStock', lowStock.length);

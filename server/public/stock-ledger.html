@@ -19,7 +19,7 @@
   <script src="client/js/core/search.js?v=29"></script>
   <script src="client/js/pages/profile.js?v=39"></script>
   <script src="client/js/pages/products.js?v=29"></script>
-  <script src="client/js/pages/stock-ledger-page.js?v=1"></script>
+  <script src="client/js/pages/stock-ledger-page.js?v=2"></script>
 </head>
 <body>
 <div class="app-layout">
@@ -57,6 +57,8 @@
       <div class="menu-section">Inventory</div>
       <a href="stock.html" class="menu-item"><i class="fas fa-warehouse"></i> Stock Summary</a>
       <a href="stock-ledger.html" class="menu-item active"><i class="fas fa-clipboard-list"></i> Stock Ledger</a>
+      <a href="stock-locations.html" class="menu-item"><i class="fas fa-map-location-dot"></i> Locations</a>
+      <a href="stock-transfers.html" class="menu-item"><i class="fas fa-right-left"></i> Transfers</a>
       <div class="menu-section">GST / Special</div>
       <a href="eway-bills.html" class="menu-item"><i class="fas fa-truck-fast"></i> E-Way Bills</a>
       <a href="challans.html#job-workers" class="menu-item"><i class="fas fa-industry"></i> Job Workers</a>
@@ -115,13 +117,13 @@
             <table class="table">
               <thead>
                 <tr>
-                  <th>Date</th><th>Movement</th><th>Reason / Document</th>
+                  <th>Date</th><th>Movement</th><th>Location</th><th>Reason / Document</th>
                   <th class="text-right">In</th><th class="text-right">Out</th>
                   <th class="text-right">Balance</th>
                 </tr>
               </thead>
               <tbody id="ledgerBody">
-                <tr><td colspan="6" class="text-center text-muted">Pick a product to see its ledger.</td></tr>
+                <tr><td colspan="7" class="text-center text-muted">Pick a product to see its ledger.</td></tr>
               </tbody>
             </table>
           </div>
@@ -157,6 +159,12 @@
               </select>
             </div>
             <div class="form-group">
+              <label for="mvLocation">Location</label>
+              <select id="mvLocation" class="form-control" onchange="loadMovements()">
+                <option value="">All locations</option>
+              </select>
+            </div>
+            <div class="form-group">
               <label for="mvFrom">From</label>
               <input type="date" id="mvFrom" class="form-control" onchange="loadMovements()">
             </div>
@@ -169,12 +177,12 @@
             <table class="table">
               <thead>
                 <tr>
-                  <th>Date</th><th>Product</th><th>Movement</th><th>Reason / Document</th>
+                  <th>Date</th><th>Product</th><th>Movement</th><th>Location</th><th>Reason / Document</th>
                   <th class="text-right">In</th><th class="text-right">Out</th><th class="text-right">Balance</th>
                 </tr>
               </thead>
               <tbody id="movementsBody">
-                <tr><td colspan="7" class="text-center text-muted">Loading&hellip;</td></tr>
+                <tr><td colspan="8" class="text-center text-muted">Loading&hellip;</td></tr>
               </tbody>
             </table>
           </div>

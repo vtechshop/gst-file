@@ -14,7 +14,8 @@ const MOVEMENT_LABEL = {
   SALE: 'Sale', SALES_RETURN: 'Sales Return',
   ADJUSTMENT_IN: 'Adjustment In', ADJUSTMENT_OUT: 'Adjustment Out',
   DAMAGE: 'Damage', SCRAP: 'Scrap', CONSUMPTION: 'Consumption',
-  SAMPLE: 'Sample', FREE_ISSUE: 'Free Issue'
+  SAMPLE: 'Sample', FREE_ISSUE: 'Free Issue',
+  TRANSFER_IN: 'Transfer In', TRANSFER_OUT: 'Transfer Out'
 };
 // Where a movement's source document lives, so the ledger can link back to
 // the thing that caused it.
@@ -25,7 +26,7 @@ const SOURCE_PAGE = {
 };
 
 async function initStockLedgerPage() {
-  await fillLedgerProducts();
+  await Promise.all([fillLedgerProducts(), fillLedgerLocations()]);
   // Deep link from the Stock Summary's ledger button.
   const wanted = new URLSearchParams(location.search).get('product');
   if (wanted) {
@@ -48,6 +49,21 @@ async function fillLedgerProducts() {
       `<option value="${escLed(r.id)}">${escLed(r.name)}${r.sku ? ' (' + escLed(r.sku) + ')' : ''}</option>`).join('');
     if (!tracked.length) el.innerHTML = '<option value="">No stock-tracked products yet</option>';
   } catch (err) { handleApiError(err, 'loading products'); }
+}
+
+// The location filter on the movements feed. Inactive locations are still
+// listed: a movement that happened at one is still history worth finding.
+async function fillLedgerLocations() {
+  const el = document.getElementById('mvLocation');
+  if (!el) return;
+  try {
+    const res = await apiFetch('/stock/locations');
+    el.innerHTML = '<option value="">All locations</option>' + res.rows.map(r =>
+      `<option value="${escLed(r.id)}">${escLed(r.name)}${r.active ? '' : ' (inactive)'}</option>`).join('');
+  } catch (err) {
+    // The feed still works without the filter; a missing location list is
+    // not a reason to fail the page.
+  }
 }
 
 // ── One product ───────────────────────────────────────────────────────
@@ -115,10 +131,12 @@ async function loadMovements() {
   const params = new URLSearchParams();
   const type = (document.getElementById('mvType') || {}).value || '';
   const dir = (document.getElementById('mvDirection') || {}).value || '';
+  const loc = (document.getElementById('mvLocation') || {}).value || '';
   const from = (document.getElementById('mvFrom') || {}).value || '';
   const to = (document.getElementById('mvTo') || {}).value || '';
   if (type) params.set('movement_type', type);
   if (dir) params.set('direction', dir);
+  if (loc) params.set('location_id', loc);
   if (from) params.set('from', from);
   if (to) params.set('to', to);
   params.set('limit', String(LEDGER_PAGE_SIZE));
@@ -143,6 +161,12 @@ function ledgerRow(r, withProduct) {
   const bal = String(Math.round(Number(r.balance_after) * 1000) / 1000);
   const label = MOVEMENT_LABEL[r.movement_type] || r.movement_type;
   const page = SOURCE_PAGE[r.source_type];
+  // A transfer says where it went, which is the one thing its reason cannot.
+  const where = r.movement_type === 'TRANSFER_OUT'
+    ? escLed(r.location_name) + ' &rarr; ' + escLed(r.to_location_name)
+    : r.movement_type === 'TRANSFER_IN'
+      ? escLed(r.to_location_name) + ' &rarr; ' + escLed(r.location_name)
+      : (escLed(r.location_name) || '&mdash;');
   const source = r.source_id && page
     ? `<a href="${page}">${escLed(label)} document</a>`
     : escLed(r.reason || '') || '—';
@@ -150,6 +174,7 @@ function ledgerRow(r, withProduct) {
     <td>${escLed(formatLedgerDate(r.created_at))}</td>
     ${withProduct ? `<td><b>${escLed(r.product_name)}</b></td>` : ''}
     <td><span class="badge ${isIn ? 'badge-success' : 'badge-danger'}">${escLed(label)}</span></td>
+    <td class="text-muted-sm">${where}</td>
     <td class="text-muted-sm">${source}</td>
     <td class="text-right">${isIn ? qty : ''}</td>
     <td class="text-right">${isIn ? '' : qty}</td>

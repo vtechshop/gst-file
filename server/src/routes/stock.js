@@ -14,8 +14,10 @@ const express = require('express');
 const pool = require('../config/pool');
 const { requireAuth } = require('../middleware/auth');
 const { asyncRoute } = require('../middleware/errorHandler');
+const { randomUUID } = require('crypto');
 const {
-  applyStockDelta, MANUAL_MOVEMENT_DIRECTION, MOVEMENT_TYPES,
+  applyStockDelta, transferStock, resolveLocation,
+  MANUAL_MOVEMENT_DIRECTION, MOVEMENT_TYPES,
   SIGNED_QTY_SQL, STOCK_STATUS_SQL, round3
 } = require('../services/stock-ledger');
 
@@ -46,6 +48,185 @@ function paging(query) {
   return { limit, offset };
 }
 
+// ── Locations ─────────────────────────────────────────────────────────
+router.get('/locations', asyncRoute(async (req, res) => {
+  const { rows } = await pool.query(
+    `SELECT l.id, l.name, l.code, l.is_default, l.active, l.created_at,
+            COALESCE(b.products, 0)::int AS products_held,
+            COALESCE(b.quantity, 0)      AS quantity_held
+       FROM stock_locations l
+       LEFT JOIN (
+         SELECT location_id, COUNT(*) FILTER (WHERE quantity <> 0) AS products,
+                SUM(quantity) AS quantity
+           FROM stock_balances WHERE user_id = $1 GROUP BY location_id
+       ) b ON b.location_id = l.id
+      WHERE l.user_id = $1
+      ORDER BY l.is_default DESC, l.active DESC, l.name ASC`, [req.userId]);
+  res.json({ rows });
+}));
+
+function locationName(body) {
+  const name = String((body || {}).name || '').trim();
+  if (!name) throw bad('A location name is required.');
+  if (name.length > 120) throw bad('That location name is too long.');
+  return name;
+}
+function locationCode(body) {
+  const code = String((body || {}).code || '').trim();
+  if (!code) return null;
+  if (!/^[A-Za-z0-9_-]{1,24}$/.test(code)) {
+    throw bad('A location code may use letters, digits, hyphen and underscore only (up to 24).');
+  }
+  return code.toUpperCase();
+}
+
+router.post('/locations', asyncRoute(async (req, res) => {
+  const name = locationName(req.body);
+  const code = locationCode(req.body);
+  const wantDefault = !!(req.body || {}).is_default;
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    // The first location a tenant creates is its default whether or not
+    // it was asked for: stock has to land somewhere.
+    const { rows: existing } = await client.query(
+      'SELECT COUNT(*)::int n FROM stock_locations WHERE user_id = $1', [req.userId]);
+    const isDefault = wantDefault || existing[0].n === 0;
+    // Only one default per tenant - the partial unique index enforces it,
+    // so the previous holder is stood down first rather than colliding.
+    if (isDefault) {
+      await client.query(
+        'UPDATE stock_locations SET is_default = FALSE, updated_at = NOW() WHERE user_id = $1 AND is_default',
+        [req.userId]);
+    }
+    const { rows } = await client.query(
+      `INSERT INTO stock_locations (user_id, name, code, is_default, active)
+       VALUES ($1,$2,$3,$4,TRUE) RETURNING id, name, code, is_default, active`,
+      [req.userId, name, code, isDefault]);
+    await client.query('COMMIT');
+    res.status(201).json(rows[0]);
+  } catch (err) {
+    await client.query('ROLLBACK');
+    if (err && err.code === '23505') throw bad('A location with that code already exists.');
+    throw err;
+  } finally { client.release(); }
+}));
+
+router.patch('/locations/:id', asyncRoute(async (req, res) => {
+  badId(req.params.id, 'location id');
+  const body = req.body || {};
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const { rows: own } = await client.query(
+      'SELECT id, is_default FROM stock_locations WHERE id = $1 AND user_id = $2 FOR UPDATE',
+      [req.params.id, req.userId]);
+    if (!own.length) { const e = new Error('Location not found.'); e.status = 404; e.expose = true; throw e; }
+
+    const set = [], vals = [];
+    if ('name' in body) { set.push(`name = ${set.length + 1}`); vals.push(locationName(body)); }
+    if ('code' in body) { set.push(`code = ${set.length + 1}`); vals.push(locationCode(body)); }
+    if ('active' in body) {
+      const active = !!body.active;
+      // The default location is where undirected stock lands; switching it
+      // off would leave documents with nowhere to go.
+      if (!active && own[0].is_default) {
+        throw bad('The default location cannot be deactivated. Make another location the default first.');
+      }
+      set.push(`active = ${set.length + 1}`); vals.push(active);
+    }
+    if (body.is_default === true) {
+      await client.query(
+        'UPDATE stock_locations SET is_default = FALSE, updated_at = NOW() WHERE user_id = $1 AND is_default',
+        [req.userId]);
+      set.push(`is_default = TRUE`);
+      set.push(`active = TRUE`);            // a default must be usable
+    }
+    if (!set.length) throw bad('Nothing to update.');
+
+    vals.push(req.params.id, req.userId);
+    const { rows } = await client.query(
+      `UPDATE stock_locations SET ${set.join(', ')}, updated_at = NOW()
+        WHERE id = ${vals.length - 1} AND user_id = ${vals.length}
+        RETURNING id, name, code, is_default, active`, vals);
+    await client.query('COMMIT');
+    res.json(rows[0]);
+  } catch (err) {
+    await client.query('ROLLBACK');
+    if (err && err.code === '23505') throw bad('A location with that code already exists.');
+    throw err;
+  } finally { client.release(); }
+}));
+
+// Deletion is refused whenever the location has ever been used. A ledger
+// that cannot say where its stock went is worse than a tidy location list,
+// so the answer is deactivation - which the message says plainly.
+router.delete('/locations/:id', asyncRoute(async (req, res) => {
+  badId(req.params.id, 'location id');
+  const { rows: own } = await pool.query(
+    'SELECT id, is_default FROM stock_locations WHERE id = $1 AND user_id = $2',
+    [req.params.id, req.userId]);
+  if (!own.length) { const e = new Error('Location not found.'); e.status = 404; e.expose = true; throw e; }
+  if (own[0].is_default) throw bad('The default location cannot be deleted. Make another location the default first.');
+
+  const { rows: held } = await pool.query(
+    'SELECT COALESCE(SUM(quantity),0) q FROM stock_balances WHERE user_id = $1 AND location_id = $2',
+    [req.userId, req.params.id]);
+  if (+held[0].q !== 0) {
+    throw bad(`This location still holds ${round3(+held[0].q)} in stock. Move it elsewhere, or deactivate the location instead.`);
+  }
+  const { rows: used } = await pool.query(
+    'SELECT COUNT(*)::int n FROM stock_movements WHERE user_id = $1 AND (location_id = $2 OR to_location_id = $2)',
+    [req.userId, req.params.id]);
+  if (used[0].n > 0) {
+    throw bad('This location appears in the stock ledger and cannot be deleted. Deactivate it instead.');
+  }
+  await pool.query('DELETE FROM stock_locations WHERE id = $1 AND user_id = $2', [req.params.id, req.userId]);
+  res.json({ ok: true });
+}));
+
+// ── Transfer ──────────────────────────────────────────────────────────
+// A repeated request must not move the stock twice. The client sends a
+// reference it generated; the pair of movements carries it, and a unique
+// index on (transfer_id, movement_type) is what actually enforces the rule
+// - a retry collides in the database rather than relying on a disabled
+// button or a check that another request could race past.
+router.post('/transfer', asyncRoute(async (req, res) => {
+  const body = req.body || {};
+  badId(body.product_id, 'product id');
+  badId(body.from_location_id, 'source location id');
+  badId(body.to_location_id, 'destination location id');
+  const transferId = body.transfer_id || randomUUID();
+  badId(transferId, 'transfer reference');
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const result = await transferStock(client, req.userId, {
+      productId: body.product_id,
+      fromLocationId: body.from_location_id,
+      toLocationId: body.to_location_id,
+      quantity: body.quantity,
+      transferId,
+      reason: String(body.reason || '').trim() || null,
+      notes: body.notes || null
+    });
+    await client.query('COMMIT');
+    res.status(201).json({ ...result, transfer_id: transferId });
+  } catch (err) {
+    await client.query('ROLLBACK');
+    // The unique index on (transfer_id, movement_type) fired: this exact
+    // transfer already happened, so report it as already done rather than
+    // as a failure the user should retry.
+    if (err && err.code === '23505') {
+      const e = new Error('This transfer has already been recorded.');
+      e.status = 409; e.expose = true; e.code = 'transfer_already_recorded'; throw e;
+    }
+    throw err;
+  } finally { client.release(); }
+}));
+
 // ── Stock Summary — one row per stock-tracked product ─────────────────
 // Also serves Low Stock and Out of Stock, which are this list with a
 // status filter, so the three can never classify a product differently.
@@ -70,12 +251,30 @@ router.get('/', asyncRoute(async (req, res) => {
   }
   if (req.query.category) {
     params.push(String(req.query.category));
-    where.push(`p.category = $${params.length}`);
+    where.push(`p.category = ${params.length}`);
+  }
+  // "what is in this location" — products holding stock there.
+  if (req.query.location_id) {
+    badId(req.query.location_id, 'location id');
+    params.push(req.query.location_id);
+    where.push(`EXISTS (SELECT 1 FROM stock_balances b
+                          WHERE b.user_id = p.user_id AND b.product_id = p.id
+                            AND b.location_id = ${params.length} AND b.quantity <> 0)`);
   }
 
   const sql = `
     SELECT p.id, p.name, p.sku, p.hsn_code, p.category, p.unit,
-           p.stock, p.reorder_level, ${STOCK_STATUS_SQL} AS status
+           p.stock, p.reorder_level, ${STOCK_STATUS_SQL} AS status,
+           -- The location breakdown travels with the row, aggregated in SQL.
+           -- The browser is never handed every balance to group itself.
+           COALESCE((
+             SELECT json_agg(json_build_object(
+                      'location_id', l.id, 'location', l.name, 'quantity', b.quantity)
+                      ORDER BY l.name)
+               FROM stock_balances b
+               JOIN stock_locations l ON l.id = b.location_id
+              WHERE b.user_id = p.user_id AND b.product_id = p.id AND b.quantity <> 0
+           ), '[]'::json) AS locations
       FROM products p
      WHERE ${where.join(' AND ')}
      ORDER BY (${STOCK_STATUS_SQL} = 'OUT_OF_STOCK') DESC,
@@ -135,16 +334,25 @@ router.get('/movements', asyncRoute(async (req, res) => {
     params.push(d);
     where.push(`m.direction = $${params.length}`);
   }
-  if (req.query.from) { params.push(req.query.from); where.push(`m.created_at >= $${params.length}`); }
+  if (req.query.location_id) {
+    badId(req.query.location_id, 'location id');
+    params.push(req.query.location_id);
+    where.push(`(m.location_id = ${params.length} OR m.to_location_id = ${params.length})`);
+  }
+  if (req.query.from) { params.push(req.query.from); where.push(`m.created_at >= ${params.length}`); }
   if (req.query.to)   { params.push(req.query.to);   where.push(`m.created_at < ($${params.length}::date + 1)`); }
 
   const sql = `
     SELECT m.id, m.product_id, p.name AS product_name, p.sku,
            m.movement_type, m.direction, m.quantity, m.unit, m.rate,
            m.balance_after, m.source_type, m.source_id, m.source_item_id,
-           m.reason, m.notes, m.created_at
+           m.reason, m.notes, m.created_at,
+           m.location_id, fl.name AS location_name,
+           m.to_location_id, tl.name AS to_location_name, m.transfer_id
       FROM stock_movements m
       JOIN products p ON p.id = m.product_id AND p.user_id = m.user_id
+      LEFT JOIN stock_locations fl ON fl.id = m.location_id
+      LEFT JOIN stock_locations tl ON tl.id = m.to_location_id
      WHERE ${where.join(' AND ')}
      ORDER BY m.created_at DESC, m.id DESC
      LIMIT ${limit} OFFSET ${offset}`;
@@ -194,8 +402,26 @@ router.get('/:productId', asyncRoute(async (req, res) => {
   const cached = product.stock === null ? null : round3(+product.stock);
   const movementCount = agg[0].movement_count;
 
+  const { rows: byLocation } = await pool.query(
+    `SELECT l.id AS location_id, l.name AS location, l.is_default, b.quantity
+       FROM stock_balances b
+       JOIN stock_locations l ON l.id = b.location_id
+      WHERE b.user_id = $1 AND b.product_id = $2
+      ORDER BY l.name`, [req.userId, req.params.productId]);
+  const locationTotal = round3(byLocation.reduce((a, r) => a + (+r.quantity), 0));
+
   res.json({
     product,
+    by_location: byLocation,
+    // A product held across locations must have its balances add up to the
+    // company total. Reported rather than assumed - a tenant that has not
+    // run the location backfill has no balances at all, which is a
+    // different state from balances that disagree.
+    location_reconciliation: {
+      location_total: locationTotal,
+      matches_company_total: byLocation.length === 0 ? null : locationTotal === cached,
+      locations: byLocation.length
+    },
     reconciliation: {
       cached_stock: cached,
       ledger_balance: ledger,
@@ -220,8 +446,12 @@ router.get('/:productId/ledger', asyncRoute(async (req, res) => {
   const { rows } = await pool.query(
     `SELECT m.id, m.movement_type, m.direction, m.quantity, m.unit, m.rate,
             m.balance_after, m.source_type, m.source_id, m.reason, m.notes,
-            m.created_at
+            m.created_at,
+            m.location_id, fl.name AS location_name,
+            m.to_location_id, tl.name AS to_location_name, m.transfer_id
        FROM stock_movements m
+       LEFT JOIN stock_locations fl ON fl.id = m.location_id
+       LEFT JOIN stock_locations tl ON tl.id = m.to_location_id
       WHERE m.user_id = $1 AND m.product_id = $2
       ORDER BY m.created_at ASC, m.id ASC
       LIMIT ${limit} OFFSET ${offset}`, params);
@@ -266,6 +496,7 @@ router.post('/opening', asyncRoute(async (req, res) => {
 
     const balance = await applyStockDelta(client, req.userId, productId, quantity, {
       type: 'OPENING', sourceType: 'opening', rate,
+      locationId: (req.body || {}).location_id || null,
       reason: (req.body || {}).reason || 'Opening balance'
     });
 
@@ -311,7 +542,8 @@ router.post('/adjustment', asyncRoute(async (req, res) => {
     const balance = await applyStockDelta(
       client, req.userId, productId,
       direction === 'IN' ? quantity : -quantity,
-      { type, sourceType: 'adjustment', reason, notes: body.notes || null });
+      { type, sourceType: 'adjustment', reason, notes: body.notes || null,
+        locationId: body.location_id || null });
 
     await client.query('COMMIT');
     res.status(201).json({ product_id: productId, stock: balance });
