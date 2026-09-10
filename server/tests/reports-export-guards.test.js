@@ -113,7 +113,10 @@ test('G10 the new sheet is fetched from the server, not from page state', () => 
   assert.match(REPORTS_JS, /apiFetch\('\/reports\/invoice-details\?'/);
   // It must not be rebuilt from the arrays the page already holds.
   assert.equal(/buildCompleteInvoiceRows\(\s*(repB2B|repB2C|repItemsByInvoice)/.test(REPORTS_JS), false);
-  assert.match(REPORTS_JS, /buildCompleteInvoiceRows\(detail\.rows\)/);
+  // Built from the fetched rows. What else is passed alongside them is not
+  // this guard's business — the sort direction rides here too — but the
+  // rows themselves must come from the response.
+  assert.match(REPORTS_JS, /buildCompleteInvoiceRows\(detail\.rows\b/);
 });
 
 test('G11 the export refuses to write a workbook it cannot vouch for', () => {
@@ -265,7 +268,10 @@ test('G23 the money columns are stored invoice figures, never recomputed', () =>
   assert.match(body, /'CGST': \+r\.inv_cgst/);
   assert.match(body, /'IGST': \+r\.inv_igst/);
   assert.match(body, /'Total Rs\.': \+r\.inv_total_amount/);
-  assert.match(body, /'GST%': formatGstRateList\(g\.rates\)/);
+  // Still built from the rates collected off the invoice's own LINES.
+  // The helper decides only how to present them — a number for a single
+  // rate, "5%, 18%" for several — and derives no amount from either.
+  assert.match(body, /'GST%': completeInvoiceGstRate\(g\.rates\)/);
   // No arithmetic builds these cells.
   assert.equal(/round2\(|\* 0\.5|\/ 2/.test(body), false,
     'the money columns must be stored values, not calculations');
@@ -312,8 +318,10 @@ test('G15 cache keys were bumped for both changed scripts', () => {
   // ?v= is the only cache mechanism these pages have.
   // reports.js moves with every change to its content, because ?v= is the
   // only cache mechanism these pages have and the previous key is already
-  // live: v=31 is serving the 24-column build right now, so the 16-column
-  // one needs its own. export.js has not changed since v=30.
-  assert.match(REPORTS_HTML, /client\/js\/reports\/reports\.js\?v=32/);
+  // live: v=33 is serving the build whose detail sheet only ever sorted
+  // one way, so the one that honours the Bill Number direction needs its
+  // own key or a browser holding the old file will keep using it.
+  // export.js has not changed since v=30.
+  assert.match(REPORTS_HTML, /client\/js\/reports\/reports\.js\?v=34/);
   assert.match(REPORTS_HTML, /client\/js\/utilities\/export\.js\?v=30/);
 });

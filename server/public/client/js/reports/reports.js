@@ -645,6 +645,40 @@ const COMPLETE_DETAIL_WIDTHS = [
   7, 12, 16, 18, 22, 16, 34, 34, 14, 14, 12, 12, 12, 14
 ].map(wch => ({ wch }));
 
+// A stored figure as a real Excel number.
+//
+// Money, quantities and rates are NUMERIC in Postgres, and node-postgres
+// hands NUMERIC back as a STRING so that no paise are lost to a float on
+// the way out. res.json() then sends "1700.00", and a workbook built
+// straight from that gets a cell of TEXT that happens to look like money:
+// it will not sum, will not chart, and sorts 9 after 100.
+//
+// This converts that string to the number it already was. It is not a
+// calculation and changes no value — 1700.00 becomes 1700, which Excel
+// renders as "1700.00" once the column carries the format. Anything that
+// is not a finite number is passed through untouched rather than being
+// forced to 0, so a value this does not understand is still visible in the
+// sheet instead of silently becoming a figure nobody entered.
+function excelNumber(v) {
+  if (v === null || v === undefined || v === '') return null;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : v;
+}
+
+// Excel number formats, by what the column holds. Kept together so every
+// sheet says "money" the same way.
+//
+// MONEY and RATE both show two decimals; QTY shows up to three and none
+// when there are none, so a quantity of 3 reads "3" and one of 2.5 reads
+// "2.5" rather than "2.500". DATE_SLASH matches what these four sheets
+// have always displayed, so making the cells real dates does not change
+// how they look.
+const XL_MONEY = '0.00';
+const XL_RATE = '0.00';
+const XL_QTY = '0.###';
+const XL_INT = '0';
+const XL_DATE_SLASH = 'dd/mm/yyyy';
+
 function completeInvoicePlaceOfSupply(row) {
   const gstin = (row.gst_number || '').trim();
   // Registered customer: the customer's own GSTIN decides POS. Only fall
@@ -664,6 +698,23 @@ function formatGstRateList(rates) {
     .sort((a, b) => a - b)
     .map(v => String(Math.round(v * 100) / 100) + '%')
     .join(', ');
+}
+
+// GST% for one invoice: a NUMBER when the invoice carries a single rate,
+// and text only when it genuinely carries more than one.
+//
+// An invoice at one rate has a rate — 18 — and there is no reason to hand
+// Excel a string for it. An invoice whose lines are at 5% and 18% has no
+// single number to give, and forcing one would mean either inventing an
+// average or dropping a rate. That cell says "5%, 18%" and stays text,
+// which is the price of stating two facts in one cell.
+//
+// Either way this is a description of rates already stored on the lines.
+// No GST is recalculated and no amount is derived from it.
+function completeInvoiceGstRate(rates) {
+  const list = [...rates];
+  if (list.length === 1) return list[0];
+  return formatGstRateList(list);
 }
 
 // One row per INVOICE, in the fourteen columns the finished sheet shows.
@@ -696,13 +747,17 @@ function formatGstRateList(rates) {
 // being able to state two rates in one cell. It is a label only - no GST
 // amount is derived from it. SGST, CGST, IGST, Amount and Total Rs. remain
 // the stored invoice figures, untouched and unrecalculated.
-function buildCompleteInvoiceRows(rows) {
+// `direction` is the Bill Number order the toolbar asks for, 'asc' or
+// 'desc'. It changes nothing but the order of the rows and the Sl.no.
+// that follows from it: the same invoices, the same aggregation, the same
+// figures, read from the other end.
+function buildCompleteInvoiceRows(rows, direction) {
   const byInvoice = new Map();
   for (const r of rows) {
     const key = r.invoice_id || (r.category + ':' + r.invoice_number);
     let g = byInvoice.get(key);
-    // Insertion order is the order the server sorted by, so the sheet keeps
-    // the Oldest/Newest choice the user made.
+    // Insertion order only groups the lines; the finished rows are ordered
+    // by bill number below, whatever order the server returned them in.
     if (!g) { g = { first: r, hsn: [], items: [], rates: new Set() }; byInvoice.set(key, g); }
     const hsn = String(r.hsn_code == null ? '' : r.hsn_code).trim();
     if (hsn && !g.hsn.includes(hsn)) g.hsn.push(hsn);
@@ -715,10 +770,8 @@ function buildCompleteInvoiceRows(rows) {
     }
   }
 
-  let slNo = 0;
   const out = [...byInvoice.values()].map(g => {
     const r = g.first;
-    slNo++;
 
     // Kept as the plain YYYY-MM-DD the API sends, and turned into a real
     // Excel date by the writer. A JS Date here would be serialised to UTC
@@ -729,7 +782,7 @@ function buildCompleteInvoiceRows(rows) {
       ? String(r.invoice_date) : '';
 
     return {
-      'Sl.no.': slNo,
+      'Sl.no.': 0,                       // assigned below, once the order is final
       'Date': invoiceDate,
       'Bill Number': r.invoice_number || '',
       'GST NUMBER': r.gst_number || '',
@@ -738,13 +791,38 @@ function buildCompleteInvoiceRows(rows) {
       'Bill Address': r.address || '',
       'Item': g.items.join(' | '),
       'Amount': +r.inv_taxable_amount || 0,
-      'GST%': formatGstRateList(g.rates),
+      'GST%': completeInvoiceGstRate(g.rates),
       'SGST': +r.inv_sgst || 0,
       'CGST': +r.inv_cgst || 0,
       'IGST': +r.inv_igst || 0,
       'Total Rs.': +r.inv_total_amount || 0
     };
   });
+
+  // Ordered by the bill number, because that is how this sheet is read:
+  // someone looking for invoice 187 wants it between 186 and 188, not
+  // wherever its date happens to put it.
+  //
+  // compareInvoiceNumbers is the same rule the invoice list and the filing
+  // use, so all three agree on which invoice comes first. It compares the
+  // digit runs inside a number as numbers, which is what makes 9 sort
+  // before 10 and INV-9 before INV-10 — plain text sorting puts 100 before
+  // 9. The stored number itself is never altered or converted; only the
+  // order of the rows changes.
+  //
+  // Descending is that same ordering read backwards, not a different rule:
+  // negating the one comparison keeps 100 above 11 above 9, where reversing
+  // a text sort would not.
+  const descending = String(direction || 'asc').toLowerCase() === 'desc';
+  out.sort((a, b) => {
+    const d = compareInvoiceNumbers(a['Bill Number'], b['Bill Number']);
+    return descending ? -d : d;
+  });
+
+  // Numbered AFTER sorting, so Sl.no. counts the sheet as it is actually
+  // read: 1 to n down the page, with no gaps and no leftover numbers from
+  // the order the rows arrived in.
+  out.forEach((row, i) => { row['Sl.no.'] = i + 1; });
 
   return out;
 }
@@ -761,24 +839,38 @@ async function fetchCompleteInvoiceDetails() {
 }
 
 async function exportFullGSTR1() {
-  // The four existing sheets are built exactly as before, from the arrays
-  // this page already holds. Nothing below changes them.
+  // The four existing sheets keep exactly the rows, columns, headers and
+  // values they have always had. What changes is the CELL TYPE: the
+  // figures reach the sheet as numbers rather than as strings that look
+  // like numbers, and the date columns as real dates. GST No, Invoice No,
+  // HSN, Customer, Product, State, Supply and Type stay text — every one
+  // of them is an identifier or a label, and an HSN of 08439000 would lose
+  // its leading zero the moment anything treated it as a quantity.
+  const MONEY_FMT = {
+    'Taxable': XL_MONEY, 'GST%': XL_RATE, 'IGST': XL_MONEY, 'CGST': XL_MONEY,
+    'SGST': XL_MONEY, 'Total': XL_MONEY, 'Total GST': XL_MONEY, 'Total Inv': XL_MONEY,
+    'S.No': XL_INT, 'Date': XL_DATE_SLASH
+  };
   const sheets = [
     {
       name: 'B2B Invoices',
-      data: repB2B.map((r,i) => ({ 'S.No': i+1, 'GST No': r.gst_number, 'Customer': r.customer_name, 'Invoice No': r.invoice_number, 'Date': formatDate(r.invoice_date), 'Supply': r.supply_type, 'Taxable': r.taxable_amount, 'GST%': r.gst_percentage, 'IGST': r.igst, 'CGST': r.cgst, 'SGST': r.sgst, 'Total': r.total_amount }))
+      data: repB2B.map((r,i) => ({ 'S.No': i+1, 'GST No': r.gst_number, 'Customer': r.customer_name, 'Invoice No': r.invoice_number, 'Date': r.invoice_date, 'Supply': r.supply_type, 'Taxable': excelNumber(r.taxable_amount), 'GST%': excelNumber(r.gst_percentage), 'IGST': excelNumber(r.igst), 'CGST': excelNumber(r.cgst), 'SGST': excelNumber(r.sgst), 'Total': excelNumber(r.total_amount) })),
+      dateColumns: ['Date'], numberFormats: MONEY_FMT
     },
     {
       name: 'B2C Invoices',
-      data: repB2C.map((r,i) => ({ 'S.No': i+1, 'State': r.state, 'Supply': r.supply_type, 'Date': formatDate(r.invoice_date), 'Taxable': r.taxable_amount, 'GST%': r.gst_percentage, 'IGST': r.igst, 'CGST': r.cgst, 'SGST': r.sgst, 'Total': r.total_amount }))
+      data: repB2C.map((r,i) => ({ 'S.No': i+1, 'State': r.state, 'Supply': r.supply_type, 'Date': r.invoice_date, 'Taxable': excelNumber(r.taxable_amount), 'GST%': excelNumber(r.gst_percentage), 'IGST': excelNumber(r.igst), 'CGST': excelNumber(r.cgst), 'SGST': excelNumber(r.sgst), 'Total': excelNumber(r.total_amount) })),
+      dateColumns: ['Date'], numberFormats: MONEY_FMT
     },
     {
       name: 'B2B HSN',
-      data: repB2BHSN.map((r,i) => ({ 'S.No': i+1, 'HSN': r.hsn_code, 'Product': r.product_name, 'Type': r.type, 'Qty': r.quantity, 'Taxable': r.taxable_value, 'GST%': r.gst_percentage, 'IGST': r.igst, 'CGST': r.cgst, 'SGST': r.sgst, 'Total GST': r.total_gst, 'Total Inv': r.total_invoice_value }))
+      data: repB2BHSN.map((r,i) => ({ 'S.No': i+1, 'HSN': r.hsn_code, 'Product': r.product_name, 'Type': r.type, 'Qty': excelNumber(r.quantity), 'Taxable': excelNumber(r.taxable_value), 'GST%': excelNumber(r.gst_percentage), 'IGST': excelNumber(r.igst), 'CGST': excelNumber(r.cgst), 'SGST': excelNumber(r.sgst), 'Total GST': excelNumber(r.total_gst), 'Total Inv': excelNumber(r.total_invoice_value) })),
+      numberFormats: Object.assign({ 'Qty': XL_QTY }, MONEY_FMT)
     },
     {
       name: 'B2C HSN',
-      data: repB2CHSN.map((r,i) => ({ 'S.No': i+1, 'HSN': r.hsn_code, 'Product': r.product_name, 'Type': r.type, 'Taxable': r.taxable_value, 'GST%': r.gst_percentage, 'IGST': r.igst, 'CGST': r.cgst, 'SGST': r.sgst, 'Total GST': r.total_gst, 'Total Inv': r.total_invoice_value }))
+      data: repB2CHSN.map((r,i) => ({ 'S.No': i+1, 'HSN': r.hsn_code, 'Product': r.product_name, 'Type': r.type, 'Taxable': excelNumber(r.taxable_value), 'GST%': excelNumber(r.gst_percentage), 'IGST': excelNumber(r.igst), 'CGST': excelNumber(r.cgst), 'SGST': excelNumber(r.sgst), 'Total GST': excelNumber(r.total_gst), 'Total Inv': excelNumber(r.total_invoice_value) })),
+      numberFormats: MONEY_FMT
     }
   ];
 
@@ -794,7 +886,10 @@ async function exportFullGSTR1() {
     return;
   }
 
-  const detailRows = buildCompleteInvoiceRows(detail.rows);
+  // The direction the SERVER echoes back, not the control read a second
+  // time: that is the value actually applied to this response, so the sheet
+  // cannot end up ordered by a choice made after the request went out.
+  const detailRows = buildCompleteInvoiceRows(detail.rows, detail.sort);
 
   if (!detailRows.length) {
     showToast('No invoices found for the selected period/category.', 'warning');
@@ -818,7 +913,14 @@ async function exportFullGSTR1() {
     data: detailRows,
     widths: COMPLETE_DETAIL_WIDTHS,
     autofilter: true,
-    dateColumns: ['Date']
+    dateColumns: ['Date'],
+    // Bill Number, GST NUMBER, HSN code, State, Bill Address and Item are
+    // deliberately absent: they are identifiers and labels, and a format
+    // is only applied to a cell that is already a number.
+    numberFormats: {
+      'Sl.no.': XL_INT, 'Amount': XL_MONEY, 'GST%': XL_RATE,
+      'SGST': XL_MONEY, 'CGST': XL_MONEY, 'IGST': XL_MONEY, 'Total Rs.': XL_MONEY
+    }
   });
 
   // Written on the server with ExcelJS: a bold header row and a frozen

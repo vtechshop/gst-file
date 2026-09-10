@@ -20,7 +20,7 @@
   <script src="client/js/pages/profile.js?v=39"></script>
   <script src="client/js/utilities/export.js?v=30"></script>
   <script src="client/js/utilities/future.js?v=29"></script>
-  <script src="client/js/reports/reports.js?v=32"></script>
+  <script src="client/js/reports/reports.js?v=34"></script>
   <script src="client/js/gst/gstr1-export.js?v=29"></script>
 </head>
 <body>
@@ -151,9 +151,9 @@
             <option value="b2b">B2B only</option>
             <option value="b2c">B2C only</option>
           </select>
-          <select class="form-control toolbar-select" id="repDetailSort" aria-label="Sort order for the Complete Invoice Details sheet" title="Sort order for the Complete Invoice Details sheet">
-            <option value="asc">Oldest &rarr; Newest</option>
-            <option value="desc">Newest &rarr; Oldest</option>
+          <select class="form-control toolbar-select" id="repDetailSort" aria-label="Bill number order for the Complete Invoice Details sheet" title="Bill number order for the Complete Invoice Details sheet">
+            <option value="asc">Bill Number &mdash; Ascending</option>
+            <option value="desc">Bill Number &mdash; Descending</option>
           </select>
           <button type="button" class="btn btn-success" onclick="exportFullGSTR1()"><i class="fas fa-file-excel"></i> Export Full GSTR-1 (Excel)</button>
           <button type="button" class="btn btn-danger"  onclick="exportSummaryPDF()"><i class="fas fa-file-pdf"></i> Export Summary (PDF)</button>

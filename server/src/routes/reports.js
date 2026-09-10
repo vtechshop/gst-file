@@ -249,6 +249,25 @@ router.post('/workbook', express.json({ limit: WORKBOOK_BODY_LIMIT }),
       const dateCols = new Set((Array.isArray(sheet.dateColumns) ? sheet.dateColumns : [])
         .map(h => headers.indexOf(h)).filter(idx => idx >= 0));
 
+      // How a column should DISPLAY, by header name. It never changes a
+      // value or its type — a money column still has to arrive as a JSON
+      // number to be one here. This exists so 1700 can read as "1700.00"
+      // while staying a number Excel can sum, which a string "1700.00"
+      // never is.
+      //
+      // Only applied to cells that really are numbers or dates: a format
+      // on a text cell is meaningless, and silently formatting one would
+      // hide the fact that a value arrived as text when it should not have.
+      const fmts = (sheet.numberFormats && typeof sheet.numberFormats === 'object'
+        && !Array.isArray(sheet.numberFormats)) ? sheet.numberFormats : {};
+      const fmtByCol = new Map();
+      headers.forEach((h, c) => {
+        if (!Object.prototype.hasOwnProperty.call(fmts, h)) return;
+        const f = String(fmts[h]);
+        if (!f || f.length > 40) throw badBody(`Sheet "${name}" has an unusable number format for "${h}".`);
+        fmtByCol.set(c, f);
+      });
+
       for (const row of rows) {
         const values = Array.isArray(row) ? row : [];
         const added = ws.addRow(headers.map((_, c) => {
@@ -260,7 +279,12 @@ router.post('/workbook', express.json({ limit: WORKBOOK_BODY_LIMIT }),
         // columns need telling how to render.
         for (const c of dateCols) {
           const cell = added.getCell(c + 1);
-          if (cell.value instanceof Date) cell.numFmt = 'dd-mm-yyyy';
+          if (cell.value instanceof Date) cell.numFmt = fmtByCol.get(c) || 'dd-mm-yyyy';
+        }
+        for (const [c, f] of fmtByCol) {
+          if (dateCols.has(c)) continue;            // already given its format above
+          const cell = added.getCell(c + 1);
+          if (typeof cell.value === 'number') cell.numFmt = f;
         }
       }
 
