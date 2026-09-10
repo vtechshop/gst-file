@@ -191,7 +191,7 @@ test('G18 every detail column is sized, with no width ExcelJS would drop', () =>
   assert.ok(widths, 'the width table must exist');
   const values = widths[1].replace(/\/\/[^\n]*/g, '').split(',')
     .map(v => Number(v.trim())).filter(v => Number.isFinite(v));
-  assert.strictEqual(values.length, 14, 'one width per column');
+  assert.strictEqual(values.length, 15, 'one width per column');
   assert.ok(values.every(v => v >= 6), 'no column may be unusably narrow');
   // A width of exactly 9 is Excel's own default, and ExcelJS emits no
   // customWidth for it — that column arrives unsized while every other
@@ -200,7 +200,7 @@ test('G18 every detail column is sized, with no width ExcelJS would drop', () =>
     'a width of exactly 9 is dropped by ExcelJS — use 8.43, 9.14 or 10');
 });
 
-test('G19 the detail sheet carries exactly the 14 agreed columns', () => {
+test('G19 the detail sheet carries exactly the 15 agreed columns', () => {
   // Read straight off the object buildCompleteInvoiceRows returns, which is
   // what decides the sheet's columns and their order.
   const body = REPORTS_JS.slice(
@@ -209,14 +209,14 @@ test('G19 the detail sheet carries exactly the 14 agreed columns', () => {
   const keys = [...body.matchAll(/^\s{6}'([^']+)':/gm)].map(m => m[1]);
 
   const EXPECTED = [
-    'Sl.no.', 'Date', 'Bill Number', 'GST NUMBER', 'HSN code', 'State',
+    'Sl.no.', 'Bill Type', 'Date', 'Bill Number', 'GST NUMBER', 'HSN code', 'State',
     'Bill Address', 'Item', 'Amount', 'GST%', 'SGST', 'CGST', 'IGST', 'Total Rs.'
   ];
   assert.deepStrictEqual(keys, EXPECTED, 'the column set or its order changed');
-  assert.strictEqual(keys.length, 14);
+  assert.strictEqual(keys.length, 15);
 });
 
-test('G20 no column outside the final fourteen is emitted', () => {
+test('G20 no column outside the final fifteen is emitted', () => {
   const body = REPORTS_JS.slice(
     REPORTS_JS.indexOf('function buildCompleteInvoiceRows'),
     REPORTS_JS.indexOf('// Fetches the detail rows for the period currently selected'));
@@ -318,10 +318,9 @@ test('G15 cache keys were bumped for both changed scripts', () => {
   // ?v= is the only cache mechanism these pages have.
   // reports.js moves with every change to its content, because ?v= is the
   // only cache mechanism these pages have and the previous key is already
-  // live: v=33 is serving the build whose detail sheet only ever sorted
-  // one way, so the one that honours the Bill Number direction needs its
-  // own key or a browser holding the old file will keep using it.
-  // export.js has not changed since v=30.
-  assert.match(REPORTS_HTML, /client\/js\/reports\/reports\.js\?v=34/);
+  // live: v=34 is serving the fourteen-column detail sheet, so the
+  // fifteen-column one needs its own key or a browser holding the old file
+  // will keep writing the old shape. export.js has not changed since v=30.
+  assert.match(REPORTS_HTML, /client\/js\/reports\/reports\.js\?v=35/);
   assert.match(REPORTS_HTML, /client\/js\/utilities\/export\.js\?v=30/);
 });

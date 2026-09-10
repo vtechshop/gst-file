@@ -637,12 +637,13 @@ function renderHSNReport() {
 // and omits it, so that one column would arrive unsized while every other
 // carried the width asked for.
 const COMPLETE_DETAIL_WIDTHS = [
-  // Sl.no., Date, Bill Number, GST NUMBER, HSN code, State, Bill Address,
-  // Item, Amount, GST%, SGST, CGST, IGST, Total Rs.
+  // Sl.no., Bill Type, Date, Bill Number, GST NUMBER, HSN code, State,
+  // Bill Address, Item, Amount, GST%, SGST, CGST, IGST, Total Rs.
   //
   // HSN code and Item are wider than a single value needs: both can hold
-  // every distinct value on a multi-product invoice.
-  7, 12, 16, 18, 22, 16, 34, 34, 14, 14, 12, 12, 12, 14
+  // every distinct value on a multi-product invoice. Bill Type holds
+  // "B2B" or "B2C" and needs no more room than its own header.
+  7, 11, 12, 16, 18, 22, 16, 34, 34, 14, 14, 12, 12, 12, 14
 ].map(wch => ({ wch }));
 
 // A stored figure as a real Excel number.
@@ -783,6 +784,11 @@ function buildCompleteInvoiceRows(rows, direction) {
 
     return {
       'Sl.no.': 0,                       // assigned below, once the order is final
+      // Which book the invoice was raised in, taken from the category the
+      // endpoint already labelled the row with. No second classification:
+      // 'B2B'/'B2C' is decided once, in the SQL that selects the two
+      // invoice tables, and this only displays it.
+      'Bill Type': r.category || '',
       'Date': invoiceDate,
       'Bill Number': r.invoice_number || '',
       'GST NUMBER': r.gst_number || '',

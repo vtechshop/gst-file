@@ -75,7 +75,7 @@ function buildDetail(rows, direction) {
   return ctx.__eval('buildCompleteInvoiceRows(__data.rows, __data.direction)');
 }
 
-const WIDTHS = [7, 12, 16, 18, 22, 16, 34, 34, 14, 14, 12, 12, 12, 14].map(wch => ({ wch }));
+const WIDTHS = [7, 11, 12, 16, 18, 22, 16, 34, 34, 14, 14, 12, 12, 12, 14].map(wch => ({ wch }));
 const DETAIL_FORMATS = {
   'Sl.no.': '0', 'Amount': '0.00', 'GST%': '0.00',
   'SGST': '0.00', 'CGST': '0.00', 'IGST': '0.00', 'Total Rs.': '0.00'
@@ -294,7 +294,7 @@ test('N8 65 invoices over 69 lines: one row each, nothing lost, filter to N66', 
     Array.from({ length: 65 }, (_, i) => i + 1), 'Sl.no. 1..65 with no gaps');
 
   const af = typeof ws.autoFilter === 'string' ? ws.autoFilter : JSON.stringify(ws.autoFilter);
-  assert.strictEqual(af, 'A1:N66');
+  assert.strictEqual(af, 'A1:O66');
 
   // The multi-line invoices kept every HSN and every item name.
   const hsn = column(ws, 'HSN code')[0];
@@ -385,13 +385,16 @@ test('N15 direction changes only the order, never the membership or the figures'
   const ws = wb.getWorksheet('Complete Invoice Details');
   assert.strictEqual(ws.rowCount, 66, '65 invoices plus the header, either way');
   const af = typeof ws.autoFilter === 'string' ? ws.autoFilter : JSON.stringify(ws.autoFilter);
-  assert.strictEqual(af, 'A1:N66');
+  assert.strictEqual(af, 'A1:O66');
   assert.strictEqual(column(ws, 'Bill Number')[0], '247', 'descending starts at the largest');
-  // The aggregation is untouched by the direction.
-  const last = ws.rowCount;
-  assert.match(String(ws.getRow(last).getCell(5).value), /08439000/);
-  assert.match(String(ws.getRow(last).getCell(5).value), /84139190/);
-  assert.strictEqual(ws.getRow(last).getCell(10).value, '5%, 18%', 'mixed rates survive');
+  // The aggregation is untouched by the direction. Read by header name
+  // rather than by column number: a column added to the sheet must not
+  // silently make this assert about a different column.
+  const lastRow = ws.rowCount - 2;          // last data row, zero-based
+  const hsn = column(ws, 'HSN code')[lastRow];
+  assert.match(String(hsn), /08439000/);
+  assert.match(String(hsn), /84139190/);
+  assert.strictEqual(column(ws, 'GST%')[lastRow], '5%, 18%', 'mixed rates survive');
 });
 
 test('N9 the sheet is still exactly the fourteen agreed columns', async () => {
@@ -399,7 +402,7 @@ test('N9 the sheet is still exactly the fourteen agreed columns', async () => {
   const wb = await workbookOf(detailSheet(rows));
   const headers = wb.getWorksheet('Complete Invoice Details').getRow(1).values.slice(1).map(String);
   assert.deepStrictEqual(headers, [
-    'Sl.no.', 'Date', 'Bill Number', 'GST NUMBER', 'HSN code', 'State',
+    'Sl.no.', 'Bill Type', 'Date', 'Bill Number', 'GST NUMBER', 'HSN code', 'State',
     'Bill Address', 'Item', 'Amount', 'GST%', 'SGST', 'CGST', 'IGST', 'Total Rs.'
   ]);
 });
@@ -423,4 +426,41 @@ test('N11 a number format is never applied to a text cell', async () => {
   const ws = wb.getWorksheet('Complete Invoice Details');
   assert.strictEqual(column(ws, 'Bill Number')[0], '00123', 'still the identifier');
   assert.strictEqual(typeof column(ws, 'Bill Number')[0], 'string', 'and still text');
+});
+
+test('N16 Bill Type carries the category the endpoint already decided', async () => {
+  // 'B2B'/'B2C' is settled once, in the SQL that selects the two invoice
+  // tables. This column displays it; nothing here re-derives it.
+  const rows = buildDetail([
+    lineRow('b', '183', '2026-08-14', '18.00'),
+    lineRow('c', '184', '2026-08-14', '18.00', { category: 'B2C', gst_number: '' })
+  ]);
+  const wb = await workbookOf(detailSheet(rows));
+  const ws = wb.getWorksheet('Complete Invoice Details');
+
+  const types = column(ws, 'Bill Type');
+  assert.deepStrictEqual(types, ['B2B', 'B2C'], 'in bill-number order, not grouped by type');
+  assert.ok(types.every(v => typeof v === 'string'), 'Bill Type is text, never a number');
+  // It is the SECOND column, immediately after Sl.no.
+  const headers = ws.getRow(1).values.slice(1).map(String);
+  assert.strictEqual(headers[1], 'Bill Type');
+});
+
+test('N17 Bill Type never regroups or duplicates rows', async () => {
+  // A B2B and a B2C invoice interleaved by number must stay interleaved:
+  // the sort key is the bill number, not the category.
+  const src = [];
+  for (let i = 0; i < 6; i++) {
+    src.push(lineRow('x' + i, String(183 + i), '2026-08-14', '18.00',
+      i % 2 ? { category: 'B2C', gst_number: '' } : {}));
+  }
+  const rows = buildDetail(src);
+  assert.strictEqual(rows.length, 6, 'one row per invoice, whatever the type');
+  const wb = await workbookOf(detailSheet(rows));
+  const ws = wb.getWorksheet('Complete Invoice Details');
+  assert.deepStrictEqual(column(ws, 'Bill Number'),
+    ['183', '184', '185', '186', '187', '188']);
+  assert.deepStrictEqual(column(ws, 'Bill Type'),
+    ['B2B', 'B2C', 'B2B', 'B2C', 'B2B', 'B2C'], 'order follows the number, not the type');
+  assert.deepStrictEqual(column(ws, 'Sl.no.'), [1, 2, 3, 4, 5, 6]);
 });
