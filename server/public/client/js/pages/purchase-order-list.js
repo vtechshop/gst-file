@@ -163,10 +163,13 @@ async function openPoReceive(id) {
       </td>
     </tr>`;
   }).join('');
-  document.getElementById('poReceiveModal').classList.add('active');
+  // 'open', not 'active': .modal-overlay.open is the rule this stylesheet
+  // actually defines. There is no .active rule anywhere, so the class this
+  // used to toggle did nothing.
+  document.getElementById('poReceiveModal').classList.add('open');
 }
 function closePoReceive() {
-  document.getElementById('poReceiveModal').classList.remove('active');
+  document.getElementById('poReceiveModal').classList.remove('open');
   poReceiveOrder = null;
 }
 function showPoReceiveError(message) {

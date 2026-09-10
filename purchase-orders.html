@@ -178,8 +178,11 @@
       </div>
 
       <!-- Receive goods -->
-      <div class="modal" id="poReceiveModal">
-        <div class="modal-content modal-lg">
+      <!-- .modal-overlay is what hides a modal (display:none until .open);
+           .modal is the card inside it. The id belongs on the OVERLAY,
+           because that is the element the CSS shows and hides. -->
+      <div class="modal-overlay" id="poReceiveModal">
+        <div class="modal modal-lg">
           <div class="modal-header">
             <span class="modal-title"><i class="fas fa-truck-ramp-box"></i> Receive against <span id="poReceiveNumber"></span></span>
             <button type="button" class="modal-close" onclick="closePoReceive()" aria-label="Close"><i class="fas fa-times"></i></button>
