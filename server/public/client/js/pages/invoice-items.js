@@ -1029,6 +1029,14 @@ function clearItemsDraft(formKey) {
 async function saveInvoiceWithItems(type, headerBase, editId, userId) {
   if (!validateInvoiceItems()) return false;
 
+  // A serial-tracked line must carry exactly one number per unit. Checked
+  // here so the person is told which line is short while they can still
+  // fix it, rather than after the save is refused.
+  if (typeof serialLinesProblem === 'function') {
+    const problem = await serialLinesProblem(currentItems);
+    if (problem) { showToast(problem, 'error'); return false; }
+  }
+
   const header = { ...headerBase, ...computeInvoiceRollups() };
   const items = currentItems
     .filter(r => r.product_name && r.taxable_value >= 0)
@@ -1042,7 +1050,10 @@ async function saveInvoiceWithItems(type, headerBase, editId, userId) {
       // and zero months would read as a warranty that was actually given.
       warranty_period_months: parseInt(r.warranty_period_months, 10) > 0
         ? parseInt(r.warranty_period_months, 10) : null,
-      total_amount: r.total_amount
+      total_amount: r.total_amount,
+      // The units being sold on this line, for a serial-tracked product.
+      // The count must equal the quantity; the server is what enforces it.
+      serials: Array.isArray(r.serials) ? r.serials : undefined
     }));
 
   try {

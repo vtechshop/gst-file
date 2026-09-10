@@ -166,7 +166,7 @@ function refuseImmutable(body, immutable, table) {
   throw e;
 }
 
-function makeCrudRouter(table, { columns, immutable, insertable = true, readOnly = false, ownerColumn = 'user_id', validate }) {
+function makeCrudRouter(table, { columns, immutable, insertable = true, readOnly = false, ownerColumn = 'user_id', validate, beforeWrite }) {
   const router = express.Router();
   router.use(requireAuth);
 
@@ -218,6 +218,10 @@ function makeCrudRouter(table, { columns, immutable, insertable = true, readOnly
     refuseImmutable(req.body, immutable, table);
     runValidate(validate, req.body, false);
     const { where, params } = buildWhere(req.query, ownerColumn, req.userId, columns);
+    // A rule that has to look at the DATABASE, not just the payload:
+    // runValidate above is synchronous and sees only the body. Optional,
+    // and only a table that genuinely needs one declares it.
+    if (beforeWrite) await beforeWrite(pool, req.body, { userId: req.userId, where, params });
     const patchCols = Object.keys(req.body).filter(c => columns.includes(c) && c !== ownerColumn); // ownership is never reassignable
     if (!patchCols.length) { const e = new Error('No valid fields to update.'); e.status = 400; e.expose = true; throw e; }
     const setClause = patchCols.map((c, i) => `${c} = $${params.length + i + 1}`).join(',');
@@ -280,6 +284,14 @@ const TABLES = {
       // The level at or below which a tracked product reads as LOW_STOCK.
       // Freely editable — it is a policy the user sets, not a balance.
       'reorder_level',
+      // Whether this product's units are tracked individually by serial
+      // number. A policy the user sets per product, like reorder_level —
+      // the SERIALS themselves are never reachable here: stock_serials is
+      // deliberately absent from this registry, exactly as stock_movements
+      // and stock_balances are, so a status, a location or an ownership
+      // reference can only be changed by the endpoint that also writes the
+      // movement explaining it.
+      'serial_tracking',
       // GST treatment (Phase 2, Module 3)
       'gst_treatment','cess_rate','reverse_charge',
       // Product Master completion (Phase 2, Module 3A)
@@ -294,7 +306,59 @@ const TABLES = {
     // Requires a valid HSN on hand-created products only (source 'local').
     // Product Sync writes source 'synced' and is deliberately unaffected —
     // see validateProductPayload() for why.
-    validate: validateProductPayload
+    validate: validateProductPayload,
+    // Turning serial tracking OFF while units exist would abandon their
+    // history. The serial rows would stay in the register, but nothing
+    // would keep them in step with stock again, and the two accounts of
+    // the same goods would drift apart from that moment with nothing
+    // recording why. Refused while ANY unit exists, in any state —
+    // including SOLD and SCRAPPED, which ARE the history.
+    //
+    // A product that has never had a serial switches freely, so this only
+    // ever stops the one case that loses information.
+    //
+    // Needs the database, which runValidate cannot reach: that hook is
+    // synchronous and sees only the payload.
+    async beforeWrite(db, body, { userId, where, params }) {
+      if (typeof body.serial_tracking !== 'boolean') return;
+      const { rows } = await db.query(
+        // COUNT(s.id), never COUNT(*): on a LEFT JOIN with no serial rows
+        // COUNT(*) still counts the product itself and would report one
+        // unit for a product that has never had any.
+        'SELECT COUNT(s.id)::int AS serials, '
+        + 'COALESCE(MAX(p.stock), 0) AS stock, COUNT(DISTINCT p.id)::int AS products '
+        + 'FROM products p LEFT JOIN stock_serials s '
+        + 'ON s.product_id = p.id AND s.user_id = p.user_id '
+        + 'WHERE p.id IN (SELECT id FROM products ' + where + ')',
+        params);
+      const { serials, stock } = rows[0];
+
+      if (body.serial_tracking === false) {
+        if (serials > 0) {
+          const e = new Error(
+            'This product has ' + serials + ' serial number'
+            + (serials === 1 ? '' : 's') + ' recorded. Serial tracking cannot be switched off '
+            + 'without abandoning that history — the units would stay in the register with '
+            + 'nothing keeping them in step with stock.');
+          e.status = 409; e.expose = true; throw e;
+        }
+        return;
+      }
+
+      // Turning it ON for a product that already holds stock with no units
+      // named would have the system claiming a number of identifiable
+      // things while knowing none of them, and the two accounts would be
+      // wrong from the first day. The way in is to name what is on the
+      // shelf: POST /api/stock/serials/reconcile-opening, which turns the
+      // flag on itself once the numbers match the balance.
+      if (serials === 0 && Number(stock) > 0) {
+        const e = new Error(
+          'This product already holds ' + Number(stock) + ' in stock with no serial numbers. '
+          + 'Existing stock must be reconciled with serial numbers before Serial Tracking '
+          + 'can be enabled.');
+        e.status = 409; e.expose = true; e.code = 'serial_reconciliation_required'; throw e;
+      }
+    }
   },
   import_mappings: {
     columns: ['id','user_id','import_type','mapping','created_at','updated_at']

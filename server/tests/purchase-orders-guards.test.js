@@ -230,7 +230,13 @@ test('P22 the receipt records, and the reversal follows, the exact order line', 
   assert.equal(/DROP |UPDATE purchase_items SET/.test(LINK_MIG), false,
     'the migration must add a column and nothing else');
   const manifest = JSON.parse(read('server/db/migrations/_manifest.json')).order;
-  assert.strictEqual(manifest[manifest.length - 1], 'migration_purchase_order_line_link.sql');
+  // Registered, and after the migration that creates the table it points
+  // at. Its position relative to THAT is what matters; a later feature
+  // appending its own migration must not fail this.
+  const ordersAt = manifest.indexOf('migration_purchase_orders.sql');
+  const linkAt = manifest.indexOf('migration_purchase_order_line_link.sql');
+  assert.ok(ordersAt > -1, 'the purchase order migration must be registered');
+  assert.ok(linkAt > ordersAt, 'the line link must come after the table it links');
 });
 
 test('P21 a concurrent second deletion cannot reverse the same receipt twice', () => {

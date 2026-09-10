@@ -16,10 +16,11 @@ const { requireAuth } = require('../middleware/auth');
 const { asyncRoute } = require('../middleware/errorHandler');
 const { randomUUID } = require('crypto');
 const {
-  applyStockDelta, transferStock, resolveLocation,
+  applyStockDelta, transferStock, resolveLocation, defaultLocationId,
   MANUAL_MOVEMENT_DIRECTION, MOVEMENT_TYPES,
   SIGNED_QTY_SQL, STOCK_STATUS_SQL, round3
 } = require('../services/stock-ledger');
+const serialsSvc = require('../services/stock-serials');
 
 const router = express.Router();
 router.use(requireAuth);
@@ -30,7 +31,12 @@ function badId(id, what) {
     const e = new Error(`Invalid ${what || 'id'}.`); e.status = 400; e.expose = true; throw e;
   }
 }
-function bad(msg) { const e = new Error(msg); e.status = 400; e.expose = true; return e; }
+// Most refusals here are malformed input, so 400 is the default; a
+// conflict with the state of the goods (already sold, already there, not
+// movable) is a 409 and says so.
+function bad(msg, status) {
+  const e = new Error(msg); e.status = status || 400; e.expose = true; return e;
+}
 
 // A quantity the user typed. Must be a real, positive, finite number —
 // "" , "abc", 0, -1 and Infinity are all refused rather than coerced,
@@ -219,6 +225,310 @@ router.post('/transfer', asyncRoute(async (req, res) => {
     // The unique index on (transfer_id, movement_type) fired: this exact
     // transfer already happened, so report it as already done rather than
     // as a failure the user should retry.
+    if (err && err.code === '23505') {
+      const e = new Error('This transfer has already been recorded.');
+      e.status = 409; e.expose = true; e.code = 'transfer_already_recorded'; throw e;
+    }
+    throw err;
+  } finally { client.release(); }
+}));
+
+// ── Serial numbers ────────────────────────────────────────────────────
+//
+// Declared BEFORE /:productId, or Express would read "serials" as a
+// product id and this whole section would be unreachable.
+//
+// Everything here is scoped to req.userId from the token. A serial that
+// belongs to another tenant is not found rather than refused, which is the
+// same answer the rest of the application gives and tells a caller nothing
+// about what other tenants hold.
+const SERIAL_LIST_COLUMNS = `
+  s.id, s.serial_no, s.status, s.product_id, s.location_id,
+  s.source_type, s.source_id, s.sold_source_type, s.sold_source_id,
+  s.purchase_order_item_id, s.notes, s.created_at, s.updated_at,
+  p.name AS product_name, p.sku AS product_sku,
+  l.name AS location_name`;
+
+router.get('/serials', asyncRoute(async (req, res) => {
+  const { limit, offset } = paging(req.query);
+  const where = ['s.user_id = $1'];
+  const params = [req.userId];
+
+  // Scanner-friendly: an exact serial match wins, and a partial one still
+  // finds it. Compared the way the unique index compares, so a scan of
+  // "sn001" finds "SN001".
+  const q = String(req.query.q || '').trim();
+  if (q) {
+    params.push('%' + q.toUpperCase() + '%');
+    where.push(`upper(btrim(s.serial_no)) LIKE $${params.length}`);
+  }
+  if (req.query.status) {
+    const wanted = String(req.query.status).toUpperCase();
+    if (!serialsSvc.SERIAL_STATUSES.includes(wanted)) {
+      throw bad(`status must be one of ${serialsSvc.SERIAL_STATUSES.join(', ')}.`);
+    }
+    params.push(wanted); where.push(`s.status = $${params.length}`);
+  }
+  if (req.query.product_id) {
+    badId(req.query.product_id, 'product id');
+    params.push(req.query.product_id); where.push(`s.product_id = $${params.length}`);
+  }
+  if (req.query.location_id) {
+    badId(req.query.location_id, 'location id');
+    params.push(req.query.location_id); where.push(`s.location_id = $${params.length}`);
+  }
+  // "Which units did THIS document bring in / take out." A return picker
+  // must offer only the units its own document is entitled to: the ones
+  // that purchase received, or the ones that invoice sold. Filtering by
+  // product alone would offer a unit from another delivery or another
+  // customer's invoice, which the save path would then rightly refuse.
+  if (req.query.source_id) {
+    badId(req.query.source_id, 'source id');
+    params.push(req.query.source_id); where.push(`s.source_id = $${params.length}`);
+  }
+  if (req.query.sold_source_id) {
+    badId(req.query.sold_source_id, 'sold source id');
+    params.push(req.query.sold_source_id); where.push(`s.sold_source_id = $${params.length}`);
+  }
+  // Several states at once, for a picker that accepts more than one.
+  if (req.query.statuses) {
+    const wanted = String(req.query.statuses).toUpperCase().split(',').map(s => s.trim()).filter(Boolean);
+    for (const st of wanted) {
+      if (!serialsSvc.SERIAL_STATUSES.includes(st)) throw bad(`Unknown status "${st}".`);
+    }
+    if (wanted.length) { params.push(wanted); where.push(`s.status = ANY($${params.length})`); }
+  }
+
+  const sql = `
+    SELECT ${SERIAL_LIST_COLUMNS}
+      FROM stock_serials s
+      JOIN products p ON p.id = s.product_id AND p.user_id = s.user_id
+      LEFT JOIN stock_locations l ON l.id = s.location_id AND l.user_id = s.user_id
+     WHERE ${where.join(' AND ')}
+     ORDER BY s.created_at DESC, upper(btrim(s.serial_no)) ASC
+     LIMIT ${limit} OFFSET ${offset}`;
+  const countSql = `SELECT COUNT(*)::int AS total FROM stock_serials s WHERE ${where.join(' AND ')}`;
+  const [{ rows }, { rows: countRows }] = await Promise.all([
+    pool.query(sql, params), pool.query(countSql, params)
+  ]);
+  res.json({ rows, total: countRows[0].total, limit, offset });
+}));
+
+// Reconciliation: the quantity balance against the units actually held.
+// Reported, never corrected — see reconcileSerials().
+router.get('/serials/reconcile', asyncRoute(async (req, res) => {
+  if (req.query.product_id) badId(req.query.product_id, 'product id');
+  const client = await pool.connect();
+  try {
+    const rows = await serialsSvc.reconcileSerials(client, req.userId,
+      { productId: req.query.product_id || null });
+    res.json({ rows, balanced: rows.every(r => r.balanced) });
+  } finally { client.release(); }
+}));
+
+// ── Naming the units a product already holds ──────────────────────────
+//
+// A product that has been counted for years has a quantity but no names.
+// Serial tracking cannot simply be switched on for it: the system would be
+// claiming ten identifiable units while knowing none of them.
+//
+// This is the reconciliation that makes it possible — the person enters
+// the numbers actually on the shelf, and only if there are exactly as many
+// as the balance says does tracking begin.
+//
+// It is NOT a purchase. No stock arrives, no quantity changes, and no
+// movement is written: inventing a PURCHASE row would put goods on a date
+// and a supplier nobody recorded. The units are marked as coming from
+// 'opening', the same word the ledger already uses for a balance that
+// predates its history.
+router.post('/serials/reconcile-opening', asyncRoute(async (req, res) => {
+  const body = req.body || {};
+  badId(body.product_id, 'product id');
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    const { rows: prod } = await client.query(
+      'SELECT id, name, stock, serial_tracking FROM products WHERE id = $1 AND user_id = $2 FOR UPDATE',
+      [body.product_id, req.userId]);
+    if (!prod.length) { const e = new Error('Product not found.'); e.status = 404; e.expose = true; throw e; }
+    const product = prod[0];
+    if (product.stock === null) {
+      throw bad('This product is not stock-tracked, so it has no units to name.');
+    }
+
+    const { rows: existing } = await client.query(
+      'SELECT COUNT(*)::int AS n FROM stock_serials WHERE user_id = $1 AND product_id = $2',
+      [req.userId, body.product_id]);
+    if (existing[0].n > 0) {
+      throw bad('This product already has serial numbers recorded. '
+        + 'Reconciliation is for a product whose units have never been named.', 409);
+    }
+
+    const serials = serialsSvc.readSerialList(body.serials, { where: 'This reconciliation' });
+    const stock = Number(product.stock);
+    if (serials.length !== stock) {
+      throw bad(
+        `"${product.name}" holds ${stock} in stock, so it needs exactly ${stock} serial `
+        + `number${stock === 1 ? '' : 's'} — ${serials.length} `
+        + `${serials.length === 1 ? 'was' : 'were'} entered.`, 409);
+    }
+    if (!stock) throw bad('There is no stock to reconcile.');
+
+    // The units go where the quantity already is. Stock spread across
+    // several locations cannot be divided up from a flat list of numbers
+    // without guessing which unit sits where, so it is refused and said so
+    // rather than assigned arbitrarily.
+    const { rows: balances } = await client.query(
+      `SELECT location_id, quantity FROM stock_balances
+        WHERE user_id = $1 AND product_id = $2 AND quantity <> 0`,
+      [req.userId, body.product_id]);
+    if (balances.length > 1) {
+      throw bad(
+        `"${product.name}" is held at ${balances.length} locations. Reconciling a product `
+        + 'spread across more than one location is not supported yet — the numbers alone '
+        + 'do not say which unit is where.', 409);
+    }
+    const locationId = balances.length ? balances[0].location_id
+      : await defaultLocationId(client, req.userId);
+
+    const created = await serialsSvc.receiveSerials(client, req.userId, {
+      productId: body.product_id, serials, locationId,
+      // Not a purchase. 'opening' is the ledger's own word for a balance
+      // that was already there when the history began.
+      sourceType: 'opening', sourceId: null, createdBy: req.userId
+    });
+
+    // Only now does tracking begin — the flag and the units are set
+    // together, so the product is never serial-tracked with nothing named.
+    await client.query(
+      'UPDATE products SET serial_tracking = TRUE WHERE id = $1 AND user_id = $2',
+      [body.product_id, req.userId]);
+
+    await client.query('COMMIT');
+    res.status(201).json({
+      product_id: body.product_id, serial_tracking: true,
+      stock, created: created.length, location_id: locationId
+    });
+  } catch (err) {
+    await client.query('ROLLBACK'); throw err;
+  } finally { client.release(); }
+}));
+
+// One unit, with the timeline that explains it. The movements carry the
+// document each step belonged to, so the history needs no table of its own.
+router.get('/serials/:id', asyncRoute(async (req, res) => {
+  badId(req.params.id, 'serial id');
+  const { rows } = await pool.query(
+    `SELECT ${SERIAL_LIST_COLUMNS}
+       FROM stock_serials s
+       JOIN products p ON p.id = s.product_id AND p.user_id = s.user_id
+       LEFT JOIN stock_locations l ON l.id = s.location_id AND l.user_id = s.user_id
+      WHERE s.id = $1 AND s.user_id = $2`, [req.params.id, req.userId]);
+  if (!rows.length) { const e = new Error('Serial not found.'); e.status = 404; e.expose = true; throw e; }
+
+  const { rows: timeline } = await pool.query(
+    `SELECT m.id, m.movement_type, m.direction, m.quantity, m.balance_after,
+            m.source_type, m.source_id, m.reason, m.notes, m.created_at,
+            l.name AS location_name, t.name AS to_location_name
+       FROM stock_movements m
+       LEFT JOIN stock_locations l ON l.id = m.location_id AND l.user_id = m.user_id
+       LEFT JOIN stock_locations t ON t.id = m.to_location_id AND t.user_id = m.user_id
+      WHERE m.serial_id = $1 AND m.user_id = $2
+      ORDER BY m.created_at ASC, m.id ASC`, [req.params.id, req.userId]);
+
+  const { rows: warranty } = await pool.query(
+    `SELECT id, warranty_number, status, warranty_until
+       FROM warranties WHERE serial_id = $1 AND user_id = $2`, [req.params.id, req.userId]);
+
+  res.json({
+    serial: rows[0],
+    timeline,
+    warranty: warranty[0] || null,
+    allowed_transitions: serialsSvc.SERIAL_TRANSITIONS[rows[0].status] || []
+  });
+}));
+
+// Inspection, damage, scrap and repair. Selling is deliberately not
+// reachable here: a unit is sold by raising an invoice for it, so that the
+// quantity, the document and the unit move together.
+router.post('/serials/:id/status', asyncRoute(async (req, res) => {
+  badId(req.params.id, 'serial id');
+  const next = String((req.body || {}).status || '').toUpperCase();
+  const reason = String((req.body || {}).reason || '').trim() || null;
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const { before, after } = await serialsSvc.transitionSerial(
+      client, req.userId, req.params.id, next, { reason });
+
+    // Damage and scrap take the unit out of sellable stock, and the
+    // quantity account has to agree. DAMAGE keeps the goods on the
+    // premises, so only SCRAP removes the quantity.
+    // Only SCRAP moves quantity. A damaged unit is still on the premises
+    // and still in the balance — it has stopped being sellable, which the
+    // serial's own status records; scrapping is when the goods actually
+    // leave. Writing a DAMAGE movement here would mean a quantity of zero,
+    // which the ledger's own CHECK (quantity > 0) rightly refuses: a
+    // movement that moves nothing is not a movement.
+    let balance = null;
+    if (next === 'SCRAPPED') {
+      balance = await applyStockDelta(client, req.userId, after.product_id, -1, {
+        type: 'SCRAP', sourceType: 'serial', sourceId: after.id,
+        reason: reason || 'Serial scrapped', locationId: before.location_id || null,
+        serialId: after.id
+      });
+    }
+    await client.query('COMMIT');
+    res.json({ serial: after, stock: balance,
+      allowed_transitions: serialsSvc.SERIAL_TRANSITIONS[after.status] || [] });
+  } catch (err) {
+    await client.query('ROLLBACK'); throw err;
+  } finally { client.release(); }
+}));
+
+// Moving one unit between locations. The quantity moves through the
+// existing transfer engine — this adds the unit's own location to the same
+// transaction rather than building a second way to move stock.
+router.post('/serials/:id/transfer', asyncRoute(async (req, res) => {
+  badId(req.params.id, 'serial id');
+  const body = req.body || {};
+  badId(body.to_location_id, 'destination location id');
+  const transferId = body.transfer_id || randomUUID();
+  badId(transferId, 'transfer reference');
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    // The unit is locked first, then the balances, which is the order
+    // transferStock() itself locks in — so a serial move and a quantity
+    // move on the same product queue instead of deadlocking.
+    const locked = await serialsSvc.lockSerials(client, req.userId, [req.params.id]);
+    const row = locked.get(req.params.id);
+    if (!row) { const e = new Error('Serial not found.'); e.status = 404; e.expose = true; throw e; }
+    if (!row.location_id) throw bad('This serial is not held at a location.', 409);
+    if (row.location_id === body.to_location_id) {
+      throw bad('That serial is already at this location.');
+    }
+
+    const moved = await serialsSvc.transferSerial(client, req.userId, req.params.id, {
+      fromLocationId: row.location_id, toLocationId: body.to_location_id
+    });
+    const result = await transferStock(client, req.userId, {
+      productId: row.product_id,
+      fromLocationId: row.location_id,
+      toLocationId: body.to_location_id,
+      quantity: 1,
+      transferId,
+      reason: String(body.reason || '').trim() || `Serial ${row.serial_no}`,
+      notes: body.notes || null,
+      serialId: row.id
+    });
+    await client.query('COMMIT');
+    res.status(201).json({ serial: moved, ...result, transfer_id: transferId });
+  } catch (err) {
+    await client.query('ROLLBACK');
     if (err && err.code === '23505') {
       const e = new Error('This transfer has already been recorded.');
       e.status = 409; e.expose = true; e.code = 'transfer_already_recorded'; throw e;
@@ -537,6 +847,16 @@ router.post('/adjustment', asyncRoute(async (req, res) => {
     if (!rows.length) { const e = new Error('Product not found.'); e.status = 404; e.expose = true; throw e; }
     if (rows[0].stock === null) {
       throw bad('This product is not stock-tracked. Record an opening balance first.');
+    }
+
+    // A serialised product cannot gain or lose stock anonymously: +1 with
+    // no serial would be a unit nobody can name, and -1 with no serial
+    // would leave the two accounts disagreeing about which unit went.
+    const tracked = await serialsSvc.serialTrackedProducts(client, req.userId, [productId]);
+    if (tracked.has(productId)) {
+      throw bad(
+        'This product is serial-tracked. Adjust its stock by entering or selecting the '
+        + 'individual serial numbers, so the units and the quantity stay in step.', 409);
     }
 
     const balance = await applyStockDelta(

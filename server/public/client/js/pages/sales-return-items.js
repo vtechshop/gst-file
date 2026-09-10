@@ -371,13 +371,25 @@ function getSrItemsForSave() {
     product_id: r.product_id, product_name: r.product_name, hsn_code: r.hsn_code, unit: r.unit,
     quantity: r.return_qty, rate: r.rate, discount_percentage: r.discount_percentage, gst_percentage: r.gst_percentage,
     taxable_value: r.taxable_value, gst_amount: r.gst_amount, igst: r.igst, cgst: r.cgst, sgst: r.sgst,
-    total_amount: r.total_amount
+    total_amount: r.total_amount,
+    // The units the customer is bringing back, for a serial-tracked line.
+    // The server checks the count and that each was sold on this invoice.
+    serials: Array.isArray(r.serials) ? r.serials : undefined
   }));
 }
 
 // ── Save orchestration ───────────────────────────────
 async function saveSalesReturnWithItems(headerBase, editId) {
   if (!validateSalesReturnItems()) return false;
+
+  // A serial-tracked line must name exactly the units coming back.
+  // Checked here so the person is told which line is short while they can
+  // still fix it, rather than after the save is refused.
+  if (typeof serialLinesProblem === 'function') {
+    const problem = await serialLinesProblem(
+      srItems.map(r => ({ ...r, quantity: r.return_qty })));
+    if (problem) { showToast(problem, 'error'); return false; }
+  }
   const header = { ...headerBase, ...computeSrRollups() };
   const items = getSrItemsForSave();
   try {

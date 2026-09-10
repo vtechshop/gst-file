@@ -611,6 +611,14 @@ function validatePurchaseItems() {
 async function savePurchaseWithItems(kind, headerBase, editId, userId) {
   if (!validatePurchaseItems()) return false;
 
+  // A serial-tracked line must carry exactly one number per unit. Checked
+  // here so the person is told which line is short while they can still
+  // fix it, rather than after the save is refused.
+  if (typeof serialLinesProblem === 'function') {
+    const problem = await serialLinesProblem(purchItems);
+    if (problem) { showToast(problem, 'error'); return false; }
+  }
+
   const header = { ...headerBase, ...computePurchRollups() };
   const items = purchItems
     .filter(r => r.product_name && r.taxable_value >= 0)
@@ -618,7 +626,12 @@ async function savePurchaseWithItems(kind, headerBase, editId, userId) {
       product_id: r.product_id, product_name: r.product_name, hsn_code: r.hsn_code, unit: r.unit,
       quantity: r.quantity, rate: r.rate, discount_percentage: r.discount_percentage, gst_percentage: r.gst_percentage,
       taxable_value: r.taxable_value, gst_amount: r.gst_amount, igst: r.igst, cgst: r.cgst, sgst: r.sgst,
-      total_amount: r.total_amount
+      total_amount: r.total_amount,
+      // One serial per unit received, for a serial-tracked product. The
+      // server refuses a count that does not match the quantity, so this
+      // is sent exactly as entered rather than padded or trimmed here.
+      serials: Array.isArray(r.serials) ? r.serials : undefined,
+      purchase_order_item_id: r.purchase_order_item_id || undefined
     }));
 
   try {

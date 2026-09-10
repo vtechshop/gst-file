@@ -199,15 +199,27 @@ test('P12 the backfill is separate, guarded, and fabricates no history', () => {
 
 // ── Nothing outside scope was touched ─────────────────────────────────
 test('P13 Phase 3 concerns are absent', () => {
-  const all = LEDGER + ROUTES + MIG;
+  // routes/stock.js now serves the serial endpoints as well as the location
+  // ones, so scanning the whole file can no longer say anything about the
+  // locations work. Only the LOCATIONS section of it is read here - from
+  // the first location route to where the serial section begins.
+  const locationsSection = ROUTES.slice(
+    ROUTES.indexOf("router.get('/locations'"),
+    ROUTES.indexOf('// ── Serial numbers'));
+  const all = LEDGER + locationsSection + MIG;
   // Specific identifiers, not loose words: "serialises" in a comment about
   // row locks is not a serial-inventory feature, and an earlier version of
   // this test failed on exactly that.
-  for (const later of ['serial_number', 'stock_serials', 'serial_id', 'serial_status',
+  // Serial inventory HAS since been built, and lives in its own migration,
+  // service and routes - so this no longer asserts its absence. What it
+  // still asserts is that it did not leak into the LOCATIONS work: the
+  // files this test reads are the Phase 2 ones, and they carry no serial
+  // identifiers of their own.
+  for (const later of ['serial_number', 'stock_serials', 'serial_status',
     'valuation', 'weighted_average', 'weighted average', 'FIFO']) {
     assert.equal(all.includes(later), false,
-      `${later} is a later phase and must not appear yet`);
+      `${later} does not belong in the locations work`);
   }
-  // and no Phase 3 tables were created
+  // Valuation is still deferred, and no serial table was created here.
   assert.equal(/CREATE TABLE[^;]*serial/i.test(MIG), false);
 });

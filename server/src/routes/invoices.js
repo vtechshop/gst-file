@@ -20,6 +20,8 @@ const { asyncRoute } = require('../middleware/errorHandler');
 const { applyInvoiceNumberFormat, invoiceSeriesFormat } = require('../utils/invoiceNumberFormat');
 const { TABLES } = require('./generic');
 const { applyStockDelta } = require('../services/stock-ledger');
+// Serial units move with the sale that moves them, in its transaction.
+const serialsSvc = require('../services/stock-serials');
 
 const router = express.Router();
 router.use(requireAuth);
@@ -54,6 +56,76 @@ function badType(type) {
 // sales-returns.js keep importing it from here as they always have.
 
 // ── 1) Save invoice header + line items + stock, one transaction ──
+// ── The serial side of a sale ─────────────────────────────────────────
+//
+// A serialised product is sold by NAME: two units means two numbers, and
+// the count must match the quantity exactly. Anything else would put stock
+// out of the door that no unit accounts for.
+//
+// Which units an invoice sold is read from the INVOICE HEADER, never from
+// its line rows — save-with-items deletes and re-inserts every line, so
+// invoice_items.id is a different value after each edit. On an edit the
+// payload says which units the invoice now sells and the database says
+// which it sold before, so the ones to give back are the difference
+// between two explicit lists. Nothing is chosen for the user.
+async function planInvoiceSerials(client, userId, items) {
+  const productIds = items.map(i => i.product_id).filter(Boolean);
+  const tracked = await serialsSvc.serialTrackedProducts(client, userId, productIds);
+  if (!tracked.size) return null;
+
+  const wanted = [];
+  const seen = new Map();
+  for (const [index, item] of items.entries()) {
+    if (!item.product_id || !tracked.has(item.product_id)) continue;
+    const where = `Line ${index + 1} ("${item.product_name || 'product'}")`;
+    const serials = serialsSvc.readSerialList(item.serials, { where });
+    const quantity = Number(item.quantity) || 0;
+    if (serials.length !== quantity) {
+      const e = new Error(
+        `${where} is serial-tracked: ${quantity} sold needs exactly ${quantity} serial `
+        + `number${quantity === 1 ? '' : 's'}, but ${serials.length} `
+        + `${serials.length === 1 ? 'was' : 'were'} selected.`);
+      e.status = 409; e.expose = true; throw e;
+    }
+    for (const value of serials) {
+      const key = serialsSvc.serialKey(value);
+      if (seen.has(key)) {
+        const e = new Error(`Serial "${value}" is on more than one line of this invoice.`);
+        e.status = 409; e.expose = true; throw e;
+      }
+      seen.set(key, item.product_id);
+    }
+    wanted.push({ productId: item.product_id, serials });
+  }
+  return { wanted, keys: seen };
+}
+
+async function applyInvoiceSerials(client, userId, type, invoiceId, plan) {
+  const sold = await serialsSvc.serialsSoldBy(client, userId, type, invoiceId);
+  const soldByKey = new Map(sold.map(r => [serialsSvc.serialKey(r.serial_no), r]));
+
+  if (!plan) {
+    // Nothing serialised now; anything this invoice used to sell is given
+    // back, because the invoice no longer says it sold it.
+    if (sold.length) await serialsSvc.unsellSerials(client, userId, sold);
+    return { sold: [], released: sold };
+  }
+
+  const dropped = sold.filter(r => !plan.keys.has(serialsSvc.serialKey(r.serial_no)));
+  if (dropped.length) await serialsSvc.unsellSerials(client, userId, dropped);
+
+  const soldNow = [];
+  for (const line of plan.wanted) {
+    const fresh = line.serials.filter(v => !soldByKey.has(serialsSvc.serialKey(v)));
+    if (!fresh.length) continue;
+    const rows = await serialsSvc.sellSerials(client, userId, {
+      productId: line.productId, serials: fresh, sourceType: type, sourceId: invoiceId
+    });
+    soldNow.push(...rows);
+  }
+  return { sold: soldNow, released: dropped };
+}
+
 router.post('/:type/save-with-items', asyncRoute(async (req, res) => {
   badType(req.params.type);
   const type = req.params.type;
@@ -83,6 +155,9 @@ router.post('/:type/save-with-items', asyncRoute(async (req, res) => {
 
     let invoiceId = editId;
     let oldItems = [];
+    // Checked before the first write: a mismatched selection must leave the
+    // invoice, the stock and the units exactly as they were.
+    const serialPlan = await planInvoiceSerials(client, req.userId, items);
 
     if (editId) {
       const values = headerCols.map(c => header[c]);
@@ -133,11 +208,44 @@ router.post('/:type/save-with-items', asyncRoute(async (req, res) => {
       }
     }
 
+    // The units this invoice sells, settled BEFORE the quantity moves.
+    // Order matters for the message the user gets: run the other way round,
+    // a sale of a unit that is already sold fails as "insufficient stock",
+    // which is true but useless — the person needs to be told WHICH serial
+    // is unavailable, not that the shelf is empty.
+    const serials = await applyInvoiceSerials(client, req.userId, type, invoiceId, serialPlan);
+
+    // Serialised goods move a unit at a time so each movement can name the
+    // unit it moved; a counted product nets, exactly as before. One row of
+    // three can only carry one serial_id, which is why three units bought
+    // are three movements of one.
+    //
+    // The arithmetic is identical either way — three of one come to the
+    // same balance as one of three — and it is the SAME applyStockDelta.
+    // There is no second stock engine here.
+    for (const row of serials.sold || []) {
+      await applyStockDelta(client, req.userId, row.product_id, -1, {
+        type: 'SALE', sourceType: type, sourceId: invoiceId, serialId: row.id
+      });
+    }
+    for (const row of serials.released || []) {
+      await applyStockDelta(client, req.userId, row.product_id, 1, {
+        type: 'SALE', sourceType: type, sourceId: invoiceId, serialId: row.id,
+        reason: 'Serial removed from the invoice', locationId: row.location_id || null
+      });
+    }
+    // Those products are accounted for one unit at a time above; netting
+    // their quantity again below would move the same goods twice.
+    const serialProducts = new Set(
+      (serialPlan ? serialPlan.wanted.map(l => l.productId) : [])
+        .concat([...(serials.sold || []), ...(serials.released || [])].map(r => r.product_id)));
+
     const oldQtyByProduct = {};
     oldItems.forEach(r => { if (r.product_id) oldQtyByProduct[r.product_id] = (oldQtyByProduct[r.product_id] || 0) + (+r.quantity || 0); });
 
     const productIds = new Set([...Object.keys(oldQtyByProduct), ...Object.keys(newQtyByProduct)]);
     for (const pid of productIds) {
+      if (serialProducts.has(pid)) continue;
       // A sale decrements stock — delta here is "more sold" (positive =
       // stock should go down), so it's applied negated, same sign
       // convention the old client-side applyStockDeltaForSave() used.
@@ -165,7 +273,7 @@ router.post('/:type/save-with-items', asyncRoute(async (req, res) => {
       client, req.userId, type, invoiceId, header, savedItems, reserveDocumentNumberOn);
 
     await client.query('COMMIT');
-    res.json({ invoiceId, warranty });
+    res.json({ invoiceId, warranty, serials });
   } catch (err) {
     await client.query('ROLLBACK');
     throw err;
@@ -342,10 +450,29 @@ router.post('/:type/:id/cascade-delete', asyncRoute(async (req, res) => {
     // Deleting a sale gives back exactly what it took, once: the line rows
     // go in the same transaction, so a repeated call finds nothing to
     // reverse and moves nothing.
-    for (const it of items) await applyStockDelta(client, req.userId, it.product_id, +it.quantity || 0, {
-      type: 'SALE', sourceType: type, sourceId: id, sourceItemId: it.id,
-      unit: it.unit, rate: it.rate, reason: 'Invoice deleted'
-    });
+    // The units this invoice sold, read before anything is reversed so
+    // each can be given back with its own movement.
+    const soldUnits = await serialsSvc.serialsSoldBy(client, req.userId, type, id);
+    const serialProducts = new Set(soldUnits.map(r => r.product_id));
+
+    for (const it of items) {
+      if (serialProducts.has(it.product_id)) continue;   // handled per unit below
+      await applyStockDelta(client, req.userId, it.product_id, +it.quantity || 0, {
+        type: 'SALE', sourceType: type, sourceId: id, sourceItemId: it.id,
+        unit: it.unit, rate: it.rate, reason: 'Invoice deleted'
+      });
+    }
+    for (const row of soldUnits) {
+      await applyStockDelta(client, req.userId, row.product_id, 1, {
+        type: 'SALE', sourceType: type, sourceId: id,
+        reason: 'Invoice deleted', serialId: row.id
+      });
+    }
+
+    // Every unit this invoice sold comes back to stock, exactly those and
+    // once. A unit already RETURNED through a sales return has moved on and
+    // is left alone by unsellSerials.
+    if (soldUnits.length) await serialsSvc.unsellSerials(client, req.userId, soldUnits);
 
     await client.query('DELETE FROM invoice_items WHERE invoice_id = $1 AND invoice_type = $2 AND user_id = $3', [id, type, req.userId]);
     await client.query(
@@ -353,7 +480,7 @@ router.post('/:type/:id/cascade-delete', asyncRoute(async (req, res) => {
       [id, type, req.userId]
     );
     await client.query('COMMIT');
-    res.json({ ok: true });
+    res.json({ ok: true, serials_released: soldUnits.length });
   } catch (err) {
     await client.query('ROLLBACK');
     throw err;

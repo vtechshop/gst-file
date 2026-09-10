@@ -312,6 +312,17 @@ function openProductModal(id) {
   set('prodDescription', r?.description);
   const rc = document.getElementById('prodReverseCharge');
   if (rc) rc.checked = !!r?.reverse_charge;
+  const st = document.getElementById('prodSerialTracking');
+  if (st) st.checked = !!r?.serial_tracking;
+  // Turning tracking OFF while units exist would leave those units behind
+  // with nothing to explain them, and turning it ON for a product that
+  // already holds stock would claim serials nobody has entered. Both are
+  // decisions with consequences, so the box explains itself rather than
+  // silently doing either.
+  prodSerialNote(r);
+  // Offered only where it applies; the check includes a server read, so it
+  // resolves after the modal is already on screen.
+  prodShowReconcile(r);
 
   document.getElementById('prodModalTitle').textContent = r ? 'Edit Product' : 'New Product';
   // The catalogue fields belong to the website for a synced product.
@@ -418,6 +429,106 @@ function productFormValues() {
   };
 }
 
+// ── Naming the units a product already holds ──────────────────────────
+//
+// A product counted for years has a quantity but no names, and serial
+// tracking cannot simply be switched on for it — the system would be
+// claiming a number of identifiable things while knowing none of them.
+// This is the way in, and it is offered ONLY where it applies: stock on
+// hand, tracking off, and no unit ever recorded.
+//
+// The serials go through the existing entry panel, so scanning, pasting a
+// column and typing all behave exactly as they do on a purchase.
+let prodReconcileProduct = null;
+
+async function prodShowReconcile(r) {
+  const box = document.getElementById('prodReconcileBox');
+  if (!box) return;
+  prodReconcileProduct = null;
+  box.classList.add('d-none');
+  // Not applicable: already tracked, not stock-tracked, or nothing on hand.
+  if (!r || r.serial_tracking || r.stock == null || !(+r.stock > 0)) return;
+  try {
+    // "No unit ever recorded" is the last condition, and only the server
+    // can answer it. One row is enough to know.
+    const res = await apiFetch('/stock/serials?limit=1&product_id=' + encodeURIComponent(r.id));
+    if ((res.total || 0) > 0) return;
+  } catch {
+    // If that read fails the action stays hidden rather than offering
+    // something the server would refuse.
+    return;
+  }
+  prodReconcileProduct = r;
+  box.classList.remove('d-none');
+}
+
+function openProdReconcile() {
+  const r = prodReconcileProduct;
+  if (!r) return;
+  const stock = Math.round(+r.stock);
+  // The panel works on a row, so it is given one: the quantity it must
+  // match is the stock on hand.
+  const row = { rowId: 'reconcile', product_id: r.id, product_name: r.name, quantity: stock, serials: [] };
+  openSerialPanel('reconcile', { rows: [row], mode: 'entry' });
+  const title = document.getElementById('serialPanelTitle');
+  if (title) title.textContent = `${r.name} — ${stock} in stock, ${stock} serial number${stock === 1 ? '' : 's'} needed`;
+}
+
+async function submitProdReconcile() {
+  const r = prodReconcileProduct;
+  const row = serialPanelRow;
+  if (!r || !row) return;
+  const serials = Array.isArray(row.serials) ? row.serials : [];
+  const stock = Math.round(+r.stock);
+  if (serials.length !== stock) {
+    serialPanelNote(`This product holds ${stock} in stock, so it needs exactly ${stock} `
+      + `serial number${stock === 1 ? '' : 's'} — ${serials.length} entered.`);
+    return;
+  }
+  const btn = document.getElementById('prodReconcileSave');
+  if (btn) btn.disabled = true;
+  try {
+    // The existing endpoint, which is the authority. Only the product id
+    // and the numbers are sent: ownership is the server's to decide.
+    const res = await apiFetch('/stock/serials/reconcile-opening', {
+      method: 'POST',
+      body: JSON.stringify({ product_id: r.id, serials })
+    });
+    showToast(`Serials reconciled: ${res.created}. Serial tracking is now on.`, 'success');
+    closeSerialPanel();
+    closeProductModal();
+    const user = await getCurrentUser();
+    if (user) { await loadProducts(user.id); applyProdFilters(); }
+  } catch (err) {
+    // The server's own sentence, not a generic one: it names the count, the
+    // duplicate or the locations, and that is what the person needs.
+    serialPanelNote((err && err.message) || 'Could not reconcile this stock.');
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
+// Says what enabling or disabling serial tracking will mean for THIS
+// product, given what it already holds. A warning, not a block: the server
+// decides what is allowed, and this only makes sure the person clicking
+// knows which of the two awkward cases they are in.
+function prodSerialNote(r) {
+  const el = document.getElementById('prodSerialTrackingError');
+  if (!el) return;
+  const stock = r && r.stock != null ? +r.stock : 0;
+  const on = !!document.getElementById('prodSerialTracking')?.checked;
+  let note = '';
+  if (on && !r?.serial_tracking && stock > 0) {
+    note = `This product already holds ${stock} in stock with no serial numbers recorded. `
+      + 'Those units stay unserialised until you enter them; new purchases will require serials.';
+  } else if (!on && r?.serial_tracking) {
+    note = 'Serial numbers already recorded for this product are kept, but new purchases '
+      + 'and sales will stop asking for them.';
+  }
+  el.textContent = note;
+  el.classList.toggle('show', !!note);
+}
+
 // Reorder level is checked here rather than in validateProductGst(): that
 // lives in the shared utils.js every page loads and is about GST, and this
 // is a Product Master inventory policy. Keeping it here also keeps the
@@ -477,6 +588,8 @@ async function saveProduct() {
     gst_treatment: v.gst_treatment, cess_rate: v.cess_rate, reverse_charge: v.reverse_charge,
     supply_bundle: v.supply_bundle, principal_gst_rate: v.principal_gst_rate,
     gst_overrides: overrides,
+    // Serial tracking is an inventory policy too, and sync never writes it.
+    serial_tracking: !!document.getElementById('prodSerialTracking')?.checked,
     // Outside the synced block on purpose: a reorder level is an inventory
     // policy this business sets, not part of the website's catalogue. Sync
     // never writes the column, so there is nothing for it to overwrite —

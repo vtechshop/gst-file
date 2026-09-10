@@ -1,0 +1,186 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Serial Numbers - GST Management System</title>
+  <link rel="stylesheet" href="client/css/style.css?v=35">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.31/jspdf.plugin.autotable.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/qrcode@1.4.4/build/qrcode.min.js"></script>
+    <script src="shared/india-districts.js?v=29"></script>
+  <script src="client/js/api/apiClient.js?v=29"></script>
+  <script src="client/js/api/backup.js?v=29"></script>
+  <script src="client/js/core/config.js?v=33"></script>
+  <script src="client/js/api/product-sync.js?v=39"></script>
+  <script src="client/js/core/auth.js?v=29"></script>
+  <script src="client/js/utilities/utils.js?v=33"></script>
+  <script src="client/js/core/search.js?v=29"></script>
+  <script src="client/js/pages/profile.js?v=39"></script>
+  <script src="client/js/pages/products.js?v=31"></script>
+  <script src="client/js/pages/stock-serials.js?v=1"></script>
+</head>
+<body>
+<div class="app-layout">
+
+  <!-- Sidebar -->
+  <aside class="sidebar">
+    <a class="sidebar-brand" href="dashboard.html">
+      <div class="brand-icon"><i class="fas fa-file-invoice-dollar"></i></div>
+      <span>GST Invoice<br>Management</span>
+    </a>
+    <nav class="sidebar-menu">
+      <div class="menu-section">Main</div>
+      <a href="dashboard.html" class="menu-item"><i class="fas fa-tachometer-alt"></i> Dashboard</a>
+      <div class="menu-section">Invoices / Sales</div>
+      <a href="invoice.html" class="menu-item"><i class="fas fa-plus-circle"></i> New Invoice</a>
+      <a href="invoice-list.html" class="menu-item"><i class="fas fa-list-alt"></i> Invoice List</a>
+      <a href="proforma.html" class="menu-item"><i class="fas fa-file-contract"></i> New Proforma</a>
+      <a href="proforma-list.html" class="menu-item"><i class="fas fa-folder-open"></i> Proforma Invoices</a>
+      <a href="cdnotes.html" class="menu-item"><i class="fas fa-file-minus"></i> Credit / Debit Notes</a>
+      <a href="sales-returns.html" class="menu-item"><i class="fas fa-rotate-left"></i> Sales Returns</a>
+      <a href="bill-of-supply.html" class="menu-item"><i class="fas fa-file-invoice"></i> Bill of Supply</a>
+      <a href="revised-invoice.html" class="menu-item"><i class="fas fa-file-pen"></i> Revised Invoice</a>
+      <a href="advances.html" class="menu-item"><i class="fas fa-hand-holding-dollar"></i> Advances</a>
+      <a href="vouchers.html" class="menu-item"><i class="fas fa-receipt"></i> Vouchers</a>
+      <a href="challans.html" class="menu-item"><i class="fas fa-file-signature"></i> Delivery Challans</a>
+      <a href="amendments.html" class="menu-item"><i class="fas fa-pen-to-square"></i> Amendments</a>
+      <div class="menu-section">Warranty</div>
+      <a href="warranty-list.html" class="menu-item"><i class="fas fa-shield-halved"></i> Warranty List</a>
+      <div class="menu-section">Purchases</div>
+      <a href="vendors.html" class="menu-item"><i class="fas fa-truck"></i> Vendors</a>
+      <a href="vendor-ledger.html" class="menu-item"><i class="fas fa-book"></i> Vendor Ledger</a>
+      <a href="purchase-orders.html" class="menu-item"><i class="fas fa-file-signature"></i> Purchase Orders</a>
+      <a href="purchases.html" class="menu-item"><i class="fas fa-cart-plus"></i> New Purchase</a>
+      <a href="purchase-list.html" class="menu-item"><i class="fas fa-boxes"></i> Purchase List</a>
+      <a href="purchase-returns.html" class="menu-item"><i class="fas fa-undo"></i> Purchase Returns</a>
+      <div class="menu-section">Inventory</div>
+      <a href="stock.html" class="menu-item"><i class="fas fa-warehouse"></i> Stock Summary</a>
+      <a href="stock-ledger.html" class="menu-item"><i class="fas fa-clipboard-list"></i> Stock Ledger</a>
+      <a href="stock-locations.html" class="menu-item"><i class="fas fa-map-location-dot"></i> Locations</a>
+      <a href="stock-transfers.html" class="menu-item"><i class="fas fa-right-left"></i> Transfers</a>
+      <a href="stock-serials.html" class="menu-item active"><i class="fas fa-barcode"></i> Serial Numbers</a>
+      <div class="menu-section">GST / Special</div>
+      <a href="eway-bills.html" class="menu-item"><i class="fas fa-truck-fast"></i> E-Way Bills</a>
+      <a href="challans.html#job-workers" class="menu-item"><i class="fas fa-industry"></i> Job Workers</a>
+      <div class="menu-section">HSN</div>
+      <a href="hsn.html#b2b" class="menu-item"><i class="fas fa-barcode"></i> B2B HSN</a>
+      <a href="hsn.html#b2c" class="menu-item"><i class="fas fa-tags"></i> B2C HSN</a>
+      <div class="menu-section">Masters</div>
+      <a href="customers.html" class="menu-item"><i class="fas fa-address-book"></i> Customers</a>
+      <a href="customer-ledger.html" class="menu-item"><i class="fas fa-book"></i> Customer Ledger</a>
+      <a href="products.html" class="menu-item"><i class="fas fa-box"></i> Products</a>
+      <div class="menu-section">Expenses</div>
+      <a href="expenses.html" class="menu-item"><i class="fas fa-receipt"></i> Expenses</a>
+      <div class="menu-section">Reports</div>
+      <a href="reports.html" class="menu-item"><i class="fas fa-chart-bar"></i> Reports &amp; Export</a>
+      <a href="gstr3b.html" class="menu-item"><i class="fas fa-calculator"></i> GSTR-3B Summary</a>
+      <a href="document-register.html" class="menu-item"><i class="fas fa-book-open"></i> Document Register</a>
+      <div class="menu-section">Settings</div>
+      <a href="#" class="menu-item" onclick="openProfileModal();return false;"><i class="fas fa-building"></i> Business Profile</a>
+    </nav>
+    <div class="sidebar-user">
+      <div class="user-avatar"><i class="fas fa-user"></i></div>
+      <div class="user-info" onclick="openSettingsModal()" title="Click to open settings">
+        <div class="user-name" id="navUserName">User</div>
+        <div class="user-role">GST Manager</div>
+      </div>
+      <button type="button" class="btn-logout btn-settings" onclick="openSettingsModal()" title="Settings"><i class="fas fa-cog"></i></button>
+      <button type="button" class="btn-logout" id="logoutBtn" title="Logout"><i class="fas fa-sign-out-alt"></i></button>
+    </div>
+  </aside>
+
+  <div class="main-content">
+    <div class="top-bar">
+      <button type="button" class="menu-toggle" id="menuToggle" aria-label="Toggle sidebar menu"><i class="fas fa-bars"></i></button>
+      <span class="page-title"><i class="fas fa-barcode"></i>Serial Numbers</span>
+      <div class="ml-auto d-flex gap-10">
+        <button type="button" class="btn btn-primary btn-sm" onclick="openOpeningStock()"><i class="fas fa-plus"></i> Opening Stock</button>
+        <button type="button" class="btn btn-secondary btn-sm" onclick="openAdjustment()"><i class="fas fa-sliders"></i> Adjust Stock</button>
+        <button type="button" class="btn btn-secondary btn-sm btn-icon" onclick="openGlobalSearch()" title="Search everywhere (Ctrl+K)" aria-label="Global search"><i class="fas fa-search"></i></button>
+      </div>
+    </div>
+
+    <div class="content">
+
+      <div class="card mb-16">
+        <div class="card-header"><span class="card-title"><i class="fas fa-filter"></i> Find a unit</span>
+          <button type="button" class="btn btn-secondary btn-sm ml-auto" onclick="snReconcile()"><i class="fas fa-scale-balanced"></i> Reconcile</button>
+        </div>
+        <div class="card-body">
+          <div class="form-grid cols-4">
+            <div class="form-group">
+              <label for="snSearch">Serial number</label>
+              <input type="text" id="snSearch" class="form-control" placeholder="Scan or type&hellip;" autocomplete="off" oninput="snDebouncedReload()">
+            </div>
+            <div class="form-group">
+              <label for="snProduct">Product</label>
+              <select id="snProduct" class="form-control" onchange="snGoTo(0)"></select>
+            </div>
+            <div class="form-group">
+              <label for="snStatus">Status</label>
+              <select id="snStatus" class="form-control" onchange="snGoTo(0)">
+                <option value="">All statuses</option>
+                <option value="AVAILABLE">Available</option>
+                <option value="SOLD">Sold</option>
+                <option value="RETURNED">Returned</option>
+                <option value="RETURNED_TO_SUPPLIER">Returned to supplier</option>
+                <option value="DAMAGED">Damaged</option>
+                <option value="SCRAPPED">Scrapped</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label for="snLocation">Location</label>
+              <select id="snLocation" class="form-control" onchange="snGoTo(0)"></select>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-header"><span class="card-title"><i class="fas fa-barcode"></i> Serial Numbers</span></div>
+        <div class="card-body">
+          <div class="table-responsive">
+            <table class="table">
+              <thead>
+                <tr>
+                  <th>Serial Number</th><th>Product</th><th>Status</th>
+                  <th>Location</th><th>Purchase</th><th>Invoice</th><th>Created</th>
+                </tr>
+              </thead>
+              <tbody id="snTableBody">
+                <tr><td colspan="7" class="text-center text-muted">Loading&hellip;</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <div id="snPagination" class="pagination"></div>
+        </div>
+      </div>
+
+      <div class="modal" id="snDetailModal">
+        <div class="modal-content modal-lg">
+          <div class="modal-header">
+            <span class="modal-title" id="snDetailTitle"></span>
+            <button type="button" class="modal-close" onclick="closeSerialDetail()" aria-label="Close"><i class="fas fa-times"></i></button>
+          </div>
+          <div class="modal-body" id="snDetailBody"></div>
+          <div class="modal-footer">
+            <div id="snDetailActions" class="d-flex gap-10 flex-wrap"></div>
+            <button type="button" class="btn btn-secondary ml-auto" onclick="closeSerialDetail()">Close</button>
+          </div>
+        </div>
+      </div>
+
+    </div>
+
+  </div>
+
+</div>
+
+<script>
+document.addEventListener('DOMContentLoaded', initStockSerials);
+</script>
+
+</body>
+</html>

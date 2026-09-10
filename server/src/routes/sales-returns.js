@@ -18,6 +18,12 @@ const { requireAuth } = require('../middleware/auth');
 const { asyncRoute } = require('../middleware/errorHandler');
 const { TABLES } = require('./generic');
 const { applyStockDelta } = require('./invoices');
+// A customer's return brings the UNITS back too, in this same transaction:
+// a return that moved the quantity but left its serials sold would leave
+// the two accounts of the same goods disagreeing.
+const serialsSvc = require('../services/stock-serials');
+// The same default location the returned quantity is credited to.
+const { defaultLocationId } = require('../services/stock-ledger');
 // The SAME rule file the browser loads — see shared/sales-return-rules.js.
 // Requiring it rather than restating the arithmetic is what guarantees the
 // limit the user was shown is the limit actually enforced here.
@@ -131,6 +137,119 @@ router.get('/returned-by-product', asyncRoute(async (req, res) => {
 }));
 
 // ── 1) Save header + line items + stock, one transaction ──
+// ── The units a customer sent back ────────────────────────────────────
+//
+// The return document owns this transition: nobody should have to call a
+// separate endpoint afterwards to make the inventory true, and a return
+// saved without it would leave units marked sold that are sitting on the
+// counter.
+//
+// A returned unit becomes RETURNED, not AVAILABLE. It has been out of the
+// building and nobody has looked at it yet; putting it straight back on
+// the shelf would offer it for sale on the strength of a customer's word.
+// Inspection is a separate, deliberate decision.
+async function planReturnSerials(client, userId, header, items) {
+  const productIds = items.map(i => i.product_id).filter(Boolean);
+  const tracked = await serialsSvc.serialTrackedProducts(client, userId, productIds);
+  if (!tracked.size) return null;
+
+  const invoiceId = header.original_invoice_id || null;
+  const invoiceType = header.original_invoice_type || null;
+  const wanted = [];
+  const seen = new Map();
+
+  for (const [index, item] of items.entries()) {
+    if (!item.product_id || !tracked.has(item.product_id)) continue;
+    const where = `Line ${index + 1} ("${item.product_name || 'product'}")`;
+    const serials = serialsSvc.readSerialList(item.serials, { where });
+    const quantity = Number(item.quantity) || 0;
+    if (serials.length !== quantity) {
+      const e = new Error(
+        `${where} is serial-tracked: ${quantity} returned needs exactly ${quantity} serial `
+        + `number${quantity === 1 ? '' : 's'}, but ${serials.length} `
+        + `${serials.length === 1 ? 'was' : 'were'} given.`);
+      e.status = 409; e.expose = true; throw e;
+    }
+    for (const value of serials) {
+      const key = serialsSvc.serialKey(value);
+      if (seen.has(key)) {
+        const e = new Error(`Serial "${value}" is on more than one line of this return.`);
+        e.status = 409; e.expose = true; throw e;
+      }
+      seen.set(key, item.product_id);
+    }
+    wanted.push({ productId: item.product_id, serials });
+  }
+  return { wanted, keys: seen, invoiceId, invoiceType };
+}
+
+async function applyReturnSerials(client, userId, returnId, plan) {
+  // Units this return already brought back, found by the return's own id.
+  const { rows: held } = await client.query(
+    `SELECT * FROM stock_serials
+      WHERE user_id = $1 AND returned_source_type = 'sales_return' AND returned_source_id = $2
+      ORDER BY upper(btrim(serial_no)) FOR UPDATE`, [userId, returnId]);
+  const byKey = new Map(held.map(r => [serialsSvc.serialKey(r.serial_no), r]));
+
+  if (!plan) {
+    for (const row of held) await sendBackToSold(client, userId, row);
+    return { returned: 0, undone: held.length };
+  }
+
+  // Dropped from the return: they were never returned, so they go back to
+  // being sold by the invoice that sold them.
+  const dropped = held.filter(r => !plan.keys.has(serialsSvc.serialKey(r.serial_no)));
+  for (const row of dropped) await sendBackToSold(client, userId, row);
+
+  let count = 0;
+  for (const line of plan.wanted) {
+    const fresh = line.serials.filter(v => !byKey.has(serialsSvc.serialKey(v)));
+    count += line.serials.length;
+    if (!fresh.length) continue;
+
+    const found = await serialsSvc.lockSerialsByText(client, userId, fresh);
+    for (const value of fresh) {
+      const row = found.get(serialsSvc.serialKey(value));
+      const refuse = (msg, status) => {
+        const e = new Error(msg); e.status = status || 409; e.expose = true; throw e;
+      };
+      // Not ours, or not a serial: one answer for both.
+      if (!row) refuse(`Serial "${value}" was not found in your inventory.`, 404);
+      if (row.product_id !== line.productId) refuse(`Serial "${value}" belongs to a different product.`);
+      if (row.status !== 'SOLD') {
+        refuse(`Serial "${value}" is ${row.status.toLowerCase().replace(/_/g, ' ')} `
+          + 'and was not sold, so it cannot be returned.');
+      }
+      // A unit may only be returned against the invoice that sold it.
+      // Matching on the product alone would let one customer's return take
+      // back a unit another customer is holding.
+      if (plan.invoiceId && row.sold_source_id && row.sold_source_id !== plan.invoiceId) {
+        refuse(`Serial "${value}" was not sold on the invoice being returned.`);
+      }
+      // Back on the premises, at the location the returned quantity was
+      // credited to, but NOT sellable until it has been inspected.
+      await client.query(
+        `UPDATE stock_serials
+            SET status = 'RETURNED', location_id = $1,
+                returned_source_type = 'sales_return', returned_source_id = $2, updated_at = NOW()
+          WHERE id = $3 AND user_id = $4`,
+        [await defaultLocationId(client, userId), returnId, row.id, userId]);
+    }
+  }
+  return { returned: count, undone: dropped.length };
+}
+
+// Undoing one: the unit goes back to being sold by the invoice that sold
+// it, which is where it was before this return claimed it.
+async function sendBackToSold(client, userId, row) {
+  if (row.status !== 'RETURNED') return;
+  await client.query(
+    `UPDATE stock_serials
+        SET status = 'SOLD', location_id = NULL,
+            returned_source_type = NULL, returned_source_id = NULL, updated_at = NOW()
+      WHERE id = $1 AND user_id = $2`, [row.id, userId]);
+}
+
 router.post('/save-with-items', asyncRoute(async (req, res) => {
   const { editId, header, items } = req.body;
   if (!header || typeof header !== 'object' || Array.isArray(header)) {
@@ -152,6 +271,10 @@ router.post('/save-with-items', asyncRoute(async (req, res) => {
     // transaction back, so an over-quantity return never reaches the
     // database even partially.
     await assertReturnQuantitiesAllowed(client, req.userId, header, items, editId);
+
+    // Settled before the first write: a return whose serials do not match
+    // must leave the document, the stock and the units exactly as they were.
+    const serialPlan = await planReturnSerials(client, req.userId, header, items);
 
     let returnId = editId;
     let oldItems = [];
@@ -199,6 +322,10 @@ router.post('/save-with-items', asyncRoute(async (req, res) => {
       }
     }
 
+    // The units, before the quantity. Run the other way round, a serial
+    // that was never sold fails as a stock error instead of naming itself.
+    const serialResult = await applyReturnSerials(client, req.userId, returnId, serialPlan);
+
     const oldQtyByProduct = {};
     oldItems.forEach(r => { if (r.product_id) oldQtyByProduct[r.product_id] = (oldQtyByProduct[r.product_id] || 0) + (+r.quantity || 0); });
 
@@ -215,7 +342,7 @@ router.post('/save-with-items', asyncRoute(async (req, res) => {
     }
 
     await client.query('COMMIT');
-    res.json({ id: returnId });
+    res.json({ id: returnId, serials: serialResult });
   } catch (err) {
     await client.query('ROLLBACK');
     throw err;

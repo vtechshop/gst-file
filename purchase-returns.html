@@ -15,8 +15,9 @@
   <script src="client/js/utilities/utils.js?v=33"></script>
   <script src="client/js/core/search.js?v=29"></script>
   <script src="client/js/pages/profile.js?v=39"></script>
-  <script src="client/js/pages/products.js?v=29"></script>
-  <script src="client/js/pages/purchase-items.js?v=29"></script>
+  <script src="client/js/pages/products.js?v=31"></script>
+  <script src="client/js/pages/purchase-items.js?v=30"></script>
+  <script src="client/js/pages/serial-entry.js?v=1"></script>
   <script src="client/js/pages/purchase-returns.js?v=29"></script>
 </head>
 <body>
@@ -57,6 +58,7 @@
       <a href="stock-ledger.html" class="menu-item"><i class="fas fa-clipboard-list"></i> Stock Ledger</a>
       <a href="stock-locations.html" class="menu-item"><i class="fas fa-map-location-dot"></i> Locations</a>
       <a href="stock-transfers.html" class="menu-item"><i class="fas fa-right-left"></i> Transfers</a>
+      <a href="stock-serials.html" class="menu-item"><i class="fas fa-barcode"></i> Serial Numbers</a>
       <div class="menu-section">GST / Special</div>
       <a href="eway-bills.html" class="menu-item"><i class="fas fa-truck-fast"></i> E-Way Bills</a>
       <a href="challans.html#job-workers" class="menu-item"><i class="fas fa-industry"></i> Job Workers</a>
@@ -212,6 +214,30 @@ document.addEventListener('DOMContentLoaded', initPurchaseReturns);
     </div>
   </div>
 </div>
+  <!-- Serial numbers for one document line. Typed on a purchase, picked on
+       a sale or a return; either way the line needs exactly as many as its
+       quantity. -->
+  <div class="modal" id="serialPanel">
+    <div class="modal-content">
+      <div class="modal-header">
+        <span class="modal-title"><i class="fas fa-barcode"></i> <span id="serialPanelTitle"></span></span>
+        <button type="button" class="modal-close" onclick="closeSerialPanel()" aria-label="Close"><i class="fas fa-times"></i></button>
+      </div>
+      <div class="modal-body">
+        <div class="d-flex gap-10 align-center mb-12">
+          <input type="text" id="serialPanelInput" class="form-control" autocomplete="off"
+                 placeholder="Scan or type a serial, then Enter" onkeydown="serialPanelKey(event)">
+          <button type="button" class="btn btn-primary btn-sm" onclick="addSerialFromInput()">Add</button>
+          <span id="serialPanelCount" class="ml-auto"></span>
+        </div>
+        <div id="serialPanelNote" class="alert alert-warning d-none"></div>
+        <div id="serialPanelBody"></div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-primary ml-auto" onclick="closeSerialPanel()">Done</button>
+      </div>
+    </div>
+  </div>
 
 </body>
 </html>

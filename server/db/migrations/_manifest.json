@@ -45,6 +45,10 @@
     "migration_stock_ledger.sql",
     "migration_stock_locations.sql",
     "migration_purchase_orders.sql",
-    "migration_purchase_order_line_link.sql"
+    "migration_purchase_order_line_link.sql",
+    "migration_stock_serials.sql",
+    "migration_stock_serial_links.sql",
+    "migration_stock_serial_supplier_return.sql",
+    "migration_stock_serial_customer_return.sql"
   ]
 }

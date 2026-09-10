@@ -208,8 +208,8 @@ async function applyStockDelta(client, userId, productId, deltaQty, movement) {
     `INSERT INTO stock_movements
        (user_id, product_id, movement_type, direction, quantity, unit, rate,
         balance_after, source_type, source_id, source_item_id, reason, notes,
-        location_id, to_location_id, transfer_id, created_by)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$1)`,
+        location_id, to_location_id, transfer_id, created_by, serial_id)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$1,$17)`,
     [
       userId, productId, movement.type,
       deltaQty > 0 ? 'IN' : 'OUT',
@@ -224,7 +224,11 @@ async function applyStockDelta(client, userId, productId, deltaQty, movement) {
       movement.notes || null,
       locationId,
       movement.toLocationId || null,
-      movement.transferId || null
+      movement.transferId || null,
+      // Which UNIT moved, when the goods are tracked one by one. NULL for
+      // counted stock, which is most of it — this is what lets a serial's
+      // timeline be a query over the ledger rather than a second history.
+      movement.serialId || null
     ]
   );
 
@@ -279,7 +283,10 @@ async function transferStock(client, userId, opts) {
   // does not re-take them in a different order.
   const shared = {
     locationLocked: true, lockedBalances: locked,
-    transferId, reason, notes, unit: rows[0].unit
+    transferId, reason, notes, unit: rows[0].unit,
+    // Carried onto both legs so a moved unit's timeline shows it leaving
+    // one location and arriving at the other.
+    serialId: opts.serialId || null
   };
   await applyStockDelta(client, userId, productId, -qty, {
     ...shared, type: 'TRANSFER_OUT', locationId: from, toLocationId: to,

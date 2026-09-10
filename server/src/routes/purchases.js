@@ -26,6 +26,12 @@ const { applyStockDelta } = require('./invoices');
 // reconciles an order must land on the status the order's own code would
 // have chosen, and compare quantities the way it compares them.
 const { reversePurchaseOrderReceipt, receiptStatus, round3 } = require('./purchase-orders');
+// Serials are the other account of the same goods, so they move in the
+// same transaction as the quantity and the rows that explain it.
+const serialsSvc = require('../services/stock-serials');
+// The same default location the quantity movement uses, so units and
+// counts land on one shelf rather than two.
+const { defaultLocationId } = require('../services/stock-ledger');
 
 const router = express.Router();
 router.use(requireAuth);
@@ -58,6 +64,156 @@ function bad(message, status) {
 // this purpose, which `=` in SQL and `===` on null would each get wrong in
 // opposite directions.
 const sameProduct = (a, b) => (a == null && b == null) || String(a) === String(b);
+
+// ── The serial side of a purchase ─────────────────────────────────────
+//
+// A serialised product is received by NAME, not by count: six units means
+// six numbers. The count check is the whole enforcement — quantity stock
+// and serial stock are two accounts of one delivery, and letting them
+// disagree at the moment goods arrive is how they stay wrong forever.
+//
+// Which serials a purchase owns is read from the PURCHASE HEADER, never
+// from its line rows, because those are deleted and re-inserted on every
+// save. On an edit the payload states what the purchase now holds and the
+// database states what it held before, so what to release is the
+// difference between two explicit lists — not a guess about which unit the
+// user meant to drop.
+async function planPurchaseSerials(client, userId, kind, purchaseId, items) {
+  const productIds = items.map(i => i.product_id).filter(Boolean);
+  const tracked = await serialsSvc.serialTrackedProducts(client, userId, productIds);
+  if (!tracked.size) return null;
+
+  const wanted = [];               // { productId, serials[], poItemId }
+  for (const [index, item] of items.entries()) {
+    if (!item.product_id || !tracked.has(item.product_id)) continue;
+    const where = `Line ${index + 1} ("${item.product_name || 'product'}")`;
+    const serials = serialsSvc.readSerialList(item.serials, { where });
+    const quantity = round3(Number(item.quantity) || 0);
+    if (serials.length !== quantity) {
+      const verb = kind === 'purchase' ? 'received' : 'returned';
+      throw bad(
+        `${where} is serial-tracked: ${quantity} ${verb} needs exactly ${quantity} serial `
+        + `number${quantity === 1 ? '' : 's'}, but ${serials.length} `
+        + `${serials.length === 1 ? 'was' : 'were'} given.`, 409);
+    }
+    wanted.push({ productId: item.product_id, serials, poItemId: item.purchase_order_item_id || null });
+  }
+
+  // One number may only appear once across the whole document, or two
+  // lines would each claim the same unit.
+  const seen = new Map();
+  for (const line of wanted) {
+    for (const value of line.serials) {
+      const key = serialsSvc.serialKey(value);
+      if (seen.has(key)) throw bad(`Serial "${value}" is listed on more than one line.`, 409);
+      seen.set(key, line.productId);
+    }
+  }
+  return { wanted, keys: seen };
+}
+
+// A purchase RETURN sends units back to the supplier. Reconciled the same
+// way a purchase is — the payload says which units the return now covers,
+// the database says which it covered before, and the difference is what
+// changes — so an edited return gives back exactly the unit it dropped.
+async function applySupplierReturnSerials(client, userId, returnId, plan, { locationId, originalPurchaseId }) {
+  const already = await serialsSvc.serialsReturnedToSupplierBy(client, userId, 'purchase_return', returnId);
+  const byKey = new Map(already.map(r => [serialsSvc.serialKey(r.serial_no), r]));
+
+  if (!plan) {
+    if (already.length) await serialsSvc.unreturnSupplierSerials(client, userId, already, { locationId });
+    return { returned: [], restored: already };
+  }
+
+  // Dropped from the return: back on the shelf they left.
+  const dropped = already.filter(r => !plan.keys.has(serialsSvc.serialKey(r.serial_no)));
+  if (dropped.length) await serialsSvc.unreturnSupplierSerials(client, userId, dropped, { locationId });
+
+  const returned = [];
+  for (const line of plan.wanted) {
+    const fresh = line.serials.filter(v => !byKey.has(serialsSvc.serialKey(v)));
+    if (!fresh.length) continue;
+    const rows = await serialsSvc.returnSerialsToSupplier(client, userId, {
+      productId: line.productId, serials: fresh,
+      sourceType: 'purchase_return', sourceId: returnId,
+      purchaseId: originalPurchaseId || null
+    });
+    returned.push(...rows);
+  }
+  return { returned, restored: dropped };
+}
+
+async function applyPurchaseSerials(client, userId, purchaseId, plan, { locationId, createdBy }) {
+  if (!plan) {
+    // Nothing serialised on the document NOW — but it may have been before
+    // this edit, and those units must still be given back.
+    const held = await serialsSvc.serialsReceivedBy(client, userId, 'purchase', purchaseId);
+    if (held.length) await serialsSvc.releaseReceivedSerials(client, userId, held);
+    return { created: [], released: held };
+  }
+
+  const held = await serialsSvc.serialsReceivedBy(client, userId, 'purchase', purchaseId);
+  const heldByKey = new Map(held.map(r => [serialsSvc.serialKey(r.serial_no), r]));
+
+  // Gone from the payload: released, exactly those and no others.
+  const dropped = held.filter(r => !plan.keys.has(serialsSvc.serialKey(r.serial_no)));
+  if (dropped.length) await serialsSvc.releaseReceivedSerials(client, userId, dropped);
+
+  const created = [];
+  for (const line of plan.wanted) {
+    const fresh = line.serials.filter(v => !heldByKey.has(serialsSvc.serialKey(v)));
+    if (fresh.length) {
+      const rows = await serialsSvc.receiveSerials(client, userId, {
+        productId: line.productId, serials: fresh, locationId,
+        sourceType: 'purchase', sourceId: purchaseId,
+        purchaseOrderItemId: line.poItemId, createdBy
+      });
+      created.push(...rows);
+    }
+    // A serial kept across the edit may have moved to a different line of
+    // the same document; its PO line link is refreshed so the two agree.
+    for (const value of line.serials) {
+      const existing = heldByKey.get(serialsSvc.serialKey(value));
+      if (!existing) continue;
+      if (existing.product_id !== line.productId) {
+        throw bad(`Serial "${value}" already belongs to a different product on this purchase.`, 409);
+      }
+      if ((existing.purchase_order_item_id || null) !== (line.poItemId || null)) {
+        await client.query(
+          `UPDATE stock_serials SET purchase_order_item_id = $1, updated_at = NOW()
+            WHERE id = $2 AND user_id = $3`, [line.poItemId, existing.id, userId]);
+      }
+    }
+  }
+  return { created, released: dropped };
+}
+
+// ── One movement per unit, for serialised goods ───────────────────────
+//
+// A counted product nets its whole change into a single movement: five
+// bought is one row of five. A serialised product cannot do that and still
+// say which unit moved — one row of five can name only one serial — so
+// each unit gets its own movement of one, carrying its own serial_id.
+//
+// The quantity arithmetic is identical either way: three movements of one
+// come to the same balance as one movement of three. What changes is that
+// a unit's history becomes a query over the ledger, which is why there is
+// no second history table.
+//
+// Uses the SAME applyStockDelta as everything else. No second stock engine.
+// `nameUnit: false` for units that no longer exist. A serial dropped from
+// a purchase is DELETED — it was received in error and there is nothing
+// left to point at — so its reversing movement carries no serial_id. The
+// quantity still comes back; only the name is gone, which is the truth.
+async function movePerUnit(client, userId, rows, sign, movement, { nameUnit = true } = {}) {
+  for (const row of rows) {
+    await applyStockDelta(client, userId, row.product_id, sign, {
+      ...movement,
+      locationId: movement.locationId || row.location_id || null,
+      serialId: nameUnit ? row.id : null
+    });
+  }
+}
 
 // ── The order's side of a purchase edit ───────────────────────────────
 //
@@ -222,6 +378,8 @@ router.post('/:kind/save-with-items', asyncRoute(async (req, res) => {
     // Settled before anything is written, so a purchase that the order
     // refuses leaves the order, the purchase and the stock untouched.
     let orderPlan = null;
+    // Same for the serials: counted and checked before the first write.
+    const serialPlan = await planPurchaseSerials(client, req.userId, kind, editId, items);
 
     if (editId) {
       // Locked before it is read. Two edits of one purchase would otherwise
@@ -289,11 +447,44 @@ router.post('/:kind/save-with-items', asyncRoute(async (req, res) => {
       }
     }
 
+    // The units, before the quantity. Run the other way round, a serial
+    // that cannot move fails as "insufficient stock" - true, but it does
+    // not tell the person WHICH unit is the problem.
+    const serialLocation = serialPlan ? await defaultLocationId(client, req.userId) : null;
+    const serialResult = kind === 'purchase'
+      ? await applyPurchaseSerials(client, req.userId, headerId, serialPlan,
+        { locationId: serialLocation, createdBy: req.userId })
+      : await applySupplierReturnSerials(client, req.userId, headerId, serialPlan,
+        { locationId: serialLocation, originalPurchaseId: header.original_purchase_id || null });
+
+    // Serialised goods move a unit at a time, so each movement can name the
+    // unit it moved. Everything else nets, exactly as before.
+    const perUnit = { type: movementType, sourceType, sourceId: headerId };
+    if (kind === 'purchase') {
+      await movePerUnit(client, req.userId, serialResult.created || [], 1, perUnit);
+      await movePerUnit(client, req.userId, serialResult.released || [], -1,
+        { ...perUnit, reason: 'Serial removed from the purchase', locationId: serialLocation },
+        { nameUnit: false });
+    } else {
+      await movePerUnit(client, req.userId, serialResult.returned || [], -1,
+        { ...perUnit, locationId: serialLocation });
+      await movePerUnit(client, req.userId, serialResult.restored || [], 1,
+        { ...perUnit, reason: 'Serial removed from the return', locationId: serialLocation });
+    }
+    // Those products are already accounted for one unit at a time; counting
+    // their quantity again here would move the same goods twice.
+    const serialProducts = new Set(
+      (serialPlan ? serialPlan.wanted.map(l => l.productId) : [])
+        .concat([...(serialResult.created || []), ...(serialResult.released || []),
+          ...(serialResult.returned || []), ...(serialResult.restored || [])]
+          .map(r => r.product_id)));
+
     const oldQtyByProduct = {};
     oldItems.forEach(r => { if (r.product_id) oldQtyByProduct[r.product_id] = (oldQtyByProduct[r.product_id] || 0) + (+r.quantity || 0); });
 
     const productIds = new Set([...Object.keys(oldQtyByProduct), ...Object.keys(newQtyByProduct)]);
     for (const pid of productIds) {
+      if (serialProducts.has(pid)) continue;
       // Net change only, same reasoning as the sale: a purchase edited from
       // 10 to 15 writes one +5 movement, and re-saving it unchanged writes
       // nothing at all.
@@ -309,8 +500,15 @@ router.post('/:kind/save-with-items', asyncRoute(async (req, res) => {
     // failure anywhere above rolls all of it back.
     const reconciled = await applyOrderReconciliation(client, req.userId, orderPlan);
 
+    // And the serials with them. Planned before anything was written so a
+    // miscounted delivery is refused with nothing changed; applied here so
+    // the units, the quantity and the document all land together.
+    // Units land where the quantity landed. applyStockDelta above put the
+    // goods in the tenant's default location, so resolving the same one
+    // here keeps the two accounts pointing at the same shelf — a serial
+    // with no location could not be transferred or reconciled.
     await client.query('COMMIT');
-    res.json({ id: headerId, purchase_order: reconciled });
+    res.json({ id: headerId, purchase_order: reconciled, serials: serialResult });
   } catch (err) {
     await client.query('ROLLBACK');
     throw err;
@@ -350,13 +548,29 @@ router.post('/:kind/:id/cascade-delete', asyncRoute(async (req, res) => {
          FROM ${itemsTable} WHERE ${itemFk} = $1 AND user_id = $2`,
       [id, req.userId]
     );
+    // The units this document moved, read before anything is reversed so
+    // each one can be given its own movement. A serialised product is
+    // reversed a unit at a time; everything else nets by line, as before.
+    const undoing = kind === 'purchase'
+      ? await serialsSvc.serialsReceivedBy(client, req.userId, 'purchase', id)
+      : await serialsSvc.serialsReturnedToSupplierBy(client, req.userId, 'purchase_return', id);
+    const serialProducts = new Set(undoing.map(r => r.product_id));
+    const undoReason = kind === 'purchase' ? 'Purchase deleted' : 'Purchase return deleted';
+
     // Deleting a saved record un-applies its stock effect — a purchase
     // being deleted must give back the stock it added; a return being
     // deleted must give back the stock it took away. Opposite sign from
     // the original apply, same magnitude.
-    for (const it of items) await applyStockDelta(client, req.userId, it.product_id, -stockSign * (+it.quantity || 0), {
-      type: movementType, sourceType, sourceId: id, sourceItemId: it.id,
-      unit: it.unit, rate: it.rate, reason: kind === 'purchase' ? 'Purchase deleted' : 'Purchase return deleted'
+    for (const it of items) {
+      if (serialProducts.has(it.product_id)) continue;   // handled per unit below
+      await applyStockDelta(client, req.userId, it.product_id, -stockSign * (+it.quantity || 0), {
+        type: movementType, sourceType, sourceId: id, sourceItemId: it.id,
+        unit: it.unit, rate: it.rate, reason: undoReason
+      });
+    }
+    await movePerUnit(client, req.userId, undoing, -stockSign, {
+      type: movementType, sourceType, sourceId: id, reason: undoReason,
+      locationId: kind === 'purchase' ? null : await defaultLocationId(client, req.userId)
     });
 
     // A purchase raised against an order counted towards what that order
@@ -365,13 +579,30 @@ router.post('/:kind/:id/cascade-delete', asyncRoute(async (req, res) => {
     // arrived is exactly the inconsistency this guards against. An
     // ordinary purchase has no order and this does nothing.
     let reconciled = null;
+    let serialsRemoved = 0;
     if (kind === 'purchase') {
       reconciled = await reversePurchaseOrderReceipt(client, req.userId, id, items);
+      // Every unit this purchase brought in goes with it. A serial that has
+      // since been sold refuses the deletion rather than vanishing from
+      // under the invoice that sold it — better a blocked delete than
+      // inventory that never existed.
+      if (undoing.length) {
+        serialsRemoved = await serialsSvc.releaseReceivedSerials(client, req.userId, undoing);
+      }
+    } else {
+      // Deleting a purchase return un-sends the units: they were never
+      // returned, so they go back to the shelf they left. The stock the
+      // return took out is given back by the loop above, so the two
+      // accounts move together.
+      if (undoing.length) {
+        serialsRemoved = await serialsSvc.unreturnSupplierSerials(client, req.userId, undoing,
+          { locationId: await defaultLocationId(client, req.userId) });
+      }
     }
 
     await client.query(`DELETE FROM ${itemsTable} WHERE ${itemFk} = $1 AND user_id = $2`, [id, req.userId]);
     await client.query('COMMIT');
-    res.json({ ok: true, purchase_order: reconciled });
+    res.json({ ok: true, purchase_order: reconciled, serials_removed: serialsRemoved });
   } catch (err) {
     await client.query('ROLLBACK');
     throw err;
