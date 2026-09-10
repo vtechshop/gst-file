@@ -714,6 +714,13 @@ async function loadInvoiceForEdit(type, id) {
   if (activeItems.length) loadItemsIntoTable(activeItems);
   else synthesizeLegacyItemRow(rec);
 
+  // The delivery charge this invoice was raised with. AFTER the lines are
+  // in, because it re-runs the rollups and there would be nothing to roll
+  // up before that. An invoice saved with none - which is every invoice
+  // raised before this feature - restores an empty box and totals
+  // identical to the ones it was saved with.
+  restoreInvoiceTransport(rec);
+
   document.getElementById('invPageTitle').textContent = 'Edit Invoice';
   document.getElementById('invSaveBtn').innerHTML = '<i class="fas fa-save"></i> Update Invoice';
 }
@@ -1094,6 +1101,8 @@ function clearInvoiceFormFields() {
   setInvValue('invDate', toISO(new Date()));
   // Cover is per sale: the next invoice must not inherit this one's.
   resetWarrantyFields();
+  // Nor its delivery charge. Cleared to blank, which is NULL - not 0.
+  restoreInvoiceTransport(null);
   setInvValue('invSupply', 'intrastate');
   // Back to the default series, same as every other field here returns
   // to its default. generateInvoiceNo() below then previews the offline

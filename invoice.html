@@ -20,11 +20,11 @@
   <script src="client/js/pages/profile.js?v=39"></script>
   <script src="client/js/pages/products.js?v=31"></script>
   <script src="client/js/core/drafts.js?v=29"></script>
-  <script src="client/js/pages/invoice-items.js?v=37"></script>
+  <script src="client/js/pages/invoice-items.js?v=40"></script>
   <script src="client/js/pages/serial-entry.js?v=1"></script>
-  <script src="client/js/pages/invoice-pdf.js?v=50"></script>
+  <script src="client/js/pages/invoice-pdf.js?v=51"></script>
   <script src="client/js/pages/payments.js?v=29"></script>
-  <script src="client/js/pages/invoice-entry.js?v=35"></script>
+  <script src="client/js/pages/invoice-entry.js?v=36"></script>
   <!-- Invoice scanner. Uploads to /api/invoice-scan, which calls Gemini
        with a server-held key; no OCR library is loaded in the browser. -->
   <script src="client/js/pages/invoice-scan.js?v=29"></script>
@@ -591,8 +591,8 @@ document.addEventListener('DOMContentLoaded', initInvoiceEntry);
 
   <!-- Serial numbers for one document line. Typed on a purchase, picked on
        a sale; either way the line needs exactly as many as its quantity. -->
-  <div class="modal" id="serialPanel">
-    <div class="modal-content">
+  <div class="modal-overlay" id="serialPanel">
+    <div class="modal">
       <div class="modal-header">
         <span class="modal-title"><i class="fas fa-barcode"></i> <span id="serialPanelTitle"></span></span>
         <button type="button" class="modal-close" onclick="closeSerialPanel()" aria-label="Close"><i class="fas fa-times"></i></button>

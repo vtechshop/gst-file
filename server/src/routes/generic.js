@@ -504,7 +504,28 @@ const TABLES = {
       'differential_65',
       // Warranty on the sale. Descriptive only - no return, total or
       // sequence reads these, and they stay NULL on older invoices.
-      'warranty_period_months','warranty_start_date','warranty_until','warranty_terms'],
+      'warranty_period_months','warranty_start_date','warranty_until','warranty_terms',
+      // An optional invoice-level delivery charge and the 18% on it. NULL
+      // means none was charged, which is what every invoice raised before
+      // this feature means, and 0 means it was charged at nothing - two
+      // different facts, so neither stands in for the other.
+      //
+      // Nothing to do with transport_required / transporter_name /
+      // transport_mode / transport_distance_km above: those describe how
+      // the goods moved, for the e-way bill, and carry no money. The charge
+      // is billed independently of that toggle.
+      //
+      // transport_gst_amount is listed so it can be READ back, but the
+      // invoice save path derives it from the charge rather than storing
+      // what the browser sent - see routes/invoices.js.
+      'transport_charge','transport_gst_amount'],
+    // The tax on the transport charge is DERIVED, so it has exactly one
+    // writer: the invoice save path, which computes it from the charge it
+    // just validated. Listed in `columns` above so it can be read back and
+    // printed; refused here so it cannot be set to a figure nothing
+    // derived. (immutable is enforced by this router's POST/PATCH only -
+    // save-with-items builds its own SQL and is unaffected.)
+    immutable: ['transport_gst_amount'],
     validate: makeDistrictValidator([['state', 'district'], ['shipping_state', 'shipping_district']])
   },
   b2c_invoices: {
@@ -524,7 +545,28 @@ const TABLES = {
       'differential_65',
       // Warranty on the sale. Descriptive only - no return, total or
       // sequence reads these, and they stay NULL on older invoices.
-      'warranty_period_months','warranty_start_date','warranty_until','warranty_terms'],
+      'warranty_period_months','warranty_start_date','warranty_until','warranty_terms',
+      // An optional invoice-level delivery charge and the 18% on it. NULL
+      // means none was charged, which is what every invoice raised before
+      // this feature means, and 0 means it was charged at nothing - two
+      // different facts, so neither stands in for the other.
+      //
+      // Nothing to do with transport_required / transporter_name /
+      // transport_mode / transport_distance_km above: those describe how
+      // the goods moved, for the e-way bill, and carry no money. The charge
+      // is billed independently of that toggle.
+      //
+      // transport_gst_amount is listed so it can be READ back, but the
+      // invoice save path derives it from the charge rather than storing
+      // what the browser sent - see routes/invoices.js.
+      'transport_charge','transport_gst_amount'],
+    // The tax on the transport charge is DERIVED, so it has exactly one
+    // writer: the invoice save path, which computes it from the charge it
+    // just validated. Listed in `columns` above so it can be read back and
+    // printed; refused here so it cannot be set to a figure nothing
+    // derived. (immutable is enforced by this router's POST/PATCH only -
+    // save-with-items builds its own SQL and is unaffected.)
+    immutable: ['transport_gst_amount'],
     validate: makeDistrictValidator([['state', 'district'], ['shipping_state', 'shipping_district']])
   },
   // Quotations. Separate tables on purpose: no Dashboard, Reports, ledger,

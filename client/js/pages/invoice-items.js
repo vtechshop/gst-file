@@ -49,6 +49,103 @@ function itemsWarrantyEnabled() {
   return itemsFormPrefix === 'invoice';
 }
 
+// ── Transport charge ──────────────────────────────
+// An optional delivery charge billed on the invoice, taxed at a fixed 18%.
+//
+// Same gate as warranty above, and for the same reason: this grid is shared
+// with Proforma Entry, proforma_invoices has nowhere to store the charge,
+// and a field that silently vanished on save would be worse than no field.
+// The proforma totals box keeps exactly the rows it had.
+function itemsTransportEnabled() {
+  return itemsFormPrefix === 'invoice';
+}
+
+// The rate a delivery charge is taxed at: the rate of the PRINCIPAL SUPPLY
+// on this invoice, never a rate of transport's own.
+//
+// Delivery billed alongside goods is part of the value of that supply, so
+// it follows what is being delivered - 5% goods carry 5% delivery, 18%
+// goods carry 18%. There is no fixed transport rate.
+//
+// Returns null when the invoice cannot say what the principal supply is:
+//
+//   no taxable line at all   nothing for the charge to follow
+//   more than one rate       WHICH supply is principal is a fact about the
+//                            goods, not something any rate can be read off.
+//                            Nothing in this app records it (products
+//                            .supply_bundle / .principal_gst_rate describe a
+//                            bundle INSIDE one product and are Product
+//                            Master validation only - no invoice reads
+//                            them), so it is refused rather than guessed.
+//                            Save blocks; see validateInvoiceItems().
+//
+// Only TAXABLE lines are considered: a nil-rated or exempt line is not a
+// taxable supply, and counting its 0% would make every invoice carrying one
+// look mixed.
+function invoicePrincipalGstRate() {
+  const rates = [...new Set(currentItems
+    .filter(r => r.product_name && +r.taxable_value > 0
+      && gstIsTaxableTreatment(gstTreatmentOf(r)))
+    .map(r => +r.gst_percentage || 0))];
+  return rates.length === 1 ? rates[0] : null;
+}
+
+// What is in the box, as a number or null.
+//
+// Blank is null, NOT 0: "no transport was charged" and "transport was
+// charged and it was free" are different facts, and only the first one
+// leaves the invoice exactly as it would have been without this feature.
+// A negative or unparseable entry also reads as null here so the on-screen
+// total never runs away while someone is mid-keystroke; the server is what
+// refuses it (utils/validation.js), and validateInvoiceItems() is what stops
+// the save.
+function invoiceTransportCharge() {
+  if (!itemsTransportEnabled()) return null;
+  const el = document.getElementById('itemsTransportCharge');
+  if (!el) return null;
+  const raw = String(el.value == null ? '' : el.value).trim();
+  if (raw === '') return null;
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n < 0) return null;
+  return round2(n);
+}
+
+// The tax on it, at the principal supply's rate and split by the invoice's
+// own supply type. calcGST is the app's one GST engine - the same call every
+// product line makes - so transport cannot drift from the rest of the
+// invoice, and there is no second splitter here.
+//
+// An undeterminable principal rate yields no tax and `rate: null`. The
+// running total then shows the charge untaxed, which is visibly incomplete
+// on purpose - and Save refuses it, so nothing incomplete can be stored.
+function invoiceTransportTax(charge) {
+  const rate = invoicePrincipalGstRate();
+  if (charge === null || rate === null) {
+    return { gstAmount: 0, igst: 0, cgst: 0, sgst: 0, rate };
+  }
+  return { ...calcGST(charge, rate, getInvoiceSupplyType()), rate };
+}
+
+// Typing in the box recomputes the invoice, exactly as editing a line does.
+function onTransportChargeInput() {
+  computeInvoiceRollups();
+}
+
+// Reopening a saved invoice. NULL restores as an empty box, which is what it
+// meant; 0 restores as "0" because a zero charge was a real decision.
+function restoreInvoiceTransport(rec) {
+  const el = document.getElementById('itemsTransportCharge');
+  if (!el) return;
+  const stored = rec && rec.transport_charge;
+  // The RAW number, never formatNum(). This is an <input type="number">,
+  // and en-IN grouping makes 1000 into "1,000.00" - which such an input
+  // refuses, leaving the box empty. The charge would then look like it was
+  // never billed, and re-saving would clear it.
+  el.value = (stored === null || stored === undefined || stored === '')
+    ? '' : String(Number(stored));
+  computeInvoiceRollups();
+}
+
 // Blank first: warranty is optional and must never be implied by a default.
 function warrantyOptionsHtml(selected) {
   const sel = parseInt(selected, 10) || '';
@@ -160,6 +257,30 @@ function renderItemsSectionShell(containerId) {
         <span class="label">Compensation Cess</span>
         <span class="value"><b id="itemsCess">0.00</b></span>
       </div>
+      ${itemsTransportEnabled() ? `
+      <!-- Transport is an invoice-level charge, not a product. It lives in
+           the totals box, below the product table, so it can never be
+           mistaken for a line with a quantity, an HSN or a rate. -->
+      <div class="calc-row calc-row-transport">
+        <span class="label">Transport Charge</span>
+        <span class="value"><input type="number" id="itemsTransportCharge" class="form-control calc-input-sm"
+               min="0" step="0.01" placeholder="0.00" aria-label="Transport Charge"
+               oninput="onTransportChargeInput()"></span>
+      </div>
+      <div class="calc-row">
+        <span class="label">Transport GST</span>
+        <div class="calc-tax-row">
+          <!-- The principal supply's rate, filled in by the rollup. Not a
+               fixed number: delivery follows what is being delivered. -->
+          <span class="text-muted-sm" id="itemsTransportRate">&ndash;</span>
+        </div>
+        <span class="value"><b id="itemsTransportGst">0.00</b></span>
+      </div>
+      <div class="calc-row d-none" id="itemsTransportNoteRow">
+        <span class="label"></span>
+        <span class="value fs-12 text-danger text-right" id="itemsTransportNote"></span>
+      </div>
+      ` : ''}
       <div class="calc-row">
         <span class="label">Round Off</span>
         <span class="value"><input type="text" id="itemsRoundOff" class="form-control calc-input-sm" readonly aria-label="Round Off"></span>
@@ -221,6 +342,17 @@ function blankRow() {
 function addItemRow() {
   currentItems.push(blankRow());
   renderItemsTable();
+  // The totals have to be drawn even though a blank row adds nothing to
+  // them. This is the FIRST thing that runs on a new invoice
+  // (initInvoiceItems opens one empty row), and every box the rollup
+  // fills - Subtotal, GST, Round Off, Grand Total, and the payment
+  // preview's Grand Total / Amount Received / Remaining Balance / Status -
+  // is an input with no value in the markup. Without this they stay
+  // literally empty until the user happens to type into a line, which
+  // reads as a broken page rather than an invoice worth zero.
+  //
+  // removeItemRow() has always done this; addItemRow() never did.
+  computeInvoiceRollups();
   persistItemsDraft();
 }
 
@@ -915,12 +1047,30 @@ function recalcAllRows() {
 
 function computeInvoiceRollups() {
   const rows = currentItems.filter(r => r.product_name && r.taxable_value > 0);
-  const taxable = round2(rows.reduce((s, r) => s + r.taxable_value, 0));
-  const igst    = round2(rows.reduce((s, r) => s + r.igst, 0));
-  const cgst    = round2(rows.reduce((s, r) => s + r.cgst, 0));
-  const sgst    = round2(rows.reduce((s, r) => s + r.sgst, 0));
+  const productTaxable = round2(rows.reduce((s, r) => s + r.taxable_value, 0));
+  const productIgst    = round2(rows.reduce((s, r) => s + r.igst, 0));
+  const productCgst    = round2(rows.reduce((s, r) => s + r.cgst, 0));
+  const productSgst    = round2(rows.reduce((s, r) => s + r.sgst, 0));
+  const cess           = round2(rows.reduce((s, r) => s + (+r.cess_amount || 0), 0));
+
+  // Transport joins the invoice ONCE, here: its charge is added to the
+  // taxable base and its 18% to the tax, and neither is added anywhere
+  // else. The product figures above are computed before this and are not
+  // touched by it - no line's Qty, Rate, Discount, GST%, Cess, Taxable
+  // Value or Line Total changes because a delivery charge was billed.
+  const transportCharge = invoiceTransportCharge();
+  const transportTax = invoiceTransportTax(transportCharge);
+  const transportGst = transportTax.gstAmount;
+
+  const taxable = round2(productTaxable + (transportCharge || 0));
+  const igst    = round2(productIgst + transportTax.igst);
+  const cgst    = round2(productCgst + transportTax.cgst);
+  const sgst    = round2(productSgst + transportTax.sgst);
   const gstAmt  = round2(igst + cgst + sgst);
-  const cess    = round2(rows.reduce((s, r) => s + (+r.cess_amount || 0), 0));
+
+  // Unchanged: the same three lines, over a base that now includes
+  // transport. With no transport charged, every figure below is bit for
+  // bit the one this function has always produced.
   const rawTotal = taxable + gstAmt + cess;
   const grandTotal = Math.round(rawTotal);
   const roundOff = round2(grandTotal - rawTotal);
@@ -940,6 +1090,20 @@ function computeInvoiceRollups() {
   // never charges it looks exactly as it always has.
   const cessRow = document.getElementById('itemsCessRow');
   if (cessRow) cessRow.classList.toggle('d-none', !cess);
+  setTxt('itemsTransportGst', formatNum(transportGst));
+  // The rate delivery is following, and - when the invoice cannot say what
+  // its principal supply is - why no rate is shown. The note only appears
+  // when a charge has actually been entered: an invoice with no delivery
+  // has nothing to resolve.
+  setTxt('itemsTransportRate', transportTax.rate === null ? '–' : transportTax.rate + '%');
+  const tNoteRow = document.getElementById('itemsTransportNoteRow');
+  const tNote = transportCharge !== null && transportTax.rate === null
+    ? (productTaxable > 0
+      ? 'This invoice has products at more than one GST rate, so the rate for transport cannot be determined. Charge delivery on a separate invoice, or put the products on separate invoices.'
+      : 'Add a taxable product before charging transport — delivery is taxed at the rate of what is being delivered.')
+    : '';
+  if (tNoteRow) tNoteRow.classList.toggle('d-none', !tNote);
+  setTxt('itemsTransportNote', tNote);
   const wordsEl = document.getElementById('itemsAmountWords');
   if (wordsEl) wordsEl.textContent = numberToWordsINR(grandTotal);
 
@@ -951,7 +1115,13 @@ function computeInvoiceRollups() {
   // typeof because this file also loads on pages with no payment section.
   if (typeof renderInvPaymentPreview === 'function') renderInvPaymentPreview(grandTotal);
 
-  return { taxable_amount: taxable, gst_percentage: gstPercentage, gst_amount: gstAmt, igst, cgst, sgst, cess_amount: cess, total_amount: grandTotal, round_off: roundOff };
+  // transport_gst_amount travels with the charge so the caller has the
+  // whole picture, but the SERVER re-derives it from the charge before
+  // storing - see routes/invoices.js. Both are null, never 0, when nothing
+  // was charged.
+  return { taxable_amount: taxable, gst_percentage: gstPercentage, gst_amount: gstAmt, igst, cgst, sgst, cess_amount: cess, total_amount: grandTotal, round_off: roundOff,
+    transport_charge: transportCharge,
+    transport_gst_amount: transportCharge === null ? null : round2(transportGst) };
 }
 
 function validateInvoiceItems() {
@@ -968,6 +1138,31 @@ function validateInvoiceItems() {
     if (row.hsn_code && !isValidHsnFormat(row.hsn_code)) { showToast(`"${row.product_name}": HSN code must be 4, 6, or 8 digits.`, 'error'); return false; }
     if (row.unit && !GST_UQC_MASTER.some(u => u.code === row.unit)) { showToast(`"${row.product_name}": "${row.unit}" is not a valid GST unit — pick one from the Unit list.`, 'error'); return false; }
     if (!GST_RATE_SLABS.includes(+row.gst_percentage)) { showToast(`"${row.product_name}": ${row.gst_percentage}% is not a standard GST slab — pick one from the GST % list.`, 'error'); return false; }
+  }
+
+  // Transport charge, if the box has anything in it at all. Read from the
+  // ELEMENT rather than through invoiceTransportCharge(), which reports a
+  // bad entry as null so the running total stays sane mid-keystroke - that
+  // is the right answer for the display and the wrong one for Save, which
+  // must say what is wrong instead of silently billing nothing.
+  if (itemsTransportEnabled()) {
+    const el = document.getElementById('itemsTransportCharge');
+    const raw = el ? String(el.value == null ? '' : el.value).trim() : '';
+    if (raw !== '') {
+      const n = Number(raw);
+      if (!Number.isFinite(n)) { showToast('Transport charge must be a number, or left blank for none.', 'error'); return false; }
+      if (n < 0) { showToast('Transport charge cannot be negative.', 'error'); return false; }
+      // A charge with no determinable principal rate cannot be taxed, and an
+      // untaxed delivery on a taxable invoice would understate the return.
+      // Refused here rather than stored at a guessed rate. Zero is exempt
+      // from this: it is "no delivery was charged", and taxes nothing.
+      if (n > 0 && invoicePrincipalGstRate() === null) {
+        showToast(currentItems.some(r => r.product_name && +r.taxable_value > 0)
+          ? 'Transport cannot be charged on an invoice with products at more than one GST rate — delivery follows the principal supply, and this invoice does not have a single one.'
+          : 'Add a taxable product before charging transport.', 'error');
+        return false;
+      }
+    }
   }
   return true;
 }

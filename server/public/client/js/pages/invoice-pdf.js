@@ -97,6 +97,20 @@ async function fetchInvoiceRecord(type, id) {
     gst_category: data.gst_category || 'regular',
     reverse_charge: !!data.reverse_charge,
     igst: +data.igst, cgst: +data.cgst, sgst: +data.sgst,
+    // The optional delivery charge and its 18%, as STORED. Null stays null:
+    // an invoice raised without transport must print exactly as it always
+    // did, and 0 would put a "Transport Charge 0.00" line on every old bill.
+    transport_charge: (data.transport_charge === null || data.transport_charge === undefined)
+      ? null : +data.transport_charge,
+    transport_gst_amount: (data.transport_gst_amount === null || data.transport_gst_amount === undefined)
+      ? null : +data.transport_gst_amount,
+    // Round Off is derived, not stored - there is no round_off column.
+    //
+    // taxable_amount and gst_amount BOTH include transport (see
+    // computeInvoiceRollups in invoice-items.js), so the transport charge
+    // and its tax cancel out of this subtraction and what is left is the
+    // actual rounding, never the transport. A 2700 + 1000 invoice gives
+    // 4366 - 3700 - 666 = 0, not 1180.
     round_off: round2(+data.total_amount - +data.taxable_amount - +data.gst_amount),
     transport_required: !!data.transport_required,
     vehicle_number: data.vehicle_number || '',
@@ -371,6 +385,50 @@ function INVOICE_ITEM_COLUMN_STYLES(tableWidth, isIgst) {
     if (c.bold) styles[i].fontStyle = 'bold';
   });
   return styles;
+}
+
+// ── Transport on the printed totals ───────────────────────────────────
+//
+// The stored header figures (taxable_amount, gst_amount, cgst/sgst/igst)
+// INCLUDE the transport charge and its tax, because transport is part of
+// what this invoice is worth. The totals block has to show the goods and
+// the delivery separately, so the goods side is recovered by taking the
+// STORED transport figures back off - never by recomputing 18% of
+// anything, and never by treating a leftover difference as transport.
+//
+// The split follows the invoice's own supply type, exactly as calcGST()
+// splits every product line: inter-state is all IGST, intra-state is half
+// CGST and half SGST.
+//
+// Returns has:false for every invoice raised without a transport charge -
+// which is every invoice raised before this feature - and those print
+// through the untouched path below.
+function invoiceTransportParts(inv) {
+  const charge = inv.transport_charge;
+  if (charge === null || charge === undefined) {
+    return { has: false, charge: 0, gst: 0, igst: 0, cgst: 0, sgst: 0,
+             productTaxable: round2(inv.taxable_amount),
+             productIgst: round2(inv.igst), productCgst: round2(inv.cgst), productSgst: round2(inv.sgst) };
+  }
+  const gst = round2(inv.transport_gst_amount || 0);
+  const interstate = inv.supply_type === 'interstate';
+  const igst = interstate ? gst : 0;
+  const cgst = interstate ? 0 : round2(gst / 2);
+  const sgst = interstate ? 0 : round2(gst / 2);
+  return {
+    has: true,
+    charge: round2(charge), gst, igst, cgst, sgst,
+    productTaxable: round2(inv.taxable_amount - charge),
+    productIgst: round2(inv.igst - igst),
+    productCgst: round2(inv.cgst - cgst),
+    productSgst: round2(inv.sgst - sgst)
+  };
+}
+
+// What the goods alone came to, tax included - the figure the customer
+// recognises as the machine price before delivery is added.
+function invoiceMachineTotal(inv, t) {
+  return round2(t.productTaxable + t.productIgst + t.productCgst + t.productSgst);
 }
 
 function invoicePartyLines(inv) {
@@ -776,10 +834,27 @@ async function buildInvoicePDFDoc(inv) {
     const QR_LABEL_RIGHT = QR_X - 4;              // the label ends here
     const CELL_TEXT_W = (QR_LABEL_RIGHT - QR_LABEL_W - 3) - (L + 2);
     const boxX = R - 80;
-    const totalsRows = [['Subtotal', formatNum(inv.taxable_amount)]];
-    if (inv.cgst > 0) totalsRows.push(['CGST', formatNum(inv.cgst)]);
-    if (inv.sgst > 0) totalsRows.push(['SGST', formatNum(inv.sgst)]);
-    if (inv.igst > 0) totalsRows.push([`IGST (${inv.gst_percentage}%)`, formatNum(inv.igst)]);
+    // With no transport charged this is the block it has always been -
+    // same rows, same figures, same order.
+    const tp = invoiceTransportParts(inv);
+    const totalsRows = [['Subtotal', formatNum(tp.productTaxable)]];
+    if (tp.productCgst > 0) totalsRows.push(['CGST', formatNum(tp.productCgst)]);
+    if (tp.productSgst > 0) totalsRows.push(['SGST', formatNum(tp.productSgst)]);
+    if (tp.productIgst > 0) totalsRows.push([`IGST (${inv.gst_percentage}%)`, formatNum(tp.productIgst)]);
+    // Delivery, billed separately from the goods and never as a product
+    // line. The rows below add up down the column: goods total, then the
+    // charge, then its tax, then rounding, then the grand total.
+    if (tp.has) {
+      totalsRows.push(['Machine / Product Total', formatNum(invoiceMachineTotal(inv, tp))]);
+      totalsRows.push(['Transport Charge', formatNum(tp.charge)]);
+      // Labelled without a rate on purpose. This file is loaded on pages
+      // that do not load invoice-items.js (sales-returns.html), so it
+      // cannot share that file's TRANSPORT_GST_RATE, and a second copy of
+      // "18" here would be a number that could silently go stale against
+      // the one the invoice was actually taxed at. The amount is stored;
+      // the rate it came from is not this file's to assert.
+      totalsRows.push(['Transport GST', formatNum(tp.gst)]);
+    }
     if (Math.abs(inv.round_off) >= 0.005) totalsRows.push(['Round Off', (inv.round_off >= 0 ? '+' : '') + formatNum(inv.round_off)]);
     const bankLines = bankDetailLines(p);
     // Wrapped HERE, once, because the space the close needs decides whether
@@ -1231,6 +1306,15 @@ async function buildInvoiceHTML(inv, opts) {
         total_amount: inv.total_amount
       }, 0);
 
+  // Same split as the PDF above, from the same stored fields. Empty string
+  // for an invoice with no transport charge, so its totals table is
+  // character for character the one it has always rendered.
+  const tpHtml = invoiceTransportParts(inv);
+  const transportRowsHtml = tpHtml.has
+    ? `<tr><td>Machine / Product Total</td><td>Rs.${formatNum(invoiceMachineTotal(inv, tpHtml))}</td></tr>`
+      + `<tr><td>Transport Charge</td><td>Rs.${formatNum(tpHtml.charge)}</td></tr>`
+      + `<tr><td>Transport GST</td><td>Rs.${formatNum(tpHtml.gst)}</td></tr>`
+    : '';
   const roundOffRowHtml = Math.abs(inv.round_off) >= 0.005
     ? `<tr><td>Round Off</td><td class="r">${(inv.round_off >= 0 ? '+' : '') + formatNum(inv.round_off)}</td></tr>`
     : '';
@@ -1424,10 +1508,11 @@ async function buildInvoiceHTML(inv, opts) {
     </div>
     <div class="right">
       <table class="tot">
-        <tr><td>Sub Total (Taxable Value)</td><td>Rs.${formatNum(inv.taxable_amount)}</td></tr>
-        ${inv.cgst > 0 ? `<tr><td>CGST</td><td>Rs.${formatNum(inv.cgst)}</td></tr>` : ''}
-        ${inv.sgst > 0 ? `<tr><td>SGST</td><td>Rs.${formatNum(inv.sgst)}</td></tr>` : ''}
-        ${inv.igst > 0 ? `<tr><td>IGST</td><td>Rs.${formatNum(inv.igst)}</td></tr>` : ''}
+        <tr><td>Sub Total (Taxable Value)</td><td>Rs.${formatNum(tpHtml.productTaxable)}</td></tr>
+        ${tpHtml.productCgst > 0 ? `<tr><td>CGST</td><td>Rs.${formatNum(tpHtml.productCgst)}</td></tr>` : ''}
+        ${tpHtml.productSgst > 0 ? `<tr><td>SGST</td><td>Rs.${formatNum(tpHtml.productSgst)}</td></tr>` : ''}
+        ${tpHtml.productIgst > 0 ? `<tr><td>IGST</td><td>Rs.${formatNum(tpHtml.productIgst)}</td></tr>` : ''}
+        ${transportRowsHtml}
         ${roundOffRowHtml}
         <tr class="grand"><td>Grand Total</td><td>Rs.${formatNum(inv.total_amount)}</td></tr>
       </table>

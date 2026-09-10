@@ -281,8 +281,98 @@ function validateProductPayload(payload, isInsert) {
   return { valid: Object.keys(errors).length === 0, errors };
 }
 
+// The rate a delivery charge is taxed at: the rate of the PRINCIPAL SUPPLY
+// on the invoice, never a rate of transport's own. Delivery billed with
+// goods is part of the value of that supply and follows what is being
+// delivered — 5% goods carry 5% delivery, 18% goods carry 18%.
+//
+// Derived from the LINE ITEMS the save is being asked to store, so the
+// browser cannot choose the rate its own delivery is taxed at.
+//
+// Returns null when the invoice cannot say what its principal supply is —
+// no taxable line, or more than one rate. Which supply is principal is a
+// fact about the goods; nothing in this schema records it (products
+// .supply_bundle / .principal_gst_rate describe a bundle inside ONE product
+// and are Product Master validation only), so the save is refused rather
+// than stored at a guessed rate.
+//
+// Only taxable lines count: a nil-rated or exempt line is not a taxable
+// supply, and counting its 0% would make every invoice carrying one look
+// mixed.
+const NON_TAXABLE_TREATMENTS = new Set(['nil_rated', 'exempt', 'non_gst']);
+
+function principalGstRate(items) {
+  if (!Array.isArray(items)) return null;
+  const rates = new Set();
+  for (const it of items) {
+    if (!it || typeof it !== 'object') continue;
+    const treatment = String(it.gst_treatment || 'taxable').trim().toLowerCase();
+    if (NON_TAXABLE_TREATMENTS.has(treatment)) continue;
+    if (!(Number(it.taxable_value) > 0)) continue;
+    rates.add(Number(it.gst_percentage) || 0);
+  }
+  return rates.size === 1 ? [...rates][0] : null;
+}
+
+// An optional invoice-level delivery charge.
+//
+// NULL and '' both mean "no transport was charged" and are stored as NULL —
+// deliberately NOT as 0, which means "transport was charged, and it was
+// free". Both are allowed; they are different facts.
+//
+// Written the same way as validateReorderLevel() above, and for the same
+// reason: Number([]) is 0, Number(' ') is 0 and Number(true) is 1, so the
+// TYPE is checked rather than trusting coercion to reject an array, an
+// object or a boolean. Number.isFinite then rejects NaN and Infinity,
+// which a bare `> 0` test would let through.
+//
+// Returns { valid, value, error } — `value` is what should be stored, so
+// the caller never re-parses the raw payload and cannot disagree with the
+// check that just passed.
+function validateTransportCharge(raw) {
+  if (raw === null || raw === undefined || raw === '') {
+    return { valid: true, value: null };
+  }
+  const isNumeric = typeof raw === 'number'
+    || (typeof raw === 'string' && raw.trim() !== '' && Number.isFinite(Number(raw)));
+  const n = isNumeric ? Number(raw) : NaN;
+
+  if (!Number.isFinite(n)) {
+    return { valid: false, error: 'Transport charge must be a number, or left blank for none.' };
+  }
+  if (n < 0) {
+    return { valid: false, error: 'Transport charge cannot be negative.' };
+  }
+  return { valid: true, value: round2(n) };
+}
+
+// The tax on that charge, at the principal supply's rate. Derived, never
+// accepted from the browser: the client shows it so the person can see what
+// they are billing, but what gets STORED is computed here from the charge
+// that was just validated and the rate the line items imply.
+//
+// A zero charge is a real stored decision ("delivery, free of charge") and
+// carries zero tax whatever the rate — so it never needs a principal rate.
+function transportGstAmount(charge, rate) {
+  if (charge === null || charge === undefined) return null;
+  const amount = Number(charge);
+  if (!(amount > 0)) return 0;
+  if (rate === null || rate === undefined) return null;
+  return round2(amount * Number(rate) / 100);
+}
+
+// The same half-paisa-safe rounding the frontend uses (client/js/utilities/
+// utils.js). Reformatting through exponential notation rather than
+// multiplying by 100 is what stops 1.005 rounding down to 1.00.
+function round2(n) {
+  const v = Number(n);
+  if (!Number.isFinite(v)) return 0;
+  return Number(Math.round(Number(v + 'e2')) + 'e-2');
+}
+
 module.exports = {
   validateGstin, isValidPhone, normalizeIndianPhone,
   validateCustomerPayload, validateProductPayload, validateProfilePayload,
-  validateDistrictPairs, makeDistrictValidator
+  validateDistrictPairs, makeDistrictValidator,
+  validateTransportCharge, transportGstAmount, principalGstRate, round2
 };

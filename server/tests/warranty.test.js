@@ -222,7 +222,10 @@ test('W22 schema.sql carries the same table and the manifest registers it', () =
 // ── the existing invoice warranty feature must be untouched ──
 test('W23 invoice-level and item-level warranty still persist', () => {
   const gen = GENERIC;
-  assert.match(gen, /'warranty_period_months','warranty_start_date','warranty_until','warranty_terms'\]/);
+  // The four columns, still registered. NOT anchored to the end of the
+  // array any more: they simply happened to be last, and a later feature
+  // adding a column of its own after them says nothing about warranty.
+  assert.match(gen, /'warranty_period_months','warranty_start_date','warranty_until','warranty_terms'/);
   const items = gen.slice(gen.indexOf('invoice_items: {'), gen.indexOf('vendors: {'));
   assert.match(items, /'warranty_period_months'/);
   for (const t of ['b2b_invoices', 'b2c_invoices']) {
@@ -284,9 +287,9 @@ test('W27 every asset whose contents changed carries its own cache key', () => {
   // Each pinned to the version its CURRENT contents were published under.
   for (const [file, want] of [['client/js/utilities/utils.js', 33],
                               ['client/js/core/config.js', 33],
-                              ['client/js/pages/invoice-pdf.js', 50],
+                              ['client/js/pages/invoice-pdf.js', 51],
                               ['client/js/pages/invoice-list.js', 34],
-                              ['client/js/pages/invoice-items.js', 37]]) {
+                              ['client/js/pages/invoice-items.js', 40]]) {
     assert.ok(page.includes(file + '?v=' + want), file + ' must be referenced at v=' + want);
   }
 });

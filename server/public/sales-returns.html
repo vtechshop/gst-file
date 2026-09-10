@@ -18,7 +18,7 @@
   <script src="client/js/utilities/utils.js?v=33"></script>
   <script src="client/js/core/search.js?v=29"></script>
   <script src="client/js/pages/profile.js?v=39"></script>
-  <script src="client/js/pages/invoice-pdf.js?v=50"></script>
+  <script src="client/js/pages/invoice-pdf.js?v=51"></script>
   <!-- The quantity rules, shared verbatim with the server (see
        server/routes/sales-returns.js) so the browser and the database
        enforce the same limit. Must load before sales-return-items.js. -->
@@ -248,8 +248,8 @@ document.addEventListener('DOMContentLoaded', initSalesReturns);
   <!-- Serial numbers for one document line. Typed on a purchase, picked on
        a sale or a return; either way the line needs exactly as many as its
        quantity. -->
-  <div class="modal" id="serialPanel">
-    <div class="modal-content">
+  <div class="modal-overlay" id="serialPanel">
+    <div class="modal">
       <div class="modal-header">
         <span class="modal-title"><i class="fas fa-barcode"></i> <span id="serialPanelTitle"></span></span>
         <button type="button" class="modal-close" onclick="closeSerialPanel()" aria-label="Close"><i class="fas fa-times"></i></button>

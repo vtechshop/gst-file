@@ -130,8 +130,8 @@ test('U8 the legacy synthesizer and unit validation are untouched', () => {
 
 test('U9 the changed asset carries a new cache key on every page that loads it', () => {
   for (const p of PAGES) {
-    assert.ok(rd(p).includes('client/js/pages/invoice-items.js?v=37'),
-      p + ' must reference invoice-items.js at v=37');
+    assert.ok(rd(p).includes('client/js/pages/invoice-items.js?v=40'),
+      p + ' must reference invoice-items.js at v=40');
   }
   // and nothing unrelated moved with it
   assert.ok(rd('invoice.html').includes('client/js/utilities/utils.js?v=33'));

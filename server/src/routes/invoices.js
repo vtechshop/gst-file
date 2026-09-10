@@ -22,6 +22,7 @@ const { TABLES } = require('./generic');
 const { applyStockDelta } = require('../services/stock-ledger');
 // Serial units move with the sale that moves them, in its transaction.
 const serialsSvc = require('../services/stock-serials');
+const { validateTransportCharge, transportGstAmount, principalGstRate } = require('../utils/validation');
 
 const router = express.Router();
 router.use(requireAuth);
@@ -144,6 +145,40 @@ router.post('/:type/save-with-items', asyncRoute(async (req, res) => {
   // an omitted source is the shop series.
   if (Object.prototype.hasOwnProperty.call(header, 'invoice_source')) {
     header.invoice_source = normaliseSource(header.invoice_source);
+  }
+
+  // Transport charge: checked here, and its tax DERIVED here.
+  //
+  // The charge is the only part of this the browser gets to decide. The
+  // 18% on it is computed from the charge that just passed validation, so
+  // a client that sends a charge of 1000 with a tax of 5000 - or with no
+  // tax at all - stores 180 either way. Absent from the payload means the
+  // caller is not touching transport, which is not the same as clearing it,
+  // so nothing is written and an existing charge survives the save.
+  if (Object.prototype.hasOwnProperty.call(header, 'transport_charge')) {
+    const check = validateTransportCharge(header.transport_charge);
+    if (!check.valid) {
+      const e = new Error(check.error); e.status = 400; e.expose = true; throw e;
+    }
+    // The rate comes from the LINE ITEMS being stored, not from the caller:
+    // delivery is taxed at the principal supply's rate, and letting the
+    // browser name that rate would let it choose its own tax.
+    const rate = principalGstRate(items);
+    const gst = transportGstAmount(check.value, rate);
+    if (check.value > 0 && gst === null) {
+      const e = new Error(
+        'Transport is taxed at the rate of the principal supply, and this invoice does not have '
+        + 'a single one — its products carry more than one GST rate (or it has no taxable product). '
+        + 'Bill the delivery on its own invoice, or split the products.');
+      e.status = 400; e.expose = true; e.code = 'transport_rate_indeterminate'; throw e;
+    }
+    header.transport_charge = check.value;
+    header.transport_gst_amount = gst;
+  } else {
+    // Never writable on its own: the tax exists only as a function of the
+    // charge, so a payload naming it without the charge is refused rather
+    // than quietly storing a figure nothing derived.
+    delete header.transport_gst_amount;
   }
 
   const headerCols = TABLES[table].columns.filter(c => c !== 'id' && c !== 'user_id' && header && Object.prototype.hasOwnProperty.call(header, c));

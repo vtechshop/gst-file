@@ -49,6 +49,7 @@
     "migration_stock_serials.sql",
     "migration_stock_serial_links.sql",
     "migration_stock_serial_supplier_return.sql",
-    "migration_stock_serial_customer_return.sql"
+    "migration_stock_serial_customer_return.sql",
+    "migration_invoice_transport_charge.sql"
   ]
 }

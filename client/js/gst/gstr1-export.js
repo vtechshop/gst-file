@@ -1318,6 +1318,116 @@ function gstr1RecomputeItem(item, supplyType) {
 // Both shapes are accepted: a total stored rounded (every invoice this
 // app writes today) and a total stored unrounded (anything older, or
 // imported, that kept the exact sum). Anything else is a real mismatch.
+// ── Transport charge ──────────────────────────────────────────────────
+//
+// An optional delivery charge billed on the invoice. It is NOT a line item
+// — it has no quantity, no product and no HSN of its own — so it is not in
+// invoice_items and gstr1RecomputeInvoice() cannot see it. The invoice's
+// STORED taxable, tax and total all include it.
+//
+// It is declared as its own SERVICE SAC row in the HSN summary, never
+// folded into a product's HSN row and never allocated across several. That
+// keeps every product HSN row at exactly its own taxable value and rate,
+// which is what makes a mixed-rate invoice (5% goods + 18% goods + 18%
+// transport) representable at all.
+//
+// THE one configuration point. The SAC and the rate are stated here and
+// nowhere else in this file, so changing either is a single edit that never
+// touches the export engine.
+// The rate is NOT here: delivery is taxed at the principal supply's rate,
+// which differs invoice by invoice (5% goods carry 5% delivery). It is read
+// back from what the invoice actually stored — see gstr1TransportOf.
+const GSTR1_TRANSPORT = {
+  sac: '996511',                 // goods transport agency service — provisional
+  desc: 'Transport charges'
+};
+
+// What was billed for delivery, read from the STORED columns — never
+// re-derived from total_amount − taxable_amount, never from round off, and
+// never by taking 18% of something a second time. The amount that was
+// billed is the amount that was billed.
+//
+// Returns null when nothing was charged. NULL and 0 both mean "no delivery
+// was billed", so neither emits a SAC row and both leave the return exactly
+// as it was before this feature existed.
+//
+// The CGST/SGST/IGST split follows the invoice's own supply type, the same
+// rule every product line follows.
+function gstr1TransportOf(inv) {
+  const charge = round2(+inv.transport_charge || 0);
+  if (!(charge > 0)) return null;
+  const gst = round2(+inv.transport_gst_amount || 0);
+  const interstate = inv.supply_type === 'interstate';
+  return {
+    // The rate this delivery was ACTUALLY taxed at, read back from the two
+    // stored figures rather than assumed. The invoice was taxed at its
+    // principal supply's rate when it was saved (routes/invoices.js), so
+    // this reports what was billed and cannot disagree with it — a 5%
+    // invoice files its delivery at 5%, not at some fixed transport rate.
+    rate: round2(gst / charge * 100),
+    taxable: charge,
+    igst: interstate ? gst : 0,
+    cgst: interstate ? 0 : round2(gst / 2),
+    sgst: interstate ? 0 : round2(gst / 2),
+    cess: 0
+  };
+}
+
+// Folds the transport component into one invoice's recomputed totals.
+//
+// Done here, once, rather than at each consumer: `val`, `itms`, the B2CL
+// threshold, the B2CS aggregation and the stored-total reconciliation all
+// read this object, and any one of them left on the goods-only figure would
+// under-declare the invoice.
+//
+// itms are rate-wise and carry no HSN — that is the Portal's own contract
+// for tables 4A/5/7 — so transport at 18% belongs in the SAME rate entry as
+// any 18% goods. The separation that matters is in the HSN summary, where
+// transport gets its own SAC row (gstr1AddTransportHsn below). Adding a
+// second 18% itms entry instead would be a duplicate-rate row the Portal
+// rejects.
+//
+// Returns the input untouched when nothing was charged, so an invoice with
+// no transport produces byte-identical output.
+function gstr1WithTransport(recomputed, t) {
+  if (!t) return recomputed;
+  const byRate = recomputed.byRate.map(b => ({ ...b }));
+  let bucket = byRate.find(b => b.rate === t.rate);
+  if (!bucket) {
+    bucket = { rate: t.rate, taxable: 0, igst: 0, cgst: 0, sgst: 0, cess: 0 };
+    byRate.push(bucket);
+  }
+  bucket.taxable = round2(bucket.taxable + t.taxable);
+  bucket.igst = round2(bucket.igst + t.igst);
+  bucket.cgst = round2(bucket.cgst + t.cgst);
+  bucket.sgst = round2(bucket.sgst + t.sgst);
+
+  const taxable = round2(recomputed.taxable + t.taxable);
+  const igst = round2(recomputed.igst + t.igst);
+  const cgst = round2(recomputed.cgst + t.cgst);
+  const sgst = round2(recomputed.sgst + t.sgst);
+  const gstAmount = round2(igst + cgst + sgst);
+  return {
+    taxable, igst, cgst, sgst, cess: recomputed.cess, gstAmount,
+    total: round2(taxable + gstAmount + recomputed.cess),
+    byRate: byRate.sort((a, b) => a.rate - b.rate)
+  };
+}
+
+// The SAC row itself. addToHsn aggregates by code + rate, so several
+// invoices that each billed for delivery become ONE summary row — which is
+// what Table 12 is.
+//
+// qty 0 and the service UQC: a delivery is not counted in pieces, and the
+// existing service convention (gstr1IsServiceHsn / GSTR1_UQC_SERVICE) is
+// what the rest of the file already uses for a 99-prefixed code.
+function gstr1AddTransportHsn(addToHsn, channel, t, errCtx) {
+  if (!t) return;
+  addToHsn(channel, GSTR1_TRANSPORT.sac, GSTR1_TRANSPORT.desc, GSTR1_UQC_SERVICE, 0,
+    { rate: t.rate, taxable: t.taxable, igst: t.igst, cgst: t.cgst, sgst: t.sgst, cess: 0 },
+    errCtx);
+}
+
 function gstr1TotalMatches(storedTotal, rawTotal) {
   const stored = round2(+storedTotal || 0);
   const raw = round2(rawTotal);
@@ -1335,8 +1445,8 @@ function gstr1TotalMismatch(inv, rawTotal) {
     invoice: inv.invoice_number, customer: inv.customer_name,
     field: 'Invoice Total',
     current: `stored ₹${stored}`,
-    expected: `₹${Math.round(raw)} — line items give ₹${raw}, round off ${roundOff >= 0 ? '+' : ''}₹${roundOff}`,
-    message: `Stored total ₹${stored} differs from the line items by ₹${round2(stored - raw)}, which is more than a rounding adjustment can explain.`,
+    expected: `₹${Math.round(raw)} — line items and transport give ₹${raw}, round off ${roundOff >= 0 ? '+' : ''}₹${roundOff}`,
+    message: `Stored total ₹${stored} differs from the line items (plus any transport charge) by ₹${round2(stored - raw)}, which is more than a rounding adjustment can explain.`,
     fix: 'Open the invoice and save it again to rebuild its total from the lines.'
   });
 }
@@ -1904,6 +2014,23 @@ async function buildGSTR1PayloadUnguarded(userId, profile, periodFilter) {
     const treatment = invoiceTreatment(inv, items, ctx);
     if (treatment === null) return;                       // mixed — already reported
     if (!gstIsTaxableTreatment(treatment)) {
+      // Table 8 has no room for a taxable component. An exempt invoice
+      // that ALSO billed 18% delivery is not wholly exempt, and reporting
+      // it here would drop the transport taxable and its tax from the
+      // return without saying so. Refused loudly instead - the invoice is
+      // the thing that needs fixing, not the return.
+      if (gstr1TransportOf(inv)) {
+        errors.push(gstr1Err({
+          invoice: inv.invoice_number, customer: inv.customer_name,
+          field: 'Transport Charge',
+          current: '₹' + round2(+inv.transport_charge || 0) + ' on a ' + treatment + ' invoice',
+          expected: 'no transport charge on a nil-rated, exempt or non-GST invoice',
+          message: 'This invoice reports as ' + treatment + ', which belongs in table 8, '
+            + 'but it also carries a taxable transport charge that table 8 cannot state.',
+          fix: 'Remove the transport charge from this invoice, or raise the delivery on its own taxable invoice.'
+        }));
+        return;
+      }
       addToNil(true, inv.supply_type, treatment, items.reduce((t, it) => t + (+it.taxable_value || 0), 0));
       return;
     }
@@ -1932,7 +2059,15 @@ async function buildGSTR1PayloadUnguarded(userId, profile, periodFilter) {
     });
     if (!itemsOk) return;
 
-    const recomputed = gstr1RecomputeInvoice(items, inv.supply_type);
+    // Delivery, if any was billed. Its SAC row joins the HSN summary
+    // alongside the product rows this invoice just added - never inside
+    // one of them - and its taxable and tax join the invoice totals, so
+    // `val`, `itms` and the reconciliation below all describe the whole
+    // invoice rather than the goods half of it.
+    const transport = gstr1TransportOf(inv);
+    gstr1AddTransportHsn(addToHsn, 'b2b', transport, ctx);
+    const recomputed = gstr1WithTransport(
+      gstr1RecomputeInvoice(items, inv.supply_type), transport);
     if (!gstr1TotalMatches(inv.total_amount, recomputed.total)) {
       errors.push(gstr1TotalMismatch(inv, recomputed.total));
       return;
@@ -2022,6 +2157,23 @@ async function buildGSTR1PayloadUnguarded(userId, profile, periodFilter) {
     const treatment = invoiceTreatment(inv, items, ctx);
     if (treatment === null) return;
     if (!gstIsTaxableTreatment(treatment)) {
+      // Table 8 has no room for a taxable component. An exempt invoice
+      // that ALSO billed 18% delivery is not wholly exempt, and reporting
+      // it here would drop the transport taxable and its tax from the
+      // return without saying so. Refused loudly instead - the invoice is
+      // the thing that needs fixing, not the return.
+      if (gstr1TransportOf(inv)) {
+        errors.push(gstr1Err({
+          invoice: inv.invoice_number, customer: inv.customer_name,
+          field: 'Transport Charge',
+          current: '₹' + round2(+inv.transport_charge || 0) + ' on a ' + treatment + ' invoice',
+          expected: 'no transport charge on a nil-rated, exempt or non-GST invoice',
+          message: 'This invoice reports as ' + treatment + ', which belongs in table 8, '
+            + 'but it also carries a taxable transport charge that table 8 cannot state.',
+          fix: 'Remove the transport charge from this invoice, or raise the delivery on its own taxable invoice.'
+        }));
+        return;
+      }
       addToNil(false, inv.supply_type, treatment, items.reduce((t, it) => t + (+it.taxable_value || 0), 0));
       return;
     }
@@ -2050,7 +2202,15 @@ async function buildGSTR1PayloadUnguarded(userId, profile, periodFilter) {
     });
     if (!itemsOk) return;
 
-    const recomputed = gstr1RecomputeInvoice(items, inv.supply_type);
+    // Delivery, if any was billed. Its SAC row joins the HSN summary
+    // alongside the product rows this invoice just added - never inside
+    // one of them - and its taxable and tax join the invoice totals, so
+    // `val`, `itms` and the reconciliation below all describe the whole
+    // invoice rather than the goods half of it.
+    const transport = gstr1TransportOf(inv);
+    gstr1AddTransportHsn(addToHsn, 'b2c', transport, ctx);
+    const recomputed = gstr1WithTransport(
+      gstr1RecomputeInvoice(items, inv.supply_type), transport);
     if (!gstr1TotalMatches(inv.total_amount, recomputed.total)) {
       errors.push(gstr1TotalMismatch(inv, recomputed.total));
       return;

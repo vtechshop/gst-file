@@ -191,10 +191,19 @@ test('P10b the non-applicable GST columns are absent, not blank', () => {
 
 test('P10c every GST figure still appears in the totals', () => {
   // Removing the columns must not remove the information.
-  assert.match(PDF, /totalsRows = \[\['Subtotal', formatNum\(inv\.taxable_amount\)\]\]/);
-  assert.match(PDF, /if \(inv\.cgst > 0\) totalsRows\.push\(\['CGST', formatNum\(inv\.cgst\)\]\)/);
-  assert.match(PDF, /if \(inv\.sgst > 0\) totalsRows\.push\(\['SGST', formatNum\(inv\.sgst\)\]\)/);
-  assert.match(PDF, /if \(inv\.igst > 0\) totalsRows\.push\(\[`IGST \(\$\{inv\.gst_percentage\}%\)`, formatNum\(inv\.igst\)\]\)/);
+  //
+  // The three tax rows read the GOODS side (tp.product*) rather than the
+  // stored header figures, because the header now also carries the optional
+  // transport charge and its tax - which get their own rows below, so that
+  // the block adds up down the column instead of counting them twice. With
+  // no transport charged, tp.product* IS the stored figure.
+  assert.match(PDF, /totalsRows = \[\['Subtotal', formatNum\(tp\.productTaxable\)\]\]/);
+  assert.match(PDF, /if \(tp\.productCgst > 0\) totalsRows\.push\(\['CGST', formatNum\(tp\.productCgst\)\]\)/);
+  assert.match(PDF, /if \(tp\.productSgst > 0\) totalsRows\.push\(\['SGST', formatNum\(tp\.productSgst\)\]\)/);
+  assert.match(PDF, /if \(tp\.productIgst > 0\) totalsRows\.push\(\[`IGST \(\$\{inv\.gst_percentage\}%\)`, formatNum\(tp\.productIgst\)\]\)/);
+  assert.match(PDF, /totalsRows\.push\(\['Machine \/ Product Total'/);
+  assert.match(PDF, /totalsRows\.push\(\['Transport Charge'/);
+  assert.match(PDF, /totalsRows\.push\(\['Transport GST'/);
   assert.match(PDF, /totalsRows\.push\(\['Round Off'/);
   assert.match(PDF, /doc\.text\('Grand Total', SPLIT \+ 2, ROW_C_Y \+ 6\.4\)/);
 });
@@ -238,8 +247,8 @@ test('P10f the HTML print view follows the same rule', () => {
 
 test('P11 the changed asset carries one new cache key on every page that loads it', () => {
   for (const p of PAGES) {
-    assert.ok(rd(p).includes('client/js/pages/invoice-pdf.js?v=50'),
-      p + ' must reference invoice-pdf.js at v=50');
+    assert.ok(rd(p).includes('client/js/pages/invoice-pdf.js?v=51'),
+      p + ' must reference invoice-pdf.js at v=51');
   }
   // and nothing unrelated moved with it
   assert.ok(rd('invoice.html').includes('client/js/utilities/utils.js?v=33'));
