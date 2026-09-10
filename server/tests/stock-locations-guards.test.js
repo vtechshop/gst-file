@@ -24,12 +24,19 @@ test('P1 reorder_level is the only Low Stock threshold in the application', () =
   // the hardcoded browser threshold is gone
   assert.equal(/LOW_STOCK_THRESHOLD/.test(DASH), false,
     'the flat "<= 10 units" rule must not remain anywhere');
-  // and the dashboard now applies the same rule the server does
-  assert.match(DASH, /function dashStockStatus\(p\)/);
-  assert.match(DASH, /reorder !== null && qty <= reorder\) return 'LOW_STOCK'/);
-  assert.match(DASH, /if \(!\(qty > 0\)\) return 'OUT_OF_STOCK'/);
-  assert.match(DASH, /dashStockStatus\(p\) === 'LOW_STOCK'/);
-  assert.match(DASH, /dashStockStatus\(p\) === 'OUT_OF_STOCK'/);
+  // and the dashboard no longer classifies at all: it asks the server,
+  // which is stronger than keeping a copy that merely agrees. Two
+  // implementations of one rule agree only until one of them is edited.
+  assert.equal(/function dashStockStatus/.test(DASH), false,
+    'the browser must not classify stock itself');
+  assert.equal(/'LOW_STOCK'/.test(DASH), false,
+    'no second LOW_STOCK rule may live in the browser');
+  assert.match(DASH, /apiFetch\('\/stock\/stats'\)/,
+    'the counts come from the server summary');
+  assert.match(DASH, /apiFetch\('\/stock\?status=LOW_STOCK/,
+    'and so does the list, already classified');
+  assert.match(DASH, /stats\.low_stock/);
+  assert.match(DASH, /stats\.out_of_stock/);
   // the server's rule is unchanged and still the single SQL definition
   assert.match(LEDGER, /WHEN p\.stock <= 0 THEN 'OUT_OF_STOCK'/);
   assert.match(LEDGER, /p\.reorder_level IS NOT NULL AND p\.stock <= p\.reorder_level THEN 'LOW_STOCK'/);

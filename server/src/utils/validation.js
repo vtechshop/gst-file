@@ -232,8 +232,42 @@ const HSN_FORMAT_REGEX = /^(\d{4}|\d{6}|\d{8})$/;
 //              other field on a synced product, whose catalogue columns
 //              (hsn_code among them) are owned by the feed and are
 //              deliberately left out of the payload.
+// The level at or below which a tracked product reads as LOW_STOCK.
+//
+// NULL is a real answer — "no reorder level set" — and is deliberately not
+// the same as 0: a product with no level can be IN_STOCK or OUT_OF_STOCK
+// but never LOW_STOCK, while one set to 0 simply never reaches its level
+// while it has any stock at all. Both are allowed; a negative is not,
+// because there is no quantity below empty to reorder at.
+//
+// Checked BEFORE the two early returns below, and only when the key is
+// present. An edit that sets nothing but a reorder level carries no
+// hsn_code, so validating after that early return would let anything
+// through on precisely the request this rule exists for.
+function validateReorderLevel(payload, errors) {
+  if (!Object.prototype.hasOwnProperty.call(payload, 'reorder_level')) return;
+  const raw = payload.reorder_level;
+  if (raw === null || raw === '') return;                 // cleared, stored as NULL
+
+  // Number('') is 0 and Number(' ') is 0, both already returned above.
+  // Number([]) is 0 and Number(true) is 1, so the type is checked rather
+  // than trusting coercion to reject them.
+  const isNumeric = typeof raw === 'number'
+    || (typeof raw === 'string' && raw.trim() !== '' && Number.isFinite(Number(raw)));
+  const n = isNumeric ? Number(raw) : NaN;
+
+  if (!Number.isFinite(n)) {
+    errors.reorder_level = 'Reorder level must be a number, or left blank for none.';
+  } else if (n < 0) {
+    errors.reorder_level = 'Reorder level cannot be negative.';
+  }
+}
+
 function validateProductPayload(payload, isInsert) {
   const errors = {};
+  validateReorderLevel(payload, errors);
+  if (Object.keys(errors).length) return { valid: false, errors };
+
   if ((payload.source || '') === 'synced') return { valid: true, errors };
 
   if (!isInsert && !Object.prototype.hasOwnProperty.call(payload, 'hsn_code')) {

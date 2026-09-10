@@ -301,6 +301,12 @@ function openProductModal(id) {
   set('prodBundle', gstSupplyBundle(r));
   set('prodPrincipalRate', r?.principal_gst_rate == null ? '' : +r.principal_gst_rate);
   set('prodRate', +(r?.default_rate ?? 0));
+  // Blank means no reorder level, which is a different thing from 0 — so a
+  // null must not become "0" in the box, or reopening a product would
+  // silently offer to set one it never had. The API returns DECIMAL as a
+  // string ("2.500"); +v keeps the value and drops the trailing zeros the
+  // number input would reject.
+  set('prodReorderLevel', r?.reorder_level == null ? '' : +r.reorder_level);
   set('prodSku', r?.sku);
   set('prodCategory', r?.category);
   set('prodDescription', r?.description);
@@ -405,12 +411,34 @@ function productFormValues() {
     default_rate: +val('prodRate') || 0,
     sku: val('prodSku').trim(),
     category: val('prodCategory').trim(),
-    description: val('prodDescription').trim()
+    description: val('prodDescription').trim(),
+    // Blank stays blank. Turning an empty box into 0 would set a reorder
+    // level nobody asked for, and 0 and "none" mean different things here.
+    reorder_level: val('prodReorderLevel').trim() === '' ? null : val('prodReorderLevel').trim()
   };
 }
 
+// Reorder level is checked here rather than in validateProductGst(): that
+// lives in the shared utils.js every page loads and is about GST, and this
+// is a Product Master inventory policy. Keeping it here also keeps the
+// change off 30-odd other pages' cache keys.
+//
+// The server refuses the same values independently — this only saves the
+// round trip and puts the message beside the field.
+function validateProductReorder(v) {
+  const raw = v.reorder_level;
+  if (raw === null) return null;                       // blank: stored as NULL
+  const n = Number(raw);
+  if (!Number.isFinite(n)) return 'Reorder level must be a number, or left blank for none.';
+  if (n < 0) return 'Reorder level cannot be negative.';
+  return null;
+}
+
 function validateProductForm() {
-  const errors = validateProductGst(productFormValues());
+  const values = productFormValues();
+  const errors = validateProductGst(values);
+  const reorder = validateProductReorder(values);
+  if (reorder) errors.reorder_level = reorder;
   const show = (field, elId) => {
     const el = document.getElementById(elId);
     if (!el) return;
@@ -423,6 +451,7 @@ function validateProductForm() {
   show('gst_percentage', 'prodGstRateError');
   show('cess_rate', 'prodCessError');
   show('principal_gst_rate', 'prodPrincipalRateError');
+  show('reorder_level', 'prodReorderLevelError');
   const btn = document.getElementById('prodSaveBtn');
   if (btn) btn.disabled = Object.keys(errors).length > 0;
   return errors;
@@ -447,7 +476,12 @@ async function saveProduct() {
     user_id: user.id,
     gst_treatment: v.gst_treatment, cess_rate: v.cess_rate, reverse_charge: v.reverse_charge,
     supply_bundle: v.supply_bundle, principal_gst_rate: v.principal_gst_rate,
-    gst_overrides: overrides
+    gst_overrides: overrides,
+    // Outside the synced block on purpose: a reorder level is an inventory
+    // policy this business sets, not part of the website's catalogue. Sync
+    // never writes the column, so there is nothing for it to overwrite —
+    // and a synced product still needs to be flaggable when it runs low.
+    reorder_level: v.reorder_level === null ? null : +v.reorder_level
   };
   // A synced product's catalogue belongs to the website; a local one's
   // belongs here.

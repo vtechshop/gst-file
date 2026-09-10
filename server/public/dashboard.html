@@ -639,51 +639,53 @@ async function loadRecentActivity(userId) {
 }
 
 // ── Inventory Intelligence ──────────────────────────────
-// Low Stock is decided by each product's own reorder_level, which is the
-// application's single authoritative threshold — the same rule the Stock
-// module applies in SQL (STOCK_STATUS_SQL in
-// server/src/services/stock-ledger.js).
+// Low Stock and Out of Stock come from the SERVER, which classifies them
+// in SQL (STOCK_STATUS_SQL in server/src/services/stock-ledger.js). That
+// expression is the application's single authority, and this page now asks
+// it rather than reimplementing it.
 //
-// It used to be a flat "<= 10 units" computed here, which meant this
-// dashboard and the Stock Summary could call the same product two
-// different things. A product with no reorder_level set can be IN_STOCK or
-// OUT_OF_STOCK but never LOW_STOCK — deliberately not the same as having a
-// reorder level of 0.
+// There used to be a copy of the rule here. It agreed with the server, but
+// two implementations of one rule only ever agree until one of them is
+// edited — and before that it was a flat "<= 10 units", which meant this
+// dashboard and the Stock Summary genuinely called the same product two
+// different things. The fix is not a matching copy; it is no copy.
 //
-// Fast/Slow Moving still looks at quantity sold in the last 30 days. Only
-// products with stock actually tracked (products.stock !== null) are
-// considered; untracked/service items have nothing to show here.
-function dashStockStatus(p) {
-  const qty = +p.stock;
-  if (!(qty > 0)) return 'OUT_OF_STOCK';
-  const reorder = (p.reorder_level === null || p.reorder_level === undefined)
-    ? null : +p.reorder_level;
-  if (reorder !== null && qty <= reorder) return 'LOW_STOCK';
-  return 'IN_STOCK';
-}
-
-// Reads the shared cache — issues no network request of its own.
+// Counts come from /stock/stats and the two short lists from the ordinary
+// stock list filtered by status, capped at what is displayed. Neither
+// downloads the product table to count anything.
+//
+// Fast/Slow Moving still looks at quantity sold in the last 30 days, and
+// still reads the shared cache — it needs product names and sales, not a
+// stock classification.
 async function loadInventoryIntelligence(userId) {
+  const set = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
+  const renderStockList = (elId, rows, emptyMsg) => {
+    const el = document.getElementById(elId);
+    if (!el) return;
+    el.innerHTML = rows.length
+      ? rows.map(p => `<div class="mini-list-row"><span>${p.name}</span><b>${formatNum(p.stock)} left</b></div>`).join('')
+      : `<p class="text-muted-sm">${emptyMsg}</p>`;
+  };
+
+  // Three small bounded reads, in parallel. A failure leaves the tiles
+  // showing their placeholder rather than a confident zero.
+  try {
+    const [stats, low, out] = await Promise.all([
+      apiFetch('/stock/stats'),
+      apiFetch('/stock?status=LOW_STOCK&limit=8'),
+      apiFetch('/stock?status=OUT_OF_STOCK&limit=8')
+    ]);
+    set('statLowStock', stats.low_stock);
+    set('statOutOfStock', stats.out_of_stock);
+    renderStockList('lowStockList', low.rows || [], 'No products running low.');
+    renderStockList('outOfStockList', out.rows || [], 'Nothing out of stock.');
+  } catch (err) {
+    handleApiError(err, 'loading the stock summary');
+  }
+
   const cache = await ensureDashCache(userId);
   if (!cache) return;
   const tracked = cache.products.filter(p => p.stock !== null && p.stock !== undefined);
-
-  const outOfStock = tracked.filter(p => dashStockStatus(p) === 'OUT_OF_STOCK');
-  const lowStock = tracked.filter(p => dashStockStatus(p) === 'LOW_STOCK').sort((a, b) => a.stock - b.stock);
-
-  const set = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
-  set('statLowStock', lowStock.length);
-  set('statOutOfStock', outOfStock.length);
-
-  const renderStockList = (elId, list, emptyMsg) => {
-    const el = document.getElementById(elId);
-    if (!el) return;
-    el.innerHTML = list.length
-      ? list.slice(0, 8).map(p => `<div class="mini-list-row"><span>${p.name}</span><b>${formatNum(p.stock)} left</b></div>`).join('')
-      : `<p class="text-muted-sm">${emptyMsg}</p>`;
-  };
-  renderStockList('lowStockList', lowStock, 'No products running low.');
-  renderStockList('outOfStockList', outOfStock, 'Nothing out of stock.');
 
   // Fast/Slow Moving: quantity sold per product in the last 30 days.
   // invoice_items has no date of its own, so each line is matched back
