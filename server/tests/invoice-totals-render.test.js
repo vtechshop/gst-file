@@ -252,12 +252,11 @@ test('D8 every modal is hidden until it is opened', () => {
   assert.ok(!/\.modal\.open\s*\{/.test(CSS),
     'there is no .modal.open rule, so .modal must never be the toggled element');
 
-  // The pages whose panels have been corrected. products.html,
-  // purchases.html, purchase-returns.html and stock-serials.html carry the
-  // same defect on their serial panel and are NOT here yet — that fix is a
-  // separate change. Move each one into this list as it lands, rather than
-  // asserting a state the repository has not reached.
-  const PAGES = ['invoice.html', 'sales-returns.html', 'purchase-orders.html'];
+  // Every page in the application that carries a modal. The four serial
+  // panels that were pending when this guard was written have since been
+  // corrected, so the list is now the whole set rather than a subset.
+  const PAGES = ['invoice.html', 'sales-returns.html', 'purchase-orders.html',
+    'products.html', 'purchases.html', 'purchase-returns.html', 'stock-serials.html'];
 
   for (const page of PAGES) {
     const html = rd(page);

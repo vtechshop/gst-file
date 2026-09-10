@@ -77,6 +77,7 @@
       <a href="expenses.html" class="menu-item"><i class="fas fa-receipt"></i> Expenses</a>
       <div class="menu-section">Reports</div>
       <a href="reports.html" class="menu-item"><i class="fas fa-chart-bar"></i> Reports &amp; Export</a>
+      <a href="product-sales.html" class="menu-item"><i class="fas fa-ranking-star"></i> Product Sales</a>
       <a href="gstr3b.html" class="menu-item"><i class="fas fa-calculator"></i> GSTR-3B Summary</a>
       <a href="document-register.html" class="menu-item"><i class="fas fa-book-open"></i> Document Register</a>
       <div class="menu-section">Settings</div>
@@ -307,8 +308,8 @@ document.addEventListener('DOMContentLoaded', initPurchaseEntry);
 
   <!-- Serial numbers for one document line. Typed on a purchase, picked on
        a sale; either way the line needs exactly as many as its quantity. -->
-  <div class="modal" id="serialPanel">
-    <div class="modal-content">
+  <div class="modal-overlay" id="serialPanel">
+    <div class="modal">
       <div class="modal-header">
         <span class="modal-title"><i class="fas fa-barcode"></i> <span id="serialPanelTitle"></span></span>
         <button type="button" class="modal-close" onclick="closeSerialPanel()" aria-label="Close"><i class="fas fa-times"></i></button>
