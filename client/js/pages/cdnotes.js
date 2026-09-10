@@ -151,6 +151,7 @@ function renderCDTable(data) {
       <td style="text-align:right;font-weight:700;">&#8377;${formatNum(r.total_amount)}</td>
       <td>
         <div class="action-btns">
+          <button class="btn btn-secondary btn-sm btn-icon" onclick="downloadCDNotePDF('${r.id}')" title="Download PDF"><i class="fas fa-file-pdf"></i></button>
           <button class="btn btn-secondary btn-sm btn-icon" onclick="editCDNote('${r.id}')" title="Edit"><i class="fas fa-edit"></i></button>
           <button class="btn btn-danger btn-sm btn-icon" onclick="deleteCDNote('${r.id}')" title="Delete"><i class="fas fa-trash"></i></button>
         </div>
