@@ -184,6 +184,232 @@ router.get('/invoice-details', asyncRoute(async (req, res) => {
   });
 }));
 
+// ── GET /api/reports/product-sales ───────────────────────────────────
+//
+// "How many of each machine did we sell this month." One row per PRODUCT,
+// not per invoice and not per line.
+//
+// Counted from the invoices themselves — invoice_items joined to the two
+// invoice tables — and never from products.stock, stock_balances or
+// stock_movements. Those describe what is on the shelf, which is a
+// different question and answers it differently the moment anything is
+// adjusted, damaged, transferred or reconciled.
+//
+// Deleting an invoice deletes its lines (routes/invoices.js cascade), and
+// saving one replaces them, so the rows this reads are always the CURRENT
+// state of the current invoices. An invoice edited from 5 to 8 reports 8;
+// a deleted invoice reports nothing. There is no soft-delete or cancelled
+// flag on either invoice table, so "valid" is simply "still there" — the
+// same rule the invoice-details report above already uses.
+const MONTHS_ALL = 'all';
+const PRODUCT_SORTS = new Map([
+  // Every ordering is chosen from this map by key. Nothing a caller sends
+  // reaches the SQL text.
+  //
+  // Each carries a full tiebreak so two runs of the same report cannot
+  // disagree about the order of two products with equal quantities.
+  ['qty_desc', 'sold_qty DESC, display_name ASC, gkey ASC'],
+  ['qty_asc', 'sold_qty ASC, display_name ASC, gkey ASC'],
+  ['name_asc', 'display_name ASC, gkey ASC'],
+  ['name_desc', 'display_name DESC, gkey ASC']
+]);
+
+// A tenant with a very large catalogue could ask for a whole year. This is
+// the point at which saying "too large" beats returning a page nobody
+// asked for — the report is explicitly all-or-nothing, because a silently
+// truncated quantity report is a wrong quantity report.
+const MAX_PRODUCT_ROWS = 20000;
+
+// The last day of a month, without constructing a local Date: day 0 of the
+// next month is the last of this one, in UTC.
+function monthRange(year, month) {
+  if (month === MONTHS_ALL) return [`${year}-01-01`, `${year}-12-31`];
+  const end = new Date(Date.UTC(year, month, 0));
+  const mm = String(month).padStart(2, '0');
+  return [`${year}-${mm}-01`, `${year}-${mm}-${String(end.getUTCDate()).padStart(2, '0')}`];
+}
+
+// A quantity leaves Postgres as a NUMERIC string ("20.000"). Excel needs a
+// real number, and so does any comparison here, so it is converted once —
+// and rounded to the three decimals the column actually stores, so binary
+// floating point cannot turn 17.999999999 into a report figure.
+function qtyNum(v) {
+  const n = Number(v);
+  if (!Number.isFinite(n)) return 0;
+  return Math.round(n * 1000) / 1000;
+}
+
+router.get('/product-sales', asyncRoute(async (req, res) => {
+  const yearRaw = String(req.query.year || '');
+  if (!/^\d{4}$/.test(yearRaw)) throw bad('year must be a four-digit year.');
+  const year = Number(yearRaw);
+  if (year < 2000 || year > 2100) throw bad('year must be between 2000 and 2100.');
+
+  const monthRaw = String(req.query.month == null || req.query.month === '' ? MONTHS_ALL : req.query.month)
+    .toLowerCase();
+  let month = MONTHS_ALL;
+  if (monthRaw !== MONTHS_ALL) {
+    if (!/^\d{1,2}$/.test(monthRaw)) throw bad('month must be 1-12, or "all".');
+    month = Number(monthRaw);
+    if (month < 1 || month > 12) throw bad('month must be 1-12, or "all".');
+  }
+  const [start, end] = monthRange(year, month);
+
+  const category = String(req.query.category || 'all').toLowerCase();
+  if (!CATEGORIES.has(category)) throw bad('category must be all, b2b or b2c.');
+
+  const sortKey = String(req.query.sort || 'qty_desc').toLowerCase();
+  if (!PRODUCT_SORTS.has(sortKey)) {
+    throw bad('sort must be qty_desc, qty_asc, name_asc or name_desc.');
+  }
+
+  // Matched against the product's displayed name and its SKU. Bound as a
+  // parameter; the wildcards are added here, and the caller's own % and _
+  // are escaped so a search for "50%" cannot become a match-anything.
+  const searchRaw = String(req.query.search || '').trim();
+  if (searchRaw.length > 100) throw bad('search is too long.');
+  const search = searchRaw ? '%' + searchRaw.replace(/([\\%_])/g, '\\$1') + '%' : null;
+
+  // Which invoice tables to read, chosen by code from the validated enum.
+  const invBranches = [];
+  if (category === 'all' || category === 'b2b') {
+    invBranches.push("SELECT id, invoice_date, 'b2b'::text AS type_key FROM b2b_invoices"
+      + ' WHERE user_id = $1 AND invoice_date >= $2 AND invoice_date <= $3');
+  }
+  if (category === 'all' || category === 'b2c') {
+    invBranches.push("SELECT id, invoice_date, 'b2c'::text AS type_key FROM b2c_invoices"
+      + ' WHERE user_id = $1 AND invoice_date >= $2 AND invoice_date <= $3');
+  }
+
+  // A return belongs to the month of the RETURN, not of the sale it
+  // reverses: an August sale returned in September reduces September.
+  // Its B2B/B2C side is the original invoice's, which the return row
+  // records itself.
+  const returnCategorySql = category === 'all' ? '' : ' AND sr.original_invoice_type = $4';
+
+  const params = [req.userId, start, end];
+  if (category !== 'all') params.push(category);
+  const searchParam = search ? '$' + (params.length + 1) : null;
+  if (search) params.push(search);
+
+  // Grouping key: the product id whenever the line has one, and the
+  // trimmed lower-cased name when it does not.
+  //
+  // invoice_items ids are regenerated on every save, so nothing may group
+  // by them. product_id is the stable identity — but it is nullable
+  // (ON DELETE SET NULL, and a line can be typed freehand), so the name is
+  // the fallback that keeps such lines from collapsing into one anonymous
+  // row. Two lines of the same product on one invoice therefore land in
+  // the same group and are summed, which is what "one product, one row"
+  // means.
+  const sql = `
+    WITH inv AS (
+      ${invBranches.join('\n      UNION ALL\n      ')}
+    ),
+    sold AS (
+      SELECT
+        COALESCE(ii.product_id::text, 'name:' || lower(btrim(ii.product_name))) AS gkey,
+        (array_agg(ii.product_id) FILTER (WHERE ii.product_id IS NOT NULL))[1] AS product_id,
+        SUM(ii.quantity) AS qty,
+        COUNT(DISTINCT ii.invoice_type || ':' || ii.invoice_id::text) AS invoice_count,
+        (array_agg(ii.product_name ORDER BY inv.invoice_date DESC, ii.id DESC))[1] AS line_name,
+        (array_agg(ii.unit ORDER BY inv.invoice_date DESC, ii.id DESC))[1] AS line_unit
+      FROM invoice_items ii
+      JOIN inv ON inv.id = ii.invoice_id AND inv.type_key = ii.invoice_type
+      WHERE ii.user_id = $1
+      GROUP BY 1
+    ),
+    returned AS (
+      SELECT
+        COALESCE(sri.product_id::text, 'name:' || lower(btrim(sri.product_name))) AS gkey,
+        (array_agg(sri.product_id) FILTER (WHERE sri.product_id IS NOT NULL))[1] AS product_id,
+        SUM(sri.quantity) AS qty,
+        (array_agg(sri.product_name ORDER BY sr.return_date DESC, sri.id DESC))[1] AS line_name,
+        (array_agg(sri.unit ORDER BY sr.return_date DESC, sri.id DESC))[1] AS line_unit
+      FROM sales_return_items sri
+      JOIN sales_returns sr ON sr.id = sri.return_id AND sr.user_id = sri.user_id
+      WHERE sri.user_id = $1 AND sr.return_date >= $2 AND sr.return_date <= $3${returnCategorySql}
+      GROUP BY 1
+    ),
+    joined AS (
+      -- FULL JOIN: a product may have only sales in the period, or only a
+      -- return (an August sale returned in September appears in September
+      -- with nothing sold). gkey is never NULL on either side, so plain
+      -- equality is the whole join.
+      SELECT
+        COALESCE(s.gkey, r.gkey) AS gkey,
+        COALESCE(s.product_id, r.product_id) AS product_id,
+        COALESCE(s.qty, 0) AS sold_qty,
+        COALESCE(r.qty, 0) AS return_qty,
+        COALESCE(s.invoice_count, 0) AS invoice_count,
+        COALESCE(s.line_name, r.line_name) AS line_name,
+        COALESCE(s.line_unit, r.line_unit) AS line_unit
+      FROM sold s FULL JOIN returned r ON s.gkey = r.gkey
+    )
+    SELECT
+      j.gkey, j.product_id,
+      -- The master's current name and unit where the product still exists,
+      -- so a renamed product reads as it is called today; the line's own
+      -- text when it does not.
+      COALESCE(p.name, j.line_name) AS display_name,
+      p.sku AS sku,
+      COALESCE(p.unit, j.line_unit) AS unit,
+      j.sold_qty, j.return_qty,
+      (j.sold_qty - j.return_qty) AS net_qty,
+      j.invoice_count
+    FROM joined j
+    LEFT JOIN products p ON p.id = j.product_id AND p.user_id = $1
+    ${search ? `WHERE (COALESCE(p.name, j.line_name) ILIKE ${searchParam} ESCAPE '\\'
+             OR COALESCE(p.sku, '') ILIKE ${searchParam} ESCAPE '\\')` : ''}
+    ORDER BY ${PRODUCT_SORTS.get(sortKey)}`;
+
+  const { rows } = await pool.query(sql, params);
+  if (rows.length > MAX_PRODUCT_ROWS) {
+    throw bad(`This period covers ${rows.length} products, which is more than this report returns at once. `
+      + 'Narrow it to a single month, or use the search box.');
+  }
+
+  const products = rows.map((r, i) => {
+    const sold = qtyNum(r.sold_qty);
+    const returned = qtyNum(r.return_qty);
+    const net = Math.round((sold - returned) * 1000) / 1000;
+    return {
+      sl_no: i + 1,
+      product_id: r.product_id || null,
+      group_key: r.gkey,
+      product_name: r.display_name || '',
+      sku: r.sku || '',
+      unit: r.unit || '',
+      sold_qty: sold,
+      return_qty: returned,
+      net_qty: net,
+      invoice_count: Number(r.invoice_count) || 0,
+      // Returned as a fact rather than clamped away: more returned than
+      // sold in one period is either a return against an earlier month's
+      // sale or a data problem, and both are things the reader needs to
+      // see rather than have quietly rounded up to zero.
+      negative_net: net < 0
+    };
+  });
+
+  res.json({
+    period: { year, month: month === MONTHS_ALL ? MONTHS_ALL : month, start, end },
+    category,
+    sort: sortKey,
+    search: searchRaw,
+    // Over the rows actually returned, so the figures at the top of the
+    // page always describe the table underneath them.
+    summary: {
+      products: products.length,
+      sold_qty: Math.round(products.reduce((t, p) => t + p.sold_qty, 0) * 1000) / 1000,
+      return_qty: Math.round(products.reduce((t, p) => t + p.return_qty, 0) * 1000) / 1000,
+      net_qty: Math.round(products.reduce((t, p) => t + p.net_qty, 0) * 1000) / 1000,
+      negative_rows: products.filter(p => p.negative_net).length
+    },
+    products
+  });
+}));
+
 // ── POST /api/reports/workbook ───────────────────────────────────────
 //
 // Writes an .xlsx and streams it back. The caller sends the rows it has

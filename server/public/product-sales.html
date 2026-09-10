@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Proforma Invoices - GST Management System</title>
+  <title>Product Sales Report - GST Management System</title>
   <link rel="stylesheet" href="client/css/style.css?v=35">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
@@ -19,10 +19,8 @@
   <script src="client/js/core/search.js?v=29"></script>
   <script src="client/js/pages/profile.js?v=39"></script>
   <script src="client/js/pages/products.js?v=31"></script>
-  <script src="client/js/pages/invoice-items.js?v=40"></script>
-  <script src="client/js/pages/invoice-pdf.js?v=51"></script>
-  <script src="client/js/pages/proforma-pdf.js?v=41"></script>
-  <script src="client/js/pages/proforma-list.js?v=29"></script>
+  <script src="client/js/utilities/export.js?v=30"></script>
+  <script src="client/js/reports/product-sales.js?v=1"></script>
 </head>
 <body>
 <div class="app-layout">
@@ -78,7 +76,7 @@
       <a href="expenses.html" class="menu-item"><i class="fas fa-receipt"></i> Expenses</a>
       <div class="menu-section">Reports</div>
       <a href="reports.html" class="menu-item"><i class="fas fa-chart-bar"></i> Reports &amp; Export</a>
-      <a href="product-sales.html" class="menu-item"><i class="fas fa-ranking-star"></i> Product Sales</a>
+      <a href="product-sales.html" class="menu-item active"><i class="fas fa-ranking-star"></i> Product Sales</a>
       <a href="gstr3b.html" class="menu-item"><i class="fas fa-calculator"></i> GSTR-3B Summary</a>
       <a href="document-register.html" class="menu-item"><i class="fas fa-book-open"></i> Document Register</a>
       <div class="menu-section">Settings</div>
@@ -98,64 +96,131 @@
   <div class="main-content">
     <div class="top-bar">
       <button type="button" class="menu-toggle" id="menuToggle" aria-label="Toggle sidebar menu"><i class="fas fa-bars"></i></button>
-      <span class="page-title"><i class="fas fa-folder-open"></i>Proforma Invoices</span>
+      <span class="page-title"><i class="fas fa-ranking-star"></i>Product Sales Report</span>
       <div class="ml-auto d-flex gap-10">
+        <button type="button" class="btn btn-primary btn-sm" onclick="psExportExcel()"><i class="fas fa-file-excel"></i> Export Excel</button>
         <button type="button" class="btn btn-secondary btn-sm btn-icon" onclick="openGlobalSearch()" title="Search everywhere (Ctrl+K)" aria-label="Global search"><i class="fas fa-search"></i></button>
       </div>
     </div>
 
     <div class="content">
-      <div class="card">
-        <div class="card-header">
-          <span class="card-title"><i class="fas fa-folder-open"></i> Proforma Invoices</span>
-          <a href="proforma.html" class="btn btn-primary btn-sm"><i class="fas fa-plus"></i> New Proforma</a>
-        </div>
+
+      <div class="card mb-16">
+        <div class="card-header"><span class="card-title"><i class="fas fa-filter"></i> Period</span></div>
         <div class="card-body">
-          <div class="form-grid cols-3 mb-16">
+          <div class="form-grid cols-4">
             <div class="form-group">
-              <label for="pfSearch">Search</label>
-              <input type="text" id="pfSearch" class="form-control" oninput="renderProformaList()" placeholder="Number or customer">
+              <label for="psYear">Year</label>
+              <select id="psYear" class="form-control"></select>
             </div>
             <div class="form-group">
-              <label for="pfStatusFilter">Status</label>
-              <select id="pfStatusFilter" class="form-control" onchange="renderProformaList()"><option value="">All</option></select>
+              <label for="psMonth">Month</label>
+              <select id="psMonth" class="form-control">
+                <option value="1">January</option>
+                <option value="2">February</option>
+                <option value="3">March</option>
+                <option value="4">April</option>
+                <option value="5">May</option>
+                <option value="6">June</option>
+                <option value="7">July</option>
+                <option value="8">August</option>
+                <option value="9">September</option>
+                <option value="10">October</option>
+                <option value="11">November</option>
+                <option value="12">December</option>
+                <option value="all">All months (whole year)</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label for="psCategory">Category</label>
+              <select id="psCategory" class="form-control">
+                <option value="all">All (B2B + B2C)</option>
+                <option value="b2b">B2B only</option>
+                <option value="b2c">B2C only</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label for="psSort">Sort by</label>
+              <select id="psSort" class="form-control">
+                <option value="qty_desc">Quantity: High to Low</option>
+                <option value="qty_asc">Quantity: Low to High</option>
+                <option value="name_asc">Product: A to Z</option>
+                <option value="name_desc">Product: Z to A</option>
+              </select>
             </div>
           </div>
+          <div class="form-grid cols-2">
+            <div class="form-group">
+              <label for="psSearch">Search product or SKU</label>
+              <input type="text" id="psSearch" class="form-control" placeholder="Product name or SKU&hellip;" autocomplete="off">
+            </div>
+            <div class="form-group d-flex gap-10 align-end">
+              <button type="button" class="btn btn-primary" onclick="psApply()"><i class="fas fa-check"></i> Apply</button>
+              <button type="button" class="btn btn-secondary" onclick="psReset()"><i class="fas fa-rotate-left"></i> Reset</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Totals for exactly the rows in the table below. -->
+      <div class="stats-grid mb-16">
+        <div class="stat-card">
+          <div class="stat-label">Products Sold</div>
+          <div class="stat-value" id="psStatProducts">0</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">Quantity Sold</div>
+          <div class="stat-value" id="psStatSold">0</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">Sales Returns</div>
+          <div class="stat-value" id="psStatReturned">0</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">Net Sold</div>
+          <div class="stat-value" id="psStatNet">0</div>
+        </div>
+      </div>
+
+      <div class="alert alert-warning d-none" id="psAnomaly"></div>
+
+      <div class="card">
+        <div class="card-header">
+          <span class="card-title"><i class="fas fa-boxes-stacked"></i> <span id="psPeriodLabel">Product sales</span></span>
+          <span class="ml-auto text-muted-sm fs-12" id="psRowCount"></span>
+        </div>
+        <div class="card-body">
           <div class="table-wrapper">
             <table class="data-table">
               <thead>
                 <tr>
-                  <th>#</th><th>Proforma No</th><th>Date</th><th>Customer</th>
-                  <th class="text-right">Total</th><th>Valid Until</th><th>Status</th>
-                  <th>Converted Invoice</th><th>Actions</th>
+                  <th class="text-center">Sl.no.</th>
+                  <th>Product Name</th>
+                  <th>SKU</th>
+                  <th>Unit</th>
+                  <th class="text-right">Quantity Sold</th>
+                  <th class="text-right">Sales Return Qty</th>
+                  <th class="text-right">Net Sold Qty</th>
+                  <th class="text-right">Invoices</th>
                 </tr>
               </thead>
-              <tbody id="pfTableBody"></tbody>
+              <tbody id="psTableBody">
+                <tr><td colspan="8" class="text-center text-muted">Loading&hellip;</td></tr>
+              </tbody>
             </table>
           </div>
-          <div id="pfPagination" class="pagination"></div>
         </div>
       </div>
+
     </div>
 
-
-  <script>
-document.addEventListener('DOMContentLoaded', initProformaList);
-</script>
-
-<!-- Global Search Modal -->
-<div class="modal-overlay" id="globalSearchModal">
-  <div class="modal modal-lg">
-    <div class="modal-header">
-      <span class="modal-title"><i class="fas fa-search"></i> Search Everywhere</span>
-      <button type="button" class="modal-close" onclick="closeGlobalSearch()" aria-label="Close"><i class="fas fa-times"></i></button>
-    </div>
-    <div class="modal-body">
-      <input type="text" id="globalSearchInput" class="form-control mb-16" oninput="onGlobalSearchInput(this.value)" aria-label="Global search input">
-      <div id="globalSearchResults"><p class="text-muted-sm">Type at least 2 characters&hellip;</p></div>
-    </div>
   </div>
+
 </div>
+
+<script>
+document.addEventListener('DOMContentLoaded', initProductSales);
+</script>
 
 </body>
 </html>
