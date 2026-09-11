@@ -17,6 +17,10 @@ let pendingProformaSourceId = null;
 let invoiceEditId = null;
 let invoiceEditType = null;
 let invoiceCustomersList = [];
+// True when B2B was picked deliberately - a click on the toggle, or an
+// invoice opened for editing that was saved as B2B - rather than by a GST
+// Number being entered, so clearing the number does not undo that choice.
+let invTypeChosenByUser = false;
 const INVOICE_FORM_KEY = 'invoice_invoice';
 const INVOICE_DRAFT_FIELDS = ['invGstin','invCustName','invPhone','invAddress','invState','invNum','invDate','invSupply','invSource','invGstCategory'];
 
@@ -116,12 +120,13 @@ function onInvCustNameMouseDown(event, el) {
   }
 }
 
-// ── B2B / B2C — a purely manual segmented toggle. GST Number/State no
-// longer drive classification at all (a B2C sale can legitimately carry
-// an optional GST Number and still save as B2C) — the toggle alone
-// decides, and it only changes whether those two fields are required,
-// never whether they're visible. Whichever the toggle says at Save time
-// is authoritative — see saveInvoice()'s validation.
+// ── B2B / B2C ──────────────────────────────────────────
+// A new invoice starts as B2C. A GST Number makes it B2B, and taking the
+// GST Number away makes it B2C again - unless B2B was the user's own choice
+// (see invTypeChosenByUser), which clearing the number never overrides. A
+// B2C invoice cannot carry a GST Number: choosing B2C clears it. The toggle
+// stays visible and is what Save sends; saveInvoice() and the server both
+// refuse a B2C with a GST Number and a B2B without one.
 function getSelectedInvoiceType() {
   return document.querySelector('input[name="invType"]:checked')?.value || 'b2c';
 }
@@ -132,6 +137,21 @@ function setInvoiceTypeToggle(type) {
   if (b2b) b2b.checked = type === 'b2b';
   if (b2c) b2c.checked = type === 'b2c';
   syncInvoiceTypeUI();
+}
+
+// The one place the GST Number decides the type. Called whenever the field
+// changes by the user's hand or on their behalf - typing, a Customer Master
+// match, a GST register fetch, a restored draft - and never from a load
+// path, which sets the type the invoice was saved with.
+function applyGstinInvoiceType() {
+  const hasGstin = !!getInvText('invGstin');
+  const type = getSelectedInvoiceType();
+  if (hasGstin && type !== 'b2b') {
+    setInvoiceTypeToggle('b2b');
+    invTypeChosenByUser = false;
+  } else if (!hasGstin && type === 'b2b' && !invTypeChosenByUser) {
+    setInvoiceTypeToggle('b2c');
+  }
 }
 
 // Keeps the segmented toggle's active styling, the top-bar badge, the
@@ -180,20 +200,28 @@ function syncInvoiceTypeUI() {
 // after changing GSTIN/state/etc.; it now just means "resync the toggle."
 function updateClassifyBadge() { syncInvoiceTypeUI(); }
 
+// A click on the toggle - the user's own choice. Choosing B2C takes the GST
+// Number off the invoice rather than leaving one on a B2C sale, and says so.
+// Choosing B2B is remembered, so emptying the GST Number later does not
+// flip it back.
 function onInvoiceTypeToggle() {
-  // Fields are always visible in both modes now, so switching modes no
-  // longer needs to clear or refill anything — GST Number/State (and
-  // whatever else is on the form) simply carry over, and only their
-  // required-ness changes.
+  const type = getSelectedInvoiceType();
+  if (type === 'b2c' && getInvText('invGstin')) {
+    setInvValue('invGstin', '');
+    setInvGstVerifyMsg('', 'info');
+    updateGstinValidationStatus();
+    showToast('GST Number cleared — a B2C invoice cannot carry one.', 'warning');
+  }
+  invTypeChosenByUser = type === 'b2b';
   syncInvoiceTypeUI();
   detectSupplyType();
 }
 
 function onInvoiceGstinInput(el) {
   el.value = el.value.toUpperCase();
-  // GST Number no longer drives B2B/B2C classification at all — a B2C
-  // sale can carry an optional GST Number and still save as B2C. Only
-  // the segmented toggle decides the type.
+  // Entering a GST Number makes the invoice B2B; emptying it makes it B2C
+  // again unless B2B was chosen deliberately - see applyGstinInvoiceType().
+  applyGstinInvoiceType();
   detectSupplyType();
   updateGstinValidationStatus();
 }
@@ -215,10 +243,9 @@ function isCustNameUntouched() {
   return !v || v === 'Walk-in Customer';
 }
 
-// GST Number is optional in both modes and never switches the type by
-// itself — no confirmation dialog needed. What's still genuinely
-// useful: recognizing a GSTIN that matches an existing customer and
-// pulling in their details automatically.
+// The type already follows the GST Number as it is typed (see
+// onInvoiceGstinInput()). What blur adds is recognising a GSTIN that
+// matches an existing customer and pulling in their details.
 function onInvoiceGstinBlur(el) {
   const value = el.value.trim();
   if (!value) return;
@@ -570,9 +597,9 @@ function onInvoiceCustomerInput() {
   const name = getInvText('invCustName');
   const cust = invoiceCustomersList.find(c => c.name.toLowerCase() === name.toLowerCase());
   if (!cust) return;
-  // Fill in whatever's on file — GST Number included — without forcing
-  // a mode switch; the toggle is the user's own explicit choice now,
-  // independent of whether the matched customer happens to have a GSTIN.
+  // Fill in whatever's on file, GST Number included. A GST Number filled in
+  // here makes the invoice B2B exactly as typing one would - see the
+  // applyGstinInvoiceType() call below.
   const gstEl = document.getElementById('invGstin');   if (gstEl && !gstEl.value && cust.gstin)   gstEl.value = cust.gstin.toUpperCase();
   const phEl  = document.getElementById('invPhone');   if (phEl  && !phEl.value  && cust.phone)   phEl.value  = cust.phone;
   const adEl  = document.getElementById('invAddress'); if (adEl  && !adEl.value  && cust.address) adEl.value  = cust.address;
@@ -596,6 +623,7 @@ function onInvoiceCustomerInput() {
     mirrorInvShipFromBilling();
   }
   applyCustomerGstCategory(cust);
+  applyGstinInvoiceType();
   detectSupplyType();
   updateGstinValidationStatus();
 }
@@ -622,6 +650,9 @@ async function saveCustomerFromInvoiceForm() {
 function restoreInvoiceDraftFull(formKey) {
   restoreDraft(formKey, INVOICE_DRAFT_FIELDS);
   restoreItemsFromDraft(formKey);
+  // A draft keeps the GST Number but not the toggle, so the type is taken
+  // from what came back.
+  applyGstinInvoiceType();
   updateClassifyBadge();
   detectSupplyType();
   const banner = document.getElementById('invDraftBanner'); if (banner) banner.innerHTML = '';
@@ -688,7 +719,17 @@ async function loadInvoiceForEdit(type, id) {
   setInvGstCategory(rec.gst_category);
   const rcEl = document.getElementById('invReverseCharge');
   if (rcEl) rcEl.checked = !!rec.reverse_charge;
+  // The type the invoice was saved as, kept: clearing its GST Number while
+  // editing does not quietly move a B2B invoice to B2C.
   setInvoiceTypeToggle(type);
+  invTypeChosenByUser = type === 'b2b';
+  // Saved before B2C stopped carrying a GST Number. Not changed on the
+  // user's behalf - switching it would move the invoice to the other table
+  // on Save - but said now, so the refusal at Save is no surprise.
+  if (type === 'b2c' && rec.gst_number) {
+    showToast('This invoice was saved as B2C with a GST Number. B2C can no longer carry one — '
+      + 'clear it to keep B2C, or switch to B2B, before saving.', 'warning');
+  }
   setPaymentSectionMode(false, rec.payment_status);
 
   const toggle = document.getElementById('transportToggle');
@@ -779,10 +820,12 @@ async function loadInvoiceDuplicateDraft() {
   setInvGstCategory(draft.gst_category);
   const rcDup = document.getElementById('invReverseCharge');
   if (rcDup) rcDup.checked = !!draft.reverse_charge;
-  // The original invoice's own type is authoritative — a B2C source
-  // invoice may well have an optional GST Number on it too, so presence
-  // of gst_number alone can no longer be used to infer B2B/B2C.
-  setInvoiceTypeToggle(draft.type || (draft.gst_number ? 'b2b' : 'b2c'));
+  // A duplicate is a new invoice, so a new invoice's rule applies: a GST
+  // Number makes it B2B. Without one it keeps the source's type, and a B2B
+  // source without a GST Number stays B2B as a deliberate choice.
+  const dupType = draft.gst_number ? 'b2b' : (draft.type || 'b2c');
+  setInvoiceTypeToggle(dupType);
+  invTypeChosenByUser = dupType === 'b2b' && !draft.gst_number;
   // A duplicate is a brand-new sale, not a copy of the old one's
   // payment state — it starts fresh and editable, at the same default as
   // any other new invoice (Paid in Full). The source invoice's own
@@ -867,11 +910,14 @@ async function saveInvoice() {
   if (!invNum && !(autoMode && wasNewInvoice)) { showToast('Please enter an invoice number.', 'error'); return; }
   if (!invDate)  { showToast('Please enter the invoice date.', 'error'); return; }
   if (type === 'b2b' && !gstin) { showToast('B2B is selected — enter the customer\'s GST Number, or switch to B2C.', 'error'); return; }
-  // GST Number is optional on B2C, but if one is entered — either type —
-  // it must be a genuinely valid GSTIN (format + state code + PAN +
-  // checksum, see validateGstin()) before Save is allowed; the 🔴
-  // Invalid GST Number indicator under the field is the live version of
-  // this same check.
+  // The other half of the same rule: a B2C invoice carries no GST Number.
+  // Choosing B2C clears it, so this only meets an invoice saved as B2C with
+  // one before that rule existed.
+  if (type === 'b2c' && gstin) { showToast('B2C is selected — a B2C invoice cannot carry a GST Number. Clear it, or switch to B2B.', 'error'); return; }
+  // A GST Number, which only a B2B invoice carries, must be a genuinely
+  // valid GSTIN (format + state code + PAN + checksum, see validateGstin())
+  // before Save is allowed; the 🔴 Invalid GST Number indicator under the
+  // field is the live version of this same check.
   if (gstin && !validateGstin(gstin).valid) {
     showToast('GST Number is invalid — correct it (or clear it) before saving.', 'error');
     return;
@@ -962,9 +1008,8 @@ async function saveInvoice() {
     dispatch_from: transportRequired ? getInvText('invDispatchFrom') : '',
     dispatch_to: transportRequired ? getInvText('invDispatchTo') : ''
   };
-  // GST Number is optional on B2C too now, so it's always persisted —
-  // b2b_invoices.gst_number is NOT NULL (validated above), b2c_invoices'
-  // is nullable.
+  // Only a B2B invoice carries one (both checks above):
+  // b2b_invoices.gst_number is NOT NULL, and a B2C row stores NULL.
   headerBase.gst_number = gstin || null;
 
   let invoiceId;
@@ -1112,6 +1157,7 @@ function clearInvoiceFormFields() {
   const rcReset = document.getElementById('invReverseCharge');
   if (rcReset) rcReset.checked = !!getCachedProfile()?.reverse_charge_default;
   setInvoiceTypeToggle('b2c');
+  invTypeChosenByUser = false;
   updateGstinValidationStatus();
 
   const toggle = document.getElementById('transportToggle');
@@ -1423,6 +1469,7 @@ async function verifyInvoiceGstin() {
     const name = (t.tradeName || t.legalName || '').trim();
     if (name) setInvValue('invCustName', name);
     setInvValue('invGstin', t.gstin || gstin);
+    applyGstinInvoiceType();
     if (t.address) { const a = document.getElementById('invAddress'); if (a) a.value = t.address; }
 
     // State first, then District — the district list is filtered by the

@@ -140,6 +140,24 @@ router.post('/:type/save-with-items', asyncRoute(async (req, res) => {
   }
   if (editId) badId(editId);
 
+  // B2B or B2C follows the customer's GST Number: a B2B invoice names the
+  // registered customer's GSTIN, a B2C invoice names none. The invoice page
+  // keeps the two in step as the user types; this refuses the combination
+  // whoever sent it, before anything is written. An edit whose payload does
+  // not mention gst_number is not changing it, so only a create, or a payload
+  // that sets it, is judged.
+  if (!editId || Object.prototype.hasOwnProperty.call(header, 'gst_number')) {
+    const gstNumber = String(header.gst_number == null ? '' : header.gst_number).trim();
+    if (type === 'b2b' && !gstNumber) {
+      const e = new Error('A B2B invoice needs the customer\'s GST Number. Enter it, or save the invoice as B2C.');
+      e.status = 400; e.expose = true; e.code = 'b2b_gstin_required'; throw e;
+    }
+    if (type === 'b2c' && gstNumber) {
+      const e = new Error('A B2C invoice cannot carry a GST Number. Clear it, or save the invoice as B2B.');
+      e.status = 400; e.expose = true; e.code = 'b2c_gstin_not_allowed'; throw e;
+    }
+  }
+
   // Whatever the client sends, the stored series is lower-cased and
   // never blank, so 'Online', 'online' and ' Online ' are one series and
   // an omitted source is the shop series.

@@ -24,7 +24,7 @@
   <script src="client/js/pages/serial-entry.js?v=1"></script>
   <script src="client/js/pages/invoice-pdf.js?v=51"></script>
   <script src="client/js/pages/payments.js?v=29"></script>
-  <script src="client/js/pages/invoice-entry.js?v=36"></script>
+  <script src="client/js/pages/invoice-entry.js?v=37"></script>
   <!-- Invoice scanner. Uploads to /api/invoice-scan, which calls Gemini
        with a server-held key; no OCR library is loaded in the browser. -->
   <script src="client/js/pages/invoice-scan.js?v=29"></script>
@@ -173,10 +173,11 @@
             </div>
           </div>
 
-          <!-- GST Number + State are always visible in both modes now —
-               only their required/optional-ness changes with the toggle
-               (see syncInvoiceTypeUI() in js/invoice-entry.js). B2C can
-               optionally carry a GST Number and still save as B2C. -->
+          <!-- GST Number + State are always visible in both modes — only
+               their required/optional-ness changes with the toggle (see
+               syncInvoiceTypeUI() in js/invoice-entry.js). Entering a GST
+               Number makes the invoice B2B, and a B2C invoice carries none:
+               choosing B2C clears it (see applyGstinInvoiceType()). -->
           <div id="invB2BFields" class="form-grid cols-2 mb-16">
             <div class="form-group">
               <label for="invGstin">GST Number <span id="invGstinReqMark" class="fs-11 text-muted-sm">(Optional)</span></label>
