@@ -327,6 +327,109 @@ test('C14 no other PDF module was modified', async () => {
 //  The boundary: whose note can be downloaded at all
 // ═══════════════════════════════════════════════════════════════════════
 
+// ═══ The seal / signature block is the Tax Invoice's ══════════════════
+//
+// A note is signed exactly as an invoice is. These pin the note's block to
+// the formula drawSignatureBlock() uses in invoice-pdf.js, so if either one
+// is changed without the other, this fails rather than the two documents
+// quietly drifting apart.
+
+test('C20 the note uses the invoice\'s signature geometry, and its helpers', async () => {
+  const INV = rd('client', 'js', 'pages', 'invoice-pdf.js');
+  const code = CDPDF.replace(/\/\/[^\n]*/g, '');
+  // The reference, as it stands in the invoice renderer.
+  assert.match(INV, /const L = 8, R = pw - 8;/, 'the invoice right edge this block is placed against');
+  assert.match(INV, /const SEAL = 26;/);
+  assert.match(INV, /const sealCx = R - 5 - SEAL \/ 2;/);
+  // ...and the same numbers in the note, against that same edge.
+  assert.match(code, /const SIG_R = pw - 8;/);
+  assert.match(code, /const SEAL = 26;/);
+  assert.match(code, /const sealCx = SIG_R - 5 - SEAL \/ 2;/);
+  assert.match(code, /doc\.text\('For ' \+ \(p\?\.business_name \|\| 'Us'\), sealCx, sealTop - 1\.8, \{ align: 'center' \}\);/);
+  assert.match(code, /doc\.text\('Authorized Signatory', sealCx, authY, \{ align: 'center' \}\);/);
+  // The measurement and placement are the invoice's own functions.
+  assert.match(code, /inkBoundsOf\(sealData\)/);
+  assert.match(code, /placeInk\(sealInk, sealWantW, sealCx, sealTop\)/);
+  for (const h of ['placeInk', 'inkBoundsOf']) {
+    assert.ok(!new RegExp('function ' + h + '\\b').test(CDPDF), h + ' must be reused, not redefined');
+  }
+  // The old right-aligned block with fixed offsets is gone.
+  assert.ok(!/R - 88/.test(code) && !/R - 45/.test(code), 'no leftover fixed seal/signature offsets');
+});
+
+renderTest('C21 the rendered stamp, signature, caption and rule land where the invoice puts them', async () => {
+  // A real seal and signature, with measured ink, so placement does real work.
+  const SEAL_PNG = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==';
+  const SIG_PNG = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=';
+  const SEAL_INK = { x: 0.2, y: 0.2, w: 0.6, h: 0.6, imgW: 400, imgH: 400 };
+  const SIG_INK = { x: 0.1, y: 0.3, w: 0.8, h: 0.4, imgW: 600, imgH: 200 };
+
+  for (const note of [DEBIT, CREDIT]) {
+    const sb = load({ ...PROFILE, seal_base64: 'SEAL', signature_base64: 'SIG' });
+    sb.__calls = [];
+    sb.__SEAL = SEAL_PNG; sb.__SIG = SIG_PNG;
+    vm.runInContext(`
+      imageUrlToDataUrl = async function (u) { return u === 'SEAL' ? __SEAL : u === 'SIG' ? __SIG : null; };
+      inkBoundsOf = async function (d) {
+        return d === __SEAL ? ${JSON.stringify(SEAL_INK)} : d === __SIG ? ${JSON.stringify(SIG_INK)} : null;
+      };
+      (function () {
+        const Orig = window.jspdf.jsPDF;
+        function Wrapped(o) {
+          const d = new Orig(o);
+          const t = d.text, ai = d.addImage, ln = d.line;
+          d.text = function (s, x, y, opt) { __calls.push({ k: 'text', s: String(s), x, y, align: opt && opt.align }); return t.apply(d, arguments); };
+          d.addImage = function (img, f, x, y, w, h) { __calls.push({ k: 'img', tag: img === __SEAL ? 'seal' : img === __SIG ? 'sig' : 'other', x, y, w, h }); return ai.apply(d, arguments); };
+          d.line = function (x1, y1, x2, y2) { __calls.push({ k: 'line', x1, y1, x2, y2, lw: d.getLineWidth() }); return ln.apply(d, arguments); };
+          return d;
+        }
+        Wrapped.API = Orig.API;
+        window.jspdf.jsPDF = Wrapped;
+      })();
+    `, sb);
+
+    const doc = await sb.buildCDNotePDFDoc(note);
+    const pw = doc.internal.pageSize.width;
+    const calls = sb.__calls;
+    const forT = calls.find(c => c.k === 'text' && /^For VTECH/.test(c.s));
+    const auth = calls.find(c => c.k === 'text' && c.s === 'Authorized Signatory');
+    const sealImg = calls.find(c => c.k === 'img' && c.tag === 'seal');
+    const sigImg = calls.find(c => c.k === 'img' && c.tag === 'sig');
+    assert.ok(forT && auth && sealImg && sigImg, 'caption, signatory, seal and signature must all be drawn');
+
+    // The invoice's formula, restated with the invoice's own placeInk.
+    const SEAL = 26;
+    const sealCx = (pw - 8) - 5 - SEAL / 2;
+    const sealTop = forT.y + 1.8;
+    const sealWantW = SEAL * SEAL_INK.w / Math.max(SEAL_INK.w, SEAL_INK.h * (SEAL_INK.imgH / SEAL_INK.imgW));
+    const seal = sb.placeInk(SEAL_INK, sealWantW, sealCx, sealTop);
+    let sig = sb.placeInk(SIG_INK, seal.inkW * 0.62, sealCx, 0);
+    if (sig.inkH > seal.inkH * 0.5) sig = sb.placeInk(SIG_INK, seal.inkW * 0.62 * (seal.inkH * 0.5 / sig.inkH), sealCx, 0);
+    sig.y = (sealTop + seal.inkH * 0.5) - SIG_INK.y * sig.h - sig.inkH / 2;
+    const authY = sealTop + seal.inkH + 5;
+    const authW = Math.min(22, (pw - 8) - 3 - sealCx);
+
+    const near = (a, b, what) => assert.ok(Math.abs(a - b) < 1e-6, `${note.note_type} ${what}: ${a} vs ${b}`);
+    near(forT.x, sealCx, 'caption x'); assert.strictEqual(forT.align, 'center');
+    near(sealImg.x, seal.x, 'seal x'); near(sealImg.y, seal.y, 'seal y');
+    near(sealImg.w, seal.w, 'seal w'); near(sealImg.h, seal.h, 'seal h');
+    near(sigImg.x, sig.x, 'signature x'); near(sigImg.y, sig.y, 'signature y');
+    near(sigImg.w, sig.w, 'signature w'); near(sigImg.h, sig.h, 'signature h');
+    near(auth.x, sealCx, 'signatory x'); near(auth.y, authY, 'signatory y');
+    assert.strictEqual(auth.align, 'center');
+    const rule = calls.find(c => c.k === 'line' && Math.abs(c.y1 - (authY - 3.5)) < 1e-6);
+    assert.ok(rule, 'the rule above Authorized Signatory must be drawn');
+    near(rule.x1, sealCx - authW, 'rule x1'); near(rule.x2, sealCx + authW, 'rule x2');
+    assert.ok(Math.abs(rule.lw - 0.25) < 1e-9, 'rule drawn at the invoice\'s RULE_CELL weight');
+
+    // The footer divider sits below the signatory, never through it, and
+    // everything stays on the one page.
+    const divider = calls.filter(c => c.k === 'line' && c.y1 === c.y2 && c.y1 > authY)[0];
+    assert.ok(divider && divider.y1 > authY + 1.5, 'footer divider must clear Authorized Signatory');
+    assert.strictEqual(doc.internal.getNumberOfPages(), 1, 'a one-page note keeps its signature on that page');
+  }
+});
+
 const SCRATCH = process.env.STOCK_TEST_DATABASE_URL;
 if (!SCRATCH) {
   test('cdnote download boundary (skipped)', { skip: 'STOCK_TEST_DATABASE_URL is not set' }, () => {});

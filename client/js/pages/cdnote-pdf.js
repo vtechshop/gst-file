@@ -242,13 +242,62 @@ async function buildCDNotePDFDoc(note) {
       doc.text('Scan to verify', L, y + 28);
     } catch {}
   }
+  // The seal / signature block, reproduced from drawSignatureBlock() in
+  // invoice-pdf.js so a note is signed exactly as a Tax Invoice is: the same
+  // 26mm stamp, the same caption above it, the signature centred on the
+  // stamp's visible ink, and the same rule and "Authorized Signatory" below.
+  //
+  // Positioned against the INVOICE's right edge (pw - 8), not this page's
+  // 14mm content margin, so the block lands on the same spot of the sheet as
+  // it does on an invoice. The ink measurement and placement are the
+  // invoice's own helpers, loaded beside this file - not copies of them.
+  const [sealInk, sigInk] = await Promise.all([inkBoundsOf(sealData), inkBoundsOf(signatureData)]);
+  const SIG_R = pw - 8;                  // the Tax Invoice's right edge
+  const SEAL = 26;                       // mm across the visible stamp
+  const sealReserveH = sealData ? SEAL : (signatureData ? 18 : 14);
+  const sealCx = SIG_R - 5 - SEAL / 2;   // centre, held clear of the margin
+  const sealTop = sigBlockY + 6;         // top of the stamp; "For ..." sits above
+
+  const sealBounds = sealInk || { w: 1, h: 1, imgW: 1, imgH: 1 };
+  const sealWantW = SEAL * sealBounds.w
+    / Math.max(sealBounds.w, sealBounds.h * (sealBounds.imgH / sealBounds.imgW));
+  const seal = sealData ? placeInk(sealInk, sealWantW, sealCx, sealTop)
+                        : { inkW: SEAL, inkH: sealReserveH };
+
   doc.setFont('helvetica', 'normal'); doc.setFontSize(9.5); doc.setTextColor(30, 30, 30);
-  doc.text('For ' + (p?.business_name || 'Us'), R, sigBlockY + 4, { align: 'right' });
-  if (sealData) { try { doc.addImage(sealData, 'PNG', R - 88, sigBlockY, 20, 20); } catch {} }
-  if (signatureData) { try { doc.addImage(signatureData, 'PNG', R - 45, sigBlockY + 6, 35, 14); } catch {} }
+  doc.text('For ' + (p?.business_name || 'Us'), sealCx, sealTop - 1.8, { align: 'center' });
+
+  if (sealData) {
+    try { doc.addImage(sealData, 'PNG', seal.x, seal.y, seal.w, seal.h); } catch {}
+  }
+  if (signatureData) {
+    const cx = sealCx, cy = sealTop + seal.inkH * 0.50;
+    let sig = placeInk(sigInk, seal.inkW * 0.62, cx, 0);
+    const maxH = seal.inkH * 0.5;
+    if (sig.inkH > maxH) {
+      const k = maxH / sig.inkH;
+      sig = placeInk(sigInk, seal.inkW * 0.62 * k, cx, 0);
+    }
+    const sigBounds = sigInk || { y: 0, h: 1 };
+    sig.y = cy - sigBounds.y * sig.h - sig.inkH / 2;
+    try { doc.addImage(signatureData, 'PNG', sig.x, sig.y, sig.w, sig.h); } catch {}
+  }
+
+  const authY = sealTop + seal.inkH + 5;
+  const authW = Math.min(22, SIG_R - 3 - sealCx);
+  // The rule is drawn at the invoice's weight, then the previous weight is
+  // put back so the footer divider below is exactly what it always was.
+  const priorLineWidth = typeof doc.getLineWidth === 'function' ? doc.getLineWidth() : null;
+  doc.setDrawColor(...RULE_INK);
+  doc.setLineWidth(RULE_CELL);
+  doc.line(sealCx - authW, authY - 3.5, sealCx + authW, authY - 3.5);
+  if (priorLineWidth !== null) doc.setLineWidth(priorLineWidth);
   doc.setFontSize(8); doc.setTextColor(120, 120, 120);
-  doc.text('Authorized Signatory', R, sigBlockY + 24, { align: 'right' });
-  y = sigBlockY + 32;
+  doc.text('Authorized Signatory', sealCx, authY, { align: 'center' });
+
+  // Below whichever column is taller - the QR on the left or the stamp on
+  // the right - so the footer can never run into either of them.
+  y = Math.max(sigBlockY + 32, authY + 4);
 
   if (y > 260) { doc.addPage(); y = 20; }
   doc.setDrawColor(178, 223, 219);
