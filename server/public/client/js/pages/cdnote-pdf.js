@@ -228,18 +228,43 @@ async function buildCDNotePDFDoc(note) {
     y += bankLines.length * 4 + 6;
   }
 
-  if (y > 250) { doc.addPage(); y = 20; }
-
-  // ── Signature ──
+  // ── Signature and footer, anchored to the foot of the page ──
+  //
+  // A Tax Invoice measures its footer first and hangs the signature row
+  // directly above it, so the stamp, the footer and the margin beneath them
+  // sit at the same height on every invoice however long it runs. The note
+  // used to draw both wherever its content happened to end, which put the
+  // stamp about 20mm higher than on an invoice and left the footer floating
+  // mid-page over an empty band. These are the invoice's own measurements
+  // (its closing grid in invoice-pdf.js), so the two land on the same line
+  // of the sheet.
   const qrSource = qrCustomData || await generateQRDataUrl(
     `${cdNoteTitle(note)}: ${note.note_number}\nDate: ${formatDate(note.note_date)}\nAmount: Rs.${formatNum(note.total_amount)}`,
     p?.header_color);
-  const sigBlockY = y;
+  const [sealInk, sigInk] = await Promise.all([inkBoundsOf(sealData), inkBoundsOf(signatureData)]);
+  const SEAL = 26;                             // mm across the visible stamp
+  const sealReserveH = sealData ? SEAL : (signatureData ? 18 : 14);
+  const SIG_BLOCK_H = 6 + sealReserveH + 5;    // gap + stamp reserve + caption
+  // The rule, the computer-generated line and the contact line, measured as
+  // the invoice measures the same three. The note prints no profile footer
+  // text, so that term is zero here.
+  const footerH = 6 + 4 + 4;                   // rule + gap, generated line + contact
+  // The page number sits 8mm from the bottom, so the footer finishes above that.
+  const PAGE_BOTTOM = doc.internal.pageSize.height - 12;
+  const FOOTER_Y = PAGE_BOTTOM - footerH;
+  // The invoice's signature row, held tall enough for the QR and its caption
+  // on the left, which the invoice keeps in a row of its own.
+  const SIG_ROW_H = Math.max(SIG_BLOCK_H + 3, qrSource ? 32 : 0);
+  const sigBlockY = FOOTER_Y - SIG_ROW_H;
+  // Content that already reaches into the band moves the band to a new
+  // page; drawing the stamp over it is never the answer.
+  if (y > sigBlockY) doc.addPage();
+
   if (qrSource) {
     try {
-      doc.addImage(qrSource, 'PNG', L, y, 24, 24);
+      doc.addImage(qrSource, 'PNG', L, sigBlockY, 24, 24);
       doc.setFontSize(7); doc.setTextColor(...accent); doc.setFont('helvetica', 'normal');
-      doc.text('Scan to verify', L, y + 28);
+      doc.text('Scan to verify', L, sigBlockY + 28);
     } catch {}
   }
   // The seal / signature block, reproduced from drawSignatureBlock() in
@@ -251,10 +276,7 @@ async function buildCDNotePDFDoc(note) {
   // 14mm content margin, so the block lands on the same spot of the sheet as
   // it does on an invoice. The ink measurement and placement are the
   // invoice's own helpers, loaded beside this file - not copies of them.
-  const [sealInk, sigInk] = await Promise.all([inkBoundsOf(sealData), inkBoundsOf(signatureData)]);
   const SIG_R = pw - 8;                  // the Tax Invoice's right edge
-  const SEAL = 26;                       // mm across the visible stamp
-  const sealReserveH = sealData ? SEAL : (signatureData ? 18 : 14);
   const sealCx = SIG_R - 5 - SEAL / 2;   // centre, held clear of the margin
   const sealTop = sigBlockY + 6;         // top of the stamp; "For ..." sits above
 
@@ -295,11 +317,9 @@ async function buildCDNotePDFDoc(note) {
   doc.setFontSize(8); doc.setTextColor(120, 120, 120);
   doc.text('Authorized Signatory', sealCx, authY, { align: 'center' });
 
-  // Below whichever column is taller - the QR on the left or the stamp on
-  // the right - so the footer can never run into either of them.
-  y = Math.max(sigBlockY + 32, authY + 4);
-
-  if (y > 260) { doc.addPage(); y = 20; }
+  // The footer, exactly where the invoice's is. The block above ends at
+  // FOOTER_Y - 3 at the lowest, so the rule can never run through it.
+  y = FOOTER_Y;
   doc.setDrawColor(178, 223, 219);
   doc.line(L, y, R, y);
   y += 6;

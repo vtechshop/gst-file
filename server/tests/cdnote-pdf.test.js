@@ -353,6 +353,17 @@ test('C20 the note uses the invoice\'s signature geometry, and its helpers', asy
   for (const h of ['placeInk', 'inkBoundsOf']) {
     assert.ok(!new RegExp('function ' + h + '\\b').test(CDPDF), h + ' must be reused, not redefined');
   }
+  // Vertically too: the invoice hangs its signature row directly above a
+  // footer measured against the same page bottom, and so must the note -
+  // not draw it wherever its content happens to end.
+  assert.match(INV, /const SIG_BLOCK_H = 6 \+ sealReserveH \+ 5;/);
+  assert.match(INV, /const PAGE_BOTTOM = doc\.internal\.pageSize\.height - 12;/);
+  assert.match(INV, /const footerH =\s*6\s[\s\S]{0,400}?\+ 4 \+ 4;/);
+  assert.match(code, /const SIG_BLOCK_H = 6 \+ sealReserveH \+ 5;/);
+  assert.match(code, /const PAGE_BOTTOM = doc\.internal\.pageSize\.height - 12;/);
+  assert.match(code, /const footerH = 6 \+ 4 \+ 4;/);
+  assert.match(code, /const sigBlockY = FOOTER_Y - SIG_ROW_H;/);
+  assert.ok(!/const sigBlockY = y;/.test(code), 'the band is no longer drawn inline after the content');
   // The old right-aligned block with fixed offsets is gone.
   assert.ok(!/R - 88/.test(code) && !/R - 45/.test(code), 'no leftover fixed seal/signature offsets');
 });
@@ -422,12 +433,96 @@ renderTest('C21 the rendered stamp, signature, caption and rule land where the i
     near(rule.x1, sealCx - authW, 'rule x1'); near(rule.x2, sealCx + authW, 'rule x2');
     assert.ok(Math.abs(rule.lw - 0.25) < 1e-9, 'rule drawn at the invoice\'s RULE_CELL weight');
 
-    // The footer divider sits below the signatory, never through it, and
-    // everything stays on the one page.
-    const divider = calls.filter(c => c.k === 'line' && c.y1 === c.y2 && c.y1 > authY)[0];
-    assert.ok(divider && divider.y1 > authY + 1.5, 'footer divider must clear Authorized Signatory');
+    // Vertically the band and the footer sit where the invoice's do: the
+    // invoice's footer measured against the same page bottom, and its
+    // signature row hung directly above it - not wherever the content ends.
+    const pageH = doc.internal.pageSize.height;
+    const footerTop = (pageH - 12) - (6 + 4 + 4);
+    near(forT.y, footerTop - (6 + SEAL + 5 + 3) + 6 - 1.8, 'caption height on the sheet');
+    near(authY + 3, footerTop, 'signatory-to-footer gap');
+    const divider = calls.find(c => c.k === 'line' && c.y1 === c.y2 && Math.abs(c.y1 - footerTop) < 1e-6);
+    assert.ok(divider, 'the footer divider must sit where the invoice\'s does');
+    const gen = calls.find(c => c.k === 'text' && /computer-generated/.test(c.s));
+    const contact = calls.find(c => c.k === 'text' && c.s.includes('  |  '));
+    const pageNo = calls.find(c => c.k === 'text' && /^Page 1 of 1$/.test(c.s));
+    assert.ok(gen && contact && pageNo, 'footer lines and page number must all be drawn');
+    near(gen.y, footerTop + 6, 'computer-generated line');
+    near(contact.y, footerTop + 11, 'contact line');
+    near(pageNo.y, pageH - 8, 'page number');
     assert.strictEqual(doc.internal.getNumberOfPages(), 1, 'a one-page note keeps its signature on that page');
   }
+});
+
+// ═══ The band's page break ═══════════════════════════════════════════
+//
+// The band is anchored at the foot of the page, so content long enough to
+// reach it has to move it rather than be drawn over. Swept across reason
+// lengths rather than one hand-picked note, so the page-break path is hit
+// whatever the font metrics make of a given line.
+renderTest('C22 content that reaches the band moves it to a new page, never under it', async () => {
+  const QR_PNG = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=';
+  const isBand = s => s === 'Scan to verify' || s === 'Authorized Signatory' || /^For VTECH/.test(s)
+    || /computer-generated/.test(s) || s.includes('  |  ') || /^Page \d+ of \d+$/.test(s);
+  let onePage = 0, movedAlone = 0;
+  for (let reps = 0; reps <= 40; reps++) {
+    const sb = load(PROFILE);
+    sb.__calls = []; sb.__QR = QR_PNG;
+    vm.runInContext(`
+      generateQRDataUrl = async function () { return __QR; };
+      (function () {
+        const Orig = window.jspdf.jsPDF;
+        function Wrapped(o) {
+          const d = new Orig(o);
+          const pg = () => d.internal.getCurrentPageInfo().pageNumber;
+          const t = d.text, ai = d.addImage, ln = d.line;
+          d.text = function (s, x, y) { __calls.push({ k: 'text', s: Array.isArray(s) ? s.join(' ') : String(s), y, page: pg() }); return t.apply(d, arguments); };
+          d.addImage = function (img, f, x, y, w, h) { __calls.push({ k: 'img', x, y, w, h, page: pg() }); return ai.apply(d, arguments); };
+          d.line = function (x1, y1, x2, y2) { __calls.push({ k: 'line', y1, y2, page: pg() }); return ln.apply(d, arguments); };
+          return d;
+        }
+        Wrapped.API = Orig.API;
+        window.jspdf.jsPDF = Wrapped;
+      })();
+    `, sb);
+    const reason = 'Revised price for the supplied equipment as agreed. '.repeat(reps).trim() || 'Price revision';
+    const doc = await sb.buildCDNotePDFDoc({ ...DEBIT, reason });
+    const pageH = doc.internal.pageSize.height;
+    const last = doc.internal.getNumberOfPages();
+    const footerTop = (pageH - 12) - (6 + 4 + 4);
+    const calls = sb.__calls;
+    const tag = `(reason x${reps}, ${last} page(s))`;
+
+    // With no seal or signature the QR column is the taller one, so the band
+    // is 32mm deep and its top is where the QR is drawn.
+    const qr = calls.find(c => c.k === 'img');
+    assert.ok(qr, 'the QR is drawn ' + tag);
+    assert.ok(Math.abs(qr.y - (footerTop - 32)) < 1e-6, 'band top ' + qr.y + ' ' + tag);
+    assert.strictEqual(qr.page, last, 'the QR is on the last page ' + tag);
+    for (const c of calls.filter(c => c.k === 'text' && isBand(c.s) && !/^Page /.test(c.s))) {
+      assert.strictEqual(c.page, last, `"${c.s}" belongs on the last page ${tag}`);
+    }
+    const divider = calls.find(c => c.k === 'line' && c.page === last && c.y1 === c.y2
+      && Math.abs(c.y1 - footerTop) < 1e-6);
+    assert.ok(divider, 'footer divider at the invoice height ' + tag);
+    const caption = calls.find(c => c.s === 'Scan to verify');
+    const auth = calls.find(c => c.s === 'Authorized Signatory');
+    assert.ok(caption.y < footerTop - 1 && auth.y <= footerTop - 3 + 1e-6, 'band clears the footer ' + tag);
+
+    // Nothing of the note's own content reaches down into the band...
+    const content = calls.filter(c => c.k === 'text' && !isBand(c.s));
+    const intruder = content.find(c => c.page === last && c.y > qr.y);
+    assert.ok(!intruder, `"${intruder && intruder.s}" at ${intruder && intruder.y} runs into the band at ${qr.y} ${tag}`);
+    // ...and nothing anywhere falls off the sheet.
+    assert.ok(calls.every(c => (c.y === undefined || c.y < pageH) && (c.y1 === undefined || c.y1 < pageH)),
+      'drawn past the page ' + tag);
+
+    if (last === 1) onePage++;
+    if (last > 1 && !content.some(c => c.page === last)) movedAlone++;
+  }
+  // Both paths were actually exercised: short notes stay on one page, and a
+  // note whose content reaches the band sends the band on by itself.
+  assert.ok(onePage > 0, 'no sweep case stayed on one page');
+  assert.ok(movedAlone > 0, 'no sweep case moved the band to a page of its own');
 });
 
 const SCRATCH = process.env.STOCK_TEST_DATABASE_URL;
