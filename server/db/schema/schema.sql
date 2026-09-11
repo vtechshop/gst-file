@@ -411,7 +411,10 @@ CREATE TABLE IF NOT EXISTS cdn_notes (
   -- document; this was written as 'N' for every note until there was
   -- somewhere to record otherwise.
   reverse_charge BOOLEAN NOT NULL DEFAULT FALSE,
-  ecom_gstin TEXT
+  ecom_gstin TEXT,
+  -- (id, user_id) as a key of its own, for cdn_note_items' composite
+  -- foreign key: an item can only belong to a note of its own tenant.
+  CONSTRAINT cdn_notes_id_user_key UNIQUE (id, user_id)
 );
 
 -- Unlike every other transactional table, cdn_notes had no index beyond
@@ -854,6 +857,30 @@ CREATE TABLE IF NOT EXISTS sales_return_items (
 );
 
 CREATE INDEX IF NOT EXISTS idx_sales_return_items_return ON sales_return_items(return_id);
+
+-- ── Credit / Debit Note Items ──────────────────────────
+-- Which products a note applies to: a snapshot of the invoice lines it was
+-- raised against, taken when the note is saved. The note keeps the money;
+-- these rows only name what it is for. See migration_cdn_note_items.sql.
+CREATE TABLE IF NOT EXISTS cdn_note_items (
+  id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
+  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  note_id UUID NOT NULL,
+  product_id UUID REFERENCES products(id) ON DELETE SET NULL,
+  product_name TEXT NOT NULL,
+  hsn_code TEXT,
+  unit TEXT,
+  quantity DECIMAL(15,3),
+  rate DECIMAL(15,2),
+  taxable_value DECIMAL(15,2),
+  sort_order INTEGER NOT NULL DEFAULT 0,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW(),
+  CONSTRAINT cdn_note_items_note_fk FOREIGN KEY (note_id, user_id)
+    REFERENCES cdn_notes (id, user_id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_cdn_note_items_note ON cdn_note_items (note_id, sort_order);
 
 -- ── updated_at trigger, applied to every table with that column ──
 CREATE OR REPLACE FUNCTION update_updated_at()

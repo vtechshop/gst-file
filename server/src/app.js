@@ -21,6 +21,7 @@ const invoiceRoutes = require('./routes/invoices');
 const documentRoutes = require('./routes/documents');
 const purchaseRoutes = require('./routes/purchases');
 const salesReturnRoutes = require('./routes/sales-returns');
+const cdnNoteRoutes = require('./routes/cdn-notes');
 const paymentsRoutes = require('./routes/payments');
 const uploadRoutes = require('./routes/uploads');
 const productSyncRoutes = require('./routes/product-sync');
@@ -133,6 +134,11 @@ app.use('/api/payments', paymentsRoutes);
 // these routes are all multi-segment (/save-with-items, /:id/cascade-*),
 // never the bare path the generic router's own routes use.
 app.use('/api/sales_returns', salesReturnRoutes);
+// Shares the /api/cdn_notes prefix with the generic router's plain
+// cdn_notes-table CRUD the same way: /save-with-items is the one path that
+// writes a note together with the products it applies to, and it is never
+// the bare path the generic router's own routes use.
+app.use('/api/cdn_notes', cdnNoteRoutes);
 app.use('/api/uploads', uploadRoutes);
 // Stock reporting plus the two manual movement entries (opening balance,
 // adjustment). Every route is requireAuth-d inside the router and scoped

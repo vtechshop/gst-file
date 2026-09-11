@@ -656,16 +656,23 @@ test('C18 a deleted note can no longer be downloaded', async () => {
   assert.match(CDPDF, /if \(!note\) \{ showToast/);
 });
 
-test('C19 saving, editing and deleting a note are unchanged', async () => {
-  // The page's own write paths are the ones that were there before; the
-  // PDF button added no fourth way to change a note.
-  assert.match(CDPAGE, /_supabase\.from\('cdn_notes'\)\.update\(payload\)/);
-  assert.match(CDPAGE, /_supabase\.from\('cdn_notes'\)\.insert\(payload\)/);
+test('C19 notes are saved through the route that checks their items, and deleted as before', async () => {
+  // Saving and editing go through /api/cdn_notes/save-with-items, which
+  // writes the note and its items in one transaction. The generic insert and
+  // update the page used before are gone from it, so there is no way left to
+  // save a note without its items being checked. Deleting is unchanged, and
+  // the PDF button added no write path of its own.
+  assert.match(CDPAGE, /apiFetch\('\/cdn_notes\/save-with-items'/);
+  assert.ok(!/_supabase\.from\('cdn_notes'\)\.(insert|update)\(/.test(CDPAGE),
+    'no generic insert/update of a note is left on the page');
   assert.match(CDPAGE, /_supabase\.from\('cdn_notes'\)\.delete\(\)/);
-  // Exactly one insert, one update, one delete - the PDF added none.
-  assert.strictEqual((CDPAGE.match(/\.insert\(/g) || []).length, 1);
-  assert.strictEqual((CDPAGE.match(/\.update\(/g) || []).length, 1);
-  assert.strictEqual((CDPAGE.match(/\.delete\(/g) || []).length, 1);
+  // Counted on the API client only: the page's own Map of ticked lines has a
+  // .delete() too, and that writes nothing.
+  const writes = verb => (CDPAGE.match(new RegExp("_supabase\\.from\\('[a-z_]+'\\)\\." + verb + '\\(', 'g')) || []).length;
+  assert.strictEqual(writes('insert'), 0);
+  assert.strictEqual(writes('update'), 0);
+  assert.strictEqual(writes('upsert'), 0);
+  assert.strictEqual(writes('delete'), 1);
 
   // A round trip through the real API leaves the stored figures alone.
   // Needs jsPDF to actually build the document, so it is checked when one

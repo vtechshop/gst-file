@@ -25,8 +25,8 @@
        exactly as sales-returns.html loads it beside sales-return-pdf.js.
        Nothing in it is modified. -->
   <script src="client/js/pages/invoice-pdf.js?v=51"></script>
-  <script src="client/js/pages/cdnote-pdf.js?v=3"></script>
-  <script src="client/js/pages/cdnotes.js?v=30"></script>
+  <script src="client/js/pages/cdnote-pdf.js?v=4"></script>
+  <script src="client/js/pages/cdnotes.js?v=31"></script>
 </head>
 <body>
 <div class="app-layout">
@@ -191,6 +191,27 @@
               <input type="text" id="cdReason" class="form-control">
             </div>
           </div>
+
+          <!-- The products this note applies to. Optional: a note without
+               items prints exactly as every note did before. The items come
+               from the invoice picked here, and only the ones ticked are
+               saved - the server re-reads them from the invoice itself. -->
+          <div class="section-title mb-14">Affected Items <span class="fs-11 text-muted-sm">(optional &mdash; the products this note applies to)</span></div>
+          <div class="form-grid cols-2 mb-16">
+            <div class="form-group">
+              <label for="cdInvoicePick">Original Invoice</label>
+              <select id="cdInvoicePick" class="form-control" onchange="onCDInvoicePick()">
+                <option value="">Not linked to an invoice</option>
+              </select>
+              <small class="text-muted">Pick the invoice to list its products, then tick only the ones this note is for.</small>
+            </div>
+            <div class="form-group">
+              <label>Items Total</label>
+              <div id="cdItemsSummary" class="form-control" style="background:var(--bg);cursor:default;min-height:38px;">No items selected</div>
+              <button type="button" class="btn btn-secondary btn-sm" id="cdUseItemsTotal" style="margin-top:8px;" onclick="useCDItemsTotal()" disabled><i class="fas fa-equals"></i> Use items total as taxable amount</button>
+            </div>
+          </div>
+          <div id="cdItemsSection" class="mb-16"></div>
 
           <div class="section-title mb-14">Tax Details</div>
           <div class="form-grid cols-3 mb-16">

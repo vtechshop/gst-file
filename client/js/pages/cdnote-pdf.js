@@ -3,9 +3,11 @@
 // =============================================
 //
 // A note is a single-figure document: cdn_notes stores one taxable amount,
-// one rate and one tax split, with no line items of its own. So this draws
-// a tax BREAKUP rather than an item table — there is nothing to tabulate,
-// and an empty items grid would only look like something had gone missing.
+// one rate and one tax split. So its money is shown as a tax BREAKUP, not
+// as the sum of an item table. A note may also carry the products it
+// applies to (cdn_note_items, a snapshot taken when it was saved); those are
+// listed under ITEM DETAILS to say what the note is FOR, and a note without
+// them - every note saved before they existed - has no such section at all.
 //
 // Every figure printed is the figure that is STORED. Nothing here
 // recomputes GST, re-splits a tax or reads the original invoice to derive
@@ -55,11 +57,102 @@ function cdNoteFileName(note) {
   return `${kind}-${num || 'note'}`;
 }
 
+// The products the note applies to, as they were when it was saved - the
+// snapshot in cdn_note_items, never the invoice or the Product Master as
+// they are now, so a product renamed since still prints as it was sold.
+async function fetchCDNoteItems(id) {
+  const rows = await readAll(
+    [_supabase.from('cdn_note_items').select('*').eq('note_id', id).order('sort_order', { ascending: true })],
+    'Could not load the note\'s items'
+  );
+  return rows ? rows[0] : null;                 // null: read failed, already reported
+}
+
+// A quantity as it is written: 2.000 is 2, 1.500 is 1.5, and none is a dash.
+function cdQty(v) {
+  if (v === null || v === undefined || v === '') return '-';
+  const n = Number(v);
+  return Number.isFinite(n) ? String(Math.round(n * 1000) / 1000) : '-';
+}
+
+const cdMoney = v => (v === null || v === undefined || v === '' ? '-' : formatNum(v));
+
+// The item table's columns, across the full 182mm between the margins.
+const CD_ITEM_COLS = [
+  { head: 'Product / Item', w: 86, align: 'left' },
+  { head: 'HSN/SAC', w: 24, align: 'left' },
+  { head: 'Qty', w: 22, align: 'right' },
+  { head: 'Rate', w: 24, align: 'right' },
+  { head: 'Taxable Amount', w: 26, align: 'right' }
+];
+
+// ITEM DETAILS, one row per stored item, in the order they were saved.
+// Drawn by hand rather than with autoTable so the page breaks are this
+// document's own: a row that would run past the foot of the page starts the
+// next one, with the column heads drawn again at its top. Returns where the
+// next section may begin.
+function drawCDNoteItems(doc, items, top, { L, R, accent }) {
+  const floor = doc.internal.pageSize.height - 20;       // clear of "Page n of m"
+  // The Tax Invoice's item-head tint, from the same accent.
+  const tint = [Math.min(accent[0] + 224, 255), Math.min(accent[1] + 165, 255), Math.min(accent[2] + 177, 255)];
+  const PAD = 1.5;
+  const edges = [];
+  CD_ITEM_COLS.reduce((x, c) => { edges.push(x); return x + c.w; }, L);
+  const cellX = i => (CD_ITEM_COLS[i].align === 'right' ? edges[i] + CD_ITEM_COLS[i].w - PAD : edges[i] + PAD);
+  let y = top;
+
+  // The title, the heads and a first row start on the same page.
+  if (y + 4 + 6 + 6.2 > floor) { doc.addPage(); y = 20; }
+  doc.setFontSize(9); doc.setFont('helvetica', 'bold'); doc.setTextColor(...accent);
+  doc.text('ITEM DETAILS', L, y);
+  doc.setDrawColor(178, 223, 219);
+  doc.line(L, y + 1.5, R, y + 1.5);
+  y += 4;
+
+  const drawHeads = () => {
+    doc.setFillColor(...tint);
+    doc.rect(L, y, R - L, 6, 'F');
+    doc.setFontSize(7.5); doc.setFont('helvetica', 'bold'); doc.setTextColor(...accent);
+    CD_ITEM_COLS.forEach((c, i) => doc.text(c.head, cellX(i), y + 4.1, { align: c.align }));
+    y += 6;
+  };
+  drawHeads();
+
+  for (const it of items) {
+    doc.setFontSize(8); doc.setFont('helvetica', 'normal');
+    const nameLines = doc.splitTextToSize(String(it.product_name || '-'), CD_ITEM_COLS[0].w - PAD * 2);
+    const rowH = nameLines.length * 3.6 + 2.6;
+    if (y + rowH > floor) {
+      doc.addPage(); y = 20; drawHeads();
+      doc.setFontSize(8); doc.setFont('helvetica', 'normal');
+    }
+    doc.setTextColor(40, 40, 40);
+    const base = y + 4;
+    doc.text(nameLines, cellX(0), base);
+    const qty = cdQty(it.quantity);
+    [
+      it.hsn_code || '-',
+      qty === '-' ? '-' : qty + (it.unit ? ' ' + it.unit : ''),
+      cdMoney(it.rate),
+      cdMoney(it.taxable_value)
+    ].forEach((v, j) => doc.text(String(v), cellX(j + 1), base, { align: CD_ITEM_COLS[j + 1].align }));
+    doc.setDrawColor(178, 223, 219);
+    doc.line(L, y + rowH, R, y + rowH);
+    y += rowH;
+  }
+  return y + 6;
+}
+
 async function downloadCDNotePDF(id) {
   const note = await fetchCDNoteRecord(id);
   if (!note) return;
+  // Read with the note, every time: a note edited a moment ago prints its
+  // new items. A failed read stops here rather than printing a note that
+  // has silently lost them.
+  const items = await fetchCDNoteItems(id);
+  if (!items) return;
   try {
-    const doc = await buildCDNotePDFDoc(note);
+    const doc = await buildCDNotePDFDoc(note, items);
     doc.save(cdNoteFileName(note) + '.pdf');
     showToast(cdNoteTitle(note) + ' downloaded!', 'success');
   } catch (err) {
@@ -67,7 +160,9 @@ async function downloadCDNotePDF(id) {
   }
 }
 
-async function buildCDNotePDFDoc(note) {
+async function buildCDNotePDFDoc(note, items) {
+  // The stored items, or none. Nothing else is ever listed as an item.
+  const noteItems = Array.isArray(items) ? items : [];
   const p = (typeof getCachedProfile === 'function') ? getCachedProfile() : null;
   const accent = hexToRgb(p?.header_color);
   const { jsPDF } = window.jspdf;
@@ -168,6 +263,14 @@ async function buildCDNotePDFDoc(note) {
     y += reasonLines.length * 4.5 + 5;
   }
 
+  // ── Item details ──
+  //
+  // Which products the note is for, drawn from the rows stored with it -
+  // never the invoice's other products, and never every product on the
+  // invoice unless every one was chosen. The note's own figures below stay
+  // authoritative: nothing here adds the rows up or derives a tax from them.
+  if (noteItems.length) y = drawCDNoteItems(doc, noteItems, y, { L, R, accent });
+
   if (y > 210) { doc.addPage(); y = 20; }
 
   // ── Tax breakup ──
@@ -190,6 +293,7 @@ async function buildCDNotePDFDoc(note) {
   rows.push(['Total GST', formatNum(note.gst_amount)]);
 
   const boxW = 80, boxX = R - boxW;
+  const taxTop = y;
   doc.setFontSize(9); doc.setFont('helvetica', 'normal'); doc.setTextColor(60, 60, 60);
   rows.forEach((r, i) => {
     doc.text(r[0], boxX, y + i * 5.5);
@@ -203,7 +307,24 @@ async function buildCDNotePDFDoc(note) {
   doc.setFontSize(12); doc.setFont('helvetica', 'bold'); doc.setTextColor(...accent);
   doc.text(isDebit ? 'Total Debit Amount' : 'Total Credit Amount', boxX, ruleY + 7);
   doc.text('Rs.' + formatNum(note.total_amount), R, ruleY + 7, { align: 'right' });
-  y = ruleY + 16;
+
+  // An itemised note carries its bank details beside the tax breakup, in the
+  // space the breakup leaves on the left - where a Tax Invoice keeps them.
+  // The item table has taken room above, and below the breakup they would
+  // push the signature onto a second page for an ordinary note. A note
+  // without items keeps them below, exactly as before.
+  const bankLines = (typeof bankDetailLines === 'function') ? bankDetailLines(p) : [];
+  const bankBeside = noteItems.length > 0 && bankLines.length > 0;
+  let bankBottom = taxTop;
+  if (bankBeside) {
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(8.5); doc.setTextColor(...accent);
+    doc.text('Bank Details', L, taxTop);
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(8); doc.setTextColor(60, 60, 60);
+    const bankWrapped = wrapLines(doc, bankLines, boxX - L - 6);
+    bankWrapped.forEach((l, i) => doc.text(l, L, taxTop + 4.5 + i * 4));
+    bankBottom = taxTop + 4.5 + bankWrapped.length * 4;
+  }
+  y = Math.max(ruleY + 16, bankBottom + 6);
 
   doc.setFontSize(9); doc.setFont('helvetica', 'normal'); doc.setTextColor(30, 30, 30);
   doc.text('Amount in Words:', L, y);
@@ -217,8 +338,7 @@ async function buildCDNotePDFDoc(note) {
     : '* This Credit Note reduces the amount payable against the invoice referenced above.', L, y);
   y += 8;
 
-  const bankLines = (typeof bankDetailLines === 'function') ? bankDetailLines(p) : [];
-  if (bankLines.length) {
+  if (bankLines.length && !bankBeside) {
     if (y > 250) { doc.addPage(); y = 20; }
     doc.setFont('helvetica', 'bold'); doc.setFontSize(8.5); doc.setTextColor(...accent);
     doc.text('Bank Details', L, y);

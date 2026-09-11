@@ -275,7 +275,32 @@ const TABLES = {
       'created_at','updated_at',
       'cess_amount','original_invoice_date','original_period','original_note_number','original_note_date',
       'supply_nature','original_invoice_id','original_invoice_table',
-      'differential_65','reverse_charge','ecom_gstin']
+      'differential_65','reverse_charge','ecom_gstin'],
+    // The invoice a note was issued against is linked only by
+    // /api/cdn_notes/save-with-items, from an invoice it has verified is this
+    // tenant's and this customer's. Readable, never directly writable: through
+    // this router a client could otherwise point a note at any invoice,
+    // including another tenant's.
+    immutable: ['original_invoice_id', 'original_invoice_table'],
+    // A note with item details must keep adding up to them and stay at the
+    // rate they were checked against. Its amount, rate and invoice change
+    // through the note form, which checks the items again; changing them here
+    // would leave items that no longer explain the note. Every other field -
+    // the reason, the date, the GSTR-1 flags - stays editable as before.
+    async beforeWrite(db, body, { where, params }) {
+      const guarded = ['taxable_amount', 'gst_percentage', 'original_invoice']
+        .filter(c => Object.prototype.hasOwnProperty.call(body, c));
+      if (!guarded.length) return;
+      const { rows } = await db.query(
+        'SELECT COUNT(*)::int AS n FROM cdn_note_items '
+        + 'WHERE note_id IN (SELECT id FROM cdn_notes ' + where + ')', params);
+      if (rows[0].n > 0) {
+        const e = new Error('This note has item details, so its '
+          + guarded.map(c => c.replace(/_/g, ' ')).join(', ')
+          + ' can only be changed from the note form, where the items are checked again.');
+        e.status = 409; e.expose = true; throw e;
+      }
+    }
   },
   products: {
     columns: ['id','user_id','name','hsn_code','type','gst_percentage','default_rate',
@@ -731,6 +756,16 @@ const TABLES = {
       'quantity','rate','discount_percentage','gst_percentage','taxable_value','gst_amount',
       'igst','cgst','sgst','total_amount','sort_order',
       'created_at','updated_at']
+  },
+  // What a Credit / Debit Note applies to: a snapshot of the invoice lines it
+  // was raised against. Written only by /api/cdn_notes/save-with-items, in
+  // the same transaction as the note and from the stored invoice - never from
+  // values the browser sends - so this router serves reads alone. Deleting a
+  // note removes its items through the foreign key, not through here.
+  cdn_note_items: {
+    columns: ['id','user_id','note_id','product_id','product_name','hsn_code','unit',
+      'quantity','rate','taxable_value','sort_order','created_at','updated_at'],
+    readOnly: true
   }
 };
 
