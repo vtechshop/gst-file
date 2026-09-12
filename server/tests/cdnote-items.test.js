@@ -292,7 +292,7 @@ test('W3 the page picks an invoice by table and id, and saves only the ticked li
     assert.ok(CDHTML.includes(`id="${id}"`), 'cdnotes.html must have #' + id);
   }
   assert.match(CDHTML, /cdnote-pdf\.js\?v=4/);
-  assert.match(CDHTML, /cdnotes\.js\?v=31/);
+  assert.match(CDHTML, /cdnotes\.js\?v=32/);
 });
 
 test('W4 the PDF lists only the stored snapshot, re-read with the note on every download', () => {

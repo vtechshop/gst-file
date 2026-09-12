@@ -480,7 +480,13 @@ async function editCDNote(id) {
   document.getElementById('cdState').value      = rec.state || '';
   document.getElementById('cdReason').value     = rec.reason || '';
   document.getElementById('cdTaxable').value    = rec.taxable_amount;
-  document.getElementById('cdGstPct').value     = rec.gst_percentage;
+  // The API returns NUMERIC as a string ("18.00"), and a <select> only
+  // accepts a value one of its options actually has ("18"). Assigning the
+  // raw string left the select blank, and saveCDNote() reads it back as
+  // parseFloat('') || 0 - so opening a note and pressing Update rewrote a
+  // real rate to 0% and zeroed its tax. Normalising the number here keeps
+  // the stored rate whatever it is; nothing else about the rate changes.
+  document.getElementById('cdGstPct').value     = String(Number(rec.gst_percentage));
   document.getElementById('cdSupply').value     = rec.supply_type;
   recalcCD();
   document.getElementById('cdFormTitle').textContent = 'Edit Note';
