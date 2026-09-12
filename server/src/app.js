@@ -33,6 +33,7 @@ const warrantyRoutes = require('./routes/warranties');
 const stockRoutes = require('./routes/stock');
 const reportsRoutes = require('./routes/reports');
 const purchaseOrderRoutes = require('./routes/purchase-orders');
+const purchaseNoteRoutes = require('./routes/purchase-notes');
 const { mountGenericRoutes } = require('./routes/generic');
 const { errorHandler } = require('./middleware/errorHandler');
 
@@ -139,6 +140,7 @@ app.use('/api/sales_returns', salesReturnRoutes);
 // writes a note together with the products it applies to, and it is never
 // the bare path the generic router's own routes use.
 app.use('/api/cdn_notes', cdnNoteRoutes);
+app.use('/api/purchase_notes', purchaseNoteRoutes);
 app.use('/api/uploads', uploadRoutes);
 // Stock reporting plus the two manual movement entries (opening balance,
 // adjustment). Every route is requireAuth-d inside the router and scoped

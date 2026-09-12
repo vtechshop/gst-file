@@ -1,9 +1,9 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Credit/Debit Notes - GST Management System</title>
+  <title>Purchase Credit/Debit Notes - GST Management System</title>
   <link rel="stylesheet" href="client/css/style.css?v=35">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
   <!-- The note PDF is drawn with jsPDF, and QRCode renders the verify code -
@@ -21,12 +21,12 @@
   <script src="client/js/core/search.js?v=29"></script>
   <script src="client/js/pages/profile.js?v=39"></script>
   <!-- invoice-pdf.js is loaded for the shared PDF helpers only (hexToRgb,
-       wrapLines, imageUrlToDataUrl, bankDetailLines, generateQRDataUrl),
-       exactly as sales-returns.html loads it beside sales-return-pdf.js.
-       Nothing in it is modified. -->
+       wrapLines, imageUrlToDataUrl, bankDetailLines, generateQRDataUrl,
+       inkBoundsOf, placeInk), exactly as cdnotes.html loads it beside
+       cdnote-pdf.js. Nothing in it is modified. -->
   <script src="client/js/pages/invoice-pdf.js?v=51"></script>
-  <script src="client/js/pages/cdnote-pdf.js?v=5"></script>
-  <script src="client/js/pages/cdnotes.js?v=34"></script>
+  <script src="client/js/pages/purchase-note-pdf.js?v=1"></script>
+  <script src="client/js/pages/purchase-notes.js?v=1"></script>
 </head>
 <body>
 <div class="app-layout">
@@ -44,7 +44,7 @@
       <a href="invoice-list.html" class="menu-item"><i class="fas fa-list-alt"></i> Invoice List</a>
       <a href="proforma.html" class="menu-item"><i class="fas fa-file-contract"></i> New Proforma</a>
       <a href="proforma-list.html" class="menu-item"><i class="fas fa-folder-open"></i> Proforma Invoices</a>
-      <a href="cdnotes.html" class="menu-item active"><i class="fas fa-file-minus"></i> Credit / Debit Notes</a>
+      <a href="cdnotes.html" class="menu-item"><i class="fas fa-file-minus"></i> Credit / Debit Notes</a>
       <a href="sales-returns.html" class="menu-item"><i class="fas fa-rotate-left"></i> Sales Returns</a>
       <a href="bill-of-supply.html" class="menu-item"><i class="fas fa-file-invoice"></i> Bill of Supply</a>
       <a href="revised-invoice.html" class="menu-item"><i class="fas fa-file-pen"></i> Revised Invoice</a>
@@ -61,7 +61,7 @@
       <a href="purchases.html" class="menu-item"><i class="fas fa-cart-plus"></i> New Purchase</a>
       <a href="purchase-list.html" class="menu-item"><i class="fas fa-boxes"></i> Purchase List</a>
       <a href="purchase-returns.html" class="menu-item"><i class="fas fa-undo"></i> Purchase Returns</a>
-      <a href="purchase-notes.html" class="menu-item"><i class="fas fa-file-invoice"></i> Purchase Credit / Debit Notes</a>
+      <a href="purchase-notes.html" class="menu-item active"><i class="fas fa-file-invoice"></i> Purchase Credit / Debit Notes</a>
       <div class="menu-section">Inventory</div>
       <a href="stock.html" class="menu-item"><i class="fas fa-warehouse"></i> Stock Summary</a>
       <a href="stock-ledger.html" class="menu-item"><i class="fas fa-clipboard-list"></i> Stock Ledger</a>
@@ -102,7 +102,7 @@
   <div class="main-content">
     <div class="top-bar">
       <button type="button" class="menu-toggle" id="menuToggle" aria-label="Toggle sidebar menu"><i class="fas fa-bars"></i></button>
-      <span class="page-title"><i class="fas fa-file-minus"></i>Credit / Debit Notes</span>
+      <span class="page-title"><i class="fas fa-file-invoice"></i>Purchase Credit / Debit Notes</span>
       <button type="button" class="btn btn-secondary btn-sm btn-icon ml-auto" onclick="openGlobalSearch()" title="Search everywhere (Ctrl+K)" aria-label="Global search"><i class="fas fa-search"></i></button>
     </div>
 
@@ -111,118 +111,96 @@
       <!-- Entry Form -->
       <div class="card mb-20">
         <div class="card-header">
-          <span class="card-title"><i class="fas fa-plus-circle"></i> <span id="cdFormTitle">Add Credit / Debit Note</span></span>
+          <span class="card-title"><i class="fas fa-plus-circle"></i> <span id="pnFormTitle">Add Purchase Credit / Debit Note</span></span>
         </div>
         <div class="card-body">
 
+          <!-- A purchase note adjusts MONEY against a purchase. Goods that
+               physically go back to the supplier are a Purchase Return, which
+               is a separate document and the only one that moves stock. -->
+          <div class="calc-box mb-16">
+            <p class="fs-13 mb-0"><i class="fas fa-circle-info"></i>
+              A Purchase Credit / Debit Note is a <b>financial adjustment</b> against a purchase &mdash;
+              a rate difference, a shortfall, a discount agreed after the bill. It does
+              <b>not</b> move stock. Goods physically returned to the supplier belong on a
+              <a href="purchase-returns.html">Purchase Return</a>.</p>
+          </div>
+
           <div class="form-grid cols-3 mb-16">
             <div class="form-group">
-              <label for="cdNoteType">Note Type <span class="text-required">*</span></label>
-              <select id="cdNoteType" class="form-control">
-                <option value="credit">Credit Note</option>
-                <option value="debit">Debit Note</option>
+              <label for="pnNoteType">Note Type <span class="text-required">*</span></label>
+              <select id="pnNoteType" class="form-control">
+                <option value="credit">Purchase Credit Note</option>
+                <option value="debit">Purchase Debit Note</option>
               </select>
             </div>
             <div class="form-group">
-              <label for="cdNoteNum">Note Number <span class="text-required">*</span></label>
-              <input type="text" id="cdNoteNum" class="form-control">
+              <label for="pnNoteNum">Note Number <span class="text-required">*</span></label>
+              <input type="text" id="pnNoteNum" class="form-control">
             </div>
             <div class="form-group">
-              <label for="cdNoteDate">Note Date <span class="text-required">*</span></label>
-              <input type="date" id="cdNoteDate" class="form-control">
+              <label for="pnNoteDate">Note Date <span class="text-required">*</span></label>
+              <input type="date" id="pnNoteDate" class="form-control">
+            </div>
+          </div>
+
+          <div class="form-grid cols-3 mb-16">
+            <div class="form-group">
+              <label for="pnOrigPurchase">Original Purchase Number</label>
+              <input type="text" id="pnOrigPurchase" class="form-control">
+            </div>
+            <div class="form-group">
+              <label for="pnVendorName">Supplier Name <span class="text-required">*</span></label>
+              <input type="text" id="pnVendorName" class="form-control">
+            </div>
+            <div class="form-group">
+              <label for="pnVendorGstin">Supplier GSTIN</label>
+              <input type="text" id="pnVendorGstin" class="form-control uppercase" maxlength="15" oninput="this.value=this.value.toUpperCase()">
             </div>
           </div>
 
           <div class="form-grid cols-2 mb-16">
             <div class="form-group">
-              <label for="cdOrigInv">Original Invoice Number</label>
-              <input type="text" id="cdOrigInv" class="form-control">
-            </div>
-            <div class="form-group">
-              <label class="d-flex align-center gap-8 mt-24" style="cursor:pointer;">
-                <input type="checkbox" id="cdReverseCharge">
-                <span class="fs-13">Reverses a reverse-charge invoice</span>
-              </label>
-              <small class="text-muted">Reported as <b>rchrg Y</b>. Was previously always N.</small>
-            </div>
-            <div class="form-group">
-              <label for="cdEcomGstin">E-commerce operator GSTIN</label>
-              <input type="text" id="cdEcomGstin" class="form-control" placeholder="If sold through an operator">
-            </div>
-            <div class="form-group">
-              <label class="d-flex align-center gap-8 mt-24" style="cursor:pointer;">
-                <input type="checkbox" id="cdDifferential65">
-                <span class="fs-13">Leased vehicle at 65% rate</span>
-              </label>
-              <small class="text-muted">Vehicles bought and leased before 1 July 2017 &mdash; <b>diff_percent 0.65</b>.</small>
-            </div>
-            <div class="form-group">
-              <label for="cdSupplyNature">What it reverses</label>
-              <select id="cdSupplyNature" class="form-control">
-                <option value="regular">Ordinary domestic supply</option>
-                <option value="sezwp">SEZ, with payment of IGST</option>
-                <option value="sezwop">SEZ, without payment (LUT)</option>
-                <option value="de">Deemed export</option>
-                <option value="expwp">Export, with payment of IGST</option>
-                <option value="expwop">Export, without payment (LUT)</option>
-              </select>
-              <small class="text-muted">A note reversing an SEZ supply is reported differently from an
-                ordinary one. For an unregistered customer the exact code could not be verified, so
-                that case is still written as B2CL and the export tells you to correct it on the Portal.</small>
-            </div>
-            <div class="form-group">
-              <label for="cdCustName">Customer Name <span class="text-required">*</span></label>
-              <input type="text" id="cdCustName" class="form-control">
-            </div>
-          </div>
-
-          <div class="form-grid cols-3 mb-16">
-            <div class="form-group">
-              <label for="cdGSTIN">Customer GSTIN</label>
-              <input type="text" id="cdGSTIN" class="form-control uppercase" maxlength="15" oninput="this.value=this.value.toUpperCase()">
-            </div>
-            <div class="form-group">
-              <label for="cdState">Customer State</label>
-              <select id="cdState" class="form-control">
+              <label for="pnState">Supplier State</label>
+              <select id="pnState" class="form-control">
                 <option value="">Select State</option>
               </select>
             </div>
             <div class="form-group">
-              <label for="cdReason">Reason</label>
-              <input type="text" id="cdReason" class="form-control">
+              <label for="pnReason">Reason</label>
+              <input type="text" id="pnReason" class="form-control">
             </div>
           </div>
 
-          <!-- The products this note applies to. Optional: a note without
-               items prints exactly as every note did before. The items come
-               from the invoice picked here, and only the ones ticked are
-               saved - the server re-reads them from the invoice itself. -->
-          <div class="section-title mb-14">AFFECTED PRODUCTS / ITEMS <span class="fs-11 text-muted-sm">(a note linked to an invoice must say which products it is for)</span></div>
+          <!-- The products this note applies to. The items come from the
+               purchase picked here, and only the ones ticked are saved - the
+               server re-reads them from the purchase itself. -->
+          <div class="section-title mb-14">AFFECTED PRODUCTS / ITEMS <span class="fs-11 text-muted-sm">(a note linked to a purchase must say which products it is for)</span></div>
           <div class="form-grid cols-2 mb-16">
             <div class="form-group">
-              <label for="cdInvoicePick">Original Invoice</label>
-              <select id="cdInvoicePick" class="form-control" onchange="onCDInvoicePick()">
-                <option value="">Not linked to an invoice</option>
+              <label for="pnPurchasePick">Original Purchase</label>
+              <select id="pnPurchasePick" class="form-control" onchange="onPNPurchasePick()">
+                <option value="">Not linked to a purchase</option>
               </select>
-              <small class="text-muted">Pick the invoice to list its products, then tick the ones this note is for &mdash; at least one.</small>
+              <small class="text-muted">Pick the purchase to list its products, then tick the ones this note is for &mdash; at least one.</small>
             </div>
             <div class="form-group">
               <label>Selected Products</label>
-              <div id="cdItemsSummary" class="form-control" style="background:var(--bg);cursor:default;min-height:46px;line-height:1.5;"><div>Selected Items: <b>0</b></div><div>Items Total: <b>&#8377;0.00</b></div></div>
-              <button type="button" class="btn btn-secondary btn-sm" id="cdUseItemsTotal" style="margin-top:8px;" onclick="useCDItemsTotal()" disabled><i class="fas fa-equals"></i> Use items total as taxable amount</button>
+              <div id="pnItemsSummary" class="form-control" style="background:var(--bg);cursor:default;min-height:46px;line-height:1.5;"><div>Selected Items: <b>0</b></div><div>Items Total: <b>&#8377;0.00</b></div></div>
+              <button type="button" class="btn btn-secondary btn-sm" id="pnUseItemsTotal" style="margin-top:8px;" onclick="usePNItemsTotal()" disabled><i class="fas fa-equals"></i> Use items total as taxable amount</button>
             </div>
           </div>
-          <div id="cdItemsSection" class="mb-16"></div>
+          <div id="pnItemsSection" class="mb-16"></div>
 
           <div class="section-title mb-14">Tax Details</div>
           <div class="form-grid cols-3 mb-16">
             <div class="form-group">
-              <label for="cdTaxable">Taxable Amount (&#8377;) <span class="text-required">*</span></label>
-              <input type="number" id="cdTaxable" class="form-control" min="0" step="0.01">
+              <label for="pnTaxable">Taxable Amount (&#8377;) <span class="text-required">*</span></label>
+              <input type="number" id="pnTaxable" class="form-control" min="0" step="0.01">
             </div>
             <div class="form-group">
-              <label for="cdGstPct">GST Percentage</label>
-              <select id="cdGstPct" class="form-control">
+              <label for="pnGstPct">GST Percentage</label>
+              <select id="pnGstPct" class="form-control">
                 <option value="0">0%</option>
                 <option value="5">5%</option>
                 <option value="12">12%</option>
@@ -231,8 +209,8 @@
               </select>
             </div>
             <div class="form-group">
-              <label for="cdSupply">Supply Type</label>
-              <select id="cdSupply" class="form-control">
+              <label for="pnSupply">Supply Type</label>
+              <select id="pnSupply" class="form-control">
                 <option value="intrastate">Intrastate</option>
                 <option value="interstate">Interstate</option>
               </select>
@@ -243,21 +221,21 @@
             <div class="calc-row">
               <span class="label">Tax Breakdown</span>
               <div class="calc-tax-row">
-                <span class="text-muted-sm">IGST: <b id="cdIGST">0.00</b></span>
-                <span class="text-muted-sm">CGST: <b id="cdCGST">0.00</b></span>
-                <span class="text-muted-sm">SGST: <b id="cdSGST">0.00</b></span>
+                <span class="text-muted-sm">IGST: <b id="pnIGST">0.00</b></span>
+                <span class="text-muted-sm">CGST: <b id="pnCGST">0.00</b></span>
+                <span class="text-muted-sm">SGST: <b id="pnSGST">0.00</b></span>
               </div>
-              <span class="value"><input type="text" id="cdGstAmt" class="form-control calc-input-sm" readonly aria-label="GST Amount"></span>
+              <span class="value"><input type="text" id="pnGstAmt" class="form-control calc-input-sm" readonly aria-label="GST Amount"></span>
             </div>
             <div class="calc-row total">
               <span class="label">Total Note Amount</span>
-              <span class="value"><input type="text" id="cdTotalAmt" class="form-control calc-input-total" readonly aria-label="Total Note Amount"></span>
+              <span class="value"><input type="text" id="pnTotalAmt" class="form-control calc-input-total" readonly aria-label="Total Note Amount"></span>
             </div>
           </div>
 
           <div class="btn-group">
-            <button type="button" class="btn btn-primary" id="cdSaveBtn" onclick="saveCDNote()"><i class="fas fa-save"></i> Save Note</button>
-            <button type="button" class="btn btn-secondary" onclick="resetCDNote()"><i class="fas fa-redo"></i> Reset</button>
+            <button type="button" class="btn btn-primary" id="pnSaveBtn" onclick="savePurchaseNote()"><i class="fas fa-save"></i> Save Note</button>
+            <button type="button" class="btn btn-secondary" onclick="resetPurchaseNote()"><i class="fas fa-redo"></i> Reset</button>
           </div>
         </div>
       </div>
@@ -265,11 +243,11 @@
       <!-- Table -->
       <div class="card">
         <div class="card-header">
-          <span class="card-title"><i class="fas fa-list"></i> Credit / Debit Note Records</span>
+          <span class="card-title"><i class="fas fa-list"></i> Purchase Credit / Debit Note Records</span>
           <div class="d-flex gap-10">
             <div class="search-input-wrap w-220">
               <i class="fas fa-search"></i>
-              <input type="text" id="cdSearch" class="form-control" aria-label="Search notes">
+              <input type="text" id="pnSearch" class="form-control" aria-label="Search purchase notes">
             </div>
           </div>
         </div>
@@ -282,22 +260,22 @@
                   <th>Type</th>
                   <th>Note No</th>
                   <th>Date</th>
-                  <th>Original Invoice</th>
-                  <th>Customer</th>
+                  <th>Original Purchase</th>
+                  <th>Supplier</th>
                   <th>Taxable Amt</th>
                   <th>GST%</th>
                   <th>Total Amount</th>
                   <th>Actions</th>
                 </tr>
               </thead>
-              <tbody id="cdTableBody">
+              <tbody id="pnTableBody">
                 <tr><td colspan="10" class="empty-state"><i class="fas fa-spinner fa-spin table-loading-icon"></i>Loading...</td></tr>
               </tbody>
-              <tfoot id="cdTableTotal"></tfoot>
+              <tfoot id="pnTableTotal"></tfoot>
             </table>
           </div>
           <div class="table-pagination-row">
-            <div id="cdPagination" class="pagination"></div>
+            <div id="pnPagination" class="pagination"></div>
           </div>
         </div>
       </div>
@@ -307,7 +285,7 @@
 </div>
 
 <script>
-document.addEventListener('DOMContentLoaded', initCDNotes);
+document.addEventListener('DOMContentLoaded', initPurchaseNotes);
 </script>
 
 <!-- Global Search Modal -->

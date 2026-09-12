@@ -762,6 +762,47 @@ const TABLES = {
   // the same transaction as the note and from the stored invoice - never from
   // values the browser sends - so this router serves reads alone. Deleting a
   // note removes its items through the foreign key, not through here.
+  // ── Purchase Credit / Debit Notes ─────────────────────────────────
+  // A purchase-side FINANCIAL adjustment. Not a Purchase Return: nothing
+  // here moves stock, serials or the purchase itself.
+  purchase_notes: {
+    columns: ['id','user_id','note_type','note_number','note_date',
+      'original_purchase_id','original_purchase_number','original_purchase_date',
+      'vendor_id','vendor_name','vendor_gstin','state','reason',
+      'taxable_amount','gst_percentage','gst_amount','total_amount','supply_type',
+      'igst','cgst','sgst','cess_amount','created_at','updated_at'],
+    // The purchase a note was raised against is linked only by
+    // /api/purchase_notes/save-with-items, from a purchase it has verified is
+    // this tenant's. Readable, never directly writable: through this router a
+    // client could otherwise point a note at any purchase, including another
+    // tenant's.
+    immutable: ['original_purchase_id'],
+    // A note with item details must keep adding up to them and stay at the
+    // rate they were checked against, so those fields change through the note
+    // form, where the items are checked again. Everything else - the reason,
+    // the date - stays editable here as usual.
+    async beforeWrite(db, body, { where, params }) {
+      const guarded = ['taxable_amount', 'gst_percentage', 'original_purchase_number']
+        .filter(c => Object.prototype.hasOwnProperty.call(body, c));
+      if (!guarded.length) return;
+      const { rows } = await db.query(
+        'SELECT COUNT(*)::int AS n FROM purchase_note_items '
+        + 'WHERE note_id IN (SELECT id FROM purchase_notes ' + where + ')', params);
+      if (rows[0].n > 0) {
+        const e = new Error('This note has item details, so its '
+          + guarded.map(c => c.replace(/_/g, ' ')).join(', ')
+          + ' can only be changed from the note form, where the items are checked again.');
+        e.status = 409; e.expose = true; throw e;
+      }
+    }
+  },
+  // Written only by the save route, from the stored purchase.
+  purchase_note_items: {
+    columns: ['id','user_id','note_id','product_id','product_name','hsn_code','unit',
+      'quantity','rate','discount_percentage','gst_percentage','cess_rate',
+      'taxable_value','sort_order','created_at','updated_at'],
+    readOnly: true
+  },
   cdn_note_items: {
     columns: ['id','user_id','note_id','product_id','product_name','hsn_code','unit',
       'quantity','rate','taxable_value','sort_order','created_at','updated_at'],

@@ -762,6 +762,70 @@ CREATE TABLE IF NOT EXISTS purchase_return_items (
 
 CREATE INDEX IF NOT EXISTS idx_purchase_return_items_return ON purchase_return_items(return_id);
 
+-- ── Purchase Credit / Debit Notes (header) ────────────────
+-- A FINANCIAL adjustment against a completed purchase - a rate difference,
+-- a shortfall, a discount agreed after the bill. Deliberately NOT a
+-- Purchase Return: a return moves goods and stock, this moves money only.
+-- Nothing on the purchase side of the app reads these rows to change stock.
+CREATE TABLE IF NOT EXISTS purchase_notes (
+  id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
+  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  note_type TEXT NOT NULL CHECK (note_type IN ('credit','debit')),
+  note_number TEXT NOT NULL,
+  note_date DATE NOT NULL,
+  original_purchase_id UUID REFERENCES purchases(id) ON DELETE SET NULL,
+  original_purchase_number TEXT,
+  original_purchase_date DATE,
+  vendor_id UUID REFERENCES vendors(id) ON DELETE SET NULL,
+  vendor_name TEXT NOT NULL,
+  vendor_gstin TEXT,
+  state TEXT,
+  reason TEXT,
+  taxable_amount DECIMAL(15,2) NOT NULL,
+  gst_percentage DECIMAL(5,2) NOT NULL,
+  gst_amount DECIMAL(15,2) NOT NULL DEFAULT 0,
+  total_amount DECIMAL(15,2) NOT NULL DEFAULT 0,
+  supply_type TEXT NOT NULL CHECK (supply_type IN ('intrastate','interstate')),
+  igst DECIMAL(15,2) DEFAULT 0,
+  cgst DECIMAL(15,2) DEFAULT 0,
+  sgst DECIMAL(15,2) DEFAULT 0,
+  cess_amount DECIMAL(15,2) DEFAULT 0,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW(),
+  CONSTRAINT purchase_notes_id_user_key UNIQUE (id, user_id)
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_purchase_notes_number ON purchase_notes (user_id, note_number);
+CREATE INDEX IF NOT EXISTS idx_purchase_notes_date ON purchase_notes (user_id, note_date);
+CREATE INDEX IF NOT EXISTS idx_purchase_notes_source ON purchase_notes (original_purchase_id);
+
+-- ── Purchase Credit / Debit Note items ────────────────────
+-- A snapshot of the purchase lines the note was raised against, taken when
+-- the note is saved. Not a reference to purchase_items, whose rows are
+-- replaced whenever a purchase is saved, and never the Product Master.
+CREATE TABLE IF NOT EXISTS purchase_note_items (
+  id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
+  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  note_id UUID NOT NULL,
+  product_id UUID REFERENCES products(id) ON DELETE SET NULL,
+  product_name TEXT NOT NULL,
+  hsn_code TEXT,
+  unit TEXT,
+  quantity DECIMAL(15,3),
+  rate DECIMAL(15,2),
+  discount_percentage DECIMAL(5,2) NOT NULL DEFAULT 0,
+  gst_percentage DECIMAL(5,2) NOT NULL DEFAULT 0,
+  cess_rate DECIMAL(6,3) NOT NULL DEFAULT 0,
+  taxable_value DECIMAL(15,2),
+  sort_order INTEGER NOT NULL DEFAULT 0,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW(),
+  CONSTRAINT purchase_note_items_note_fk FOREIGN KEY (note_id, user_id)
+    REFERENCES purchase_notes (id, user_id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_purchase_note_items_note ON purchase_note_items (note_id, sort_order);
+
 -- ── Expense Categories ────────────────────────────────
 CREATE TABLE IF NOT EXISTS expense_categories (
   id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,

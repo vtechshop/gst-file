@@ -216,7 +216,7 @@ test('M1 the migration creates cdn_note_items with the approved columns, key and
   assert.match(sql, /CREATE INDEX IF NOT EXISTS idx_cdn_note_items_note ON cdn_note_items \(note_id, sort_order\);/);
 });
 
-test('M2 the migration is additive, runs in the runner\'s transaction, and is last in the manifest', () => {
+test('M2 the migration is additive, runs in the runner\'s transaction, and is ordered in the manifest', () => {
   const sql = sqlCode(MIGRATION);
   for (const bad of [/\bDROP\b/i, /\bTRUNCATE\b/i, /\bDELETE\s+FROM\b/i, /\bUPDATE\s+\w+\s+SET\b/i, /\bINSERT\s+INTO\b/i]) {
     assert.ok(!bad.test(sql), 'the migration must not change data: ' + bad);
@@ -224,8 +224,21 @@ test('M2 the migration is additive, runs in the runner\'s transaction, and is la
   assert.ok(!/^\s*BEGIN\s*;/mi.test(sql), 'it must not open its own transaction');
   const order = MANIFEST.order;
   assert.strictEqual(order.filter(f => f === 'migration_cdn_note_items.sql').length, 1, 'listed once');
-  assert.strictEqual(order[order.length - 1], 'migration_cdn_note_items.sql', 'appended last');
+  assert.ok(order.includes('migration_cdn_note_items.sql'), 'listed in the execution order');
+  // Deliberately NOT "it is the last entry". That held only while this was
+  // the newest migration; the project has since added others, and the
+  // manifest is an append-only ordering, not a claim about which change came
+  // last. Nothing creates cdn_notes in a migration - it comes from the base
+  // schema - so there is no predecessor here to order this one against.
   assert.ok(!order.some(f => /backfill/i.test(f)), 'no backfill');
+  assert.strictEqual(order.length, new Set(order).size, 'no migration is listed twice');
+  // The manifest is the execution order, so it and the directory must agree
+  // exactly: a listed file that is absent stops a run part-way through, and
+  // a file on disk that is unlisted never runs at all.
+  const migrationDir = path.join(ROOT, 'server', 'db', 'migrations');
+  const onDisk = fs.readdirSync(migrationDir).filter(f => /\.sql$/.test(f)).sort();
+  assert.deepStrictEqual([...order].sort(), onDisk,
+    'the manifest and the directory must agree - no missing or unlisted migration');
 });
 
 test('M3 schema.sql declares the same table, after the tables its keys point at', () => {
