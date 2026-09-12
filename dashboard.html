@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Dashboard - GST Management System</title>
-  <link rel="stylesheet" href="client/css/style.css?v=35">
+  <link rel="stylesheet" href="client/css/style.css?v=36">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
   <script src="shared/india-districts.js?v=29"></script>
@@ -18,11 +18,11 @@
   <script src="client/js/pages/profile.js?v=39"></script>
   <script src="client/js/reports/dashboard.js?v=29"></script>
 </head>
-<body>
+<body class="dashboard-page">
 <div class="app-layout">
 
   <!-- Sidebar -->
-  <aside class="sidebar">
+  <aside class="sidebar" id="appSidebar" aria-label="Main menu">
     <a class="sidebar-brand" href="dashboard.html">
       <div class="brand-icon"><i class="fas fa-file-invoice-dollar"></i></div>
       <span>GST Invoice<br>Management</span>
@@ -92,7 +92,7 @@
   <!-- Main Content -->
   <div class="main-content">
     <div class="top-bar">
-      <button type="button" class="menu-toggle" id="menuToggle" aria-label="Toggle sidebar menu"><i class="fas fa-bars"></i></button>
+      <button type="button" class="menu-toggle" id="menuToggle" aria-label="Toggle sidebar menu" aria-controls="appSidebar" aria-expanded="false" title="Menu"><i class="fas fa-bars"></i></button>
       <span class="page-title"><i class="fas fa-tachometer-alt"></i>Dashboard</span>
       <div class="dash-header-controls">
         <button type="button" class="btn btn-secondary btn-sm btn-icon" onclick="openGlobalSearch()" title="Search everywhere (Ctrl+K)" aria-label="Global search"><i class="fas fa-search"></i></button>
@@ -222,7 +222,7 @@
         <div class="card-header">
           <span class="card-title"><i class="fas fa-bolt"></i> Quick Actions</span>
         </div>
-        <div class="card-body d-flex gap-12 flex-wrap">
+        <div class="card-body d-flex gap-12 flex-wrap dash-quick-actions">
           <a href="invoice.html" class="btn btn-primary"><i class="fas fa-plus"></i> New Invoice</a>
           <a href="hsn.html"   class="btn btn-secondary"><i class="fas fa-barcode"></i> HSN Summary</a>
           <a href="reports.html" class="btn btn-info"><i class="fas fa-chart-bar"></i> View Reports</a>
@@ -813,11 +813,45 @@ function confirmClearData() {
   });
 }
 
+// ── Mobile drawer: accessibility ────────────────────────
+// setupMobileMenu() (utils.js) still opens and closes the drawer. This
+// keeps the hamburger's aria-expanded in step with it, whoever toggled
+// it, and adds the keyboard half: opening moves focus into the menu,
+// Escape closes it and hands focus back, and tabbing out of it closes it.
+// Below 768px the closed drawer is visibility:hidden (style.css), so its
+// links stay out of the tab order until it is opened.
+function setupDrawerA11y() {
+  const toggle = document.getElementById('menuToggle');
+  const sidebar = document.getElementById('appSidebar');
+  if (!toggle || !sidebar) return;
+  const isOpen = () => sidebar.classList.contains('open');
+  const sync = () => {
+    toggle.setAttribute('aria-expanded', String(isOpen()));
+    if (isOpen() && document.activeElement === toggle) {
+      const first = sidebar.querySelector('.menu-item.active') || sidebar.querySelector('a[href], button');
+      if (first) first.focus();
+    }
+  };
+  new MutationObserver(sync).observe(sidebar, { attributes: true, attributeFilter: ['class'] });
+  sync();
+  document.addEventListener('keydown', e => {
+    if (e.key === 'Escape' && isOpen()) {
+      sidebar.classList.remove('open');
+      toggle.focus();
+    }
+  });
+  sidebar.addEventListener('focusout', e => {
+    const next = e.relatedTarget;
+    if (isOpen() && next && !sidebar.contains(next) && next !== toggle) sidebar.classList.remove('open');
+  });
+}
+
 // ── Init ────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', async () => {
   populateYearDropdown();
   updatePeriodLabel();
   setupMobileMenu();
+  setupDrawerA11y();
   setupLogoutBtn();
   refreshStorageStatus();          // show storage counts immediately
   showLoader();

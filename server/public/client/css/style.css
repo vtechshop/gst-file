@@ -1097,6 +1097,112 @@ tr.row-skip { opacity: 0.5; }
 .mini-list-row { display: flex; justify-content: space-between; gap: 10px; padding: 7px 0; border-bottom: 1px dashed var(--border); font-size: 13px; }
 .mini-list-row:last-child { border-bottom: none; }
 
+/* ---- Dashboard: tablet & phone ----
+   Scoped to body.dashboard-page so no other page changes, and only inside
+   max-width queries so desktop (769px and up) renders exactly as before.
+
+   Why the right-hand cards were cut off: at 768px and below .stat-grid
+   became repeat(2, 1fr). A bare 1fr track is minmax(auto, 1fr), and that
+   "auto" floors each column at its card's min-content width - the nowrap
+   label plus the nowrap amount, ~225px. Two of those need ~467px, so on a
+   320-430px phone the grid ran past the screen and .main-content's
+   overflow-x:hidden cut the second column off. The page itself never
+   scrolled sideways, which is why the check on it never caught this.
+   Every track below is floored at 0 or at min(100%, ...), so a grid is
+   sized by the screen, never by the text inside it. */
+@media (max-width: 768px) {
+  /* Header: wraps instead of spilling out of a fixed 60px bar. */
+  .dashboard-page .top-bar { height: auto; min-height: var(--header-h); flex-wrap: wrap; padding: 8px 16px; gap: 8px 12px; }
+  .dashboard-page .menu-toggle { display: inline-flex; align-items: center; justify-content: center; width: 44px; height: 44px; margin-left: -8px; flex-shrink: 0; }
+  .dashboard-page .menu-toggle:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+  .dashboard-page .dash-header-controls .btn-icon { width: 44px; height: 44px; justify-content: center; }
+  .dashboard-page .dash-select-year,
+  .dashboard-page .dash-select-month { min-height: 44px; }
+
+  /* Drawer: still the .open class setupMobileMenu() toggles. Closed, it is
+     also visibility:hidden, so its links leave the tab order; the delay
+     keeps it visible while it slides out. The backdrop is simply a tap
+     target for the existing outside-click close. */
+  .dashboard-page .sidebar { visibility: hidden; transition: transform 0.3s, visibility 0s linear 0.3s; }
+  .dashboard-page .sidebar.open { visibility: visible; transition: transform 0.3s; }
+  .dashboard-page .sidebar.open ~ .main-content::after { content: ''; position: fixed; inset: 0; background: rgba(0,0,0,0.35); z-index: 150; }
+  /* .menu-item's transition:all also animates the visibility it inherits
+     from the drawer, so for the first frame after opening the links are
+     still hidden and cannot take focus. Only the hover properties need to
+     animate. */
+  .dashboard-page .menu-item { transition: background-color 0.2s, color 0.2s, border-color 0.2s; }
+
+  /* Local storage: status and actions on one line, the counts beneath. */
+  .dashboard-page .storage-bar { padding: 12px 14px; gap: 10px 12px; }
+  .dashboard-page .storage-actions { order: 1; margin-left: auto; flex-wrap: wrap; }
+  .dashboard-page .storage-stats { order: 2; flex: 1 1 100%; display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 120px), 1fr)); gap: 4px 16px; }
+  .dashboard-page .storage-stats > span { min-width: 0; overflow-wrap: anywhere; }
+  .dashboard-page .storage-stats > span:last-child { grid-column: 1 / -1; }
+  .dashboard-page .storage-actions .btn { min-height: 44px; justify-content: center; }
+  .dashboard-page .storage-actions .btn-clear-data { min-width: 44px; }
+
+  /* Summary cards: as many 190px+ columns as fit - three at 768px, two
+     from 431px. Labels wrap rather than being cut to an ellipsis. */
+  .dashboard-page .stat-grid { grid-template-columns: repeat(auto-fill, minmax(min(100%, 190px), 1fr)); gap: 12px; margin-bottom: 18px; }
+  .dashboard-page .stat-card { padding: 14px; gap: 10px; }
+  .dashboard-page .stat-card .stat-icon { width: 36px; height: 36px; font-size: 16px; }
+  .dashboard-page .stat-label { white-space: normal; overflow-wrap: anywhere; line-height: 1.35; }
+
+  /* Charts and insight lists: two up on a tablet, one on a phone. */
+  .dashboard-page .chart-grid { grid-template-columns: repeat(auto-fill, minmax(min(100%, 300px), 1fr)); gap: 14px; }
+  .dashboard-page .mini-list-row > span { min-width: 0; overflow-wrap: anywhere; }
+  .dashboard-page .mini-list-row > b { flex-shrink: 0; text-align: right; }
+
+  .dashboard-page .dash-quick-actions .btn { min-height: 44px; justify-content: center; }
+}
+
+@media (max-width: 768px) and (prefers-reduced-motion: reduce) {
+  .dashboard-page .sidebar,
+  .dashboard-page .sidebar.open { transition: none; }
+}
+
+@media (max-width: 430px) {
+  .dashboard-page .content { padding: 12px; }
+
+  /* Header in two compact rows: menu, title and period; then search, year
+     and month. display:contents lets the period badge join the title row,
+     and ::after is the line break in front of the controls. Tab order is
+     unchanged - the badge is not focusable. */
+  .dashboard-page .top-bar { padding: 6px 12px 8px; gap: 6px 8px; }
+  .dashboard-page .top-bar::after { content: ''; order: 2; flex-basis: 100%; }
+  .dashboard-page .dash-header-controls { display: contents; }
+  .dashboard-page .period-badge { order: 1; margin-left: auto; font-size: 11.5px; padding: 4px 10px; }
+  .dashboard-page .dash-header-controls > .btn-icon,
+  .dashboard-page .dash-select-year,
+  .dashboard-page .dash-select-month { order: 3; }
+  .dashboard-page .dash-select-year { flex: 0 0 92px; width: auto; }
+  .dashboard-page .dash-select-month { flex: 1 1 0; width: auto; min-width: 0; }
+
+  /* Local storage: status, the counts two to a row, then the three
+     actions sharing the full width. */
+  .dashboard-page .storage-bar { padding: 12px; }
+  .dashboard-page .storage-stats { order: 0; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .dashboard-page .storage-actions { order: 0; margin-left: 0; flex: 1 1 100%; }
+  .dashboard-page .storage-actions .btn { flex: 1 1 0; }
+  .dashboard-page .storage-actions .btn-clear-data { flex: 0 0 44px; }
+
+  /* Summary cards: two columns, icon above the figures, so each amount
+     has the whole card width. fitStatValues() still shrinks one only if
+     it would not fit. */
+  .dashboard-page .stat-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin-bottom: 16px; }
+  .dashboard-page .stat-card { flex-direction: column; gap: 8px; padding: 12px; }
+  .dashboard-page .stat-card .stat-icon { width: 32px; height: 32px; font-size: 14px; border-radius: 8px; }
+  .dashboard-page .stat-info { align-self: stretch; }
+  .dashboard-page .stat-value { text-align: left; }
+
+  .dashboard-page .chart-grid { gap: 12px; margin-top: 16px; }
+  .dashboard-page .content > .card.mt-24 { margin-top: 16px; }
+  .dashboard-page .chart-card { padding: 14px; }
+  .dashboard-page .card-header { padding: 12px 14px; }
+  .dashboard-page .dash-quick-actions { padding: 14px; gap: 10px; }
+  .dashboard-page .dash-quick-actions .btn { flex: 1 1 140px; }
+}
+
 /* ---- Bulk action bar ---- */
 .bulk-bar { padding: 10px 20px; border-bottom: 1px solid var(--border); background: var(--primary-xlight); }
 
