@@ -315,12 +315,26 @@ test('C13 the page loads what the PDF needs, and reuses the shared helpers', asy
   }
 });
 
+// The Purchase Order PDF has since been redesigned under its own approved
+// change, so "unmodified" is no longer the right test for that one file.
+// It is pinned by content instead: Credit/Debit Note work still cannot
+// touch it, and any further edit fails here until it is approved and this
+// digest is updated deliberately. The rest stay pinned to untouched.
+const APPROVED_PO_PDF_SHA256 = 'a6679111dd76c63c34454757e10bda3cd9324dc5af563773d1716e5c8a987feb';
+
 test('C14 no other PDF module was modified', async () => {
   const { execSync } = require('child_process');
   const changed = execSync('git status --porcelain -- client/js/pages/invoice-pdf.js '
-    + 'client/js/pages/proforma-pdf.js client/js/pages/sales-return-pdf.js '
-    + 'client/js/pages/purchase-order-pdf.js', { cwd: ROOT, encoding: 'utf8' }).trim();
+    + 'client/js/pages/proforma-pdf.js client/js/pages/sales-return-pdf.js',
+  { cwd: ROOT, encoding: 'utf8' }).trim();
   assert.strictEqual(changed, '', 'the existing PDF modules must be untouched');
+
+  // Line endings differ between checkouts; the content does not.
+  const po = require('crypto').createHash('sha256')
+    .update(rd('client', 'js', 'pages', 'purchase-order-pdf.js').replace(/\r\n/g, '\n')).digest('hex');
+  assert.strictEqual(po, APPROVED_PO_PDF_SHA256,
+    'purchase-order-pdf.js is not the approved Purchase Order redesign - Credit/Debit Note work must not '
+    + 'modify it, and any further Purchase Order change needs its own approval and this digest updated');
 });
 
 // ═══════════════════════════════════════════════════════════════════════
