@@ -292,7 +292,7 @@ test('W3 the page picks an invoice by table and id, and saves only the ticked li
     assert.ok(CDHTML.includes(`id="${id}"`), 'cdnotes.html must have #' + id);
   }
   assert.match(CDHTML, /cdnote-pdf\.js\?v=4/);
-  assert.match(CDHTML, /cdnotes\.js\?v=32/);
+  assert.match(CDHTML, /cdnotes\.js\?v=33/);
 });
 
 test('W4 the PDF lists only the stored snapshot, re-read with the note on every download', () => {
@@ -819,8 +819,14 @@ test('D10 MANDATORY an edit replaces the items atomically: Qty 2 / 6000 becomes 
     items: [{ invoice_item_id: L_B, quantity: 2 }] });
   assert.strictEqual(r.status, 200, errOf(r));
   assert.deepStrictEqual((await itemsOf(id)).map(x => x.product_name), ['Coconut Scraper Machine']);
-  // Removing every item turns it back into a note without items.
+  // A note still on its invoice must keep saying which products it covers,
+  // so emptying the selection is refused and the items it had survive.
   r = await save({ editId: id, header: header('credit', 'CN-EDIT', 6000), invoice: A1(), items: [] });
+  assert.strictEqual(r.status, 400);
+  assert.match(errOf(r), /must say which items it covers/);
+  assert.deepStrictEqual((await itemsOf(id)).map(x => x.product_name), ['Coconut Scraper Machine']);
+  // Taking it off the invoice is how it becomes a note without items again.
+  r = await save({ editId: id, header: header('credit', 'CN-EDIT', 6000, { original_invoice: 'PAPER-ONLY' }), items: [] });
   assert.strictEqual(r.status, 200, errOf(r));
   assert.strictEqual((await itemsOf(id)).length, 0);
   const orphans = (await db.query(
@@ -930,6 +936,38 @@ test('D15 a note saved without items has no ITEM DETAILS', async () => {
     assert.ok(!text.includes('ITEM DETAILS'));
     assert.ok(text.includes('DEBIT NOTE') && text.includes('Rs.1,180.00'));
   }
+});
+
+test('D18 MANDATORY a note on a chosen invoice cannot be saved without naming its products', async () => {
+  // An invoice was chosen and no line was ticked: refused, nothing written.
+  const r = await save({ header: header('credit', 'CN-NOITEMS', 6000), invoice: A1(), items: [] });
+  assert.strictEqual(r.status, 400);
+  assert.match(errOf(r), /must say which items it covers/);
+  const written = (await db.query('SELECT COUNT(*)::int n FROM cdn_notes WHERE user_id = $1 AND note_number = $2',
+    [USER_A, 'CN-NOITEMS'])).rows[0].n;
+  assert.strictEqual(written, 0, 'the note must not exist');
+  // Leaving the items key out entirely is the same thing.
+  const none = await save({ header: header('credit', 'CN-NOITEMS2', 6000), invoice: A1() });
+  assert.strictEqual(none.status, 400);
+  assert.match(errOf(none), /must say which items it covers/);
+  // A note that names no invoice may still carry no products, exactly as
+  // every note written before item details existed does.
+  const free = await save({ header: header('credit', 'CN-FREE', 6000, { original_invoice: 'PAPER-ONLY' }), items: [] });
+  assert.strictEqual(free.status, 200, errOf(free));
+  assert.strictEqual((await itemsOf(free.body.id)).length, 0);
+});
+
+test('D19 the page shows the affected products prominently and refuses an empty selection', () => {
+  assert.match(CDHTML, /AFFECTED PRODUCTS \/ ITEMS/, 'the section must be titled for the products');
+  assert.match(CDHTML, /Selected Items:/, 'the count is shown');
+  assert.match(CDHTML, /Items Total:/, 'the total is shown');
+  const page = code(CDPAGE);
+  for (const head of ['Product', 'HSN/SAC', 'Invoice Qty', 'Note Qty', 'Rate', 'Taxable Amount', 'GST%']) {
+    assert.ok(page.includes(head), 'the item table must carry the column ' + head);
+  }
+  // Told before the round trip, and the server still has the final word.
+  assert.match(page, /if \(cdPicked && !picked\.length\)/);
+  assert.match(page, /must say which items it covers/);
 });
 
 test('D16 the save route and the item read are authenticated', async () => {

@@ -265,17 +265,21 @@ function renderCDItemsSummary() {
   if (!el) return;
   const lines = cdSelectedLines();
   if (!lines.length) {
-    el.textContent = cdOrphanItems.length ? 'Saved items cannot be checked' : 'No items selected';
+    el.innerHTML = cdOrphanItems.length
+      ? '<div>Saved items cannot be checked</div>'
+      : '<div>Selected Items: <b>0</b></div><div>Items Total: <b>&#8377;0.00</b></div>';
     if (btn) btn.disabled = true;
     return;
   }
   const sum = cdSelectedTotal();
   const taxable = parseFloat(document.getElementById('cdTaxable')?.value) || 0;
   const match = Math.round(sum * 100) === Math.round(taxable * 100);
-  el.innerHTML = `${lines.length} item${lines.length === 1 ? '' : 's'} &middot; &#8377;${formatNum(sum)} `
+  el.innerHTML = `<div>Selected Items: <b>${lines.length}</b></div>`
+    + `<div>Items Total: <b>&#8377;${formatNum(sum)}</b> `
     + (match
       ? '<span style="color:#2e7d32;">&#10003; matches the taxable amount</span>'
-      : `<span style="color:#c62828;">&ne; taxable amount &#8377;${formatNum(taxable)}</span>`);
+      : `<span style="color:#c62828;">&ne; taxable amount &#8377;${formatNum(taxable)}</span>`)
+    + '</div>';
   if (btn) btn.disabled = match;
 }
 
@@ -321,6 +325,13 @@ async function saveCDNote() {
   // The same two checks the server makes, made first so the user is told
   // before a round trip. The server's answer is the one that counts.
   const picked = cdSelectedLines();
+  // A note raised against an invoice has to say which of its products it
+  // covers. Leaving the invoice unselected is still how a note without
+  // product details is written.
+  if (cdPicked && !picked.length) {
+    showToast('Tick the product(s) this note is for. A note linked to an invoice must say which items it covers.', 'error');
+    return;
+  }
   if (picked.length) {
     const offRate = picked.find(l => !cdSameRate(l.gst_percentage, gstPct));
     if (offRate) {

@@ -218,6 +218,16 @@ router.post('/save-with-items', asyncRoute(async (req, res) => {
       }
     }
 
+    // A note raised against an invoice the user CHOSE must name the products
+    // it covers - "which items is this note for" is the whole point of the
+    // link. Checked after the invoice and its customer, so those refusals
+    // keep their own wording. A note linked only by a typed number is left
+    // alone: that is how every note read before items existed, and a legacy
+    // note must not become unsaveable.
+    if (invoice && !snapshot.length) {
+      refuse('Select the product(s) this note is for - a note linked to an invoice must say which items it covers.');
+    }
+
     // ── The note ──
     const own = { ...header };
     if (inv) {

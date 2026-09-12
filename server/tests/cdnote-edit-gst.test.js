@@ -207,5 +207,5 @@ test('G6 an itemised note keeps the rate its items are checked against', async (
 });
 
 test('G7 the page ships with a new cache key so browsers take the fix', () => {
-  assert.match(CDHTML, /client\/js\/pages\/cdnotes\.js\?v=32/);
+  assert.match(CDHTML, /client\/js\/pages\/cdnotes\.js\?v=33/);
 });
