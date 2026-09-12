@@ -66,6 +66,66 @@ function managesOwnTransaction(sql) {
   return /^\s*BEGIN\s*;/mi.test(sql);
 }
 
+// Which tables a migration is responsible for creating, read from the
+// migration itself. Evidence, not a hand-maintained list: if a file says
+// CREATE TABLE IF NOT EXISTS x, then x is its effect and must exist before
+// anyone may claim the migration is applied.
+//
+// A migration that creates no table - one that only adds a column, widens a
+// CHECK or builds an index - has no owned table here. Those are NOT
+// validated by this rule; baseline reports them as unverified rather than
+// pretending to have checked them.
+function ownedTables(sql) {
+  const out = [];
+  const re = /CREATE\s+TABLE\s+IF\s+NOT\s+EXISTS\s+([a-z0-9_]+)/gi;
+  let m;
+  while ((m = re.exec(sql)) !== null) {
+    const t = m[1].toLowerCase();
+    if (!out.includes(t)) out.push(t);
+  }
+  return out;
+}
+
+// Of the tables a migration claims to create, which are absent from this
+// database? Anything returned here is proof that baselining the migration
+// would be a lie.
+async function missingTablesFor(client, sql) {
+  const owned = ownedTables(sql);
+  if (!owned.length) return { owned, missing: [] };
+  const { rows } = await client.query(
+    `SELECT t AS name, to_regclass('public.' || t) IS NOT NULL AS present
+       FROM unnest($1::text[]) AS t`, [owned]);
+  return { owned, missing: rows.filter(r => !r.present).map(r => r.name) };
+}
+
+// The operator-facing guard.
+//
+// baseline says "this database already has these effects". That is a claim
+// only a human can make, and getting it wrong is unrecoverable: the
+// migration is recorded, never runs, and the schema it would have created
+// is missing forever. So before the CLI baselines anything, every migration
+// about to be recorded is checked against the database it is being recorded
+// into.
+//
+// Deliberately NOT inside run(): the library contract is "record without
+// executing", which the migrator's own tests pin, and which a caller may
+// legitimately want. This is the safety net for the command an operator
+// types.
+//
+// Migrations held back with --except are not being baselined, so they are
+// not validated here.
+async function validateBaselineTargets(client, plan, except) {
+  const targets = plan.filter(m => !except.includes(m.id));
+  const divergent = [];
+  const unverifiable = [];
+  for (const m of targets) {
+    const { owned, missing } = await missingTablesFor(client, m.sql);
+    if (missing.length) divergent.push({ id: m.id, filename: m.filename, missing });
+    else if (!owned.length) unverifiable.push(m.id);
+  }
+  return { divergent, unverifiable, checked: targets.length };
+}
+
 // Reads the manifest and the directory, and refuses to continue if they
 // disagree. A file present but unlisted would be silently skipped forever;
 // a file listed but absent would fail halfway through a run. Both are
@@ -305,7 +365,8 @@ async function run(pool, { mode = 'up', log = console.log, confirmBaseline = fal
   }
 }
 
-module.exports = { run, loadPlan, checksum, idOf, managesOwnTransaction, LOCK_KEY, MIGRATIONS_DIR, TABLE_DDL };
+module.exports = { run, loadPlan, checksum, idOf, managesOwnTransaction, ownedTables,
+  missingTablesFor, validateBaselineTargets, LOCK_KEY, MIGRATIONS_DIR, TABLE_DDL };
 
 // ── CLI ──────────────────────────────────────────────
 // node src/db/migrator.js [status|up|baseline] [--yes]
@@ -338,7 +399,38 @@ if (require.main === module) {
   }
   const pool = require('../config/pool');
   console.log(`\nmigrations: ${mode}${except.length ? `  (excluding ${except.join(', ')})` : ''}`);
-  run(pool, { mode, confirmBaseline: args.includes('--yes'), except })
+
+  // Baseline is the one command that can quietly make a database lie about
+  // itself. Check before anything is written; on refusal nothing is
+  // recorded and no migration SQL is executed.
+  const preflight = mode !== 'baseline' ? Promise.resolve(null) : (async () => {
+    const client = await pool.connect();
+    try {
+      const applied = (await tableExists(client)) ? await readApplied(client) : new Map();
+      const pending = loadPlan().filter(m => !applied.has(m.id));
+      const { divergent, unverifiable, checked } = await validateBaselineTargets(client, pending, except);
+      if (divergent.length) {
+        const detail = divergent.map(d => `    ${d.filename}  — missing: ${d.missing.join(', ')}`).join('\n');
+        throw new Error(
+          `refusing to baseline ${divergent.length} of ${checked} migration(s): this database does `
+          + `not have the tables they create.\n${detail}\n`
+          + '  Baselining them would record them as applied while their schema is absent, and they\n'
+          + '  would never run again. This database is not at the baseline it is being told to claim.\n'
+          + '  Next: apply the missing schema first (db/schema/schema.sql on a fresh database, or the\n'
+          + '  specific migrations), or baseline only what is really there using --except.');
+      }
+      if (unverifiable.length) {
+        console.log(`  note: ${unverifiable.length} migration(s) create no table, so this check `
+          + 'could not verify them: ' + unverifiable.join(', '));
+      }
+      return null;
+    } finally {
+      client.release();
+    }
+  })();
+
+  preflight
+    .then(() => run(pool, { mode, confirmBaseline: args.includes('--yes'), except }))
     .then((r) => {
       if (mode === 'up' && r.applied.length) console.log(`\n  ${r.applied.length} migration(s) applied.`);
       console.log('');

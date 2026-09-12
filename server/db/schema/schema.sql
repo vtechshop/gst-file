@@ -762,6 +762,240 @@ CREATE TABLE IF NOT EXISTS purchase_return_items (
 
 CREATE INDEX IF NOT EXISTS idx_purchase_return_items_return ON purchase_return_items(return_id);
 
+-- ══ Purchase Orders and the Stock ledger ══
+-- These arrived as migrations after the first consolidation of this file and
+-- were, for a time, missing from it: a database built from schema.sql alone
+-- had neither, while the application required both. Declared here so this
+-- file is once again the complete current baseline.
+--
+-- Order below is fixed by the foreign keys, not by preference:
+--   stock_locations before stock_balances and stock_movements.location_id
+--   purchase_orders before purchase_order_items before stock_serials
+--   stock_serials   before stock_movements.serial_id
+
+-- ── Purchase Orders (header) ──────────────────────────
+-- A pre-document: it commits to buying, moves no stock, and is numbered
+-- from the document book (documents.js), unlike purchases which are typed.
+CREATE TABLE IF NOT EXISTS purchase_orders (
+  id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
+  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  document_number TEXT NOT NULL,
+  document_date DATE NOT NULL,
+  document_series TEXT NOT NULL DEFAULT 'purchase_order',
+  status TEXT NOT NULL DEFAULT 'DRAFT'
+    CHECK (status IN ('DRAFT','SENT','CONFIRMED','PARTIALLY_RECEIVED','FULLY_RECEIVED','CANCELLED','CLOSED')),
+  vendor_id UUID REFERENCES vendors(id) ON DELETE SET NULL,
+  vendor_name TEXT NOT NULL,
+  vendor_gstin TEXT,
+  phone TEXT,
+  address TEXT,
+  state TEXT,
+  district TEXT,
+  gst_category TEXT NOT NULL DEFAULT 'regular',
+  purchase_representative TEXT,
+  logistics_mode TEXT,
+  logistics_notes TEXT,
+  payment_terms TEXT,
+  expected_delivery_date DATE,
+  delivery_address TEXT,
+  delivery_state TEXT,
+  delivery_district TEXT,
+  supply_type TEXT NOT NULL DEFAULT 'intrastate'
+    CHECK (supply_type IN ('intrastate','interstate')),
+  taxable_amount DECIMAL(15,2) NOT NULL DEFAULT 0,
+  gst_percentage DECIMAL(5,2) NOT NULL DEFAULT 0,
+  gst_amount DECIMAL(15,2) NOT NULL DEFAULT 0,
+  igst DECIMAL(15,2) NOT NULL DEFAULT 0,
+  cgst DECIMAL(15,2) NOT NULL DEFAULT 0,
+  sgst DECIMAL(15,2) NOT NULL DEFAULT 0,
+  cess_amount DECIMAL(15,2) NOT NULL DEFAULT 0,
+  total_amount DECIMAL(15,2) NOT NULL DEFAULT 0,
+  terms TEXT,
+  notes TEXT,
+  cancelled_at TIMESTAMPTZ,
+  cancelled_by UUID REFERENCES users(id) ON DELETE SET NULL,
+  cancel_reason TEXT,
+  created_by UUID REFERENCES users(id) ON DELETE SET NULL,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_purchase_orders_user_date ON purchase_orders (user_id, document_date DESC);
+CREATE INDEX IF NOT EXISTS idx_purchase_orders_user_status ON purchase_orders (user_id, status);
+CREATE INDEX IF NOT EXISTS idx_purchase_orders_vendor ON purchase_orders (user_id, vendor_id);
+-- One number per tenant per series, case-insensitively.
+CREATE UNIQUE INDEX IF NOT EXISTS uq_purchase_orders_user_series_number
+  ON purchase_orders (user_id, document_series, upper(document_number));
+
+-- ── Purchase Order line items ─────────────────────────
+-- received_quantity is kept in step with receipts by routes/purchases.js;
+-- the CHECK is what makes over-receipt impossible rather than merely
+-- discouraged.
+CREATE TABLE IF NOT EXISTS purchase_order_items (
+  id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
+  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  purchase_order_id UUID NOT NULL REFERENCES purchase_orders(id) ON DELETE CASCADE,
+  product_id UUID REFERENCES products(id) ON DELETE SET NULL,
+  product_name TEXT NOT NULL,
+  hsn_code TEXT,
+  unit TEXT,
+  quantity DECIMAL(15,3) NOT NULL CHECK (quantity > 0),
+  received_quantity DECIMAL(15,3) NOT NULL DEFAULT 0 CHECK (received_quantity >= 0),
+  rate DECIMAL(15,2) NOT NULL DEFAULT 0,
+  discount_percentage DECIMAL(5,2) NOT NULL DEFAULT 0,
+  gst_percentage DECIMAL(5,2) NOT NULL DEFAULT 0,
+  taxable_value DECIMAL(15,2) NOT NULL DEFAULT 0,
+  gst_amount DECIMAL(15,2) NOT NULL DEFAULT 0,
+  igst DECIMAL(15,2) NOT NULL DEFAULT 0,
+  cgst DECIMAL(15,2) NOT NULL DEFAULT 0,
+  sgst DECIMAL(15,2) NOT NULL DEFAULT 0,
+  total_amount DECIMAL(15,2) NOT NULL DEFAULT 0,
+  gst_treatment TEXT NOT NULL DEFAULT 'taxable',
+  cess_rate DECIMAL(6,3) NOT NULL DEFAULT 0,
+  cess_amount DECIMAL(15,2) NOT NULL DEFAULT 0,
+  sort_order INTEGER NOT NULL DEFAULT 0,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW(),
+  CONSTRAINT purchase_order_items_no_over_receipt_check CHECK (received_quantity <= quantity)
+);
+
+CREATE INDEX IF NOT EXISTS idx_purchase_order_items_parent
+  ON purchase_order_items (purchase_order_id, sort_order);
+
+-- ── Stock locations ───────────────────────────────────
+-- A tenant may have none; stock then has no location and the columns
+-- referencing this table stay NULL.
+CREATE TABLE IF NOT EXISTS stock_locations (
+  id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
+  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  name TEXT NOT NULL,
+  code TEXT,
+  is_default BOOLEAN NOT NULL DEFAULT FALSE,
+  active BOOLEAN NOT NULL DEFAULT TRUE,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_stock_locations_user ON stock_locations (user_id, active, name);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_stock_locations_one_default
+  ON stock_locations (user_id) WHERE is_default;
+CREATE UNIQUE INDEX IF NOT EXISTS uq_stock_locations_user_code
+  ON stock_locations (user_id, lower(code)) WHERE code IS NOT NULL;
+
+-- ── Stock balances, per product per location ──────────
+CREATE TABLE IF NOT EXISTS stock_balances (
+  id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
+  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  product_id UUID NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+  location_id UUID NOT NULL REFERENCES stock_locations(id) ON DELETE RESTRICT,
+  quantity DECIMAL(15,3) NOT NULL DEFAULT 0 CHECK (quantity >= 0),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_stock_balances_user_location ON stock_balances (user_id, location_id);
+CREATE INDEX IF NOT EXISTS idx_stock_balances_user_product ON stock_balances (user_id, product_id);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_stock_balances_user_product_location
+  ON stock_balances (user_id, product_id, location_id);
+
+-- ── Serialised units ──────────────────────────────────
+-- One row per physical unit. status covers the supplier- and customer-return
+-- states added by later migrations; the source/sold/returned column triples
+-- name the DOCUMENT a unit came from or went out on, always by its stable
+-- header id - never a line id, because line rows are replaced on every save.
+CREATE TABLE IF NOT EXISTS stock_serials (
+  id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
+  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  product_id UUID NOT NULL REFERENCES products(id) ON DELETE RESTRICT,
+  serial_no TEXT NOT NULL CHECK (btrim(serial_no) <> ''),
+  status TEXT NOT NULL DEFAULT 'AVAILABLE'
+    CHECK (status IN ('AVAILABLE','SOLD','RETURNED','RETURNED_TO_SUPPLIER','DAMAGED','SCRAPPED')),
+  location_id UUID REFERENCES stock_locations(id) ON DELETE SET NULL,
+  source_type TEXT,
+  source_id UUID,
+  purchase_order_item_id UUID REFERENCES purchase_order_items(id) ON DELETE SET NULL,
+  sold_source_type TEXT,
+  sold_source_id UUID,
+  notes TEXT,
+  created_by UUID REFERENCES users(id) ON DELETE SET NULL,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW(),
+  supplier_return_type TEXT,
+  supplier_return_id UUID,
+  returned_source_type TEXT,
+  returned_source_id UUID
+);
+
+CREATE INDEX IF NOT EXISTS idx_stock_serials_user_product_status
+  ON stock_serials (user_id, product_id, status);
+CREATE INDEX IF NOT EXISTS idx_stock_serials_location
+  ON stock_serials (user_id, location_id, status) WHERE location_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_stock_serials_source
+  ON stock_serials (user_id, source_type, source_id) WHERE source_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_stock_serials_sold_source
+  ON stock_serials (user_id, sold_source_type, sold_source_id) WHERE sold_source_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_stock_serials_supplier_return
+  ON stock_serials (user_id, supplier_return_type, supplier_return_id) WHERE supplier_return_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_stock_serials_returned_source
+  ON stock_serials (user_id, returned_source_type, returned_source_id) WHERE returned_source_id IS NOT NULL;
+-- One serial per tenant, compared without case or surrounding space.
+CREATE UNIQUE INDEX IF NOT EXISTS uq_stock_serials_user_serial
+  ON stock_serials (user_id, upper(btrim(serial_no)));
+
+-- ── The stock ledger ──────────────────────────────────
+-- Append-only. Every movement records what moved, which way, how much, the
+-- balance it produced, and the document behind it. movement_type carries the
+-- full set including the transfer pair; the transfer shape CHECK is what
+-- keeps a transfer from being recorded with only one end.
+CREATE TABLE IF NOT EXISTS stock_movements (
+  id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
+  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  product_id UUID NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+  movement_type TEXT NOT NULL
+    CHECK (movement_type IN (
+      'OPENING',
+      'PURCHASE','PURCHASE_RETURN',
+      'SALE','SALES_RETURN',
+      'ADJUSTMENT_IN','ADJUSTMENT_OUT',
+      'DAMAGE','SCRAP','CONSUMPTION','SAMPLE','FREE_ISSUE',
+      'TRANSFER_IN','TRANSFER_OUT')),
+  direction TEXT NOT NULL CHECK (direction IN ('IN','OUT')),
+  quantity DECIMAL(15,3) NOT NULL CHECK (quantity > 0),
+  unit TEXT,
+  rate DECIMAL(15,2),
+  balance_after DECIMAL(15,3) NOT NULL,
+  source_type TEXT,
+  source_id UUID,
+  source_item_id UUID,
+  reason TEXT,
+  notes TEXT,
+  created_by UUID REFERENCES users(id) ON DELETE SET NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  location_id UUID REFERENCES stock_locations(id) ON DELETE RESTRICT,
+  to_location_id UUID REFERENCES stock_locations(id) ON DELETE RESTRICT,
+  transfer_id UUID,
+  serial_id UUID REFERENCES stock_serials(id) ON DELETE SET NULL,
+  CONSTRAINT stock_movements_transfer_shape_check CHECK (
+    ((movement_type IN ('TRANSFER_IN','TRANSFER_OUT'))
+       AND to_location_id IS NOT NULL AND transfer_id IS NOT NULL)
+    OR
+    ((movement_type NOT IN ('TRANSFER_IN','TRANSFER_OUT'))
+       AND to_location_id IS NULL AND transfer_id IS NULL))
+);
+
+CREATE INDEX IF NOT EXISTS idx_stock_movements_user_created ON stock_movements (user_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_stock_movements_user_product_created
+  ON stock_movements (user_id, product_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_stock_movements_user_type ON stock_movements (user_id, movement_type);
+CREATE INDEX IF NOT EXISTS idx_stock_movements_source ON stock_movements (user_id, source_type, source_id);
+CREATE INDEX IF NOT EXISTS idx_stock_movements_user_location
+  ON stock_movements (user_id, location_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_stock_movements_serial
+  ON stock_movements (serial_id, created_at) WHERE serial_id IS NOT NULL;
+-- One transfer reference produces one pair of movements, never two.
+CREATE UNIQUE INDEX IF NOT EXISTS uq_stock_movements_transfer_half
+  ON stock_movements (transfer_id, movement_type) WHERE transfer_id IS NOT NULL;
+
 -- ── Purchase Credit / Debit Notes (header) ────────────────
 -- A FINANCIAL adjustment against a completed purchase - a rate difference,
 -- a shortfall, a discount agreed after the bill. Deliberately NOT a
