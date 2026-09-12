@@ -211,12 +211,30 @@ function renderCDItems() {
   }
 
   const notePct = Number(document.getElementById('cdGstPct')?.value || 0);
+  // A percentage as it is stored: "0.00" reads as 0, and a missing one as 0.
+  const pct = v => (v === null || v === undefined || v === '' ? '0' : String(Number(v)));
+  // Left of Note Qty every figure is the INVOICE's own, shown so the user can
+  // see exactly which product the note is being raised against; none of them
+  // is editable. Right of it are the note's: the quantity they may change,
+  // the rate carried from the invoice, and what that comes to - from
+  // cdLineTaxable(), the one helper that values an item here and in the
+  // summary below.
   box.innerHTML = `
     <div class="table-wrapper"><table class="data-table">
       <thead><tr>
-        <th style="width:36px;"></th><th>Product</th><th>HSN/SAC</th>
-        <th class="text-right">Invoice Qty</th><th class="text-right" style="min-width:110px;">Note Qty</th>
-        <th class="text-right">Rate</th><th class="text-right">Taxable Amount</th><th class="text-center">GST%</th>
+        <th style="width:36px;"></th>
+        <th class="min-w-280">Product</th>
+        <th style="min-width:92px;">HSN/SAC</th>
+        <th style="min-width:62px;">Unit</th>
+        <th class="text-right" style="min-width:88px;">Invoice Qty</th>
+        <th class="text-right" style="min-width:100px;">Invoice Rate</th>
+        <th class="text-right" style="min-width:112px;">Invoice Amount</th>
+        <th class="text-right" style="min-width:104px;">Note Qty</th>
+        <th class="text-right" style="min-width:100px;">Note Rate</th>
+        <th class="text-center" style="min-width:84px;">Discount %</th>
+        <th class="text-center" style="min-width:70px;">GST %</th>
+        <th class="text-center" style="min-width:70px;">Cess %</th>
+        <th class="text-right" style="min-width:126px;">Note Taxable Amount</th>
       </tr></thead>
       <tbody>${cdInvoiceLines.map(l => {
         const on = cdSelected.has(l.id);
@@ -225,15 +243,20 @@ function renderCDItems() {
         return `<tr>
           <td><input type="checkbox" ${on ? 'checked' : ''} onchange="toggleCDItem('${l.id}', this.checked)" aria-label="Include ${escItemHtml(l.product_name)}"></td>
           <td>${escItemHtml(l.product_name)}</td>
-          <td>${escItemHtml(l.hsn_code || '—')}</td>
-          <td class="text-right">${Number(l.quantity)} ${escItemHtml(l.unit || '')}</td>
-          <td class="text-right"><input type="number" class="form-control calc-input-sm" min="0" step="any" max="${Number(l.quantity)}"
+          <td>${escItemHtml(l.hsn_code || '&mdash;')}</td>
+          <td>${escItemHtml(l.unit || '&mdash;')}</td>
+          <td class="text-right">${Number(l.quantity)}</td>
+          <td class="text-right">&#8377;${formatNum(l.rate)}</td>
+          <td class="text-right">&#8377;${formatNum(l.taxable_value)}</td>
+          <td class="text-right"><input type="number" class="form-control calc-input-sm" style="width:88px;" min="0" step="any" max="${Number(l.quantity)}"
             value="${escItemHtml(qty)}" ${on ? '' : 'disabled'} oninput="setCDItemQty('${l.id}', this.value)" aria-label="Quantity on this note"></td>
           <td class="text-right">&#8377;${formatNum(l.rate)}</td>
-          <td class="text-right" id="cdItemTax-${l.id}">${on ? '&#8377;' + formatNum(cdLineTaxable(l, qty)) : '&mdash;'}</td>
+          <td class="text-center">${pct(l.discount_percentage)}%</td>
           <td class="text-center">${on && !rateOk
             ? `<b style="color:#c62828;" title="This note is at ${notePct}%">${Number(l.gst_percentage)}%</b>`
             : Number(l.gst_percentage) + '%'}</td>
+          <td class="text-center">${pct(l.cess_rate)}%</td>
+          <td class="text-right" id="cdItemTax-${l.id}">${on ? '&#8377;' + formatNum(cdLineTaxable(l, qty)) : '&mdash;'}</td>
         </tr>`;
       }).join('')}</tbody>
     </table></div>`;

@@ -79,10 +79,12 @@ const cdMoney = v => (v === null || v === undefined || v === '' ? '-' : formatNu
 
 // The item table's columns, across the full 182mm between the margins.
 const CD_ITEM_COLS = [
-  { head: 'Product / Item', w: 86, align: 'left' },
-  { head: 'HSN/SAC', w: 24, align: 'left' },
-  { head: 'Qty', w: 22, align: 'right' },
-  { head: 'Rate', w: 24, align: 'right' },
+  { head: 'Product / Item', w: 66, align: 'left' },
+  { head: 'HSN/SAC', w: 22, align: 'left' },
+  { head: 'Unit', w: 14, align: 'left' },
+  { head: 'Qty', w: 18, align: 'right' },
+  { head: 'Rate', w: 22, align: 'right' },
+  { head: 'GST %', w: 14, align: 'right' },
   { head: 'Taxable Amount', w: 26, align: 'right' }
 ];
 
@@ -91,7 +93,7 @@ const CD_ITEM_COLS = [
 // document's own: a row that would run past the foot of the page starts the
 // next one, with the column heads drawn again at its top. Returns where the
 // next section may begin.
-function drawCDNoteItems(doc, items, top, { L, R, accent }) {
+function drawCDNoteItems(doc, items, top, { L, R, accent, gstPct }) {
   const floor = doc.internal.pageSize.height - 20;       // clear of "Page n of m"
   // The Tax Invoice's item-head tint, from the same accent.
   const tint = [Math.min(accent[0] + 224, 255), Math.min(accent[1] + 165, 255), Math.min(accent[2] + 177, 255)];
@@ -118,6 +120,13 @@ function drawCDNoteItems(doc, items, top, { L, R, accent }) {
   };
   drawHeads();
 
+  // One note, one GST rate: the server refuses an item charged at any other
+  // rate, so the note's own rate is every line's rate. Nothing is derived
+  // here and no figure is recomputed - the rate is printed beside the
+  // product it belongs to so the reader can see what the note covers.
+  const gstText = (gstPct === null || gstPct === undefined || gstPct === '')
+    ? '-' : cdRate(gstPct) + '%';
+
   for (const it of items) {
     doc.setFontSize(8); doc.setFont('helvetica', 'normal');
     const nameLines = doc.splitTextToSize(String(it.product_name || '-'), CD_ITEM_COLS[0].w - PAD * 2);
@@ -129,11 +138,14 @@ function drawCDNoteItems(doc, items, top, { L, R, accent }) {
     doc.setTextColor(40, 40, 40);
     const base = y + 4;
     doc.text(nameLines, cellX(0), base);
-    const qty = cdQty(it.quantity);
+    // Unit stands in its own column - never glued onto the quantity - so the
+    // affected product reads at a glance.
     [
       it.hsn_code || '-',
-      qty === '-' ? '-' : qty + (it.unit ? ' ' + it.unit : ''),
+      it.unit || '-',
+      cdQty(it.quantity),
       cdMoney(it.rate),
+      gstText,
       cdMoney(it.taxable_value)
     ].forEach((v, j) => doc.text(String(v), cellX(j + 1), base, { align: CD_ITEM_COLS[j + 1].align }));
     doc.setDrawColor(178, 223, 219);
@@ -269,7 +281,9 @@ async function buildCDNotePDFDoc(note, items) {
   // never the invoice's other products, and never every product on the
   // invoice unless every one was chosen. The note's own figures below stay
   // authoritative: nothing here adds the rows up or derives a tax from them.
-  if (noteItems.length) y = drawCDNoteItems(doc, noteItems, y, { L, R, accent });
+  if (noteItems.length) {
+    y = drawCDNoteItems(doc, noteItems, y, { L, R, accent, gstPct: note.gst_percentage });
+  }
 
   if (y > 210) { doc.addPage(); y = 20; }
 

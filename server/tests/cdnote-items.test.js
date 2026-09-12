@@ -291,8 +291,8 @@ test('W3 the page picks an invoice by table and id, and saves only the ticked li
   for (const id of ['cdInvoicePick', 'cdItemsSection', 'cdItemsSummary', 'cdUseItemsTotal']) {
     assert.ok(CDHTML.includes(`id="${id}"`), 'cdnotes.html must have #' + id);
   }
-  assert.match(CDHTML, /cdnote-pdf\.js\?v=4/);
-  assert.match(CDHTML, /cdnotes\.js\?v=33/);
+  assert.match(CDHTML, /cdnote-pdf\.js\?v=5/);
+  assert.match(CDHTML, /cdnotes\.js\?v=34/);
 });
 
 test('W4 the PDF lists only the stored snapshot, re-read with the note on every download', () => {
@@ -332,10 +332,16 @@ test('W5 Sales Return and the other PDF modules are untouched', () => {
 
 renderTest('I1 a single-product Credit Note lists that product, and only that product', async () => {
   const { text, pages } = await render(CREDIT_B, [ITEM_B]);
-  for (const s of ['ITEM DETAILS', 'Product / Item', 'HSN/SAC', 'Qty', 'Rate', 'Taxable Amount',
-    'Coconut Scraper Machine', '85094010', '2 PCS', '3,000.00', '6,000.00']) {
+  for (const s of ['ITEM DETAILS', 'Product / Item', 'HSN/SAC', 'Unit', 'Qty', 'Rate', 'GST %',
+    'Taxable Amount', 'Coconut Scraper Machine', '85094010', 'PCS', '3,000.00', '6,000.00']) {
     assert.ok(text.includes(s), 'missing: ' + s);
   }
+  // The unit has a column of its own: a reader should not have to pick it
+  // out of the quantity.
+  assert.ok(!text.includes('2 PCS'), 'the quantity and the unit must not share a cell');
+  // The note's rate is printed against the product it applies to - once in
+  // the tax breakup, and once on the line itself.
+  assert.ok(count(text, '18%') >= 2, 'the line must carry its GST rate, not only the breakup');
   assert.ok(!text.includes('Chapathi'), 'a product the note is not for must not appear');
   assert.strictEqual(count(text, 'Coconut Scraper Machine'), 1, 'one row, not a duplicate');
   // Credit wording throughout, and the note's own totals.
@@ -348,10 +354,11 @@ renderTest('I1 a single-product Credit Note lists that product, and only that pr
 
 renderTest('I2 a single-product Debit Note lists that product with debit wording', async () => {
   const { text, pages } = await render(DEBIT_A, [ITEM_A]);
-  for (const s of ['ITEM DETAILS', 'Chapathi Press Machine 8 Inch', '84388090', '1 PCS', '27,000.00',
+  for (const s of ['ITEM DETAILS', 'Chapathi Press Machine 8 Inch', '84388090', 'PCS', '27,000.00',
     'DEBIT NOTE', 'DEBITED TO', 'Total Debit Amount', 'Rs.31,860.00']) {
     assert.ok(text.includes(s), 'missing: ' + s);
   }
+  assert.ok(!text.includes('1 PCS'), 'the quantity and the unit must not share a cell');
   assert.ok(!text.includes('Coconut'));
   assert.ok(!/CREDIT/.test(text), 'no credit wording on a debit note');
   assert.strictEqual(pages, 1);
@@ -367,9 +374,21 @@ for (const [label, note] of [['Credit', CREDIT_AB], ['Debit', DEBIT_AB]]) {
     const a = calls.find(c => c.s === 'Chapathi Press Machine 8 Inch');
     const b = calls.find(c => c.s === 'Coconut Scraper Machine');
     assert.ok(a && b && b.y > a.y, 'two rows, not one cell');
-    for (const s of ['84388090', '85094010', '1 PCS', '2 PCS', '27,000.00', '6,000.00', 'Rs.33,000.00', 'Rs.38,940.00']) {
+    for (const s of ['84388090', '85094010', 'PCS', '27,000.00', '6,000.00', 'Rs.33,000.00', 'Rs.38,940.00']) {
       assert.ok(text.includes(s), 'missing: ' + s);
     }
+    // Cell by cell: the unit has a column of its own, the quantity is a
+    // number on its own, and the note's one GST rate is printed against the
+    // product it applies to.
+    const rowOf = name => calls
+      .filter(c => c.k === 'text' && Math.abs(c.y - calls.find(x => x.s === name).y) < 1e-6)
+      .map(c => c.s);
+    assert.deepStrictEqual(rowOf('Chapathi Press Machine 8 Inch'),
+      ['Chapathi Press Machine 8 Inch', '84388090', 'PCS', '1', '27,000.00', '18%', '27,000.00']);
+    assert.deepStrictEqual(rowOf('Coconut Scraper Machine'),
+      ['Coconut Scraper Machine', '85094010', 'PCS', '2', '3,000.00', '18%', '6,000.00']);
+    assert.ok(!text.includes('1 PCS') && !text.includes('2 PCS'),
+      'the quantity and the unit must not share a cell');
     assert.ok(text.includes(label === 'Credit' ? 'Total Credit Amount' : 'Total Debit Amount'));
     assert.strictEqual(pages, 1, 'a two-product note with five bank lines stays on one page');
   });
@@ -469,7 +488,10 @@ renderTest('I8 missing snapshot values print as a dash, never as an invented fig
   const { calls } = await render(CREDIT_B, [bare]);
   const row = calls.filter(c => c.k === 'text' && Math.abs(c.y - calls.find(x => x.s === 'Service Visit').y) < 1e-6);
   const cells = row.map(c => c.s);
-  assert.deepStrictEqual(cells, ['Service Visit', '-', '-', '-', '6,000.00']);
+  // hsn, unit, quantity and rate are all absent, so all four are dashes. The
+  // GST cell is the NOTE's own rate, which is a stored figure, not one
+  // invented for the line.
+  assert.deepStrictEqual(cells, ['Service Visit', '-', '-', '-', '-', '18%', '6,000.00']);
 });
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -962,9 +984,21 @@ test('D19 the page shows the affected products prominently and refuses an empty 
   assert.match(CDHTML, /Selected Items:/, 'the count is shown');
   assert.match(CDHTML, /Items Total:/, 'the total is shown');
   const page = code(CDPAGE);
-  for (const head of ['Product', 'HSN/SAC', 'Invoice Qty', 'Note Qty', 'Rate', 'Taxable Amount', 'GST%']) {
+  // The invoice's own figures, then the note's - enough to see exactly which
+  // product the note is being raised against.
+  for (const head of ['Product', 'HSN/SAC', 'Unit', 'Invoice Qty', 'Invoice Rate', 'Invoice Amount',
+    'Note Qty', 'Note Rate', 'Discount %', 'GST %', 'Cess %', 'Note Taxable Amount']) {
     assert.ok(page.includes(head), 'the item table must carry the column ' + head);
   }
+  // Only the quantity may be typed into. The invoice's values and the note's
+  // rate are shown, never edited - a second editable rate would be a second
+  // way to value a line.
+  const rows = page.slice(page.indexOf('function renderCDItems()'),
+    page.indexOf('function toggleCDItem'));
+  assert.strictEqual((rows.match(/type="number"/g) || []).length, 1,
+    'Note Qty is the only editable figure - Note Rate and the invoice values are display-only');
+  assert.match(rows, /cdLineTaxable\(l, qty\)/,
+    'the row total must come from the existing helper, not a second calculation');
   // Told before the round trip, and the server still has the final word.
   assert.match(page, /if \(cdPicked && !picked\.length\)/);
   assert.match(page, /must say which items it covers/);
