@@ -404,9 +404,18 @@ function poPdfTerms(doc, y, order, buyer) {
 
 // ── signatures ────────────────────────────────────────────────────────
 // The supplier signs the copy they return, so their block is left blank on
-// purpose. Ours carries the seal and signature from the profile, if they
-// have been configured.
-function poPdfSignatures(doc, y, buyer) {
+// purpose. Ours is signed exactly as a Tax Invoice is: the stamp measured
+// by its visible ink rather than by the file's edges, the caption above it,
+// the signature beside it across a small gap, then the rule and
+// "Authorized Signatory" beneath. Seal and signature are centred as one
+// group, so the pair reads as a single approval mark. inkBoundsOf() and placeInk() are
+// invoice-pdf.js's own helpers, loaded beside this file - not copies. When
+// they are absent the marks still draw, from the file's edges.
+const PO_SEAL = 19;          // mm across the visible stamp
+const PO_SIG_OF_SEAL = 0.9;  // the signature, as a fraction of that width
+const PO_MARK_GAP = 4;       // mm of air between the stamp and the signature
+
+async function poPdfSignatures(doc, y, buyer) {
   const M = PO_PDF.MARGIN;
   const R = PO_PDF.PAGE_W - M;
   const gap = 6;
@@ -414,8 +423,8 @@ function poPdfSignatures(doc, y, buyer) {
   // Every mark inside the block is placed against blockH, so the seal, the
   // signature, the rule and the caption keep their order and never sit on
   // top of one another.
-  const blockH = 38;
-  const ruleY = y + blockH - 7;
+  const blockH = 40;
+  const ruleY = y + blockH - 5.5;
 
   y = poPdfSpace(doc, y, blockH);
 
@@ -444,40 +453,72 @@ function poPdfSignatures(doc, y, buyer) {
     sy += 8;
   });
 
-  // our side: For <company>, then the seal and the signature side by side,
-  // then the caption - the whole group centred on the panel. The marks are
-  // laid out from the width of what the profile actually holds, so one on
-  // its own is centred too rather than sitting where the pair would start.
+  // our side: For <company>, the stamp with the signature on it, then the
+  // rule and the caption - every one of them centred on the panel, so the
+  // block reads as one approval mark however many assets are configured.
   const bx = M + w + gap;
   const cx = bx + w / 2;
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(8.5);
-  doc.text('For ' + String(buyer.name).toUpperCase(), cx, y + 12.5, { align: 'center' });
+  doc.text('For ' + String(buyer.name).toUpperCase(), cx, y + 11, { align: 'center' });
 
-  // Both marks finish above the rule; the caption sits below it.
-  const markTop = y + 13.5;
-  const SEAL = 16, SIGN_W = 28, SIGN_H = 11, MARK_GAP = 4;
-  const hasSeal = !!buyer.seal, hasSign = !!buyer.signature;
-  const groupW = (hasSeal ? SEAL : 0) + (hasSign ? SIGN_W : 0) + (hasSeal && hasSign ? MARK_GAP : 0);
-  let mx = cx - groupW / 2;
-  if (hasSeal) {
-    try { doc.addImage(buyer.seal, 'PNG', mx, markTop, SEAL, SEAL); } catch (e) { /* optional */ }
-    mx += SEAL + MARK_GAP;
+  const measure = (typeof inkBoundsOf === 'function') ? inkBoundsOf : async () => null;
+  const place = (typeof placeInk === 'function') ? placeInk : null;
+  const [sealInk, sigInk] = await Promise.all([measure(buyer.seal), measure(buyer.signature)]);
+
+  // One group, centred as a whole: the stamp, a small gap, the signature.
+  // Both ink boxes are worked out before anything is drawn, because centring
+  // each mark on the panel in turn would stack one on top of the other.
+  const markTop = y + 12.5;
+  const SB = sealInk || { x: 0, y: 0, w: 1, h: 1, imgW: 1, imgH: 1 };
+  const GB = sigInk || { x: 0, y: 0, w: 1, h: 1, imgW: 1, imgH: 1 };
+  const sealTall = (SB.h / SB.w) * (SB.imgH / SB.imgW);   // ink height per unit of width
+  const sigTall = (GB.h / GB.w) * (GB.imgH / GB.imgW);
+  const sealW = buyer.seal ? PO_SEAL / Math.max(1, sealTall) : 0;   // a tall stamp is not blown up
+  const sealH = sealW * sealTall;
+  let sigW = buyer.signature ? PO_SEAL * PO_SIG_OF_SEAL : 0;
+  let sigH = sigW * sigTall;
+  const sigCap = (sealH || PO_SEAL) * 0.75;               // never overpowers the stamp
+  if (sigH > sigCap) { sigW *= sigCap / sigH; sigH = sigCap; }
+
+  // With one asset missing its gap collapses, so the survivor centres alone.
+  const markGap = (sealW && sigW) ? PO_MARK_GAP : 0;
+  const left = cx - (sealW + markGap + sigW) / 2;
+  const sealCx = left + sealW / 2;
+  const sigCx = left + sealW + markGap + sigW / 2;
+  const midY = markTop + (sealH || PO_SEAL) / 2;          // one centre line for both
+
+  if (buyer.seal) {
+    if (place) {
+      const s = place(sealInk, sealW, sealCx, markTop);
+      try { doc.addImage(buyer.seal, 'PNG', s.x, s.y, s.w, s.h); } catch (e) { /* optional */ }
+    } else {
+      try { doc.addImage(buyer.seal, 'PNG', sealCx - sealW / 2, markTop, sealW, sealH); } catch (e) { /* optional */ }
+    }
   }
-  if (hasSign) {
-    // Centred against the seal, which is the taller of the two.
-    try { doc.addImage(buyer.signature, 'PNG', mx, markTop + (SEAL - SIGN_H) / 2, SIGN_W, SIGN_H); } catch (e) { /* optional */ }
+  if (buyer.signature) {
+    if (place) {
+      const g = place(sigInk, sigW, sigCx, 0);
+      g.y = midY - GB.y * g.h - g.inkH / 2;               // sits on the stamp's centre line
+      try { doc.addImage(buyer.signature, 'PNG', g.x, g.y, g.w, g.h); } catch (e) { /* optional */ }
+    } else {
+      try { doc.addImage(buyer.signature, 'PNG', sigCx - sigW / 2, midY - sigH / 2, sigW, sigH); } catch (e) { /* optional */ }
+    }
   }
+
   doc.setDrawColor.apply(doc, PO_PDF.RULE);
-  doc.line(bx + 4, ruleY, bx + w - 4, ruleY);
+  doc.line(cx - 22, ruleY, cx + 22, ruleY);
   doc.setFont('helvetica', 'normal');
   doc.setFontSize(8);
-  doc.text('Authorized Signatory', cx, ruleY + 4.5, { align: 'center' });
+  doc.text('Authorized Signatory', cx, ruleY + 4, { align: 'center' });
 
   return y + blockH + 4;
 }
 
-function generatePurchaseOrderPDF(order, items, mode) {
+// Async because the stamp is measured from its own pixels before it is
+// placed - see poPdfSignatures(). The callers fire and forget, exactly as
+// they did; the document is finished before it is saved or printed.
+async function generatePurchaseOrderPDF(order, items, mode) {
   const { jsPDF } = window.jspdf;
   const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
   const M = PO_PDF.MARGIN;
@@ -528,7 +569,7 @@ function generatePurchaseOrderPDF(order, items, mode) {
 
   y = poPdfSummary(doc, y, order, buyer);
   y = poPdfTerms(doc, y, order, buyer);
-  poPdfSignatures(doc, y, buyer);
+  await poPdfSignatures(doc, y, buyer);
 
   poPdfFooters(doc, order, buyer);
 

@@ -22,7 +22,10 @@
 
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.31/jspdf.plugin.autotable.min.js"></script>
-  <script src="client/js/pages/purchase-order-pdf.js?v=2"></script>
+  <!-- invoice-pdf.js first: the order is signed with the Tax Invoice's own
+       ink-measuring helpers, reused rather than copied. -->
+  <script src="client/js/pages/invoice-pdf.js?v=39"></script>
+  <script src="client/js/pages/purchase-order-pdf.js?v=3"></script>
   <script src="client/js/pages/purchase-order-list.js?v=1"></script>
 </head>
 <body>

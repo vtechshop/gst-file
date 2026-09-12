@@ -320,7 +320,7 @@ test('C13 the page loads what the PDF needs, and reuses the shared helpers', asy
 // It is pinned by content instead: Credit/Debit Note work still cannot
 // touch it, and any further edit fails here until it is approved and this
 // digest is updated deliberately. The rest stay pinned to untouched.
-const APPROVED_PO_PDF_SHA256 = '002752cdf0deaf798d9359e60be493d7b24eb612b80c702ec26665ae94fa78a4';
+const APPROVED_PO_PDF_SHA256 = '331ae4705c81539d9178f3f5657ab00b6ff67c581e82077d666c34456f4f408a';
 
 test('C14 no other PDF module was modified', async () => {
   const { execSync } = require('child_process');

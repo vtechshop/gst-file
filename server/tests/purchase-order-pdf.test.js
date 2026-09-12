@@ -80,6 +80,11 @@ function load(profile) {
   vm.runInContext(fs.readFileSync(JSPDF_FILE, 'utf8'), sb, { filename: 'jspdf.umd.min.js' });
   vm.runInContext(fs.readFileSync(AUTOTABLE_FILE, 'utf8'), sb, { filename: 'jspdf.plugin.autotable.min.js' });
   vm.runInContext(rd('client', 'js', 'utilities', 'utils.js'), sb, { filename: 'utils.js' });
+  // The pages load invoice-pdf.js before this one, for inkBoundsOf() and
+  // placeInk(); the sandbox does the same. Without a canvas, inkBoundsOf()
+  // returns null and placeInk() falls back to the file's own edges - which
+  // is the path a broken or unmeasurable image takes in the browser too.
+  vm.runInContext(rd('client', 'js', 'pages', 'invoice-pdf.js'), sb, { filename: 'invoice-pdf.js' });
   vm.runInContext(POPDF, sb, { filename: 'purchase-order-pdf.js' });
   vm.runInContext(`
     showToast = function () {};
@@ -131,12 +136,20 @@ function pdfText(buf) {
   return shown.join('\n');
 }
 
-function render(order, items, profile) {
+async function render(order, items, profile, ink) {
   const sb = load(profile);
+  // In the browser inkBoundsOf() measures the pixels, and the renderer centres
+  // the VISIBLE ink rather than the file. The sandbox has no canvas, so a case
+  // that cares about that path hands the measurements in itself.
+  if (ink) {
+    vm.runInContext('inkBoundsOf = async function (u) { return ('
+      + JSON.stringify(ink) + ')[u] || null; };', sb);
+  }
   sb.__docs.length = 0;
   sb.__images.length = 0;
   sb.__texts.length = 0;
-  vm.runInContext('generatePurchaseOrderPDF(' + JSON.stringify(order) + ',' + JSON.stringify(items) + ', "save")', sb);
+  // The renderer measures the stamp before placing it, so it is a promise.
+  await vm.runInContext('generatePurchaseOrderPDF(' + JSON.stringify(order) + ',' + JSON.stringify(items) + ', "save")', sb);
   const doc = sb.__docs[sb.__docs.length - 1];
   const buf = Buffer.from(doc.output('arraybuffer'));
   return { text: pdfText(buf), pages: doc.internal.getNumberOfPages(), images: sb.__images.slice(),
@@ -183,8 +196,8 @@ const MANY = [
 //  The document
 // ══════════════════════════════════════════════════════════════════════
 
-renderTest('O1 a one-item order carries the whole company letterhead and the order facts', () => {
-  const { text } = render(mkOrder({}, ONE), ONE);
+renderTest('O1 a one-item order carries the whole company letterhead and the order facts', async () => {
+  const { text } = await render(mkOrder({}, ONE), ONE);
   for (const s of ['VTECH KITCHEN EQUIPMENTS', '9/83 E, 4th Street Extension, T Balan Nagar',
     'Coimbatore, Tamil Nadu', 'GSTIN: 33AAAAA0000A1Z5', 'PAN: AAAAA0000A',
     'PURCHASE ORDER', 'PO No: PO/2026/09/0005', 'Order Date: 09-09-2026', 'CONFIRMED',
@@ -195,8 +208,8 @@ renderTest('O1 a one-item order carries the whole company letterhead and the ord
   }
 });
 
-renderTest('O2 the item table prints every stored column of every line', () => {
-  const { text } = render(mkOrder({}, MANY), MANY);
+renderTest('O2 the item table prints every stored column of every line', async () => {
+  const { text } = await render(mkOrder({}, MANY), MANY);
   for (const s of ['DESCRIPTION', 'HSN/SAC', 'QTY', 'UNIT', 'UNIT PRICE', 'GST %', 'TAX', 'AMOUNT']) {
     assert.ok(text.includes(s), 'missing column head: ' + s);
   }
@@ -210,9 +223,9 @@ renderTest('O2 the item table prints every stored column of every line', () => {
   }
 });
 
-renderTest('O3 an intra-state order prints CGST and SGST, and no IGST row', () => {
+renderTest('O3 an intra-state order prints CGST and SGST, and no IGST row', async () => {
   const order = mkOrder({}, MANY);
-  const { text } = render(order, MANY);
+  const { text } = await render(order, MANY);
   assert.ok(text.includes('Untaxed Amount'));
   assert.ok(text.includes('CGST') && text.includes('SGST'), 'CGST/SGST must be printed');
   assert.ok(!/\bIGST\b/.test(text), 'an intra-state order must not carry an IGST row');
@@ -222,43 +235,43 @@ renderTest('O3 an intra-state order prints CGST and SGST, and no IGST row', () =
   assert.ok(text.includes('TOTAL PO VALUE'));
 });
 
-renderTest('O4 an inter-state order prints IGST alone', () => {
+renderTest('O4 an inter-state order prints IGST alone', async () => {
   const order = mkOrder({ state: 'Karnataka', vendor_gstin: '29AAACK1234C1Z9' }, MANY, true);
-  const { text } = render(order, MANY);
+  const { text } = await render(order, MANY);
   assert.ok(text.includes('IGST'), 'IGST must be printed');
   assert.ok(!/\bCGST\b/.test(text) && !/\bSGST\b/.test(text), 'no CGST/SGST on an inter-state order');
   assert.ok(text.includes(Number(order.igst).toLocaleString('en-IN', { minimumFractionDigits: 2 })));
 });
 
-renderTest('O5 the amount in words comes from the shared helper, on the stored total', () => {
+renderTest('O5 the amount in words comes from the shared helper, on the stored total', async () => {
   const order = mkOrder({}, ONE);
-  const { text } = render(order, ONE);
+  const { text } = await render(order, ONE);
   assert.ok(text.includes('AMOUNT IN WORDS'));
   // 3,68,750 -> the app's own numberToWordsINR wording
   assert.ok(text.includes('Three Lakh Sixty Eight Thousand Seven Hundred and Fifty Rupees Only'),
     'the words must match numberToWordsINR for the stored total');
 });
 
-renderTest('O6 a long supplier address and a long description wrap instead of clipping', () => {
+renderTest('O6 a long supplier address and a long description wrap instead of clipping', async () => {
   const longVendor = {
     vendor_name: 'Sri Venkateswara Industrial Kitchen Equipments and Allied Services Private Limited',
     address: 'Plot No. 165, Jagananna Mega Industrial Hub, Kopparty (V), Chintha Komma Dinne (M), Kadapa District, Andhra Pradesh - 516003',
     state: 'Andhra Pradesh', district: 'Kadapa'
   };
-  const { text } = render(mkOrder(longVendor, MANY), MANY);
+  const { text } = await render(mkOrder(longVendor, MANY), MANY);
   assert.ok(text.includes('Sri Venkateswara Industrial Kitchen'), 'the long supplier name must appear');
   assert.ok(text.includes('Jagananna Mega Industrial'), 'the long address must appear');
 
   const longItems = [line(1, 'PTFE non-stick chapati machine plate assembly with reinforced edge banding and heat-resistant coating for continuous commercial duty', '84389090', 3, 4500, 18)];
-  const t2 = render(mkOrder({}, longItems), longItems).text;
+  const t2 = (await render(mkOrder({}, longItems), longItems)).text;
   assert.ok(t2.includes('PTFE non-stick chapati machine'), 'the long description must appear');
   assert.ok(t2.includes('84389090'));
 });
 
-renderTest('O7 a long order runs onto more pages, with the head repeated and one set of closing blocks', () => {
+renderTest('O7 a long order runs onto more pages, with the head repeated and one set of closing blocks', async () => {
   const lots = Array.from({ length: 28 }, (_, i) =>
     line(i + 1, `Commercial Kitchen Component Model CK-${100 + i}`, '84198190', (i % 5) + 1, 1500 + i * 250, 18));
-  const { text, pages } = render(mkOrder({ status: 'PARTIALLY_RECEIVED' }, lots), lots);
+  const { text, pages } = await render(mkOrder({ status: 'PARTIALLY_RECEIVED' }, lots), lots);
   assert.ok(pages >= 2, 'twenty-eight lines must not fit on one page');
   const count = (s, n) => s.split(n).length - 1;
   assert.ok(count(text, 'DESCRIPTION') >= 2, 'the item head repeats on every page');
@@ -269,8 +282,8 @@ renderTest('O7 a long order runs onto more pages, with the head repeated and one
   assert.ok(text.includes('PARTIALLY RECEIVED'), 'the stored status prints as a badge');
 });
 
-renderTest('O8 the seal and the signature are the profile images, at a sensible size', () => {
-  const { images, texts } = render(mkOrder({}, ONE), ONE);
+renderTest('O8 the seal and the signature are the profile images, at a sensible size', async () => {
+  const { images, texts } = await render(mkOrder({}, ONE), ONE);
   assert.ok(images.length >= 2, 'the seal and signature must be drawn');
   for (const im of images) {
     assert.ok(im.w <= 34 && im.h <= 24, `an image is oversized: ${im.w}x${im.h}mm`);
@@ -291,7 +304,7 @@ renderTest('O8 the seal and the signature are the profile images, at a sensible 
   assert.strictEqual(supplierLabels.length, 3, 'the supplier signing area keeps its three lines');
   for (const l of supplierLabels) assert.ok(l.y <= 297 - 16, 'a signing line runs under the footer');
 
-  const { text } = render(mkOrder({}, ONE), ONE);
+  const { text } = await render(mkOrder({}, ONE), ONE);
   assert.ok(text.includes('For VTECH KITCHEN EQUIPMENTS'));
   assert.ok(text.includes('Authorized Signatory'));
   assert.ok(text.includes("SUPPLIER'S AUTHORIZED SIGNATORY"));
@@ -306,8 +319,8 @@ const APPROVAL_CENTRE = (() => {
   return M + w + gap + w / 2;          // 153mm
 })();
 
-renderTest('O16 the approval marks sit centred, seal first, and never touch', () => {
-  const { images, texts } = render(mkOrder({}, ONE), ONE);
+renderTest('O16 the marks are centred as one group, stamp then signature, never touching', async () => {
+  const { images, texts } = await render(mkOrder({}, ONE), ONE);
   const caption = texts.find(t => t.s === 'Authorized Signatory');
   const forLine = texts.find(t => /^For /.test(t.s));
   assert.ok(caption && forLine, 'the approval caption and company line must be drawn');
@@ -323,57 +336,104 @@ renderTest('O16 the approval marks sit centred, seal first, and never touch', ()
   const marks = images.filter(im => im.page === caption.page && im.x >= 108 && im.x + im.w <= 198)
     .sort((a, b) => a.x - b.x);
   assert.strictEqual(marks.length, 2, 'the seal and the signature are both drawn');
-  const [seal, sign] = marks;
-  assert.strictEqual(seal.w, 16, 'the seal keeps its size');
-  assert.strictEqual(sign.w, 28, 'the signature keeps its size');
+  const [seal, sign] = marks;              // left to right: the stamp, then the signature
 
-  // Seal first, a small gap, then the signature - and they cannot overlap.
-  const space = sign.x - (seal.x + seal.w);
-  assert.ok(space > 0, `the seal and signature overlap by ${-space}mm`);
-  assert.ok(space >= 2 && space <= 6, `the gap between them is ${space}mm, outside the intended 2-6mm`);
+  // These fixtures carry no measurable ink, so the drawn rectangle IS the
+  // mark. O17 covers the measured-ink path that real assets take.
+  assert.ok(seal.w >= sign.w, 'the stamp must be the left-hand mark, not the signature');
+  assert.ok(seal.w >= 14, `the stamp is only ${seal.w}mm across - it must stay clearly visible`);
+  assert.ok(sign.w >= 8, `the signature is only ${sign.w}mm across - it must not shrink to a dash`);
 
-  // The pair is centred as a group.
-  const groupCentre = (seal.x + sign.x + sign.w) / 2;
-  assert.ok(Math.abs(groupCentre - APPROVAL_CENTRE) < 0.01,
-    `the marks are centred on ${groupCentre}mm, not ${APPROVAL_CENTRE}mm`);
+  // Side by side with air between them: neither stacked nor adrift.
+  const gap = sign.x - (seal.x + seal.w);
+  assert.ok(gap > 0, `the marks overlap by ${(-gap).toFixed(2)}mm - they must stand apart`);
+  assert.ok(gap <= 8, `the gap is ${gap.toFixed(2)}mm - the pair must read as one group`);
 
-  // And the whole group still clears the rule and the caption beneath it.
+  const gL = seal.x, gR = sign.x + sign.w;
+  assert.ok(Math.abs((gL + gR) / 2 - APPROVAL_CENTRE) < 0.05,
+    `the group is centred on ${((gL + gR) / 2).toFixed(2)}mm, not the panel centre ${APPROVAL_CENTRE}mm`);
+  assert.ok(gL > 108 + 10, 'the stamp is pushed to the left edge of the panel');
+  assert.ok(gR < 198 - 10, 'the signature is pushed to the right edge of the panel');
+  assert.ok(gR - gL <= 60, 'the pair is stretched across the panel');
+
+  // One centre line, and both clear of the rule and the caption beneath.
+  assert.ok(Math.abs((seal.y + seal.h / 2) - (sign.y + sign.h / 2)) < 0.5,
+    'the marks do not share a centre line');
   for (const im of marks) {
     assert.ok(im.y + im.h <= caption.y - 1, 'a mark runs into the caption');
     assert.ok(im.x >= 108 && im.x + im.w <= 198, 'a mark leaves the approval panel');
   }
 });
 
-renderTest('O9 bank details print only when the profile has them', () => {
-  const withBank = render(mkOrder({}, ONE), ONE).text;
+// The browser always measures the assets. A real stamp is a circle on a
+// transparent square, so the file's edges and its ink are two different
+// boxes: what must be centred, and what must keep its gap, is the ink. The
+// drawn rectangles legitimately overlap once the margin is counted, which is
+// why nothing here trusts them.
+renderTest('O17 the group is centred on the visible ink, not on the image files', async () => {
+  const ink = {};
+  ink[PNG_A] = { x: 0.10, y: 0.20, w: 0.60, h: 0.50, imgW: 600, imgH: 600 };
+  ink[PNG_B] = { x: 0.05, y: 0.30, w: 0.90, h: 0.40, imgW: 900, imgH: 400 };
+  const { images, texts } = await render(mkOrder({}, ONE), ONE, undefined, ink);
+  const caption = texts.find(t => t.s === 'Authorized Signatory');
+  assert.ok(caption, 'the approval caption must be drawn');
+
+  const marks = images.filter(im => im.page === caption.page && im.x >= 100 && im.x + im.w <= 200)
+    .sort((a, b) => a.x - b.x);
+  assert.strictEqual(marks.length, 2, 'the seal and the signature are both drawn');
+  const bounds = [ink[PNG_A], ink[PNG_B]];        // the stamp is the left-hand mark
+  const inked = marks.map((m, i) => ({
+    x: m.x + bounds[i].x * m.w, w: bounds[i].w * m.w,
+    y: m.y + bounds[i].y * m.h, h: bounds[i].h * m.h
+  }));
+  const [s1, s2] = inked;
+
+  const gap = s2.x - (s1.x + s1.w);
+  assert.ok(gap > 0, `the visible marks overlap by ${(-gap).toFixed(2)}mm`);
+  assert.ok(gap <= 8, `the visible gap is ${gap.toFixed(2)}mm - the pair must read as one group`);
+  const gL = s1.x, gR = s2.x + s2.w;
+  assert.ok(Math.abs((gL + gR) / 2 - APPROVAL_CENTRE) < 0.05,
+    `the ink is centred on ${((gL + gR) / 2).toFixed(2)}mm, not the panel centre ${APPROVAL_CENTRE}mm`);
+  assert.ok(s1.w >= 14, `the stamp's ink is only ${s1.w.toFixed(2)}mm across`);
+  assert.ok(s2.w >= 8, `the signature's ink is only ${s2.w.toFixed(2)}mm across`);
+  assert.ok(Math.abs((s1.y + s1.h / 2) - (s2.y + s2.h / 2)) < 0.5,
+    'the visible marks do not share a centre line');
+  assert.ok(gL > 108 + 8 && gR < 198 - 8, 'the ink group is pushed against a panel edge');
+  for (const m of inked) {
+    assert.ok(m.y + m.h <= caption.y - 1, 'a visible mark runs into the caption');
+  }
+});
+
+renderTest('O9 bank details print only when the profile has them', async () => {
+  const withBank = (await render(mkOrder({}, ONE), ONE)).text;
   assert.ok(withBank.includes('BANK DETAILS'));
   assert.ok(withBank.includes('BARB0GANAPA'));
-  const bare = render(mkOrder({}, ONE), ONE, { business_name: 'VTECH KITCHEN EQUIPMENTS' }).text;
+  const bare = (await render(mkOrder({}, ONE), ONE, { business_name: 'VTECH KITCHEN EQUIPMENTS' })).text;
   assert.ok(!bare.includes('BANK DETAILS'), 'no bank block when nothing is saved');
   assert.ok(bare.includes('VTECH KITCHEN EQUIPMENTS'), 'the letterhead still prints');
 });
 
-renderTest('O10 terms come from the order, then the profile, then the standard wording', () => {
-  const own = render(mkOrder({ terms: 'Inspection at our works before dispatch.' }, ONE), ONE).text;
+renderTest('O10 terms come from the order, then the profile, then the standard wording', async () => {
+  const own = (await render(mkOrder({ terms: 'Inspection at our works before dispatch.' }, ONE), ONE)).text;
   assert.ok(own.includes('TERMS & CONDITIONS'));
   assert.ok(own.includes('Inspection at our works before dispatch.'));
   assert.ok(!own.includes('Standard purchase order terms'), 'saved terms are not labelled standard');
 
-  const saved = render(mkOrder({}, ONE), ONE,
-    Object.assign({}, PROFILE, { terms_conditions: 'Company terms: payment 30 days from invoice.' })).text;
+  const saved = (await render(mkOrder({}, ONE), ONE,
+    Object.assign({}, PROFILE, { terms_conditions: 'Company terms: payment 30 days from invoice.' }))).text;
   assert.ok(saved.includes('Company terms: payment 30 days from invoice.'));
 
   // The standard set is laid out two to a row, so each entry is wrapped in
   // the PDF and is matched here on the part that stays on one line.
-  const fallback = render(mkOrder({}, ONE), ONE).text;
+  const fallback = (await render(mkOrder({}, ONE), ONE)).text;
   assert.ok(fallback.includes('Standard purchase order terms'), 'the default set is labelled as standard');
   assert.ok(fallback.includes('1. Goods must be supplied as per the'));
   assert.ok(fallback.includes('5. Invoice should reference the Purchase Order'));
   assert.ok(fallback.includes('10. The buyer may verify quantity and quality at the'), 'all ten print');
 });
 
-renderTest('O11 the footer names the order and numbers every page', () => {
-  const { text, pages } = render(mkOrder({}, ONE), ONE);
+renderTest('O11 the footer names the order and numbers every page', async () => {
+  const { text, pages } = await render(mkOrder({}, ONE), ONE);
   assert.ok(text.includes('Purchase Order No. PO/2026/09/0005'));
   assert.ok(text.includes('Page 1 of ' + pages));
   assert.ok(text.includes('www.vtech.test'), 'the footer carries the saved contact line');
@@ -400,8 +460,13 @@ test('O13 it still derives nothing: no tax and no line amount is recomputed', ()
 
 test('O14 both purchase order pages load the new renderer', () => {
   for (const html of [PO_LIST_HTML, PO_ENTRY_HTML]) {
-    assert.match(html, /client\/js\/pages\/purchase-order-pdf\.js\?v=2/, 'the cache key must be bumped');
+    assert.match(html, /client\/js\/pages\/purchase-order-pdf\.js\?v=3/, 'the cache key must be bumped');
     assert.ok(html.includes('jspdf.plugin.autotable'), 'autoTable is required by the item table');
+    // The stamp is measured with invoice-pdf.js's helpers, so that file has
+    // to be loaded first - reused, never copied into this renderer.
+    assert.ok(html.includes('client/js/pages/invoice-pdf.js'), 'invoice-pdf.js must be loaded');
+    assert.ok(html.indexOf('invoice-pdf.js') < html.indexOf('purchase-order-pdf.js'),
+      'invoice-pdf.js must come before purchase-order-pdf.js');
   }
 });
 
