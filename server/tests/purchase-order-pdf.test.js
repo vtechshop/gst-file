@@ -404,12 +404,18 @@ renderTest('O17 the group is centred on the visible ink, not on the image files'
   }
 });
 
-renderTest('O9 bank details print only when the profile has them', async () => {
+// A purchase order is issued TO a supplier. Our own bank details have no
+// business on it, so they are not printed even when the profile carries
+// them - which is what the fixture PROFILE does.
+renderTest('O9 a purchase order carries no bank details, whatever the profile holds', async () => {
   const withBank = (await render(mkOrder({}, ONE), ONE)).text;
-  assert.ok(withBank.includes('BANK DETAILS'));
-  assert.ok(withBank.includes('BARB0GANAPA'));
+  assert.ok(!withBank.includes('BANK DETAILS'), 'the bank block must not print');
+  assert.ok(!withBank.includes('BARB0GANAPA'), 'nor the IFSC behind it');
+  assert.ok(!withBank.includes('1234567890123'), 'nor the account number');
+  assert.ok(withBank.includes('AMOUNT IN WORDS'), 'the amount in words stays');
+  assert.ok(withBank.includes('TOTAL PO VALUE'), 'and the totals block');
   const bare = (await render(mkOrder({}, ONE), ONE, { business_name: 'VTECH KITCHEN EQUIPMENTS' })).text;
-  assert.ok(!bare.includes('BANK DETAILS'), 'no bank block when nothing is saved');
+  assert.ok(!bare.includes('BANK DETAILS'));
   assert.ok(bare.includes('VTECH KITCHEN EQUIPMENTS'), 'the letterhead still prints');
 });
 
@@ -427,9 +433,33 @@ renderTest('O10 terms come from the order, then the profile, then the standard w
   // the PDF and is matched here on the part that stays on one line.
   const fallback = (await render(mkOrder({}, ONE), ONE)).text;
   assert.ok(fallback.includes('Standard purchase order terms'), 'the default set is labelled as standard');
-  assert.ok(fallback.includes('1. Goods must be supplied as per the'));
-  assert.ok(fallback.includes('5. Invoice should reference the Purchase Order'));
-  assert.ok(fallback.includes('10. The buyer may verify quantity and quality at the'), 'all ten print');
+  // The six approved clauses, each a numbered heading with its wording. They
+  // wrap, so each is matched on the part that stays on one line.
+  for (const lead of ['1. Delivery:', '2. Inspection & Acceptance:', '3. Price:',
+    '4. Order Amendment:', '5. Invoice & Delivery Documents:', '6. Order Acknowledgement:']) {
+    assert.ok(fallback.includes(lead), 'missing clause heading: ' + lead);
+  }
+  assert.ok(fallback.includes('Material shall be dispatched within the agreed delivery period'));
+  assert.ok(fallback.includes('All materials are subject to inspection and acceptance'));
+  assert.ok(fallback.includes('supplier at no additional cost'));
+  assert.ok(fallback.includes('firm and fixed until completion of the'));
+  assert.ok(fallback.includes('shall be valid only with written approval from both parties'));
+  assert.ok(fallback.includes('Purchase Order Number on the invoice'));
+  assert.ok(fallback.includes('shall be deemed accepted'));
+  // Reusable wording only: no party, address, GSTIN or phone number INSIDE
+  // the clauses. Scoped to the terms block on purpose - the letterhead and
+  // the supplier panel carry real GSTINs, and checking the whole document
+  // would both fail on those and mask a genuine leak in a clause.
+  const termsStart = fallback.indexOf('1. Delivery:');
+  const termsEnd = fallback.indexOf("SUPPLIER'S AUTHORIZED SIGNATORY");
+  assert.ok(termsStart > -1 && termsEnd > termsStart, 'the terms block must be locatable');
+  const termsOnly = fallback.slice(termsStart, termsEnd);
+  for (const leak of ['Triovision', 'GSTIN', 'Mobile Number', 'Kadapa', '9550896635',
+    '33AAAAA0000A1Z5', '33AAACK1234C1Z9']) {
+    assert.ok(!termsOnly.includes(leak), 'the standard terms must stay generic: ' + leak);
+  }
+  assert.ok(!/7\.\s|8\.\s|9\.\s|10\.\s/.test(fallback.slice(fallback.indexOf('1. Delivery:'))),
+    'exactly six clauses, not the old ten');
 });
 
 renderTest('O11 the footer names the order and numbers every page', async () => {

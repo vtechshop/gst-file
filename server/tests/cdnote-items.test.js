@@ -332,7 +332,7 @@ test('W5 Sales Return and the other PDF modules are untouched', () => {
   // it is pinned by content rather than by "not modified": this still fails
   // if Credit/Debit Note work edits it, and if anyone changes it again
   // without approving the new revision here.
-  const APPROVED_PO_PDF_SHA256 = '331ae4705c81539d9178f3f5657ab00b6ff67c581e82077d666c34456f4f408a';
+  const APPROVED_PO_PDF_SHA256 = '28b1cd6108c5ef69a68c3cec702734d8f9b5f9e7a24f7d4332e41c31b2056644';
   const poSrc = fs.readFileSync(path.join(ROOT, 'client', 'js', 'pages', 'purchase-order-pdf.js'), 'utf8');
   const po = require('crypto').createHash('sha256').update(poSrc.replace(/\r\n/g, '\n')).digest('hex');
   assert.strictEqual(po, APPROVED_PO_PDF_SHA256,

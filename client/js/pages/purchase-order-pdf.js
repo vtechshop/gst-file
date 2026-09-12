@@ -8,8 +8,9 @@
 // A4 portrait, laid out as a company purchase order: a branded letterhead
 // from the saved Business Profile, the document title with its number, date
 // and status, supplier and deliver-to panels, the order's own terms, the
-// item table, the tax summary beside the amount in words and the bank
-// block, terms and conditions, then the supplier and approval signatures.
+// item table, the tax summary beside the amount in words, terms and
+// conditions, then the supplier and approval signatures. A purchase order is
+// issued TO a supplier, so it carries no bank details of ours.
 // Item rows flow onto as many pages as they need with the head repeated,
 // every closing block is drawn only where there is room for it, and the
 // footer repeats on every page.
@@ -28,17 +29,29 @@ const PO_PDF = {
 // Printed only when the order carries no terms of its own and the Business
 // Profile has none either. They are ordinary trade wording, not legal
 // advice, and both the order form and the profile can replace them.
+// Each clause is a heading and a body: the heading is set in bold so the six
+// points can be scanned, the body wraps beneath it. Generic on purpose - no
+// party, address, GSTIN or contact belongs in wording reused by every order.
 const PO_PDF_DEFAULT_TERMS = [
-  'Goods must be supplied as per the purchase order specifications.',
-  'Material quantity and quality must match the order.',
-  'Any shortage, damage or mismatch should be informed before acceptance.',
-  'Delivery should follow the agreed delivery date.',
-  'Invoice should reference the Purchase Order number.',
-  'GST and statutory documents must accompany the supply where applicable.',
-  'Payment will be processed according to the agreed payment terms.',
-  'Any change to this order requires approval from the buyer named above.',
-  'Goods should be properly packed to prevent transit damage.',
-  'The buyer may verify quantity and quality at the time of receipt.'
+  ['Delivery',
+    'Material shall be dispatched within the agreed delivery period from the date of receipt '
+    + 'of this Purchase Order and delivered to the address mentioned in the order.'],
+  ['Inspection & Acceptance',
+    'All materials are subject to inspection and acceptance. Rejected or defective materials '
+    + 'shall be replaced by the supplier at no additional cost.'],
+  ['Price',
+    'The prices mentioned in this Purchase Order are firm and fixed until completion of the '
+    + 'order, unless otherwise agreed in writing.'],
+  ['Order Amendment',
+    'Any amendment or change to this Purchase Order shall be valid only with written approval '
+    + 'from both parties.'],
+  ['Invoice & Delivery Documents',
+    'The supplier shall mention our Purchase Order Number on the invoice and submit the '
+    + 'invoice along with the delivery/delivery note.'],
+  ['Order Acknowledgement',
+    'The supplier shall provide a signed and stamped acknowledgement of the Purchase Order '
+    + 'within two working days. If no objection is received within this period, the order '
+    + 'shall be deemed accepted.']
 ];
 
 function poPdfMoney(v) {
@@ -263,7 +276,7 @@ function poPdfOrderDetails(doc, y, order) {
   return y + boxH + 6;
 }
 
-// ── the tax summary, the words, and the bank block ────────────────────
+// ── the tax summary and the amount in words ───────────────────────────
 function poPdfSummary(doc, y, order, buyer) {
   const M = PO_PDF.MARGIN;
   const R = PO_PDF.PAGE_W - M;
@@ -275,24 +288,17 @@ function poPdfSummary(doc, y, order, buyer) {
   if (Number(order.cess_amount)) rows.push(['Cess', poPdfMoney(order.cess_amount)]);
 
   const words = (typeof numberToWordsINR === 'function') ? numberToWordsINR(order.total_amount) : '';
-  const bank = [
-    buyer.bank.name ? 'Bank: ' + buyer.bank.name : '',
-    buyer.bank.account ? 'A/c: ' + buyer.bank.account : '',
-    buyer.bank.ifsc ? 'IFSC: ' + buyer.bank.ifsc : '',
-    buyer.bank.branch ? 'Branch: ' + buyer.bank.branch : ''
-  ].filter(Boolean);
-
   const boxW = 76;
   const boxX = R - boxW;
   const leftW = boxX - M - 6;
   const wordLines = words ? doc.splitTextToSize(words, leftW - 4) : [];
   const summaryH = rows.length * 6 + 11;
-  const leftH = (wordLines.length ? wordLines.length * 4 + 9 : 0) + (bank.length ? bank.length * 4 + 9 : 0);
+  const leftH = wordLines.length ? wordLines.length * 4 + 9 : 0;
 
   y = poPdfSpace(doc, y, Math.max(summaryH, leftH) + 4);
 
   // amount in words, from the shared helper the rest of the app uses
-  let ly = y;
+  const ly = y;
   if (wordLines.length) {
     doc.setDrawColor.apply(doc, PO_PDF.RULE);
     doc.rect(M, ly, leftW, wordLines.length * 4 + 8);
@@ -305,20 +311,7 @@ function poPdfSummary(doc, y, order, buyer) {
     doc.setTextColor.apply(doc, PO_PDF.INK);
     let wy = ly + 9.5;
     wordLines.forEach(w => { doc.text(w, M + 3, wy); wy += 4; });
-    ly += wordLines.length * 4 + 12;
   }
-  if (bank.length) {
-    doc.setFont('helvetica', 'bold');
-    doc.setFontSize(7);
-    doc.setTextColor.apply(doc, PO_PDF.MUTED);
-    doc.text('BANK DETAILS', M + 3, ly + 3);
-    doc.setFont('helvetica', 'normal');
-    doc.setFontSize(8);
-    doc.setTextColor.apply(doc, PO_PDF.INK);
-    let by = ly + 7.5;
-    bank.forEach(b => { doc.text(b, M + 3, by); by += 4; });
-  }
-
   // the figures, exactly as they are stored
   let ry = y;
   doc.setDrawColor.apply(doc, PO_PDF.RULE);
@@ -353,9 +346,6 @@ function poPdfTerms(doc, y, order, buyer) {
   const own = String(order.terms || '').trim();
   const saved = String(buyer.profileTerms || '').trim();
   const source = own || saved;
-  const colGap = 8;
-  const colW = (R - M - colGap) / 2;
-
   const heading = () => {
     doc.setFont('helvetica', 'bold');
     doc.setFontSize(9);
@@ -375,20 +365,36 @@ function poPdfTerms(doc, y, order, buyer) {
     doc.setTextColor.apply(doc, PO_PDF.INK);
   };
 
-  // The standard set is set two to a row, which keeps a short order on one
-  // page; saved wording is prose and runs the full width.
+  // The standard set runs the full width, one numbered paragraph per clause:
+  // six clauses of real wording set two to a row would be a column of about
+  // fifty characters, which is where terms stop being read. A clause that
+  // would run past the foot of the page starts the next one whole, so no
+  // paragraph is ever split across the break.
   if (!source) {
-    const numbered = PO_PDF_DEFAULT_TERMS.map((t, i) => (i + 1) + '. ' + t);
-    const mid = Math.ceil(numbered.length / 2);
-    const wrapCol = list => list.reduce((acc, t) => acc.concat(doc.splitTextToSize(t, colW)), []);
-    const colA = wrapCol(numbered.slice(0, mid));
-    const colB = wrapCol(numbered.slice(mid));
-    y = poPdfSpace(doc, y, Math.max(colA.length, colB.length) * 3.5 + 12);
+    const bodyW = R - M - 4;
+    y = poPdfSpace(doc, y, 14);
     heading();
-    let ay = y, by = y;
-    colA.forEach(l => { doc.text(l, M, ay); ay += 3.5; });
-    colB.forEach(l => { doc.text(l, M + colW + colGap, by); by += 3.5; });
-    return Math.max(ay, by) + 3;
+    PO_PDF_DEFAULT_TERMS.forEach((clause, i) => {
+      const [label, text] = clause;
+      const lead = (i + 1) + '. ' + label + ': ';
+      doc.setFont('helvetica', 'bold');
+      const leadW = doc.getTextWidth(lead);
+      // The first line sits beside the heading, the rest wrap under it.
+      const first = doc.splitTextToSize(text, bodyW - leadW);
+      const firstLine = first[0] || '';
+      const restText = text.slice(firstLine.length).trim();
+      const rest = restText ? doc.splitTextToSize(restText, bodyW) : [];
+      y = poPdfSpace(doc, y, (rest.length + 1) * 3.6 + 4);
+      doc.setFont('helvetica', 'bold');
+      doc.setTextColor.apply(doc, PO_PDF.INK);
+      doc.text(lead, M, y);
+      doc.setFont('helvetica', 'normal');
+      doc.text(firstLine, M + leadW, y);
+      let ly = y;
+      rest.forEach(l => { ly += 3.6; doc.text(l, M, ly); });
+      y = ly + 4.4;
+    });
+    return y + 1;
   }
 
   const lines = doc.splitTextToSize(source, R - M - 4);
