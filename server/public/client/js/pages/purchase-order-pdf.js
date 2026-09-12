@@ -444,25 +444,35 @@ function poPdfSignatures(doc, y, buyer) {
     sy += 8;
   });
 
-  // our side: For <company>, seal, signature, caption
+  // our side: For <company>, then the seal and the signature side by side,
+  // then the caption - the whole group centred on the panel. The marks are
+  // laid out from the width of what the profile actually holds, so one on
+  // its own is centred too rather than sitting where the pair would start.
   const bx = M + w + gap;
+  const cx = bx + w / 2;
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(8.5);
-  doc.text('For ' + String(buyer.name).toUpperCase(), bx + 4, y + 12.5);
+  doc.text('For ' + String(buyer.name).toUpperCase(), cx, y + 12.5, { align: 'center' });
 
   // Both marks finish above the rule; the caption sits below it.
   const markTop = y + 13.5;
-  if (buyer.seal) {
-    try { doc.addImage(buyer.seal, 'PNG', bx + 5, markTop, 16, 16); } catch (e) { /* optional */ }
+  const SEAL = 16, SIGN_W = 28, SIGN_H = 11, MARK_GAP = 4;
+  const hasSeal = !!buyer.seal, hasSign = !!buyer.signature;
+  const groupW = (hasSeal ? SEAL : 0) + (hasSign ? SIGN_W : 0) + (hasSeal && hasSign ? MARK_GAP : 0);
+  let mx = cx - groupW / 2;
+  if (hasSeal) {
+    try { doc.addImage(buyer.seal, 'PNG', mx, markTop, SEAL, SEAL); } catch (e) { /* optional */ }
+    mx += SEAL + MARK_GAP;
   }
-  if (buyer.signature) {
-    try { doc.addImage(buyer.signature, 'PNG', bx + 26, markTop + 2.5, 28, 11); } catch (e) { /* optional */ }
+  if (hasSign) {
+    // Centred against the seal, which is the taller of the two.
+    try { doc.addImage(buyer.signature, 'PNG', mx, markTop + (SEAL - SIGN_H) / 2, SIGN_W, SIGN_H); } catch (e) { /* optional */ }
   }
   doc.setDrawColor.apply(doc, PO_PDF.RULE);
   doc.line(bx + 4, ruleY, bx + w - 4, ruleY);
   doc.setFont('helvetica', 'normal');
   doc.setFontSize(8);
-  doc.text('Authorized Signatory', bx + 4, ruleY + 4.5);
+  doc.text('Authorized Signatory', cx, ruleY + 4.5, { align: 'center' });
 
   return y + blockH + 4;
 }

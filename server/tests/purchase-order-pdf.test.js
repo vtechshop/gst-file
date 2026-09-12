@@ -298,6 +298,52 @@ renderTest('O8 the seal and the signature are the profile images, at a sensible 
   assert.ok(text.includes('APPROVED BY'));
 });
 
+// The approval block's own geometry: the panel is the right-hand half of
+// the page between the margins, so its centre is fixed by the page.
+const APPROVAL_CENTRE = (() => {
+  const M = 12, R = 210 - 12, gap = 6;
+  const w = (R - M - gap) / 2;
+  return M + w + gap + w / 2;          // 153mm
+})();
+
+renderTest('O16 the approval marks sit centred, seal first, and never touch', () => {
+  const { images, texts } = render(mkOrder({}, ONE), ONE);
+  const caption = texts.find(t => t.s === 'Authorized Signatory');
+  const forLine = texts.find(t => /^For /.test(t.s));
+  assert.ok(caption && forLine, 'the approval caption and company line must be drawn');
+
+  // Both lines are centred on the panel.
+  assert.ok(Math.abs(caption.x - APPROVAL_CENTRE) < 0.01,
+    `the caption is at ${caption.x}mm, not the panel centre ${APPROVAL_CENTRE}mm`);
+  assert.ok(Math.abs(forLine.x - APPROVAL_CENTRE) < 0.01,
+    `the company line is at ${forLine.x}mm, not the panel centre ${APPROVAL_CENTRE}mm`);
+
+  // Only the marks inside the approval panel - the letterhead logo is an
+  // image too, and it sits at the left margin at the top of the page.
+  const marks = images.filter(im => im.page === caption.page && im.x >= 108 && im.x + im.w <= 198)
+    .sort((a, b) => a.x - b.x);
+  assert.strictEqual(marks.length, 2, 'the seal and the signature are both drawn');
+  const [seal, sign] = marks;
+  assert.strictEqual(seal.w, 16, 'the seal keeps its size');
+  assert.strictEqual(sign.w, 28, 'the signature keeps its size');
+
+  // Seal first, a small gap, then the signature - and they cannot overlap.
+  const space = sign.x - (seal.x + seal.w);
+  assert.ok(space > 0, `the seal and signature overlap by ${-space}mm`);
+  assert.ok(space >= 2 && space <= 6, `the gap between them is ${space}mm, outside the intended 2-6mm`);
+
+  // The pair is centred as a group.
+  const groupCentre = (seal.x + sign.x + sign.w) / 2;
+  assert.ok(Math.abs(groupCentre - APPROVAL_CENTRE) < 0.01,
+    `the marks are centred on ${groupCentre}mm, not ${APPROVAL_CENTRE}mm`);
+
+  // And the whole group still clears the rule and the caption beneath it.
+  for (const im of marks) {
+    assert.ok(im.y + im.h <= caption.y - 1, 'a mark runs into the caption');
+    assert.ok(im.x >= 108 && im.x + im.w <= 198, 'a mark leaves the approval panel');
+  }
+});
+
 renderTest('O9 bank details print only when the profile has them', () => {
   const withBank = render(mkOrder({}, ONE), ONE).text;
   assert.ok(withBank.includes('BANK DETAILS'));
