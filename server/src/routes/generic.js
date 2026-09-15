@@ -632,7 +632,15 @@ const TABLES = {
       'export_type','shipping_bill_number','shipping_bill_date','port_code',
       'export_of','sez_recipient_type','lut_number','differential_65',
       'converted_invoice_id','converted_invoice_type','cancelled_at','cancel_reason',
+      // The quoted delivery charge - the same two columns, with the same
+      // meaning, as b2b_invoices/b2c_invoices, so a proforma prices delivery
+      // exactly the way the invoice will. transport_gst_amount is listed so
+      // it can be READ back; it is derived by the save route
+      // (routes/documents.js) from the charge and the principal supply's
+      // rate, so nothing may set it directly.
+      'transport_charge','transport_gst_amount',
       'created_at','updated_at'],
+    immutable: ['transport_gst_amount'],
     validate: makeDistrictValidator([['state', 'district'], ['shipping_state', 'shipping_district']])
   },
   proforma_invoice_items: {

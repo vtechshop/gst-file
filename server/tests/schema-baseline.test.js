@@ -260,3 +260,113 @@ dbTest('C3 --except narrows what must be proven', async () => {
     assert.ok(!ids.includes('migration_purchase_notes'), 'the excluded migration stays pending');
   } finally { await dropCliDb(); }
 });
+
+// ══════════════════════════════════════════════════════════════════
+//  T - transport columns in the baseline
+// ══════════════════════════════════════════════════════════════════
+//
+// S1 proves every TABLE a migration creates is declared in schema.sql. It
+// cannot see a COLUMN a migration adds to a table that already exists - and
+// that is how the transport charge went missing: the invoice and proforma
+// migrations add it with ALTER TABLE, so a database built from schema.sql and
+// then baselined had no transport_charge, and every save touching it would
+// have failed with 42703.
+//
+// These read the migrations themselves, so a future transport column or
+// constraint is covered without editing a list here.
+const TB_MIG_DIR = path.join(ROOT, 'server', 'db', 'migrations');
+const TB_SCHEMA = fs.readFileSync(path.join(ROOT, 'server', 'db', 'schema', 'schema.sql'), 'utf8')
+  .replace(/\r\n/g, '\n');
+const tbStrip = (s) => s.replace(/\r\n/g, '\n').replace(/--[^\n]*/g, '');
+const tbSquash = (s) => s.replace(/\s+/g, ' ').trim();
+
+// Every transport column and CHECK any migration adds with ALTER TABLE.
+function tbMigrationTransport() {
+  const order = JSON.parse(fs.readFileSync(path.join(TB_MIG_DIR, '_manifest.json'), 'utf8')).order;
+  const cols = [], cons = [];
+  for (const file of order) {
+    const sql = tbStrip(fs.readFileSync(path.join(TB_MIG_DIR, file), 'utf8'));
+    for (const m of sql.matchAll(/ALTER TABLE\s+([a-z_0-9]+)\s+([^;]*);/gi)) {
+      const table = m[1], body = m[2];
+      for (const c of body.matchAll(/ADD COLUMN IF NOT EXISTS\s+(transport[a-z_0-9]*)\s+([A-Z]+(?:\(\d+(?:,\d+)?\))?)/gi)) {
+        cols.push({ file, table, column: c[1], type: c[2].toUpperCase() });
+      }
+      for (const k of body.matchAll(/ADD CONSTRAINT\s+([a-z_0-9]*transport[a-z_0-9]*)\s+CHECK\s*\(([\s\S]*)\)\s*$/gi)) {
+        cons.push({ file, table, name: k[1], check: tbSquash(k[2]) });
+      }
+    }
+  }
+  return { cols, cons };
+}
+function tbTableBlock(table) {
+  const m = new RegExp('CREATE TABLE IF NOT EXISTS ' + table + ' \\(([\\s\\S]*?)\\n\\);').exec(tbStrip(TB_SCHEMA));
+  assert.ok(m, 'schema.sql must declare ' + table);
+  return tbSquash(m[1]);
+}
+
+test('T1 every transport column a migration adds is declared in schema.sql, with the same type', () => {
+  const { cols } = tbMigrationTransport();
+  assert.ok(cols.length >= 6, 'the scan must find the invoice and proforma transport columns (found ' + cols.length + ')');
+  for (const c of cols) {
+    const decl = new RegExp('(^|[ ,(])' + c.column + ' ' + c.type.replace(/[()]/g, '\\$&') + '[ ,]');
+    assert.ok(decl.test(tbTableBlock(c.table) + ' '),
+      c.table + '.' + c.column + ' ' + c.type + ' (added by ' + c.file + ') is missing from schema.sql');
+  }
+});
+
+test('T2 every transport CHECK a migration adds is declared in schema.sql, under the same name', () => {
+  const { cons } = tbMigrationTransport();
+  assert.ok(cons.length >= 6, 'the scan must find the transport constraints (found ' + cons.length + ')');
+  for (const k of cons) {
+    assert.ok(tbTableBlock(k.table).includes('CONSTRAINT ' + k.name + ' CHECK (' + k.check + ')'),
+      k.table + ': ' + k.name + ' (added by ' + k.file + ') is missing from schema.sql, or its CHECK differs');
+  }
+});
+
+dbTest('T3 a database built from schema.sql alone has the transport shape the migrations produce', async () => {
+  const DBN = 'gst_tb_baseline_probe';
+  await admin('SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = $1', [DBN]);
+  await admin(`DROP DATABASE IF EXISTS ${DBN}`);
+  await admin(`CREATE DATABASE ${DBN}`);
+  const c = new Client({ connectionString: urlFor(DBN) });
+  c.on('error', () => {});
+  await c.connect();
+  try {
+    await c.query(TB_SCHEMA);
+    const { cols, cons } = tbMigrationTransport();
+    for (const col of cols) {
+      const { rows } = await c.query(
+        `SELECT data_type, numeric_precision AS p, numeric_scale AS s, is_nullable, column_default
+           FROM information_schema.columns
+          WHERE table_schema = 'public' AND table_name = $1 AND column_name = $2`, [col.table, col.column]);
+      assert.strictEqual(rows.length, 1, col.table + '.' + col.column + ' must exist');
+      const num = /^NUMERIC\((\d+),(\d+)\)$/.exec(col.type);
+      if (num) {
+        assert.strictEqual(rows[0].data_type, 'numeric', col.table + '.' + col.column);
+        assert.strictEqual(rows[0].p, Number(num[1]), col.table + '.' + col.column + ' precision');
+        assert.strictEqual(rows[0].s, Number(num[2]), col.table + '.' + col.column + ' scale');
+      }
+      assert.strictEqual(rows[0].is_nullable, 'YES', col.table + '.' + col.column + ': nullable, as the migration adds it');
+      assert.strictEqual(rows[0].column_default, null, col.table + '.' + col.column + ': no default, as the migration adds it');
+    }
+    // What PostgreSQL makes of each migration's own CHECK expression, on
+    // columns of the same types - so the baseline's constraint is compared by
+    // meaning, not by how it happens to be spelled.
+    const probeCols = [...new Map(cols.map(x => [x.column, x.type])).entries()]
+      .map(([name, type]) => name + ' ' + type).join(', ');
+    for (const k of cons) {
+      const got = await c.query(
+        'SELECT pg_get_constraintdef(oid) AS d FROM pg_constraint WHERE conname = $1 AND conrelid = $2::regclass',
+        [k.name, k.table]);
+      assert.strictEqual(got.rows.length, 1, k.name + ' must exist on ' + k.table);
+      await c.query('CREATE TEMP TABLE tb_probe (' + probeCols + ', CONSTRAINT tb_probe_check CHECK (' + k.check + '))');
+      const ref = await c.query("SELECT pg_get_constraintdef(oid) AS d FROM pg_constraint WHERE conname = 'tb_probe_check'");
+      await c.query('DROP TABLE tb_probe');
+      assert.strictEqual(got.rows[0].d, ref.rows[0].d, k.name + ' must mean what ' + k.file + ' declares');
+    }
+  } finally {
+    await c.end();
+    await admin('SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = $1', [DBN]);
+    await admin(`DROP DATABASE IF EXISTS ${DBN}`);
+  }
+});

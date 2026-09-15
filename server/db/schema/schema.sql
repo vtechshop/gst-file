@@ -181,7 +181,20 @@ CREATE TABLE IF NOT EXISTS b2b_invoices (
   warranty_period_months INTEGER,
   warranty_start_date DATE,
   warranty_until DATE,
-  warranty_terms TEXT
+  warranty_terms TEXT,
+
+  -- Transport charge, from migration_invoice_transport_charge.sql. An optional delivery
+  -- charge on the whole invoice, not the e-way bill transport fields. NULL means no
+  -- transport was charged, 0 means it was charged and free. The tax on it is
+  -- derived by the save route, and its CGST/SGST/IGST split follows supply_type,
+  -- so the split is not stored. Last in the table, which is where the migration
+  -- adds them on a database that already existed.
+  transport_charge NUMERIC(14,2),
+  transport_gst_amount NUMERIC(14,2),
+  CONSTRAINT b2b_invoices_transport_charge_nonneg
+    CHECK (transport_charge IS NULL OR transport_charge >= 0),
+  CONSTRAINT b2b_invoices_transport_gst_nonneg
+    CHECK (transport_gst_amount IS NULL OR transport_gst_amount >= 0)
 );
 
 -- ── B2C Invoices ─────────────────────────────────────
@@ -266,7 +279,20 @@ CREATE TABLE IF NOT EXISTS b2c_invoices (
   warranty_period_months INTEGER,
   warranty_start_date DATE,
   warranty_until DATE,
-  warranty_terms TEXT
+  warranty_terms TEXT,
+
+  -- Transport charge, from migration_invoice_transport_charge.sql. An optional delivery
+  -- charge on the whole invoice, not the e-way bill transport fields. NULL means no
+  -- transport was charged, 0 means it was charged and free. The tax on it is
+  -- derived by the save route, and its CGST/SGST/IGST split follows supply_type,
+  -- so the split is not stored. Last in the table, which is where the migration
+  -- adds them on a database that already existed.
+  transport_charge NUMERIC(14,2),
+  transport_gst_amount NUMERIC(14,2),
+  CONSTRAINT b2c_invoices_transport_charge_nonneg
+    CHECK (transport_charge IS NULL OR transport_charge >= 0),
+  CONSTRAINT b2c_invoices_transport_gst_nonneg
+    CHECK (transport_gst_amount IS NULL OR transport_gst_amount >= 0)
 );
 
 -- No two invoices may share a number WITHIN A SERIES — a real DB-level
@@ -1839,7 +1865,20 @@ CREATE TABLE IF NOT EXISTS proforma_invoices (
   export_of TEXT,
   sez_recipient_type TEXT,
   lut_number TEXT,
-  differential_65 BOOLEAN NOT NULL DEFAULT FALSE
+  differential_65 BOOLEAN NOT NULL DEFAULT FALSE,
+
+  -- Transport charge, from migration_proforma_transport_charge.sql. An optional delivery
+  -- charge on the whole quotation, not the e-way bill transport fields. NULL means no
+  -- transport was charged, 0 means it was charged and free. The tax on it is
+  -- derived by the save route, and its CGST/SGST/IGST split follows supply_type,
+  -- so the split is not stored. Last in the table, which is where the migration
+  -- adds them on a database that already existed.
+  transport_charge NUMERIC(14,2),
+  transport_gst_amount NUMERIC(14,2),
+  CONSTRAINT proforma_invoices_transport_charge_nonneg
+    CHECK (transport_charge IS NULL OR transport_charge >= 0),
+  CONSTRAINT proforma_invoices_transport_gst_nonneg
+    CHECK (transport_gst_amount IS NULL OR transport_gst_amount >= 0)
 );
 
 CREATE TABLE IF NOT EXISTS proforma_invoice_items (

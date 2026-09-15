@@ -576,26 +576,38 @@ test('T13b GSTR-1 export structure is untouched - no new column, no new section'
     'no Transport column may be added to the sheet');
 });
 
-// ═══ Proforma must not have grown a transport box ═════════════════════
+// ═══ Proforma quotes transport through the invoice engine ═════════════════════
 
-test('T27 Proforma is untouched', () => {
-  assert.match(ITEMS, /function itemsTransportEnabled\(\)\s*\{\s*return itemsFormPrefix === 'invoice';/);
-  const sb = load({ formPrefix: 'proforma' });
-  sb.__setItems([machineLine('intrastate')]);
-  sb.__setTransport('1000');                       // even if something set it
-  const out = sb.computeInvoiceRollups();
-  assert.strictEqual(out.transport_charge, null, 'a proforma can never carry a transport charge');
+test('T27 Proforma carries transport through the same engine as the invoice', () => {
+  // The gate opens for exactly two forms: the tax invoice, and the proforma
+  // that quotes it. Any other form sharing this grid stays without the box.
+  assert.match(ITEMS, /function itemsTransportEnabled\(\)\s*\{\s*return itemsFormPrefix === 'invoice' \|\| itemsFormPrefix === 'proforma';/);
+
+  // Same rollup, same figures: a proforma prices delivery exactly as the
+  // invoice bills it, intra and inter state alike.
+  for (const supply of ['intrastate', 'interstate']) {
+    const inv = rollup('1000', { supply }).out;
+    const pf = rollup('1000', { supply, formPrefix: 'proforma' }).out;
+    // Compared as plain data: each rollup comes from its own sandbox, and
+    // objects from two realms never share a prototype.
+    assert.deepStrictEqual(JSON.parse(JSON.stringify(pf)), JSON.parse(JSON.stringify(inv)),
+      supply + ': the proforma rollup must equal the invoice rollup');
+    assert.strictEqual(pf.transport_charge, 1000);
+    assert.strictEqual(pf.total_amount, 4366);
+  }
+
+  // A form that is neither still cannot carry one, even if something set it.
+  const other = load({ formPrefix: 'challan' });
+  other.__setItems([machineLine('intrastate')]);
+  other.__setTransport('1000');
+  const out = other.computeInvoiceRollups();
+  assert.strictEqual(out.transport_charge, null, 'no other form may carry a transport charge');
   assert.strictEqual(out.total_amount, 3186);
 
-  for (const f of [['client', 'js', 'pages', 'proforma-entry.js'],
-                   ['client', 'js', 'pages', 'proforma-pdf.js'],
-                   ['proforma.html']]) {
-    assert.ok(!/transport_charge|transport_gst_amount/.test(rd(...f)),
-      f.join('/') + ' must not mention the transport charge');
-  }
-  // ...and the column does not exist on the quotation table either.
+  // The invoice's own applied migration is untouched: the proforma columns
+  // arrived in a migration of their own, never by editing an applied one.
   assert.ok(!/proforma_invoices/.test(rd('server', 'db', 'migrations', 'migration_invoice_transport_charge.sql')
-    .replace(/--[^\n]*/g, '')), 'the migration must not touch proforma_invoices');
+    .replace(/--[^\n]*/g, '')), 'the invoice migration must not touch proforma_invoices');
 });
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -884,10 +896,11 @@ test('T23b the derived tax has one writer - the generic route refuses it outrigh
     'SELECT transport_gst_amount FROM b2b_invoices WHERE id=$1', [id]);
   assert.strictEqual(Number(rows[0].transport_gst_amount), 180, 'the derived tax stands');
 
-  // ...and the registry says so, on both invoice tables.
+  // ...and the registry says so, on both invoice tables and on the proforma
+  // that quotes them - the one other place this derived tax is stored.
   const GEN = rd('server', 'src', 'routes', 'generic.js');
-  assert.strictEqual((GEN.match(/immutable: \['transport_gst_amount'\]/g) || []).length, 2,
-    'both b2b_invoices and b2c_invoices must refuse it');
+  assert.strictEqual((GEN.match(/immutable: \['transport_gst_amount'\]/g) || []).length, 3,
+    'b2b_invoices, b2c_invoices and proforma_invoices must all refuse it');
 });
 
 test('T24 the save path is authenticated', async () => {

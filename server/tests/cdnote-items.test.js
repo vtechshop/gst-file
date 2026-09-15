@@ -323,7 +323,7 @@ test('W5 Sales Return and the other PDF modules are untouched', () => {
   const { execSync } = require('child_process');
   const changed = execSync('git status --porcelain -- server/src/routes/sales-returns.js '
     + 'client/js/pages/sales-returns.js client/js/pages/sales-return-pdf.js '
-    + 'client/js/pages/invoice-pdf.js client/js/pages/proforma-pdf.js '
+    + 'client/js/pages/invoice-pdf.js '
     + 'client/js/gst/gstr1-export.js',
   { cwd: ROOT, encoding: 'utf8' }).trim();
   assert.strictEqual(changed, '', 'these files must be unchanged');
@@ -337,6 +337,17 @@ test('W5 Sales Return and the other PDF modules are untouched', () => {
   const po = require('crypto').createHash('sha256').update(poSrc.replace(/\r\n/g, '\n')).digest('hex');
   assert.strictEqual(po, APPROVED_PO_PDF_SHA256,
     'purchase-order-pdf.js is not the approved Purchase Order redesign');
+
+  // The Proforma PDF gained Transport Charge / Transport GST rows under its
+  // own approved change (proforma-transport-charge.test.js), so it moves from
+  // "not modified" to a content pin on the same terms as the Purchase Order
+  // PDF above: Credit/Debit Note work still may not touch it, and a further
+  // change must approve its new revision here.
+  const APPROVED_PROFORMA_PDF_SHA256 = '58db37f34bbd861f4890386f361c6571d9dbc9d1dc7d30c7ae80741ed4b26f8c';
+  const pfSrc = fs.readFileSync(path.join(ROOT, 'client', 'js', 'pages', 'proforma-pdf.js'), 'utf8');
+  const pf = require('crypto').createHash('sha256').update(pfSrc.replace(/\r\n/g, '\n')).digest('hex');
+  assert.strictEqual(pf, APPROVED_PROFORMA_PDF_SHA256,
+    'proforma-pdf.js is not the approved Proforma transport revision');
 });
 
 // ═══════════════════════════════════════════════════════════════════════

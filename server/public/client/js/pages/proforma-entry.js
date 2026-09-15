@@ -238,6 +238,12 @@ async function saveProforma() {
   const items = collectProformaItems();
   if (!items.length) { showToast('Add at least one product with a quantity and rate.', 'error'); return; }
 
+  // The delivery charge, refused by the tax invoice's own rule
+  // (validateInvoiceTransport in invoice-items.js) - and BEFORE a number is
+  // reserved below, so a Save this turns away never burns a number from the
+  // proforma book.
+  if (!validateInvoiceTransport()) return;
+
   const validUntil = getProformaText('pfValidUntil') || null;
   if (validUntil && validUntil < date) {
     showToast('Valid Until cannot be before the proforma date.', 'error');
@@ -245,8 +251,18 @@ async function saveProforma() {
   }
 
   // Totals come from the grid, which is the same code the invoice totals use.
-  const taxable = items.reduce((a, r) => a + r.taxable_value, 0);
-  const gst = items.reduce((a, r) => a + r.gst_amount, 0);
+  //
+  // Transport joins them ONCE, here, through the same two calls the invoice
+  // rollup makes (computeInvoiceRollups in invoice-items.js): the charge into
+  // the taxable base, and its tax - at the principal supply's rate, split by
+  // this proforma's supply type - into the tax and into IGST/CGST/SGST, added
+  // as its split exactly as the invoice rollup adds it. Blank is null, so a
+  // proforma quoted without delivery stores exactly the figures it always did.
+  const transportCharge = invoiceTransportCharge();
+  const transportTax = invoiceTransportTax(transportCharge);
+  const taxable = items.reduce((a, r) => a + r.taxable_value, 0) + (transportCharge || 0);
+  const gst = items.reduce((a, r) => a + r.gst_amount, 0)
+    + transportTax.igst + transportTax.cgst + transportTax.sgst;
   const document_ = {
     document_number: getProformaText('pfNumber') || '',
     document_date: date,
@@ -264,10 +280,13 @@ async function saveProforma() {
     taxable_amount: taxable,
     gst_percentage: items.length ? items[0].gst_percentage : 0,
     gst_amount: gst,
-    igst: items.reduce((a, r) => a + r.igst, 0),
-    cgst: items.reduce((a, r) => a + r.cgst, 0),
-    sgst: items.reduce((a, r) => a + r.sgst, 0),
+    igst: items.reduce((a, r) => a + r.igst, 0) + transportTax.igst,
+    cgst: items.reduce((a, r) => a + r.cgst, 0) + transportTax.cgst,
+    sgst: items.reduce((a, r) => a + r.sgst, 0) + transportTax.sgst,
     total_amount: taxable + gst,
+    // The charge only. Its tax is derived by the save route from this charge
+    // and the line items, and nothing the browser sends for it is stored.
+    transport_charge: transportCharge,
     notes: getProformaText('pfNotes') || null,
     terms: getProformaText('pfTerms') || null,
     ...buildProformaExport()
@@ -370,6 +389,12 @@ async function loadProformaForEdit(id) {
 
   const rows = (read[1] || []).slice().sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0));
   if (rows.length) loadItemsIntoTable(rows);
+  // The delivery charge this proforma was quoted with. AFTER the lines are
+  // in, exactly as Invoice Entry restores it on Edit: it re-runs the rollups,
+  // and its tax follows the rate of those lines. A proforma saved without one,
+  // which is every proforma saved before this, restores an empty box and the
+  // totals it was saved with.
+  restoreInvoiceTransport(rec);
   populateDistrictList('pfDistrictList', rec.state || '');
   renderProformaValidityNote();
 

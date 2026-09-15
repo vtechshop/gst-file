@@ -869,7 +869,14 @@ async function loadInvoiceDuplicateDraft() {
   // change the quotation, and a save that fails must leave it alone.
   pendingProformaSourceId = draft.source_proforma_id || null;
 
-  if (Array.isArray(draft.items) && draft.items.length) loadItemsIntoTable(draft.items);
+  if (Array.isArray(draft.items) && draft.items.length) {
+    loadItemsIntoTable(draft.items);
+    // A delivery charge quoted on a proforma travels with it, so the invoice
+    // bills what the customer was quoted. AFTER the lines, as on Edit,
+    // because it re-runs the rollups. An invoice Duplicate carries no charge,
+    // so that path is left exactly as it was: an empty box.
+    restoreInvoiceTransport(draft);
+  }
 
   document.getElementById('invPageTitle').textContent = 'New Invoice (Duplicated)';
   showToast('Duplicated — review and Save to create a new invoice.', 'success');

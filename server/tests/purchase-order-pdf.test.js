@@ -503,7 +503,16 @@ test('O14 both purchase order pages load the new renderer', () => {
 test('O15 no other PDF module was touched', () => {
   const { execSync } = require('child_process');
   const changed = execSync('git status --porcelain -- client/js/pages/invoice-pdf.js '
-    + 'client/js/pages/proforma-pdf.js client/js/pages/sales-return-pdf.js '
+    + 'client/js/pages/sales-return-pdf.js '
     + 'client/js/pages/cdnote-pdf.js', { cwd: ROOT, encoding: 'utf8' }).trim();
   assert.strictEqual(changed, '', 'the other PDF modules must be untouched');
+
+  // The Proforma PDF gained Transport Charge / Transport GST rows under its
+  // own approved change (proforma-transport-charge.test.js), so it is pinned
+  // by content rather than by "not modified" - the terms the Purchase Order
+  // PDF is held to. A further change must approve its new revision here.
+  const pf = require('crypto').createHash('sha256')
+    .update(rd('client', 'js', 'pages', 'proforma-pdf.js').replace(/\r\n/g, '\n')).digest('hex');
+  assert.strictEqual(pf, '58db37f34bbd861f4890386f361c6571d9dbc9d1dc7d30c7ae80741ed4b26f8c',
+    'proforma-pdf.js is not the approved Proforma transport revision');
 });

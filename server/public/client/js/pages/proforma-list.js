@@ -157,6 +157,10 @@ function importProformaIntoInvoice(id) {
     shipping_address: r.shipping_address, shipping_state: r.shipping_state,
     shipping_district: r.shipping_district,
     supply_type: r.supply_type, gst_category: r.gst_category,
+    // The quoted delivery charge, so the invoice bills what the customer was
+    // quoted. Only the charge travels: the invoice derives its own tax from
+    // it and its lines, at the principal supply's rate.
+    transport_charge: r.transport_charge,
     // Read once by Invoice Entry and used only after a successful save.
     source_proforma_id: r.id,
     items

@@ -289,7 +289,7 @@ test('W27 every asset whose contents changed carries its own cache key', () => {
                               ['client/js/core/config.js', 33],
                               ['client/js/pages/invoice-pdf.js', 51],
                               ['client/js/pages/invoice-list.js', 34],
-                              ['client/js/pages/invoice-items.js', 40]]) {
+                              ['client/js/pages/invoice-items.js', 41]]) {
     assert.ok(page.includes(file + '?v=' + want), file + ' must be referenced at v=' + want);
   }
 });

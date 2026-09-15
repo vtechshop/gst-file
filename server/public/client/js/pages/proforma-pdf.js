@@ -72,6 +72,13 @@ function proformaToRenderable(row, items) {
     igst: +row.igst || 0,
     cgst: +row.cgst || 0,
     sgst: +row.sgst || 0,
+    // The quoted delivery charge and its derived tax, carried exactly as the
+    // tax invoice carries them (invoice-pdf.js): NULL stays null, never 0,
+    // so a proforma quoted without delivery prints exactly what it always did.
+    transport_charge: (row.transport_charge === null || row.transport_charge === undefined)
+      ? null : +row.transport_charge,
+    transport_gst_amount: (row.transport_gst_amount === null || row.transport_gst_amount === undefined)
+      ? null : +row.transport_gst_amount,
     // Round-off is DERIVED here, not stored: proforma_invoices keeps the
     // calculated total and this only decides what the quotation prints. The
     // taxable value and every tax column above are passed through untouched,
@@ -224,10 +231,28 @@ async function buildProformaPDFDoc(row, items) {
 
   // ── Totals ──
   const boxW = 80, boxX = R - boxW;
-  const totalsRows = [['Subtotal', formatNum(inv.taxable_amount)]];
-  if (inv.cgst > 0) totalsRows.push(['CGST', formatNum(inv.cgst)]);
-  if (inv.sgst > 0) totalsRows.push(['SGST', formatNum(inv.sgst)]);
-  if (inv.igst > 0) totalsRows.push(['IGST', formatNum(inv.igst)]);
+  // The stored figures INCLUDE any quoted delivery, so the goods are recovered
+  // by taking the stored transport figures back off - through the tax
+  // invoice's own invoiceTransportParts() (invoice-pdf.js, which every page
+  // that prints a proforma loads), never a second copy of that arithmetic.
+  // With no delivery quoted it hands back the stored figures unchanged, so
+  // this block prints exactly what it always has.
+  const tp = invoiceTransportParts(inv);
+  const totalsRows = [['Subtotal', formatNum(tp.productTaxable)]];
+  if (tp.productCgst > 0) totalsRows.push(['CGST', formatNum(tp.productCgst)]);
+  if (tp.productSgst > 0) totalsRows.push(['SGST', formatNum(tp.productSgst)]);
+  if (tp.productIgst > 0) totalsRows.push(['IGST', formatNum(tp.productIgst)]);
+  // Delivery, quoted separately from the goods and never as a product line.
+  // Labelled without a rate, as the tax invoice labels it: the amount is
+  // stored, the rate it came from is not this file's to assert.
+  if (tp.has) {
+    // What the goods alone came to, tax included - the tax invoice's own
+    // invoiceMachineTotal(), so this column reads exactly as the invoice's
+    // does: goods total, then the charge, then its tax, then rounding.
+    totalsRows.push(['Machine / Product Total', formatNum(invoiceMachineTotal(inv, tp))]);
+    totalsRows.push(['Transport Charge', formatNum(tp.charge)]);
+    totalsRows.push(['Transport GST', formatNum(tp.gst)]);
+  }
   // Shown only when it is worth a line. Same threshold and same signed format
   // the tax invoice uses, so the two documents read alike.
   if (Math.abs(inv.round_off) >= 0.005) {

@@ -25,6 +25,7 @@ const { requireAuth } = require('../middleware/auth');
 const { asyncRoute } = require('../middleware/errorHandler');
 const { applyInvoiceNumberFormat } = require('../utils/invoiceNumberFormat');
 const { TABLES } = require('./generic');
+const { validateTransportCharge, transportGstAmount, principalGstRate } = require('../utils/validation');
 
 const router = express.Router();
 router.use(requireAuth);
@@ -56,7 +57,9 @@ const DOCUMENT_TABLES = {
   // generic save/cancel path - it reports in no return, see the registry
   // entry in js/utils.js.
   proforma_invoice: { table: 'proforma_invoices', series: 'proforma_invoice',
-                     items: 'proforma_invoice_items', itemsFk: 'proforma_invoice_id' },
+                     items: 'proforma_invoice_items', itemsFk: 'proforma_invoice_id',
+                     // Carries the quoted delivery charge; see the save route.
+                     transport: true },
 
   // An order to a supplier. It joins this registry for the numbering and
   // the duplicate check; everything a purchase order does BEYOND being a
@@ -251,6 +254,37 @@ router.post('/:type/save', asyncRoute(async (req, res) => {
   // another book by sending a different document_series.
   if (spec.series) document.document_series = spec.series;
 
+  // ── Transport charge ──
+  //
+  // For a type that carries it (a proforma), checked here and its tax DERIVED
+  // here - the rule a tax invoice's save applies (routes/invoices.js), through
+  // the same three functions in utils/validation.js, so the two documents
+  // cannot disagree about it.
+  //
+  // The charge is the only part the browser decides. Its tax is computed from
+  // the charge that just passed validation and the principal supply's rate
+  // among the line items being stored, so a caller naming its own tax - or its
+  // own rate - stores the derived figure either way. Absent from the payload
+  // means the caller is not touching transport, which is not the same as
+  // clearing it: nothing is written, and an existing charge survives.
+  let derivedTransportGst;
+  if (spec.transport && Object.prototype.hasOwnProperty.call(document, 'transport_charge')) {
+    const check = validateTransportCharge(document.transport_charge);
+    if (!check.valid) {
+      const e = new Error(check.error); e.status = 400; e.expose = true; throw e;
+    }
+    const gst = transportGstAmount(check.value, principalGstRate(items));
+    if (check.value > 0 && gst === null) {
+      const e = new Error(
+        'Transport is taxed at the rate of the principal supply, and this proforma does not have '
+        + 'a single one — its products carry more than one GST rate (or it has no taxable product). '
+        + 'Quote the delivery separately, or split the products.');
+      e.status = 400; e.expose = true; e.code = 'transport_rate_indeterminate'; throw e;
+    }
+    document.transport_charge = check.value;
+    derivedTransportGst = gst;
+  }
+
   // A table may declare columns that exist and are readable but must not be
   // written through a generic save - a purchase order's status and its
   // items' received_quantity are moved only by the transaction that also
@@ -263,6 +297,13 @@ router.post('/:type/save', asyncRoute(async (req, res) => {
     Object.prototype.hasOwnProperty.call(document, c));
   if (!allowed.length) {
     const e = new Error('Nothing to save.'); e.status = 400; e.expose = true; throw e;
+  }
+  // The derived tax joins the write HERE, past the immutable filter above. It
+  // is immutable so that no caller can set it: this route is its one writer,
+  // and it writes only the figure it derived.
+  if (derivedTransportGst !== undefined) {
+    allowed.push('transport_gst_amount');
+    document.transport_gst_amount = derivedTransportGst;
   }
 
   const client = await pool.connect();

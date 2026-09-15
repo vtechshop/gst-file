@@ -348,9 +348,10 @@ test('A16 the invoice scanner still sets B2B through the same handlers', () => {
 });
 
 test('A17 the page loads the changed script under a new cache key only', () => {
-  assert.match(HTML, /client\/js\/pages\/invoice-entry\.js\?v=37/);
-  // The other invoice scripts keep their keys.
-  assert.match(HTML, /client\/js\/pages\/invoice-items\.js\?v=40/);
+  assert.match(HTML, /client\/js\/pages\/invoice-entry\.js\?v=38/);
+  // invoice-items.js moved with it - the Proforma transport change touched
+  // both. The PDF module did not, and keeps its key.
+  assert.match(HTML, /client\/js\/pages\/invoice-items\.js\?v=41/);
   assert.match(HTML, /client\/js\/pages\/invoice-pdf\.js\?v=51/);
 });
 

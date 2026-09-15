@@ -58,8 +58,12 @@ test('M3 it targets only this migration and never the runner', () => {
 
 test('M4 package.json runs it before start, and exposes it as its own command', () => {
   const pkg = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8'));
-  assert.strictEqual(pkg.scripts.prestart, 'node scripts/migrate-purchase-notes.js',
-    'prestart must run the targeted check, so npm start cannot skip it');
+  // Still pinned exactly. The Purchase Notes check runs FIRST, as it always
+  // has; the Proforma transport check follows it, joined with && so either
+  // one failing stops the start (see migrate-proforma-transport.test.js).
+  assert.strictEqual(pkg.scripts.prestart,
+    'node scripts/migrate-purchase-notes.js && node scripts/migrate-proforma-transport.js',
+    'prestart must run the targeted checks, Purchase Notes first, so npm start cannot skip either');
   assert.strictEqual(pkg.scripts['migrate:purchase-notes'], 'node scripts/migrate-purchase-notes.js');
   assert.strictEqual(pkg.scripts.start, 'node src/app.js', 'start itself must stay unchanged');
   // prestart is pinned exactly above, so it cannot be the runner. What is

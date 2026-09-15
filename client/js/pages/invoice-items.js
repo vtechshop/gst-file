@@ -50,14 +50,17 @@ function itemsWarrantyEnabled() {
 }
 
 // ── Transport charge ──────────────────────────────
-// An optional delivery charge billed on the invoice, taxed at a fixed 18%.
+// An optional delivery charge billed on the document, taxed at the
+// principal supply's rate (invoicePrincipalGstRate, below).
 //
-// Same gate as warranty above, and for the same reason: this grid is shared
-// with Proforma Entry, proforma_invoices has nowhere to store the charge,
-// and a field that silently vanished on save would be worse than no field.
-// The proforma totals box keeps exactly the rows it had.
+// On the tax invoice, and on the proforma that quotes it: a quotation has
+// to price delivery exactly the way the invoice will, or the customer is
+// quoted one total and billed another. proforma_invoices carries the same
+// two columns (migration_proforma_transport_charge.sql). Every other form
+// sharing this grid stays without it, because a field that silently
+// vanished on save would be worse than no field.
 function itemsTransportEnabled() {
-  return itemsFormPrefix === 'invoice';
+  return itemsFormPrefix === 'invoice' || itemsFormPrefix === 'proforma';
 }
 
 // The rate a delivery charge is taxed at: the rate of the PRINCIPAL SUPPLY
@@ -1140,11 +1143,24 @@ function validateInvoiceItems() {
     if (!GST_RATE_SLABS.includes(+row.gst_percentage)) { showToast(`"${row.product_name}": ${row.gst_percentage}% is not a standard GST slab — pick one from the GST % list.`, 'error'); return false; }
   }
 
-  // Transport charge, if the box has anything in it at all. Read from the
-  // ELEMENT rather than through invoiceTransportCharge(), which reports a
-  // bad entry as null so the running total stays sane mid-keystroke - that
-  // is the right answer for the display and the wrong one for Save, which
-  // must say what is wrong instead of silently billing nothing.
+  // Transport charge: validateInvoiceTransport(), below - the one rule, which
+  // Proforma Entry's save runs as well.
+  if (!validateInvoiceTransport()) return false;
+  return true;
+}
+
+// Transport charge, if the box has anything in it at all. Read from the
+// ELEMENT rather than through invoiceTransportCharge(), which reports a
+// bad entry as null so the running total stays sane mid-keystroke - that
+// is the right answer for the display and the wrong one for Save, which
+// must say what is wrong instead of silently billing nothing.
+//
+// Its own function so Proforma Entry refuses exactly the same entries
+// without taking on the invoice's per-line checks. Deliberately declared
+// AFTER validateInvoiceItems: the rollup's read-the-charge-once guarantee
+// is checked over the source between computeInvoiceRollups and that
+// function, and nothing here may land inside that span.
+function validateInvoiceTransport() {
   if (itemsTransportEnabled()) {
     const el = document.getElementById('itemsTransportCharge');
     const raw = el ? String(el.value == null ? '' : el.value).trim() : '';
