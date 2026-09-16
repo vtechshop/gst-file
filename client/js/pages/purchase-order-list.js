@@ -55,7 +55,7 @@ async function loadPurchaseOrders() {
     const res = await apiFetch('/purchase-orders?' + params.toString());
     body.innerHTML = res.rows.length
       ? res.rows.map(poRow).join('')
-      : `<tr><td colspan="10" class="text-center text-muted">
+      : `<tr><td colspan="10" class="text-center text-muted po-empty">
            ${params.toString().includes('q=') || val('poStatus')
     ? 'No purchase orders match these filters.'
     : 'No purchase orders yet. Raise one to order goods from a vendor.'}
@@ -77,7 +77,7 @@ function poRow(r) {
   return `<tr>
     <td><b>${escPoList(r.document_number)}</b></td>
     <td>${escPoList(formatDate(r.document_date))}</td>
-    <td>${escPoList(r.vendor_name)}</td>
+    <td><span class="po-vendor" title="${escPoList(r.vendor_name)}">${escPoList(r.vendor_name)}</span></td>
     <td>${r.expected_delivery_date ? escPoList(formatDate(r.expected_delivery_date)) : '&mdash;'}</td>
     <td class="text-right">&#8377;${formatNum(r.total_amount)}</td>
     <td class="text-right">${qty(r.ordered_quantity)}</td>
@@ -85,11 +85,13 @@ function poRow(r) {
     <td class="text-right${pending > 0 ? ' text-warning' : ''}"><b>${qty(pending)}</b></td>
     <td><span class="badge ${cls}">${label}</span></td>
     <td class="text-right">
-      <a class="btn btn-secondary btn-sm btn-icon" href="purchase-order.html?id=${id}" title="View / Edit"><i class="fas fa-pen"></i></a>
-      <button type="button" class="btn btn-secondary btn-sm btn-icon" onclick="poPdf('${id}')" title="PDF"><i class="fas fa-file-pdf"></i></button>
-      <button type="button" class="btn btn-secondary btn-sm btn-icon" onclick="poPrint('${id}')" title="Print"><i class="fas fa-print"></i></button>
-      ${canReceive ? `<button type="button" class="btn btn-primary btn-sm btn-icon" onclick="openPoReceive('${id}')" title="Receive goods"><i class="fas fa-truck-ramp-box"></i></button>` : ''}
-      ${canCancel ? `<button type="button" class="btn btn-danger btn-sm btn-icon" onclick="poCancel('${id}')" title="Cancel"><i class="fas fa-ban"></i></button>` : ''}
+      <div class="po-actions">
+        <a class="btn btn-secondary btn-sm btn-icon" href="purchase-order.html?id=${id}" title="View / Edit"><i class="fas fa-pen"></i></a>
+        <button type="button" class="btn btn-secondary btn-sm btn-icon" onclick="poPdf('${id}')" title="PDF"><i class="fas fa-file-pdf"></i></button>
+        <button type="button" class="btn btn-secondary btn-sm btn-icon" onclick="poPrint('${id}')" title="Print"><i class="fas fa-print"></i></button>
+        ${canReceive ? `<button type="button" class="btn btn-primary btn-sm btn-icon" onclick="openPoReceive('${id}')" title="Receive goods"><i class="fas fa-truck-ramp-box"></i></button>` : ''}
+        ${canCancel ? `<button type="button" class="btn btn-danger btn-sm btn-icon" onclick="poCancel('${id}')" title="Cancel"><i class="fas fa-ban"></i></button>` : ''}
+      </div>
     </td>
   </tr>`;
 }

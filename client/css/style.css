@@ -1225,3 +1225,324 @@ tr.row-skip { opacity: 0.5; }
 :root[data-theme="dark"] .item-product-option.highlighted { background: var(--primary-xlight); }
 :root[data-theme="dark"] .data-table tbody tr:hover { background: #16302c; }
 :root[data-theme="dark"] .page-btn { background: #1b2523; color: var(--text); }
+
+
+/* =====================================================================
+   Purchase Orders list (purchase-orders.html)
+   ---------------------------------------------------------------------
+   Presentation only, and scoped under .po-list-page so no other page
+   moves. purchase-order-list.js still renders every figure, date, status
+   label, filter and action exactly as before; these rules only give the
+   page its spacing, alignment and hierarchy.
+   ===================================================================== */
+
+.po-list-page {
+  /* size - narrowed in steps below so the columns fit beside the sidebar */
+  --po-cell-x: 14px;
+  --po-font: 13.5px;
+  --po-head-font: 12px;
+  --po-badge-font: 12px;
+  --po-btn: 30px;
+  --po-btn-gap: 6px;
+  --po-vendor-min: 190px;
+  /* colour */
+  --po-line: #e7eeec;
+  --po-muted: #5f6f6c;
+  --po-soft: #455a64;
+  --po-hover: #f3f9f8;
+  --po-ink: var(--primary-dark);
+  --po-icon: var(--primary);
+  --po-pending: #e65100;
+  --po-btn-border: #cddcd9;
+  --po-danger: var(--danger);
+  --po-danger-border: #efc7c7;
+  --po-danger-hover: #ffebee;
+}
+/* The app's own dark theme (Profile > Dark theme) swaps the same tokens. */
+:root[data-theme="dark"] .po-list-page {
+  --po-line: #2c3a37;
+  --po-muted: #9fb0ae;
+  --po-soft: #b8c5c3;
+  --po-hover: #16302c;
+  --po-ink: #80cbc4;
+  --po-icon: #80cbc4;
+  --po-pending: #ffb74d;
+  --po-btn-border: #3a4d49;
+  --po-danger: #ef9a9a;
+  --po-danger-border: #6b3434;
+  --po-danger-hover: #3a2222;
+}
+/* The shared card title is dark teal, which disappears on a dark card. */
+:root[data-theme="dark"] .po-list-page .card-title { color: var(--po-ink); }
+
+/* ── Find an order: one aligned toolbar ─────────────────────────────── */
+.po-list-page .po-filter-card .card-header { padding: 16px 22px; gap: 12px; }
+.po-list-page .po-filter-card .card-body { padding: 18px 22px 22px; }
+.po-list-page .po-filter-card .card-header .btn-primary {
+  padding: 9px 16px;
+  font-size: 13.5px;
+  font-weight: 600;
+  border-radius: 8px;
+  box-shadow: 0 1px 2px rgba(0, 77, 64, 0.2);
+}
+/* The "what" filters on the first row, the four dates on the second. */
+.po-list-page .po-filter-grid {
+  display: grid;
+  grid-template-columns: repeat(12, minmax(0, 1fr));
+  gap: 16px 18px;
+  align-items: end;
+}
+.po-list-page .po-filter-grid .form-group { min-width: 0; gap: 6px; }
+.po-list-page .po-f-search { grid-column: span 6; }
+.po-list-page .po-f-status,
+.po-list-page .po-f-receipt,
+.po-list-page .po-f-date { grid-column: span 3; }
+.po-list-page .po-filter-grid label {
+  font-size: 11.5px;
+  letter-spacing: 0.5px;
+  color: var(--po-muted);
+}
+/* One height for every control: a select and a date input otherwise sit
+   a couple of pixels off the text input beside them. */
+.po-list-page .po-filter-grid .form-control { height: 40px; padding-top: 0; padding-bottom: 0; }
+.po-list-page .po-f-search .form-control {
+  padding-left: 36px;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%2378909c' stroke-width='2.2' stroke-linecap='round'><circle cx='11' cy='11' r='7'/><path d='M20 20l-3.6-3.6'/></svg>");
+  background-repeat: no-repeat;
+  background-position: 12px center;
+  background-size: 16px 16px;
+}
+
+/* ── The list ───────────────────────────────────────────────────────── */
+.po-list-page .po-table-card .card-body.po-table-body { padding: 0; }
+.po-list-page .po-table-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+.po-list-page .po-list-table {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  font-size: var(--po-font);
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+.po-list-page .po-list-table thead th {
+  background: var(--primary-dark);
+  color: #fff;
+  font-size: var(--po-head-font);
+  font-weight: 600;
+  letter-spacing: 0.2px;
+  text-align: left;
+  white-space: nowrap;
+  padding: 12px var(--po-cell-x);
+}
+.po-list-page .po-list-table thead th.text-right { text-align: right; }
+.po-list-page .po-list-table tbody td {
+  height: 60px;
+  padding: 10px var(--po-cell-x);
+  vertical-align: middle;
+  border-bottom: 1px solid var(--po-line);
+  transition: background 0.12s;
+}
+.po-list-page .po-list-table tbody tr:last-child td { border-bottom: none; }
+.po-list-page .po-list-table tbody tr:hover td { background: var(--po-hover); }
+
+/* Identity. The number reads first and breaks only where it has a natural
+   break (a long "PO/2026-27/..." style number takes two lines). A vendor
+   name takes at most two lines; the full name is on hover. */
+.po-list-page .po-list-table td:nth-child(1) { color: var(--po-ink); overflow-wrap: break-word; }
+.po-list-page .po-list-table td:nth-child(1) b { font-weight: 600; }
+.po-list-page .po-list-table td:nth-child(3) { min-width: var(--po-vendor-min); }
+.po-list-page .po-vendor {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  overflow: hidden;
+  overflow-wrap: break-word;
+  font-weight: 500;
+  line-height: 1.4;
+}
+.po-list-page .po-list-table td:nth-child(2),
+.po-list-page .po-list-table td:nth-child(4) { white-space: nowrap; color: var(--po-soft); }
+/* Money, then quantities: right-aligned, fixed-width figures. */
+.po-list-page .po-list-table td:nth-child(5) { white-space: nowrap; font-weight: 600; }
+.po-list-page .po-list-table td:nth-child(6),
+.po-list-page .po-list-table td:nth-child(7),
+.po-list-page .po-list-table td:nth-child(8) { white-space: nowrap; color: var(--po-soft); }
+.po-list-page .po-list-table td:nth-child(8) b { color: var(--text); }
+.po-list-page .po-list-table td.text-warning,
+.po-list-page .po-list-table td.text-warning b { color: var(--po-pending); }
+/* Two quiet rules: where the money ends and the quantities begin, and
+   where the quantities end. Whitespace does the rest. */
+.po-list-page .po-list-table th:nth-child(6),
+.po-list-page .po-list-table td:nth-child(6),
+.po-list-page .po-list-table th:nth-child(9),
+.po-list-page .po-list-table td:nth-child(9) { border-left: 1px solid var(--po-line); }
+.po-list-page .po-list-table thead th:nth-child(6),
+.po-list-page .po-list-table thead th:nth-child(9) { border-left-color: rgba(255, 255, 255, 0.16); }
+.po-list-page .po-list-table td:nth-child(9) { white-space: nowrap; }
+
+/* Status. purchase-order-list.js has always tagged each status with one of
+   these classes, but only badge-green ever had a rule, so six of the seven
+   statuses rendered uncoloured. Same classes, same labels - now styled,
+   from the palette the other badges already use. */
+.po-list-page .po-list-table .badge {
+  gap: 6px;
+  padding: 4px 10px 4px 8px;
+  font-size: var(--po-badge-font);
+  font-weight: 600;
+  line-height: 16px;
+  white-space: nowrap;
+  border: 1px solid #dfe5e8;
+  background: #eceff1;
+  color: #455a64;
+}
+.po-list-page .po-list-table .badge::before {
+  content: '';
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  flex: none;
+}
+.po-list-page .po-list-table .badge-secondary { background: #eceff1; color: #455a64; border-color: #dfe5e8; }
+.po-list-page .po-list-table .badge-info      { background: #e3f2fd; color: #1565c0; border-color: #cde2f7; }
+.po-list-page .po-list-table .badge-green     { background: #e8f5e9; color: #2e7d32; border-color: #cfe8d1; }
+.po-list-page .po-list-table .badge-warning   { background: #fff3e0; color: #e65100; border-color: #fbdcb8; }
+.po-list-page .po-list-table .badge-success   { background: #e0f2f1; color: #00695c; border-color: #bfe0dc; }
+.po-list-page .po-list-table .badge-danger    { background: #ffebee; color: #c62828; border-color: #f5cfd4; }
+
+/* Actions. Edit, PDF and Print - which every order has - sit in the same
+   place on every row; Receive and Cancel follow where the order allows
+   them. One size, one gap, one line. */
+.po-list-page .po-list-table thead th:nth-child(10),
+.po-list-page .po-list-table td:nth-child(10) { text-align: left; white-space: nowrap; }
+.po-list-page .po-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--po-btn-gap);
+  flex-wrap: nowrap;
+}
+.po-list-page .po-actions .btn-icon {
+  width: var(--po-btn);
+  height: var(--po-btn);
+  padding: 0;
+  gap: 0;
+  justify-content: center;
+  font-size: 12.5px;
+  border-radius: 7px;
+  border: 1px solid var(--po-btn-border);
+  background: var(--card-bg);
+  color: var(--po-icon);
+  box-shadow: none;
+}
+.po-list-page .po-actions .btn-icon:hover { background: var(--primary-xlight); border-color: var(--primary); }
+.po-list-page .po-actions .btn-icon:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+.po-list-page .po-actions .btn-primary { background: var(--primary); border-color: var(--primary); color: #fff; }
+.po-list-page .po-actions .btn-primary:hover { background: var(--primary-dark); border-color: var(--primary-dark); }
+.po-list-page .po-actions .btn-danger { background: var(--card-bg); border-color: var(--po-danger-border); color: var(--po-danger); }
+.po-list-page .po-actions .btn-danger:hover { background: var(--po-danger-hover); border-color: var(--po-danger); }
+
+/* Loading, empty and error rows span the table. */
+.po-list-page .po-list-table tbody td[colspan] {
+  height: auto;
+  padding: 44px var(--po-cell-x);
+  text-align: center;
+  white-space: normal;
+  font-size: 14px;
+  font-weight: 400;
+  color: var(--text-muted);
+}
+.po-list-page .po-list-table tbody tr:hover td[colspan] { background: transparent; }
+.po-list-page .po-list-table td.po-empty::before {
+  content: '';
+  display: block;
+  width: 48px;
+  height: 48px;
+  margin: 0 auto 12px;
+  border-radius: 14px;
+  background-color: var(--primary-xlight);
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24' fill='none' stroke='%2326a69a' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'><path d='M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z'/><path d='M14 3v5h5'/><path d='M9 13h6M9 17h4'/></svg>");
+  background-repeat: no-repeat;
+  background-position: center;
+  background-size: 24px 24px;
+}
+
+/* Pagination sits in the card's own footer strip. */
+.po-list-page .po-table-body > .po-pagination {
+  margin: 0;
+  padding: 12px 18px;
+  gap: 8px;
+  border-top: 1px solid var(--po-line);
+}
+.po-list-page .po-table-body > .po-pagination:empty { display: none; }
+.po-list-page .po-pagination .btn { width: 32px; height: 32px; padding: 0; justify-content: center; }
+
+/* ── Narrower screens ──────────────────────────────────────────────── */
+/* Beside the sidebar, a 1440px screen leaves about 1150px for the table
+   and a 1280px screen about 990px: step the spacing down so all ten
+   columns still sit side by side. */
+@media (max-width: 1499px) {
+  .po-list-page {
+    --po-cell-x: 11px;
+    --po-font: 13px;
+    --po-btn: 28px;
+    --po-btn-gap: 5px;
+    --po-vendor-min: 160px;
+  }
+}
+@media (max-width: 1366px) {
+  .po-list-page {
+    --po-cell-x: 8px;
+    --po-font: 12.5px;
+    --po-head-font: 11.5px;
+    --po-badge-font: 11.5px;
+    --po-btn: 28px;
+    --po-btn-gap: 4px;
+    --po-vendor-min: 116px;
+  }
+  .po-list-page .po-list-table .badge { gap: 5px; padding: 3px 8px 3px 7px; }
+}
+/* Below this the columns cannot sit side by side, so the table keeps a
+   comfortable width and scrolls inside its card - it never compresses
+   into overlapping text, and the page itself never scrolls sideways. */
+@media (max-width: 1180px) {
+  .po-list-page {
+    --po-cell-x: 12px;
+    --po-font: 13px;
+    --po-head-font: 12px;
+    --po-badge-font: 12px;
+    --po-btn: 30px;
+    --po-btn-gap: 6px;
+    --po-vendor-min: 180px;
+  }
+  .po-list-page .po-list-table { min-width: 1100px; }
+  .po-list-page .po-list-table .badge { gap: 6px; padding: 4px 10px 4px 8px; }
+  /* The PO number stays in view while the rest of the row scrolls, so an
+     action is never separated from the order it belongs to. */
+  .po-list-page .po-list-table thead th:nth-child(1),
+  .po-list-page .po-list-table tbody td:nth-child(1) {
+    position: sticky;
+    left: 0;
+    z-index: 1;
+    box-shadow: inset -1px 0 0 var(--po-line);
+  }
+  .po-list-page .po-list-table thead th:nth-child(1) { z-index: 2; box-shadow: inset -1px 0 0 rgba(255, 255, 255, 0.16); }
+  .po-list-page .po-list-table tbody td:nth-child(1) { background: var(--card-bg); }
+  .po-list-page .po-list-table tbody tr:hover td:nth-child(1) { background: var(--po-hover); }
+  .po-list-page .po-list-table tbody td[colspan] { position: static; box-shadow: none; }
+  .po-list-page .po-list-table tbody tr:hover td[colspan] { background: var(--card-bg); }
+}
+@media (max-width: 640px) {
+  .po-list-page .po-filter-card .card-header,
+  .po-list-page .po-filter-card .card-body { padding-left: 16px; padding-right: 16px; }
+  .po-list-page .po-f-search { grid-column: span 12; }
+  .po-list-page .po-f-status,
+  .po-list-page .po-f-receipt,
+  .po-list-page .po-f-date { grid-column: span 6; }
+}
+@media (max-width: 360px) {
+  .po-list-page .po-f-status,
+  .po-list-page .po-f-receipt,
+  .po-list-page .po-f-date { grid-column: span 12; }
+}
+/* end Purchase Orders list */

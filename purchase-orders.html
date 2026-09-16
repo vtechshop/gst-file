@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Purchase Orders - GST Management System</title>
-<link rel="stylesheet" href="client/css/style.css?v=35">
+<link rel="stylesheet" href="client/css/style.css?v=37">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
   <script src="shared/india-districts.js?v=29"></script>
   <script src="client/js/api/apiClient.js?v=29"></script>
@@ -26,7 +26,7 @@
        ink-measuring helpers, reused rather than copied. -->
   <script src="client/js/pages/invoice-pdf.js?v=39"></script>
   <script src="client/js/pages/purchase-order-pdf.js?v=3"></script>
-  <script src="client/js/pages/purchase-order-list.js?v=1"></script>
+  <script src="client/js/pages/purchase-order-list.js?v=2"></script>
 </head>
 <body>
 <div class="app-layout">
@@ -108,19 +108,19 @@
       </div>
     </div>
 
-    <div class="content">
-      <div class="card mb-16">
+    <div class="content po-list-page">
+      <div class="card mb-16 po-filter-card">
         <div class="card-header">
           <span class="card-title"><i class="fas fa-filter"></i> Find an order</span>
           <a href="purchase-order.html" class="btn btn-primary btn-sm ml-auto"><i class="fas fa-plus"></i> New Purchase Order</a>
         </div>
         <div class="card-body">
-          <div class="form-grid cols-4">
-            <div class="form-group">
+          <div class="form-grid cols-4 po-filter-grid">
+            <div class="form-group po-f-search">
               <label for="poSearch">PO number or vendor</label>
               <input type="text" id="poSearch" class="form-control" placeholder="Search&hellip;" oninput="poDebouncedReload()">
             </div>
-            <div class="form-group">
+            <div class="form-group po-f-status">
               <label for="poStatus">Status</label>
               <select id="poStatus" class="form-control" onchange="poReload()">
                 <option value="">All statuses</option>
@@ -133,38 +133,38 @@
                 <option value="CLOSED">Closed</option>
               </select>
             </div>
-            <div class="form-group">
-              <label for="poFrom">Ordered from</label>
-              <input type="date" id="poFrom" class="form-control" onchange="poReload()">
-            </div>
-            <div class="form-group">
-              <label for="poTo">Ordered to</label>
-              <input type="date" id="poTo" class="form-control" onchange="poReload()">
-            </div>
-            <div class="form-group">
-              <label for="poDeliveryFrom">Delivery from</label>
-              <input type="date" id="poDeliveryFrom" class="form-control" onchange="poReload()">
-            </div>
-            <div class="form-group">
-              <label for="poDeliveryTo">Delivery to</label>
-              <input type="date" id="poDeliveryTo" class="form-control" onchange="poReload()">
-            </div>
-            <div class="form-group">
+            <div class="form-group po-f-receipt">
               <label for="poPending">Receipt</label>
               <select id="poPending" class="form-control" onchange="poReload()">
                 <option value="">Everything</option>
                 <option value="1">Still awaiting goods</option>
               </select>
             </div>
+            <div class="form-group po-f-date">
+              <label for="poFrom">Ordered from</label>
+              <input type="date" id="poFrom" class="form-control" onchange="poReload()">
+            </div>
+            <div class="form-group po-f-date">
+              <label for="poTo">Ordered to</label>
+              <input type="date" id="poTo" class="form-control" onchange="poReload()">
+            </div>
+            <div class="form-group po-f-date">
+              <label for="poDeliveryFrom">Delivery from</label>
+              <input type="date" id="poDeliveryFrom" class="form-control" onchange="poReload()">
+            </div>
+            <div class="form-group po-f-date">
+              <label for="poDeliveryTo">Delivery to</label>
+              <input type="date" id="poDeliveryTo" class="form-control" onchange="poReload()">
+            </div>
           </div>
         </div>
       </div>
 
-      <div class="card">
+      <div class="card po-table-card">
         <div class="card-header"><span class="card-title"><i class="fas fa-list-alt"></i> Purchase Orders</span></div>
-        <div class="card-body">
-          <div class="table-responsive">
-            <table class="table">
+        <div class="card-body po-table-body">
+          <div class="table-responsive po-table-scroll">
+            <table class="table po-list-table">
               <thead>
                 <tr>
                   <th>PO Number</th><th>Date</th><th>Vendor</th><th>Expected</th>
@@ -178,7 +178,7 @@
               </tbody>
             </table>
           </div>
-          <div id="poPagination" class="pagination"></div>
+          <div id="poPagination" class="pagination po-pagination"></div>
         </div>
       </div>
 
