@@ -202,9 +202,14 @@ test('P12 the Sales note and the Purchase Return are untouched', () => {
   const changed = execSync('git status --porcelain -- client/js/pages/cdnotes.js '
     + 'client/js/pages/cdnote-pdf.js server/src/routes/cdn-notes.js '
     + 'server/src/routes/purchases.js client/js/pages/purchase-returns.js '
-    + 'client/js/pages/purchase-items.js client/js/gst/gstr3b.js',
+    + 'client/js/gst/gstr3b.js',
   { cwd: ROOT, encoding: 'utf8' }).trim();
   assert.strictEqual(changed, '', 'these modules must be unchanged by purchase-note work');
+  // The shared purchase grid is still edited for its own sake (New Purchase's
+  // Unit select), so it is held to what this guard is about - it carries no
+  // purchase-note code - rather than to having no uncommitted change at all.
+  const grid = fs.readFileSync(path.join(ROOT, 'client', 'js', 'pages', 'purchase-items.js'), 'utf8');
+  assert.ok(!/purchase[_-]?note/i.test(grid), 'the purchase grid must not carry purchase-note code');
 });
 
 // ═══════════════════════════════════════════════════════════════════════

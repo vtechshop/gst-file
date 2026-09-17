@@ -15,11 +15,16 @@ let purchKind = null;         // 'purchase' | 'return'
 let purchUserId = null;
 let purchRowSeq = 0;
 let purchQuickAddTargetRowId = null;
+let purchUnitSelect = false;  // see initPurchaseItems()
 
 // ── Init ──────────────────────────────────────────
-async function initPurchaseItems(userId, kind) {
+// options.unitSelect: render Unit as a <select> of the GST unit list rather
+// than a free-text box. New Purchase asks for it; Purchase Order entry and
+// Purchase Returns share this grid and keep the text field they have.
+async function initPurchaseItems(userId, kind, options) {
   purchUserId = userId;
   purchKind = kind;
+  purchUnitSelect = !!(options && options.unitSelect);
   // loadProductsList() returns null when the read failed. Keeping the
   // previous list (rather than replacing it with an empty one) is what
   // stops the Quick Add prompt from offering to create products that
@@ -161,8 +166,7 @@ function renderPurchItemsTable() {
       </td>
       <td><input type="text" class="form-control" value="${escItemHtml(row.hsn_code)}" ${row.locked ? 'readonly' : ''}
           onchange="onPurchFieldChange('${row.rowId}','hsn_code',this.value)"></td>
-      <td><input type="text" class="form-control" value="${escItemHtml(row.unit)}" ${row.locked ? 'readonly' : ''}
-          onchange="onPurchFieldChange('${row.rowId}','unit',this.value)"></td>
+      <td>${purchUnitCell(row)}</td>
       <td><input type="number" class="form-control text-center" min="0.001" step="0.001" value="${row.quantity}"
           oninput="onPurchFieldChange('${row.rowId}','quantity',this.value)"></td>
       <td><input type="number" class="form-control text-right" min="0" step="0.01" value="${row.rate}"
@@ -177,6 +181,37 @@ function renderPurchItemsTable() {
       <td class="text-right fw-700 purch-total-cell">&#8377;${formatNum(row.total_amount)}</td>
       <td><button type="button" class="btn btn-danger btn-sm btn-icon" onclick="removePurchItemRow('${row.rowId}')" title="Remove row"><i class="fas fa-trash"></i></button></td>
     </tr>`).join('');
+}
+
+// The Unit cell. Without the option it is the free-text box it always was.
+// With it, a <select> of GST_UQC_MASTER - js/utils.js's unit list, the same
+// one Invoice Entry and the Product Master offer. Each option reads as its
+// code alone ("PCS"): a closed select can only show the text its list shows,
+// and this grid has no room for "PCS - PIECES" without scrolling sideways at
+// desktop widths. The unit's full name is the option's title. Two things are
+// carried over rather than changed:
+//   - a row filled from the Product Master is locked, as before: the select
+//     is disabled, the way the text box was readonly;
+//   - a stored unit that is not a standard code (an older free-typed line,
+//     say "Box of 10") stays selected as an extra option with its exact
+//     value, so opening and re-saving a purchase never rewrites it.
+// A code is matched regardless of case ("Nos" shows as NOS), but only
+// choosing a different option changes what is stored.
+function purchUnitCell(row) {
+  const onchange = `onPurchFieldChange('${row.rowId}','unit',this.value)`;
+  if (!purchUnitSelect) {
+    return `<input type="text" class="form-control" value="${escItemHtml(row.unit)}" ${row.locked ? 'readonly' : ''}
+          onchange="${onchange}">`;
+  }
+  const stored = row.unit || '';
+  const code = stored.trim().toUpperCase();
+  const known = GST_UQC_MASTER.some(u => u.code === code);
+  const options = `<option value=""${stored ? '' : ' selected'}>Select Unit</option>`
+    + GST_UQC_MASTER.map(u => `<option value="${u.code}" title="${u.label}"${u.code === code ? ' selected' : ''}>${u.code}</option>`).join('')
+    + (stored && !known ? `<option value="${escItemHtml(stored)}" selected>${escItemHtml(stored)} (not a standard GST unit)</option>` : '');
+  return `<select class="form-control purch-unit-select" aria-label="Unit"${row.locked
+    ? ' disabled title="Filled from the Product Master for this product"' : ''}
+          onchange="${onchange}">${options}</select>`;
 }
 
 // ── Product autocomplete / autofill / lock ─────────

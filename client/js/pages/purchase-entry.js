@@ -22,7 +22,7 @@ async function initPurchaseEntry() {
   populatePurchStateOptions();
   populateGstCategorySelect('purchGstCategory');   // same list as Invoice Entry
   await loadPurchVendorsList(user.id);
-  await initPurchaseItems(user.id, 'purchase');
+  await initPurchaseItems(user.id, 'purchase', { unitSelect: true });
   setPurchValue('purchDate', toISO(new Date()));
 
   const params = new URLSearchParams(window.location.search);
