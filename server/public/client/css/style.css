@@ -1548,6 +1548,601 @@ tr.row-skip { opacity: 0.5; }
 /* end Purchase Orders list */
 
 /* =====================================================================
+   New Invoice page (invoice.html)
+   ---------------------------------------------------------------------
+   Presentation only, scoped under .inv-page. invoice.html gained wrapper
+   <div>s and iv- classes around its existing markup - no field moved, so
+   the Enter-key and Tab order are what they were - and invoice-items.js
+   still renders the Products grid and totals into #itemsSection exactly
+   as before. These rules only arrange and dress what is already there.
+
+   One rule for anything below that sets `display`: this block is more
+   specific than the .d-none utility the page's scripts toggle, so a rule
+   that sets display on an element those scripts hide must exclude .d-none.
+   ===================================================================== */
+
+.inv-page {
+  --iv-line: #e4ebe9;
+  --iv-card-border: #dfe7e5;
+  --iv-panel: #f6faf9;
+  --iv-scan-border: #b2dfdb;
+  --iv-muted: #5f6f6c;
+  --iv-soft: #455a64;
+  --iv-ink: var(--primary-dark);
+  --iv-icon-bg: var(--primary-xlight);
+  --iv-icon: var(--primary);
+  --iv-band: #e8f4f1;
+  --iv-out: #1f2d2b;
+  --iv-pill-off-bg: #eef2f1;
+  --iv-pill-off: #78909c;
+  --iv-pill-on-bg: var(--primary-xlight);
+  --iv-bal-paid-bg: #e8f5e9;
+  --iv-bal-paid: #2e7d32;
+  --iv-bal-part-bg: #fff4e5;
+  --iv-bal-part: #e65100;
+  --iv-bal-due-bg: #ffebee;
+  --iv-bal-due: #c62828;
+}
+/* The app's own dark theme (Profile > Dark theme) swaps the same tokens. */
+:root[data-theme="dark"] .inv-page {
+  --iv-line: #2c3a37;
+  --iv-card-border: #2c3a37;
+  --iv-panel: #18221f;
+  --iv-scan-border: #35504b;
+  --iv-muted: #9fb0ae;
+  --iv-soft: #b8c5c3;
+  --iv-ink: #80cbc4;
+  --iv-icon-bg: #16302c;
+  --iv-icon: #80cbc4;
+  --iv-band: #16302c;
+  --iv-out: #e8ecec;
+  --iv-pill-off-bg: #24302d;
+  --iv-pill-off: #9fb0ae;
+  --iv-pill-on-bg: #16302c;
+  --iv-bal-paid-bg: #173022;
+  --iv-bal-paid: #81c784;
+  --iv-bal-part-bg: #33260f;
+  --iv-bal-part: #ffb74d;
+  --iv-bal-due-bg: #3a1d1d;
+  --iv-bal-due: #ef9a9a;
+}
+
+/* ── Frame: the one long card becomes a column of section cards ─────── */
+.inv-page .iv-scan-card {
+  background: var(--iv-panel);
+  border: 1px dashed var(--iv-scan-border);
+  box-shadow: none;
+  margin-bottom: 16px;
+}
+.inv-page .iv-scan-card > .card-body { padding: 12px 20px; }
+.inv-page .iv-form-card {
+  background: transparent;
+  box-shadow: none;
+  border-radius: 0;
+  overflow: visible;
+  margin-bottom: 16px;
+}
+.inv-page .iv-form-card > .iv-form-body { padding: 0; }
+.inv-page #invDraftBanner:not(:empty) { margin-bottom: 16px; }
+
+.inv-page .iv-section {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-width: 0;
+  margin-bottom: 16px;
+  padding: 20px 24px 24px;
+  background: var(--card-bg);
+  border: 1px solid var(--iv-card-border);
+  border-radius: 14px;
+  box-shadow: 0 1px 2px rgba(16, 42, 38, 0.04);
+}
+/* Spacing comes from the column gap, not from each block's own margin. */
+.inv-page .iv-section > * { margin-top: 0; margin-bottom: 0; min-width: 0; }
+
+/* Section header: an icon tile, the existing title text, a hairline. */
+.inv-page .iv-section > .section-title,
+.inv-page #itemsSection > .section-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0;
+  padding: 0 0 14px;
+  border-left: 0;
+  border-bottom: 1px solid var(--iv-line);
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: 0.1px;
+  color: var(--iv-ink);
+}
+.inv-page .iv-section > .section-title::before,
+.inv-page #itemsSection > .section-title::before {
+  content: var(--iv-glyph, "\f15c");
+  font-family: "Font Awesome 6 Free";
+  font-weight: 900;
+  font-size: 13px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  background: var(--iv-icon-bg);
+  color: var(--iv-icon);
+}
+.inv-page .iv-sec-customer  { --iv-glyph: "\f007"; }
+.inv-page .iv-sec-ship      { --iv-glyph: "\f48b"; }
+.inv-page .iv-sec-info      { --iv-glyph: "\f570"; }
+.inv-page .iv-sec-items     { --iv-glyph: "\f466"; }
+.inv-page .iv-sec-warranty  { --iv-glyph: "\f3ed"; }
+.inv-page .iv-sec-transport { --iv-glyph: "\f0d1"; }
+.inv-page .iv-sec-payment   { --iv-glyph: "\f555"; }
+
+/* ── Fields ─────────────────────────────────────────────────────────── */
+.inv-page .iv-section .form-group { gap: 6px; min-width: 0; }
+.inv-page .iv-section .form-group > label {
+  font-size: 11.5px;
+  line-height: 20px;
+  letter-spacing: 0.5px;
+  color: var(--iv-muted);
+}
+.inv-page .iv-section .form-grid { gap: 16px 20px; }
+.inv-page .iv-section .form-grid .form-control:not(textarea),
+.inv-page .iv-section > .form-group > .form-control:not(textarea) { height: 40px; }
+.inv-page .iv-section .form-group .d-flex > .form-control { flex: 1 1 auto; min-width: 0; }
+.inv-page .iv-section .form-group .d-flex > .btn { height: 40px; flex: none; }
+.inv-page .iv-section input[type="checkbox"] { width: 16px; height: 16px; margin: 0; accent-color: var(--primary); }
+.inv-page #invWarrantyTerms { min-height: 76px; resize: vertical; }
+/* A checkbox is an option, not a field caption: sentence case, full ink. */
+.inv-page .iv-section .form-group > label.d-flex {
+  text-transform: none;
+  letter-spacing: 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+}
+/* The auto-detected supply type reads as a value, not an input. */
+.inv-page .iv-readonly-tile { border-style: dashed; border-color: var(--iv-card-border); }
+
+/* Three even columns, so every card's fields line up with the next. */
+.inv-page .iv-section .form-grid.cols-3,
+.inv-page .iv-sec-customer > .form-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.inv-page .iv-sec-customer .iv-span-2 { grid-column: span 2; }
+.inv-page #exportFields { grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); }
+/* Export Type's options are the longest text in the panel ("WOPAY - under
+   LUT / bond, no IGST"): given two columns wherever there are two. */
+@media (min-width: 641px) {
+  .inv-page #exportFields > .form-group:first-child { grid-column: span 2; }
+}
+
+/* Invoice information. Reverse Charge sits above GST Category inside that
+   field's own group, so the supply type beside it starts one option-row
+   lower - 20px row + its 6px margin + the 6px group gap - and the two
+   captions and the two boxes land on the same lines. */
+.inv-page .iv-sec-info .form-group > .d-flex:first-child { flex-wrap: wrap; row-gap: 4px; min-height: 20px; }
+.inv-page .iv-sec-info .iv-f-category > label.d-flex:first-child { min-height: 20px; font-size: 12.5px; font-weight: 500; }
+@media (min-width: 1181px) {
+  .inv-page .iv-sec-info .iv-f-supply { padding-top: 32px; }
+}
+
+/* ── Invoice type: one slim strip ───────────────────────────────────── */
+.inv-page .iv-sec-type {
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px 24px;
+  padding: 14px 24px;
+}
+.inv-page .iv-sec-type > .form-group { flex-direction: row; align-items: center; gap: 12px; }
+.inv-page .iv-sec-type > .inv-mode-header { flex: 1 1 320px; }
+
+/* ── Products + Tax & totals ────────────────────────────────────────── */
+.inv-page #itemsSection {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(360px, 440px);
+  column-gap: 28px;
+  row-gap: 14px;
+  align-items: start;
+}
+.inv-page #itemsSection > * { grid-column: 1 / -1; margin: 0; min-width: 0; }
+.inv-page #itemsSection > .btn { grid-column: 1; justify-self: start; }
+.inv-page #itemsSection > .calc-box { grid-column: 2; }
+.inv-page #itemsSection > .items-table-wrapper { border: 1px solid var(--iv-line); border-radius: 10px; }
+
+.inv-page #itemsSection > .calc-box {
+  padding: 0 18px 4px;
+  background: var(--iv-panel);
+  border: 1px solid var(--iv-line);
+  border-radius: 12px;
+}
+.inv-page #itemsSection > .calc-box::before {
+  content: "Tax & totals";
+  display: block;
+  padding: 12px 0 10px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.6px;
+  text-transform: uppercase;
+  color: var(--iv-muted);
+}
+.inv-page #itemsSection .calc-box .calc-row:not(.d-none) {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(112px, 170px);
+  column-gap: 16px;
+  align-items: center;
+  min-height: 42px;
+  margin: 0;
+  padding: 9px 0;
+  border-top: 1px solid var(--iv-line);
+}
+.inv-page #itemsSection .calc-box .calc-row .label { grid-column: 1; grid-row: 1; font-size: 13.5px; color: var(--iv-soft); }
+/* The IGST / CGST / SGST split runs under its row at the panel's full width. */
+.inv-page #itemsSection .calc-box .calc-tax-row {
+  grid-column: 1 / -1;
+  grid-row: 2;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 14px;
+  margin-top: 2px;
+  font-size: 12px;
+}
+.inv-page #itemsSection .calc-box .calc-row .value {
+  grid-column: 2;
+  grid-row: 1;
+  min-width: 0;
+  text-align: right;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--iv-out);
+  font-variant-numeric: tabular-nums;
+}
+.inv-page #itemsSection .calc-box .calc-row:has(#itemsRoundOff) .value { font-weight: 500; color: var(--iv-soft); }
+.inv-page #itemsTransportRate {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: var(--iv-pill-off-bg);
+  font-size: 11.5px;
+  font-weight: 600;
+}
+.inv-page #itemsTransportNoteRow .label { display: none; }
+.inv-page #itemsTransportNoteRow .value { grid-column: 1 / -1; grid-row: 1; text-align: left; font-weight: 500; }
+/* Grand Total: the line the totals panel exists for. */
+.inv-page #itemsSection .calc-box .calc-row.total:not(.d-none) {
+  margin: 4px -18px 0;
+  padding: 12px 18px;
+  background: var(--iv-band);
+  border-top: 0;
+}
+.inv-page #itemsSection .calc-box .calc-row.total .label { font-size: 15px; font-weight: 700; color: var(--iv-ink); }
+.inv-page #itemsSection .calc-box .calc-row.total .value { font-size: 22px; font-weight: 800; color: var(--iv-ink); }
+/* Amount in words: a caption over the sentence. */
+.inv-page #itemsSection .calc-box .calc-row:last-child:not(.d-none) { grid-template-columns: minmax(0, 1fr); row-gap: 2px; border-top: 0; }
+.inv-page #itemsSection .calc-box .calc-row:last-child .label {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  color: var(--iv-muted);
+}
+.inv-page #itemsSection .calc-box .calc-row:last-child .value {
+  grid-column: 1;
+  grid-row: 2;
+  text-align: left;
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--iv-soft);
+}
+
+/* Calculated figures read as results, not as boxes to type in. They stay
+   the same readonly inputs; only their chrome goes. */
+.inv-page #itemsSection .calc-box input[readonly],
+.inv-page #invPaymentPreview input[readonly] {
+  width: 100%;
+  height: auto;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  box-shadow: none;
+  font: inherit;
+  color: inherit;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  cursor: default;
+}
+.inv-page #itemsSection .calc-box input[readonly]:focus-visible,
+.inv-page #invPaymentPreview input[readonly]:focus-visible { outline: 2px solid var(--primary); outline-offset: 3px; }
+/* ...while the one figure you do type keeps its field. */
+.inv-page #itemsTransportCharge {
+  width: 100%;
+  height: 36px;
+  padding: 6px 10px;
+  text-align: right;
+  font-weight: 600;
+  background: var(--card-bg);
+}
+
+/* ── Warranty ───────────────────────────────────────────────────────── */
+.inv-page .iv-sec-warranty .form-group > .fs-11 { line-height: 16px; }
+
+/* ── Transport & additional GST options ─────────────────────────────── */
+.inv-page .iv-sec-transport > .section-title { flex-wrap: wrap; row-gap: 8px; }
+.inv-page .iv-sec-transport > .section-title > .inv-toggle { margin-left: auto; }
+.inv-page #transportToggleLabel,
+.inv-page #exportToggleLabel,
+.inv-page #ecomToggleLabel {
+  display: inline-flex;
+  align-items: center;
+  min-height: 22px;
+  padding: 0 10px;
+  border-radius: 999px;
+  background: var(--iv-pill-off-bg);
+  font-size: 11.5px;
+  font-weight: 700;
+  letter-spacing: 0.2px;
+}
+.inv-page #exportToggleLabel.text-gray-mid,
+.inv-page #ecomToggleLabel.text-gray-mid { color: var(--iv-pill-off); }
+.inv-page #exportToggleLabel:not(.text-gray-mid),
+.inv-page #ecomToggleLabel:not(.text-gray-mid) { background: var(--iv-pill-on-bg); color: var(--primary); }
+.inv-page .iv-sec-transport:has(#transportToggle:checked) #transportToggleLabel { background: var(--iv-pill-on-bg); }
+
+.inv-page .iv-options {
+  background: var(--card-bg);
+  border: 1px solid var(--iv-line);
+  border-radius: 12px;
+}
+.inv-page .iv-options::before {
+  content: "Additional GST options";
+  display: block;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--iv-line);
+  border-radius: 12px 12px 0 0;
+  background: var(--iv-panel);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.6px;
+  text-transform: uppercase;
+  color: var(--iv-muted);
+}
+.inv-page .iv-options > .iv-option {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  column-gap: 12px;
+  row-gap: 4px;
+  min-height: 52px;
+  margin: 0;
+  padding: 10px 16px;
+}
+.inv-page .iv-options > * + .iv-option { border-top: 1px solid var(--iv-line); }
+.inv-page .iv-options > .iv-option > span.fs-12.fw-700:not([id]),
+.inv-page .iv-options > .iv-option > label .fs-12.fw-700 { font-size: 13.5px; font-weight: 600; color: var(--text); }
+/* The leased-vehicle checkbox sits in the same 36px column as the switches,
+   so all three option names start on one line. */
+.inv-page .iv-options > .iv-option > label.d-flex input[type="checkbox"] { margin: 0 14px 0 10px; }
+.inv-page .iv-options > .iv-option > small.text-muted {
+  flex: 0 1 auto;
+  max-width: 52%;
+  margin-left: auto;
+  text-align: right;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--iv-muted);
+}
+
+/* What each switch reveals: a tinted panel that names its switch. */
+.inv-page #exportFields,
+.inv-page #ecomFields,
+.inv-page #transportFields {
+  padding: 14px 16px 16px;
+  background: var(--iv-panel);
+  border: 1px solid var(--iv-line);
+  border-radius: 10px;
+}
+.inv-page .iv-options > #exportFields,
+.inv-page .iv-options > #ecomFields { margin: 0 16px 14px; }
+.inv-page #exportFields::before,
+.inv-page #ecomFields::before,
+.inv-page #transportFields::before {
+  grid-column: 1 / -1;
+  margin-bottom: -4px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.6px;
+  text-transform: uppercase;
+  color: var(--iv-muted);
+}
+.inv-page #exportFields::before { content: "Export details"; }
+.inv-page #ecomFields::before { content: "E-commerce operator details"; }
+.inv-page #transportFields::before { content: "Vehicle & transporter details"; }
+
+/* ── Payment + amount summary ───────────────────────────────────────── */
+.inv-page .iv-pay-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(320px, 400px);
+  gap: 24px;
+  align-items: start;
+}
+.inv-page .iv-pay-inputs,
+.inv-page .iv-pay-summary { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
+.inv-page .iv-pay-inputs > *,
+.inv-page .iv-pay-summary > * { margin: 0; }
+.inv-page .iv-pay-inputs > .inv-collapsible.collapsed { margin-top: -16px; }
+.inv-page .iv-pay-inputs .form-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+/* The shared collapse caps an open group at 200px - fine for one row of
+   fields, but four stacked on a phone ran past it and Reference / Notes
+   were cut off. Open, the payment groups get the room they need. */
+.inv-page #invPaymentDetailGroup:not(.collapsed) { max-height: 640px; }
+.inv-page #invPaymentAmountGroup:not(.collapsed) { max-height: 400px; }
+/* An opened invoice shows only the note: the inputs column steps aside. */
+.inv-page .iv-pay-layout:has(#invPaymentPreview.d-none) { grid-template-columns: minmax(0, 1fr); }
+.inv-page .iv-pay-layout:has(#invPaymentPreview.d-none) > .iv-pay-inputs:not(:has(> :not(.d-none))) { display: none; }
+.inv-page #invPaymentEditNote {
+  padding: 12px 14px;
+  background: var(--iv-panel);
+  border: 1px solid var(--iv-line);
+  border-radius: 10px;
+  font-size: 13px;
+}
+
+.inv-page #invPaymentPreview {
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+  background: var(--card-bg);
+  border: 1px solid var(--iv-card-border);
+  border-radius: 14px;
+  box-shadow: 0 1px 2px rgba(16, 42, 38, 0.05), 0 10px 28px rgba(0, 77, 64, 0.08);
+}
+.inv-page #invPaymentPreview::before {
+  content: "Amount summary";
+  display: block;
+  padding: 11px 20px;
+  background: var(--primary-dark);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.7px;
+  text-transform: uppercase;
+}
+.inv-page #invPaymentPreview .calc-row:not(.d-none) {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  column-gap: 16px;
+  align-items: center;
+  margin: 0;
+  padding: 12px 20px;
+  border-top: 1px solid var(--iv-line);
+}
+.inv-page #invPaymentPreview .calc-row .label { font-size: 13.5px; font-weight: 500; color: var(--iv-soft); }
+.inv-page #invPaymentPreview .calc-row .value {
+  display: block;
+  min-width: 0;
+  text-align: right;
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--iv-out);
+}
+/* 1 - Grand Total: the largest figure on the page. */
+.inv-page #invPaymentPreview .calc-row:first-child:not(.d-none) {
+  grid-template-columns: minmax(0, 1fr);
+  row-gap: 4px;
+  padding: 18px 20px 16px;
+  border-top: 0;
+}
+.inv-page #invPaymentPreview .calc-row:first-child .label {
+  font-size: 11.5px;
+  font-weight: 700;
+  letter-spacing: 0.6px;
+  text-transform: uppercase;
+  color: var(--iv-muted);
+}
+.inv-page #invPaymentPreview .calc-row:first-child .value {
+  font-size: 30px;
+  font-weight: 800;
+  line-height: 1.15;
+  letter-spacing: -0.3px;
+  color: var(--iv-ink);
+}
+/* 3 - Remaining Balance: a band, tinted by the status the badge shows. */
+.inv-page #invPaymentPreview .calc-row.total:not(.d-none) {
+  padding: 14px 20px;
+  background: var(--iv-band);
+  border-top: 0;
+}
+.inv-page #invPaymentPreview .calc-row.total .label { font-size: 14px; font-weight: 700; color: var(--text); }
+.inv-page #invPaymentPreview .calc-row.total .value { font-size: 22px; font-weight: 800; color: var(--iv-ink); }
+.inv-page #invPaymentPreview:has(#invPreviewStatus .badge-green) .calc-row.total { background: var(--iv-bal-paid-bg); }
+.inv-page #invPaymentPreview:has(#invPreviewStatus .badge-green) .calc-row.total .value { color: var(--iv-bal-paid); }
+.inv-page #invPaymentPreview:has(#invPreviewStatus .badge-orange) .calc-row.total { background: var(--iv-bal-part-bg); }
+.inv-page #invPaymentPreview:has(#invPreviewStatus .badge-orange) .calc-row.total .value { color: var(--iv-bal-part); }
+.inv-page #invPaymentPreview:has(#invPreviewStatus .badge-red) .calc-row.total { background: var(--iv-bal-due-bg); }
+.inv-page #invPaymentPreview:has(#invPreviewStatus .badge-red) .calc-row.total .value { color: var(--iv-bal-due); }
+/* 4 - Status: the badge the preview already renders, given room. */
+.inv-page #invPreviewStatus .badge {
+  gap: 6px;
+  padding: 5px 12px 5px 10px;
+  font-size: 12.5px;
+  line-height: 16px;
+}
+.inv-page #invPreviewStatus .badge::before {
+  content: "";
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+/* ── Save bar ───────────────────────────────────────────────────────── */
+.inv-page .iv-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 16px;
+  padding: 14px 24px;
+  background: var(--card-bg);
+  border: 1px solid var(--iv-card-border);
+  border-radius: 14px;
+}
+.inv-page .iv-actions > .btn-group { justify-content: flex-end; }
+.inv-page .iv-actions .btn { min-height: 42px; padding: 10px 22px; font-weight: 600; }
+
+/* ── Narrower screens ──────────────────────────────────────────────── */
+@media (max-width: 1180px) {
+  .inv-page .iv-section .form-grid.cols-3,
+  .inv-page .iv-sec-customer > .form-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .inv-page .iv-sec-customer .iv-span-2 { grid-column: auto; }
+  /* Two columns: number / source, date / supply type, then GST category
+     on its own row with Reverse Charge above it. The supply type is not a
+     field anyone tabs to, so placing it beside the date moves no focus. */
+  .inv-page .iv-sec-info .iv-f-num { grid-area: 1 / 1; }
+  .inv-page .iv-sec-info .iv-f-source { grid-area: 1 / 2; }
+  .inv-page .iv-sec-info .iv-f-date { grid-area: 2 / 1; }
+  .inv-page .iv-sec-info .iv-f-supply { grid-area: 2 / 2; }
+  .inv-page .iv-sec-info .iv-f-category { grid-area: 3 / 1; }
+  .inv-page #itemsSection { grid-template-columns: minmax(0, 1fr); }
+  .inv-page #itemsSection > .calc-box { grid-column: 1; }
+  .inv-page .iv-pay-layout { grid-template-columns: minmax(0, 1fr); }
+}
+@media (max-width: 768px) {
+  .inv-page .iv-section { padding: 16px 16px 18px; border-radius: 12px; }
+  .inv-page .iv-sec-type { padding: 12px 16px; }
+  .inv-page .iv-actions { padding: 12px 16px; border-radius: 12px; }
+  .inv-page .iv-options > .iv-option > small.text-muted { flex-basis: 100%; max-width: none; margin-left: 48px; text-align: left; }
+  .inv-page .iv-options > #exportFields,
+  .inv-page .iv-options > #ecomFields { margin: 0 12px 12px; }
+}
+@media (max-width: 640px) {
+  .inv-page .iv-section .form-grid.cols-3,
+  .inv-page .iv-sec-customer > .form-grid,
+  .inv-page .iv-pay-inputs .form-grid { grid-template-columns: minmax(0, 1fr); }
+  .inv-page .iv-sec-info .iv-f-num,
+  .inv-page .iv-sec-info .iv-f-source,
+  .inv-page .iv-sec-info .iv-f-date,
+  .inv-page .iv-sec-info .iv-f-supply,
+  .inv-page .iv-sec-info .iv-f-category { grid-area: auto; }
+  .inv-page .iv-sec-type > .form-group { flex-wrap: wrap; }
+  .inv-page .iv-options > .iv-option { padding: 10px 12px; }
+  .inv-page .iv-options > .iv-option > small.text-muted { margin-left: 48px; }
+  /* A long option name wraps inside its own space, so its Yes/No stays on
+     the switch's line instead of dropping underneath it. */
+  .inv-page .iv-options > .iv-option > span.fs-12.fw-700:not([id]) { flex: 1 1 0; min-width: 0; }
+  .inv-page #itemsSection .calc-box .calc-row:not(.d-none) { grid-template-columns: minmax(0, 1fr) minmax(96px, 140px); }
+  .inv-page #invPaymentPreview .calc-row:first-child .value { font-size: 26px; }
+  /* A long balance gets the full width rather than being cut short. */
+  .inv-page #invPaymentPreview .calc-row.total:not(.d-none) { grid-template-columns: minmax(0, 1fr); row-gap: 2px; }
+}
+@media (max-width: 480px) {
+  .inv-page .iv-actions > .btn-group { width: 100%; }
+  .inv-page .iv-actions .btn { justify-content: center; }
+}
+/* end New Invoice page */
+
+/* =====================================================================
    New Purchase - Unit select (purchase-items.js, purchUnitCell)
    ---------------------------------------------------------------------
    Only New Purchase asks the shared purchase grid for a Unit <select>, so
