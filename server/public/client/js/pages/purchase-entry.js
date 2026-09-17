@@ -469,7 +469,24 @@ async function savePurchase() {
     purchEditId = id;
     document.getElementById('purchSaveBtn').innerHTML = '<i class="fas fa-save"></i> Update Purchase';
     document.getElementById('purchPageTitle').textContent = 'Edit Purchase';
+    returnToPurchaseListAfterUpdate();
   }
+}
+
+// An update is finished with, so go back to Purchase List - the page whose
+// Edit link opened this one. Only reached after the save succeeded: every
+// failure above returns first and leaves the person here with their edits.
+// A moment first so the success toast is actually seen (it cannot survive
+// the page change), with Save disabled so the same update cannot be sent
+// twice meanwhile; replace() rather than a new history entry, so Back does
+// not reopen an editor for a purchase that is already saved - the same way
+// Invoice Entry returns to Invoice List after an update.
+const PURCHASE_LIST_PAGE = 'purchase-list.html';
+const PURCHASE_UPDATE_RETURN_DELAY_MS = 1000;
+function returnToPurchaseListAfterUpdate() {
+  const saveBtn = document.getElementById('purchSaveBtn');
+  if (saveBtn) saveBtn.disabled = true;
+  setTimeout(() => location.replace(PURCHASE_LIST_PAGE), PURCHASE_UPDATE_RETURN_DELAY_MS);
 }
 
 function clearPurchaseFormFields() {
