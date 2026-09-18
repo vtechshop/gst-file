@@ -340,10 +340,13 @@ test('C14 no other PDF module was modified', async () => {
   // own approved change (proforma-transport-charge.test.js), so it is pinned
   // by content rather than by "not modified" - the terms the Purchase Order
   // PDF is held to. A further change must approve its new revision here.
+  // Revised again, under its own approved change, for the round-off fix: a
+  // proforma saved now stores the invoice's rounded Grand Total and prints its
+  // round-off and cess from it (proforma-roundoff-save.test.js).
   const pf = require('crypto').createHash('sha256')
     .update(rd('client', 'js', 'pages', 'proforma-pdf.js').replace(/\r\n/g, '\n')).digest('hex');
-  assert.strictEqual(pf, '58db37f34bbd861f4890386f361c6571d9dbc9d1dc7d30c7ae80741ed4b26f8c',
-    'proforma-pdf.js is not the approved Proforma transport revision');
+  assert.strictEqual(pf, 'c58e758714b70c16de29003886fffa40c9e4d22a725445806028766e84d06be3',
+    'proforma-pdf.js is not the approved Proforma revision (transport, then round-off)');
 });
 
 // ═══════════════════════════════════════════════════════════════════════

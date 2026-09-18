@@ -5,9 +5,12 @@
 // "...Nine Hundred Rupees Only" in words beside "1,38,900.16" as a figure.
 // The words and the numeral disagreed on the same document.
 //
-// The fix is display-side only. proforma_invoices still stores the calculated
-// total; nothing here may change a taxable value, a tax column or an item
-// total, and no column was added to the database.
+// That fix was display-side: a proforma then stored the calculated, unrounded
+// total, and the PDF rounds it for print - which is still exactly how a
+// proforma saved before is printed, and what R3 below pins. A proforma saved
+// now stores the tax invoice's own rounded Grand Total instead; see
+// proforma-roundoff-save.test.js. Nothing here may change a taxable value, a
+// tax column or an item total, and no column was added to the database.
 const test = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
@@ -114,8 +117,8 @@ test('R9 the changed asset carries a new cache key on every page that loads it',
   const pages = ['proforma.html', 'proforma-list.html'];
   for (const p of pages) {
     const html = rd(p);
-    assert.ok(html.includes('client/js/pages/proforma-pdf.js?v=42'),
-      p + ' must reference proforma-pdf.js at v=42');
+    assert.ok(html.includes('client/js/pages/proforma-pdf.js?v=43'),
+      p + ' must reference proforma-pdf.js at v=43');
   }
   // and nothing unrelated moved with it
   // proforma-entry.js is checked as "still versioned", not pinned to a

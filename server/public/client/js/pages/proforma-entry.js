@@ -263,6 +263,13 @@ async function saveProforma() {
   const taxable = items.reduce((a, r) => a + r.taxable_value, 0) + (transportCharge || 0);
   const gst = items.reduce((a, r) => a + r.gst_amount, 0)
     + transportTax.igst + transportTax.cgst + transportTax.sgst;
+  // The quoted total is the tax invoice's own Grand Total, from the tax
+  // invoice's own rollup: taxable value + GST + cess (delivery and its tax
+  // included), rounded to the rupee - the figure the Grand Total box shows
+  // and the figure an invoice converted from this proforma will total. It
+  // used to be taxable + gst summed here, which dropped the round-off AND the
+  // cess, so the list and the PDF quoted a different amount from the screen.
+  const quotedTotal = computeInvoiceRollups().total_amount;
   const document_ = {
     document_number: getProformaText('pfNumber') || '',
     document_date: date,
@@ -283,7 +290,7 @@ async function saveProforma() {
     igst: items.reduce((a, r) => a + r.igst, 0) + transportTax.igst,
     cgst: items.reduce((a, r) => a + r.cgst, 0) + transportTax.cgst,
     sgst: items.reduce((a, r) => a + r.sgst, 0) + transportTax.sgst,
-    total_amount: taxable + gst,
+    total_amount: quotedTotal,
     // The charge only. Its tax is derived by the save route from this charge
     // and the line items, and nothing the browser sends for it is stored.
     transport_charge: transportCharge,

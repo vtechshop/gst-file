@@ -343,11 +343,14 @@ test('W5 Sales Return and the other PDF modules are untouched', () => {
   // "not modified" to a content pin on the same terms as the Purchase Order
   // PDF above: Credit/Debit Note work still may not touch it, and a further
   // change must approve its new revision here.
-  const APPROVED_PROFORMA_PDF_SHA256 = '58db37f34bbd861f4890386f361c6571d9dbc9d1dc7d30c7ae80741ed4b26f8c';
+  // Revised again, under its own approved change, for the round-off fix: a
+  // proforma saved now stores the invoice's rounded Grand Total and prints its
+  // round-off and cess from it (proforma-roundoff-save.test.js).
+  const APPROVED_PROFORMA_PDF_SHA256 = 'c58e758714b70c16de29003886fffa40c9e4d22a725445806028766e84d06be3';
   const pfSrc = fs.readFileSync(path.join(ROOT, 'client', 'js', 'pages', 'proforma-pdf.js'), 'utf8');
   const pf = require('crypto').createHash('sha256').update(pfSrc.replace(/\r\n/g, '\n')).digest('hex');
   assert.strictEqual(pf, APPROVED_PROFORMA_PDF_SHA256,
-    'proforma-pdf.js is not the approved Proforma transport revision');
+    'proforma-pdf.js is not the approved Proforma revision (transport, then round-off)');
 });
 
 // ═══════════════════════════════════════════════════════════════════════

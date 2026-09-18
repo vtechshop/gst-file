@@ -79,12 +79,21 @@ function proformaToRenderable(row, items) {
       ? null : +row.transport_charge,
     transport_gst_amount: (row.transport_gst_amount === null || row.transport_gst_amount === undefined)
       ? null : +row.transport_gst_amount,
-    // Round-off is DERIVED here, not stored: proforma_invoices keeps the
-    // calculated total and this only decides what the quotation prints. The
-    // taxable value and every tax column above are passed through untouched,
-    // so nothing that feeds a return or a converted invoice moves.
+    // Round-off is DERIVED here, not stored - proforma_invoices has no
+    // round_off column, exactly as the tax invoice has none. The taxable
+    // value and every tax column above are passed through untouched, so
+    // nothing that feeds a return or a converted invoice moves.
     //
-    // It exists because numberToWordsINR() already rounds
+    // A proforma saved now stores the tax invoice's own Grand Total:
+    // taxable + GST + cess, already rounded to the rupee (saveProforma takes
+    // it from computeInvoiceRollups). So, as the tax invoice PDF does, the
+    // round-off is what that total added to the calculated amount, and the
+    // cess - part of the total - gets its own line. Recognised by the rule
+    // itself: its stored total IS Math.round(taxable + GST + cess).
+    //
+    // A proforma saved before stored the unrounded taxable + GST instead, and
+    // prints exactly as it always has: rounded here, for the page only.
+    // That rounding exists because numberToWordsINR() already rounds
     // (Math.round(Math.abs(n))), so a total of 138900.16 printed as
     // "...Nine Hundred Rupees Only" beside a numeral of 138900.16 - the words
     // and the figure disagreed on the same line of the same document.
@@ -92,10 +101,23 @@ function proformaToRenderable(row, items) {
     // round2() on the difference keeps binary floating point out of the
     // print: 138900 - 138900.16 is -0.15999999999417923, and -0.16 is what a
     // quotation has to show.
+    //
+    // The GST in that calculated amount is the IGST/CGST/SGST split - the
+    // figure the invoice rollup adds up and the rows this PDF prints above.
+    // A line's CGST and SGST are each rounded on their own, so together they
+    // can sit a paisa away from the line's gst_amount; summing gst_amount
+    // instead would print a round-off a paisa off the screen's.
     ...(() => {
-      const calculated = +row.total_amount || 0;
+      const stored = +row.total_amount || 0;
+      const cess = round2((items || []).reduce((s, it) => s + (+it.cess_amount || 0), 0));
+      const beforeRounding = round2((+row.taxable_amount || 0)
+        + (+row.igst || 0) + (+row.cgst || 0) + (+row.sgst || 0) + cess);
+      if (stored === Math.round(beforeRounding)) {
+        return { round_off: round2(stored - beforeRounding), total_amount: stored, cess_amount: cess };
+      }
+      const calculated = stored;
       const rounded = Math.round(calculated);
-      return { round_off: round2(rounded - calculated), total_amount: rounded };
+      return { round_off: round2(rounded - calculated), total_amount: rounded, cess_amount: 0 };
     })(),
     notes: row.notes || '',
     terms: row.terms || '',
@@ -253,6 +275,11 @@ async function buildProformaPDFDoc(row, items) {
     totalsRows.push(['Transport Charge', formatNum(tp.charge)]);
     totalsRows.push(['Transport GST', formatNum(tp.gst)]);
   }
+  // Cess, when the quoted total carries it (a proforma saved since the total
+  // became the invoice's Grand Total - see proformaToRenderable). Its own line,
+  // so the column adds up and the round-off below is only the rounding. Absent
+  // otherwise, so everything else prints exactly as it did.
+  if (inv.cess_amount > 0) totalsRows.push(['Cess', formatNum(inv.cess_amount)]);
   // Shown only when it is worth a line. Same threshold and same signed format
   // the tax invoice uses, so the two documents read alike.
   if (Math.abs(inv.round_off) >= 0.005) {
