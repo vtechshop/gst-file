@@ -2,7 +2,15 @@
 // Purchase Bill Scanner — Bill → Gemini → Purchase Entry
 //
 // Uploads a supplier bill to our own backend (/api/bill-scan), which
-// asks Gemini to read it and returns structured JSON. The Gemini API key
+// asks Gemini to read it and returns structured JSON.
+//
+// One file is one bill is one Purchase Entry. Several files can be picked
+// in one go: each is scanned separately, in turn, through the same
+// one-document endpoint, and each is imported and saved on its own, so
+// four bills become four purchases and the lines of one never land on
+// another. A bill printed across several PAGES is still a single file, so
+// it is still a single scan and a single purchase — the pages of one bill
+// are not separate bills. The Gemini API key
 // lives only on the server — this file never sees it and never talks to
 // Google directly.
 //
@@ -19,42 +27,142 @@
 // when typed. Nothing here parses a bill or computes money.
 // =============================================
 
-let scanExtracted = null;      // last scan, awaiting the user's Import click
+let scanExtracted = null;      // the bill being reviewed right now
 let scanAppliedValues = {};    // what Import wrote, per field id — basis of "never overwrite user edits"
 
-// ── Entry point ──────────────────────────────────────
-async function handlePurchaseBillUpload(file) {
-  if (!file) return;
-  if (!/\.(pdf|jpe?g|png)$/i.test(file.name)) {
-    showToast('Upload a PDF, JPG, JPEG or PNG bill.', 'error');
-    return;
-  }
-  if (file.size > 10 * 1024 * 1024) {
-    showToast('That file is over 10 MB — try a smaller scan.', 'error');
-    return;
-  }
+// ── The upload queue ─────────────────────────────────
+// One entry per file the user picked. Each file is a bill in its own
+// right: its own scan, its own review, its own Save Purchase. Files are
+// never combined — a page of one bill and a page of another have nothing
+// to do with each other — while a bill that runs to several PAGES is one
+// file, goes up in one request, and stays one purchase exactly as before.
+//
+//   status: 'waiting' | 'scanning' | 'ready' | 'imported' | 'failed'
+let billQueue = [];
+let billSelectedId = null;     // the bill whose details are on screen
+let billScanRunning = false;   // one scan at a time - see runBillQueue()
+let billSeq = 0;
+// The bill whose values are sitting in the form, unsaved. Set on Import,
+// and only cleared once the form has been emptied (Save Purchase clears
+// it) - it is what stops a second bill's lines landing on top of a first
+// bill's, which would silently merge two suppliers' goods into one entry.
+let billInForm = null;
 
+// ── Entry point ──────────────────────────────────────
+// Takes the input's whole FileList. A single File is still accepted, so
+// any existing one-file caller keeps working unchanged.
+async function handlePurchaseBillUpload(selection) {
+  const files = selection && typeof selection.length === 'number'
+    ? Array.from(selection)
+    : (selection ? [selection] : []);
+  if (!files.length) return;
+
+  // Each file is judged on its own: one unusable file among four does not
+  // throw away the other three, it simply is not queued.
+  const good = [];
+  const rejected = [];
+  for (const f of files) {
+    const problem = billFileProblem(f);
+    if (problem) rejected.push({ name: f.name, problem });
+    else good.push(f);
+  }
+  if (rejected.length) {
+    showToast(files.length === 1
+      ? rejected[0].problem
+      : `${rejected.length} file(s) skipped — ${rejected[0].name}: ${rejected[0].problem}`, 'error');
+  }
+  if (!good.length) return;
+
+  // A new upload replaces whatever the previous one left behind, the same
+  // way the customer-invoice scanner treats a fresh selection.
+  billPanelScrolled = false;    // a fresh selection deserves to be shown
+  billQueue = good.map(f => ({
+    id: 'bill' + (++billSeq), file: f, name: f.name, size: f.size,
+    status: 'waiting', result: null, error: ''
+  }));
+  billSelectedId = null;
+  scanExtracted = null;
+  renderBillQueue();
+  await runBillQueue();
+}
+
+// The same two rules the scanner has always applied, per file, worded as
+// they always were so a single bad file reads exactly as it used to.
+function billFileProblem(file) {
+  if (!file) return 'No file.';
+  if (!/\.(pdf|jpe?g|png)$/i.test(file.name)) return 'Upload a PDF, JPG, JPEG or PNG bill.';
+  if (file.size > 10 * 1024 * 1024) return 'That file is over 10 MB — try a smaller scan.';
+  return '';
+}
+
+// Works through the queue ONE BILL AT A TIME. Deliberately sequential:
+// every file is a separate document to read, and firing all of them at
+// once would multiply the upload, the server's work and the rate limit by
+// however many files someone happened to select. A failure stops that
+// bill only — the queue carries on, and the failed one can be retried.
+async function runBillQueue() {
+  if (billScanRunning) return;
+  billScanRunning = true;
   const input = document.getElementById('purchBillInput');
   if (input) input.disabled = true;
-  showScanProgress('Analysing bill…');
-
-  const started = Date.now();
   try {
-    scanExtracted = await sendBillForScan(file);
-    hideScanProgress();
-    console.log(`[bill-scan] ${Date.now() - started}ms model=${scanExtracted.model || 'unknown'} OK products=${scanExtracted.products.length}`);
-    if (!scanExtracted.products.length && !scanExtracted.vendor.vendor_name) {
-      showToast('Nothing could be read from that bill. Please enter it manually.', 'warning');
-      return;
+    for (;;) {
+      const job = billQueue.find(j => j.status === 'waiting');
+      if (!job) break;
+      job.status = 'scanning';
+      const position = billQueue.indexOf(job) + 1;
+      showScanProgress(billQueue.length === 1
+        ? 'Analysing bill…'
+        : `Analysing bill ${position} of ${billQueue.length}: ${job.name}`);
+      renderBillQueue();
+
+      const started = Date.now();
+      try {
+        const data = await sendBillForScan(job.file);
+        console.log(`[bill-scan] ${Date.now() - started}ms model=${data.model || 'unknown'} OK products=${data.products.length} file=${job.name}`);
+        if (!data.products.length && !data.vendor.vendor_name) {
+          job.status = 'failed';
+          job.error = 'Nothing could be read from that bill. Please enter it manually.';
+          if (billQueue.length === 1) showToast(job.error, 'warning');
+        } else {
+          job.status = 'ready';
+          job.result = data;
+          if (!billSelectedId) { billSelectedId = job.id; scanExtracted = data; }
+        }
+      } catch (err) {
+        job.status = 'failed';
+        job.error = (err && err.message) || 'Could not read that bill.';
+        console.log(`[bill-scan] ${Date.now() - started}ms FAIL ${job.error} file=${job.name}`);
+        handleApiError(err, billQueue.length === 1 ? 'Could not read that bill' : `Could not read ${job.name}`);
+      }
+      renderBillQueue();
     }
-    renderScanReview(scanExtracted);
-  } catch (err) {
-    hideScanProgress();
-    console.log(`[bill-scan] ${Date.now() - started}ms FAIL ${err.message || 'unknown'}`);
-    handleApiError(err, 'Could not read that bill');
   } finally {
-    if (input) { input.disabled = false; input.value = ''; }   // let the same file be picked again
+    hideScanProgress();
+    billScanRunning = false;
+    // Re-enabled and emptied so the very same files can be picked again -
+    // a retry after a failure, or a deliberate second import.
+    if (input) { input.disabled = false; input.value = ''; }
   }
+}
+
+// A bill that could not be read is put back in the queue and scanned
+// again. Nothing else in the queue is disturbed.
+function retryScannedBill(id) {
+  const job = billQueue.find(j => j.id === id);
+  if (!job || job.status !== 'failed') return;
+  job.status = 'waiting';
+  job.error = '';
+  renderBillQueue();
+  runBillQueue();
+}
+
+function selectScannedBill(id) {
+  const job = billQueue.find(j => j.id === id);
+  if (!job || job.status !== 'ready') return;
+  billSelectedId = id;
+  scanExtracted = job.result;
+  renderBillQueue();
 }
 
 // Plain fetch rather than apiFetch(): this is multipart, and apiFetch
@@ -121,10 +229,49 @@ function assertScanShape(b) {
 
 // ── Review panel ─────────────────────────────────────
 // Nothing reaches the form until the user presses Import here.
-function renderScanReview(d) {
-  const panel = document.getElementById('purchOcrReview');
-  if (!panel) return;
+//
+// One file is shown exactly as it always was. Several files are shown as
+// a list - file name, what was read from it, and where it has got to -
+// with the selected bill's details underneath. The list is the only way
+// to tell four bills apart, and keeping one detail panel means the rows
+// of one bill can never appear under the heading of another.
+let billPanelScrolled = false;
 
+function billStatusBadge(job) {
+  const map = {
+    waiting:  ['badge', 'Waiting'],
+    scanning: ['badge badge-blue', 'Scanning…'],
+    ready:    ['badge badge-green', 'Review ready'],
+    imported: ['badge badge-green', 'Imported'],
+    failed:   ['badge badge-red', 'Failed']
+  };
+  const [cls, text] = map[job.status] || ['badge', job.status];
+  return `<span class="${cls}">${text}</span>`;
+}
+
+function billQueueRow(job) {
+  const d = job.result;
+  const selectable = job.status === 'ready';
+  const isSel = job.id === billSelectedId;
+  return `
+    <tr${selectable ? ` style="cursor:pointer;" onclick="selectScannedBill('${job.id}')"` : ''}>
+      <td>${selectable
+        ? `<input type="radio" name="purchBillPick" ${isSel ? 'checked' : ''} onclick="event.stopPropagation();selectScannedBill('${job.id}')" aria-label="Review ${escScan(job.name)}">`
+        : ''}</td>
+      <td class="fs-12${isSel ? ' fw-600' : ''}">${escScan(job.name)}</td>
+      <td>${d ? (escScan(d.purchase.purchase_number) || '<span class="text-muted-sm">no number</span>') : '&mdash;'}</td>
+      <td>${d ? (escScan(d.purchase.purchase_date) || '&mdash;') : '&mdash;'}</td>
+      <td>${d ? (escScan(d.vendor.vendor_name) || '&mdash;') : '&mdash;'}</td>
+      <td class="text-center">${d ? d.products.length : '&mdash;'}</td>
+      <td>${billStatusBadge(job)}${job.error ? `<div class="fs-11 text-muted-sm">${escScan(job.error)}</div>` : ''}</td>
+      <td class="text-right">${job.status === 'failed'
+        ? `<button type="button" class="btn btn-secondary btn-sm" onclick="event.stopPropagation();retryScannedBill('${job.id}')"><i class="fas fa-rotate-right"></i> Retry</button>`
+        : ''}</td>
+    </tr>`;
+}
+
+// The details of ONE bill - the panel this scanner has always shown.
+function billDetailMarkup(d) {
   const line = (label, value) => `<div class="calc-row"><span class="label">${label}</span>
     <span class="value">${escScan(value) || '<span class="text-muted-sm">not found</span>'}</span></div>`;
 
@@ -140,12 +287,7 @@ function renderScanReview(d) {
       <td class="text-center">${productMatchBadge(it.product_name)}</td>
     </tr>`).join('');
 
-  panel.innerHTML = `
-    <div class="card mb-20" id="purchOcrCard">
-      <div class="card-header">
-        <span class="card-title"><i class="fas fa-file-invoice"></i> Review Scanned Bill</span>
-        <span class="fs-12 text-muted-sm">${d.products.length} product row(s) read</span>
-      </div>
+  return `
       <div class="card-body">
         <div class="banner-warning mb-16">
           <div><i class="fas fa-circle-info"></i>Nothing is saved yet. Check the values below, press <b>Import</b> to fill the form, edit anything you like, then press <b>Save Purchase</b>.</div>
@@ -173,11 +315,80 @@ function renderScanReview(d) {
           <button type="button" class="btn btn-primary" onclick="importScanIntoForm()"><i class="fas fa-file-import"></i> Import into Form</button>
           <button type="button" class="btn btn-secondary" onclick="dismissScanReview()">Cancel</button>
         </div>
+      </div>`;
+}
+
+// Draws whatever the queue currently is. Called after every state change:
+// a scan starting, a scan finishing, an import, a retry.
+function renderBillQueue() {
+  const panel = document.getElementById('purchOcrReview');
+  if (!panel) return;
+
+  const single = billQueue.length === 1;
+  const selected = billQueue.find(j => j.id === billSelectedId && j.status === 'ready');
+
+  // A single bill behaves exactly as before: the panel appears when the
+  // scan has something to show, and not while it is running or if it
+  // failed - those are a progress banner and a toast, as they always were.
+  if (single) {
+    const job = billQueue[0];
+    if (job.status !== 'ready') { hideBillPanel(panel); return; }
+    panel.innerHTML = `
+    <div class="card mb-20" id="purchOcrCard">
+      <div class="card-header">
+        <span class="card-title"><i class="fas fa-file-invoice"></i> Review Scanned Bill</span>
+        <span class="fs-12 text-muted-sm">${job.result.products.length} product row(s) read</span>
       </div>
+      ${billDetailMarkup(job.result)}
     </div>`;
+    showBillPanel(panel, job.result.purchase.purchase_number);
+    return;
+  }
+
+  if (!billQueue.length) { hideBillPanel(panel); return; }
+
+  const imported = billQueue.filter(j => j.status === 'imported').length;
+  const detail = selected
+    ? billDetailMarkup(selected.result)
+    : `<div class="card-body"><div class="empty-state">${billQueue.some(j => j.status === 'waiting' || j.status === 'scanning')
+        ? 'Reading the bills — each one is scanned in turn.'
+        : (imported === billQueue.length
+          ? 'Every scanned bill has been imported.'
+          : 'Pick a bill above to review it.')}</div></div>`;
+
+  panel.innerHTML = `
+    <div class="card mb-20" id="purchOcrCard">
+      <div class="card-header">
+        <span class="card-title"><i class="fas fa-file-invoice"></i> Review Scanned Bills</span>
+        <span class="fs-12 text-muted-sm">${billQueue.length} file(s) &middot; ${imported} imported</span>
+      </div>
+      <div class="card-body pb-0">
+        <div class="banner-warning mb-16">
+          <div><i class="fas fa-circle-info"></i>Each file is a separate bill and becomes its own purchase.
+          Import one, press <b>Save Purchase</b>, then come back for the next. Nothing is saved yet.</div>
+        </div>
+        <div class="table-wrapper mb-16"><table class="data-table">
+          <thead><tr><th style="width:36px;"></th><th>File</th><th>Bill No</th><th>Date</th><th>Vendor</th>
+            <th class="text-center">Items</th><th>Status</th><th></th></tr></thead>
+          <tbody>${billQueue.map(billQueueRow).join('')}</tbody></table></div>
+      </div>
+      ${detail}
+    </div>`;
+  showBillPanel(panel, selected ? selected.result.purchase.purchase_number : '');
+}
+
+function showBillPanel(panel, purchaseNumber) {
   panel.classList.remove('d-none');
-  panel.scrollIntoView({ behavior: 'smooth', block: 'start' });
-  warnIfPurchaseNumberExists(d.purchase.purchase_number);
+  if (!billPanelScrolled) {
+    billPanelScrolled = true;
+    panel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+  if (purchaseNumber) warnIfPurchaseNumberExists(purchaseNumber);
+}
+
+function hideBillPanel(panel) {
+  panel.innerHTML = '';
+  panel.classList.add('d-none');
 }
 
 // Things the scan is not confident about. Shown before the values
@@ -247,6 +458,9 @@ async function warnIfPurchaseNumberExists(num) {
 
 function dismissScanReview() {
   scanExtracted = null;
+  billQueue = [];
+  billSelectedId = null;
+  billPanelScrolled = false;
   const panel = document.getElementById('purchOcrReview');
   if (panel) { panel.innerHTML = ''; panel.classList.add('d-none'); }
 }
@@ -255,8 +469,23 @@ function dismissScanReview() {
 // Every write goes through the form's own handlers, and every field the
 // user has already touched is left alone.
 function importScanIntoForm() {
-  const d = scanExtracted;
+  const job = billQueue.find(j => j.id === billSelectedId && j.status === 'ready')
+    || billQueue.find(j => j.status === 'ready');
+  const d = job ? job.result : scanExtracted;
   if (!d) return;
+
+  // One bill at a time reaches the form. A bill already imported and not
+  // yet saved still owns the vendor, the number and the item rows, and
+  // importing a second one on top of it would merge two suppliers' goods
+  // into a single purchase - the one thing this whole queue exists to
+  // prevent. Save Purchase empties the form, which releases the hold.
+  if (job && billInForm && billInForm !== job.id && formHoldsImportedBill()) {
+    showToast('Save the bill already in the form first — then import the next one.', 'warning');
+    return;
+  }
+  // Each import starts its own record of what it wrote, so "never
+  // overwrite what the user typed" is judged against THIS bill.
+  scanAppliedValues = {};
 
   setIfUntouched('purchVendorName', d.vendor.vendor_name);
   if (typeof onPurchVendorInput === 'function') onPurchVendorInput();   // vendor auto-fill + Save Vendor / Skip panel
@@ -277,8 +506,41 @@ function importScanIntoForm() {
 
   if (d.products.length) importScanItems(d.products);
 
-  dismissScanReview();
-  showToast(`Imported ${d.products.length} product row(s). Review, then press Save Purchase.`, 'success');
+  if (!job) {                       // nothing queued - the old direct path
+    dismissScanReview();
+    showToast(`Imported ${d.products.length} product row(s). Review, then press Save Purchase.`, 'success');
+    return;
+  }
+
+  job.status = 'imported';
+  billInForm = job.id;
+  // Take ONLY this bill off the list of things to import; the rest stay
+  // exactly as they were, scanned and waiting, so the user can save this
+  // purchase and come straight back for the next without re-uploading.
+  const remaining = billQueue.filter(j => j.status === 'ready');
+  billSelectedId = remaining.length ? remaining[0].id : null;
+  scanExtracted = remaining.length ? remaining[0].result : null;
+
+  if (!billQueue.some(j => j.status !== 'imported')) {
+    dismissScanReview();            // everything from this upload is in
+    showToast(billQueue.length > 1
+      ? `Imported ${d.products.length} product row(s) from ${job.name}. That was the last scanned bill — press Save Purchase to finish.`
+      : `Imported ${d.products.length} product row(s). Review, then press Save Purchase.`, 'success');
+    return;
+  }
+
+  renderBillQueue();
+  showToast(`Imported ${d.products.length} product row(s) from ${job.name}. Press Save Purchase, then import the next of ${remaining.length} remaining.`, 'success');
+}
+
+// Is an imported bill still sitting in the form, unsaved? Judged by the
+// item grid, because Save Purchase empties it (clearPurchaseFormFields()
+// in js/purchase-entry.js) and nothing else does.
+function formHoldsImportedBill() {
+  const rows = (typeof purchItems !== 'undefined' && Array.isArray(purchItems)) ? purchItems : [];
+  if (rows.some(r => r.product_name)) return true;
+  const num = document.getElementById('purchNum');
+  return !!(num && num.value.trim());
 }
 
 // purchState is a <select>, so a value that isn't one of its options

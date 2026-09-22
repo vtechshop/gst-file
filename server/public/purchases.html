@@ -22,7 +22,7 @@
   <script src="client/js/pages/purchase-entry.js?v=32"></script>
   <!-- Bill scanner. Uploads to /api/bill-scan, which calls Gemini with a
        server-held key; no OCR library is loaded in the browser at all. -->
-  <script src="client/js/pages/purchase-scan.js?v=29"></script>
+  <script src="client/js/pages/purchase-scan.js?v=30"></script>
 </head>
 <body>
 <div class="app-layout">
@@ -111,11 +111,11 @@
       <div class="card mb-20">
         <div class="card-body d-flex align-center gap-10 flex-wrap">
           <label class="btn btn-secondary btn-sm" style="cursor:pointer;margin-bottom:0;">
-            <i class="fas fa-file-arrow-up"></i> Upload Purchase Bill
-            <input type="file" id="purchBillInput" accept=".pdf,.jpg,.jpeg,.png" class="file-input-hidden"
-                   onchange="handlePurchaseBillUpload(this.files[0])" aria-label="Upload purchase bill">
+            <i class="fas fa-file-arrow-up"></i> Upload Purchase Bills
+            <input type="file" id="purchBillInput" accept=".pdf,.jpg,.jpeg,.png" multiple class="file-input-hidden"
+                   onchange="handlePurchaseBillUpload(this.files)" aria-label="Upload purchase bills">
           </label>
-          <span class="fs-12 text-muted-sm">PDF, JPG or PNG &middot; read automatically, nothing is saved until you press Save Purchase &middot; optional &mdash; you can still type everything by hand</span>
+          <span class="fs-12 text-muted-sm">Select one or more PDF, JPG or PNG files &middot; each file is one bill and becomes its own purchase &middot; a bill printed over several pages is one file &middot; nothing is saved until you press Save Purchase</span>
         </div>
       </div>
       <div id="purchOcrProgress" class="d-none"></div>
