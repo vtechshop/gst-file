@@ -529,3 +529,49 @@ function onPurchStateChange() {
 function onPurchDistrictChange() {
   syncDistrictField('purchState', 'purchDistrict', 'purchDistrictList', 'purchDistrictError');
 }
+
+// ── Keyboard entry of the item lines ────────────────
+// A purchase bill is typed one line after another, so the grid has to be
+// completable from the keyboard: a bill of three products should never
+// need the mouse between them. Invoice Entry has had exactly this since
+// it was written (js/invoice-entry.js's document keydown listener); the
+// purchase grid was given the pieces — arrow-key highlighting and
+// selectHighlightedPurchProductOption() in js/purchase-items.js — but
+// nothing ever pressed them into service, so Enter did nothing at all and
+// every keystroke after it went on piling into the Product box.
+//
+// Scope is deliberately the item grid alone: Enter in the Product field
+// takes whatever the dropdown has highlighted, Enter in Quantity starts
+// the next line. Every other field behaves exactly as before, including
+// Enter, which has never done anything on this page and still doesn't.
+function focusNewPurchRowProduct() {
+  const rows = document.querySelectorAll('#purchItemsTableBody tr');
+  rows[rows.length - 1]?.querySelector('.purch-product-input')?.focus();
+}
+
+document.addEventListener('keydown', (e) => {
+  if (e.key !== 'Enter') return;
+  const el = e.target;
+  if (!el || el.tagName !== 'INPUT') return;
+
+  // Product field: take the highlighted option (the top match unless the
+  // arrow keys moved it). selectPurchProductFromDropdown() moves on to
+  // Quantity by itself, so this only has to make the choice.
+  if (el.matches('#purchItemsTableBody .purch-product-input')) {
+    const tr = el.closest('tr[data-row]');
+    if (!tr) return;
+    e.preventDefault();
+    selectHighlightedPurchProductOption(tr.getAttribute('data-row'));
+    return;
+  }
+
+  // Quantity: the line is complete, so start the next one and put the
+  // cursor where typing continues. Rate and the rest keep their own Enter
+  // (nothing), because a bill is read product by product, not column by
+  // column.
+  if (el.matches('#purchItemsTableBody .purch-qty-input')) {
+    e.preventDefault();
+    addPurchItemRow();
+    focusNewPurchRowProduct();
+  }
+});

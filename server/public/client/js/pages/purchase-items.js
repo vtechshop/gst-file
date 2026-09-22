@@ -157,7 +157,7 @@ function renderPurchItemsTable() {
   tbody.innerHTML = purchItems.map(row => `
     <tr data-row="${row.rowId}">
       <td>
-        <input type="text" class="form-control" autocomplete="off"
+        <input type="text" class="form-control purch-product-input" autocomplete="off"
           value="${escItemHtml(row.product_name)}"
           oninput="if (!onPurchProductInput('${row.rowId}', this.value)) showPurchProductDropdown('${row.rowId}', this, this.value)"
           onfocus="showPurchProductDropdown('${row.rowId}', this, this.value)"
@@ -167,7 +167,7 @@ function renderPurchItemsTable() {
       <td><input type="text" class="form-control" value="${escItemHtml(row.hsn_code)}" ${row.locked ? 'readonly' : ''}
           onchange="onPurchFieldChange('${row.rowId}','hsn_code',this.value)"></td>
       <td>${purchUnitCell(row)}</td>
-      <td><input type="number" class="form-control text-center" min="0.001" step="0.001" value="${row.quantity}"
+      <td><input type="number" class="form-control text-center purch-qty-input" min="0.001" step="0.001" value="${row.quantity}"
           oninput="onPurchFieldChange('${row.rowId}','quantity',this.value)"></td>
       <td><input type="number" class="form-control text-right" min="0" step="0.01" value="${row.rate}"
           oninput="onPurchFieldChange('${row.rowId}','rate',this.value)"></td>
@@ -341,7 +341,15 @@ function selectPurchProductFromDropdown(rowId, productId) {
   applyProductToPurchRow(row, product);
   recalcPurchItemRow(rowId);
   hidePurchProductDropdown();
-  document.querySelector(`#purchItemsTableBody tr[data-row="${rowId}"] input[oninput*="'quantity'"]`)?.select();
+  // Both calls above re-render the row (fresh DOM nodes), so Quantity is
+  // looked up fresh. Matched by its own class rather than by "does the
+  // oninput attribute's text contain 'quantity'": a copy of another
+  // function's call text goes stale the moment that function is renamed,
+  // silently, while a class on the element cannot. Invoice Entry uses
+  // data-field-wrap for the same reason — see js/invoice-items.js.
+  // .select() rather than .focus() so the default "1" is replaced by the
+  // next digit typed instead of being prepended to.
+  document.querySelector(`#purchItemsTableBody tr[data-row="${rowId}"] .purch-qty-input`)?.select();
 }
 
 async function onPurchProductBlur(rowId, name) {

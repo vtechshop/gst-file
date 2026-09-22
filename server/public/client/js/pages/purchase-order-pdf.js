@@ -392,7 +392,7 @@ function poPdfTerms(doc, y, order, buyer) {
       doc.text(firstLine, M + leadW, y);
       let ly = y;
       rest.forEach(l => { ly += 3.6; doc.text(l, M, ly); });
-      y = ly + 4.4;
+      y = ly + 4;
     });
     return y + 1;
   }
@@ -428,11 +428,20 @@ async function poPdfSignatures(doc, y, buyer) {
   const w = (R - M - gap) / 2;
   // Every mark inside the block is placed against blockH, so the seal, the
   // signature, the rule and the caption keep their order and never sit on
-  // top of one another.
-  const blockH = 40;
-  const ruleY = y + blockH - 5.5;
+  // top of one another. 38mm rather than the 40 it was: the three signing
+  // lines sit 7mm apart instead of 8, which is still more than twice the
+  // 8pt type they label, and the two millimetres are what keeps a six-line
+  // order - the size this defect was reported at - on a single page.
+  const blockH = 38;
 
+  // The room check first, and every offset measured from what it returns.
+  // Worked out before it, the rule and the "Authorized Signatory" caption
+  // kept the y the block WOULD have had on the previous page while the
+  // panel itself was drawn at the top of the new one: on a ten-line order
+  // the caption landed at 306.9mm of a 297mm page, printing nothing at all
+  // and leaving the panel captionless.
   y = poPdfSpace(doc, y, blockH);
+  const ruleY = y + blockH - 5.5;
 
   doc.setDrawColor.apply(doc, PO_PDF.RULE);
   doc.rect(M, y, w, blockH);
@@ -451,12 +460,12 @@ async function poPdfSignatures(doc, y, buyer) {
   // supplier side: a blank signing area
   doc.setFont('helvetica', 'normal');
   doc.setFontSize(8);
-  let sy = y + 14;
+  let sy = y + 13;
   ['Name:', 'Date:', 'Signature:'].forEach(label => {
     doc.text(label, M + 4, sy);
     doc.setDrawColor.apply(doc, PO_PDF.RULE);
     doc.line(M + 22, sy + 0.8, M + w - 4, sy + 0.8);
-    sy += 8;
+    sy += 7;
   });
 
   // our side: For <company>, the stamp with the signature on it, then the
@@ -475,7 +484,7 @@ async function poPdfSignatures(doc, y, buyer) {
   // One group, centred as a whole: the stamp, a small gap, the signature.
   // Both ink boxes are worked out before anything is drawn, because centring
   // each mark on the panel in turn would stack one on top of the other.
-  const markTop = y + 12.5;
+  const markTop = y + 12;
   const SB = sealInk || { x: 0, y: 0, w: 1, h: 1, imgW: 1, imgH: 1 };
   const GB = sigInk || { x: 0, y: 0, w: 1, h: 1, imgW: 1, imgH: 1 };
   const sealTall = (SB.h / SB.w) * (SB.imgH / SB.imgW);   // ink height per unit of width

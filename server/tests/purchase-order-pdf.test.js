@@ -490,7 +490,9 @@ test('O13 it still derives nothing: no tax and no line amount is recomputed', ()
 
 test('O14 both purchase order pages load the new renderer', () => {
   for (const html of [PO_LIST_HTML, PO_ENTRY_HTML]) {
-    assert.match(html, /client\/js\/pages\/purchase-order-pdf\.js\?v=3/, 'the cache key must be bumped');
+    // v=4: the approval block's page handling was fixed under
+    // purchase-print-pagination.test.js
+    assert.match(html, /client\/js\/pages\/purchase-order-pdf\.js\?v=4/, 'the cache key must be bumped');
     assert.ok(html.includes('jspdf.plugin.autotable'), 'autoTable is required by the item table');
     // The stamp is measured with invoice-pdf.js's helpers, so that file has
     // to be loaded first - reused, never copied into this renderer.

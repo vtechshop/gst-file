@@ -120,5 +120,5 @@ test('PR6 the list returned to is the one Edit is opened from, and the page load
   assert.match(rd('client', 'js', 'pages', 'purchase-list.js'), /href="purchases\.html\?id=\$\{r\.id\}" title="Edit"/);
   assert.ok(fs.existsSync(path.join(ROOT, 'purchase-list.html')));
   assert.match(ENTRY, /const PURCHASE_LIST_PAGE = 'purchase-list\.html';/);
-  assert.ok(rd('purchases.html').includes('client/js/pages/purchase-entry.js?v=31'));
+  assert.ok(rd('purchases.html').includes('client/js/pages/purchase-entry.js?v=32'));
 });

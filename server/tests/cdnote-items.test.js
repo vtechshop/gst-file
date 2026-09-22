@@ -332,7 +332,11 @@ test('W5 Sales Return and the other PDF modules are untouched', () => {
   // it is pinned by content rather than by "not modified": this still fails
   // if Credit/Debit Note work edits it, and if anyone changes it again
   // without approving the new revision here.
-  const APPROVED_PO_PDF_SHA256 = '28b1cd6108c5ef69a68c3cec702734d8f9b5f9e7a24f7d4332e41c31b2056644';
+  // Revised again, under its own approved change: the approval block's rule
+  // and caption were being drawn from a y left over from the previous page
+  // (off the paper on a long order), and its spacing now keeps a six-line
+  // order on one page (purchase-print-pagination.test.js).
+  const APPROVED_PO_PDF_SHA256 = 'b137174c046df225f56f0a29eccbcf64ede27598f3186da1eb69ce13345f46ce';
   const poSrc = fs.readFileSync(path.join(ROOT, 'client', 'js', 'pages', 'purchase-order-pdf.js'), 'utf8');
   const po = require('crypto').createHash('sha256').update(poSrc.replace(/\r\n/g, '\n')).digest('hex');
   assert.strictEqual(po, APPROVED_PO_PDF_SHA256,

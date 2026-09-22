@@ -54,7 +54,7 @@ test('PU1 New Purchase opts in; Purchase Order entry and Purchase Returns do not
   assert.match(rd('client', 'js', 'pages', 'purchase-returns.js'), /await initPurchaseItems\(user\.id, 'return'\);/);
   assert.match(GRID, /purchUnitSelect = !!\(options && options\.unitSelect\);/);
   const html = rd('purchases.html');
-  for (const key of ['client/js/pages/purchase-items.js?v=31', 'client/js/pages/purchase-entry.js?v=31', 'client/css/style.css?v=39']) {
+  for (const key of ['client/js/pages/purchase-items.js?v=32', 'client/js/pages/purchase-entry.js?v=32', 'client/css/style.css?v=39']) {
     assert.ok(html.includes(key), 'purchases.html loads ' + key);
   }
 });

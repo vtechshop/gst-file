@@ -320,7 +320,11 @@ test('C13 the page loads what the PDF needs, and reuses the shared helpers', asy
 // It is pinned by content instead: Credit/Debit Note work still cannot
 // touch it, and any further edit fails here until it is approved and this
 // digest is updated deliberately. The rest stay pinned to untouched.
-const APPROVED_PO_PDF_SHA256 = '28b1cd6108c5ef69a68c3cec702734d8f9b5f9e7a24f7d4332e41c31b2056644';
+// Revised again, under its own approved change: the approval block's rule
+// and caption were being drawn from a y left over from the previous page
+// (off the paper on a long order), and its spacing now keeps a six-line
+// order on one page (purchase-print-pagination.test.js).
+const APPROVED_PO_PDF_SHA256 = 'b137174c046df225f56f0a29eccbcf64ede27598f3186da1eb69ce13345f46ce';
 
 test('C14 no other PDF module was modified', async () => {
   const { execSync } = require('child_process');

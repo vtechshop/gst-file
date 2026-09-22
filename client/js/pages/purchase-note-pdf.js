@@ -118,7 +118,7 @@ function drawPurchaseNoteItems(doc, items, top, { L, R, accent, gstPct }) {
     doc.line(L, y + rowH, R, y + rowH);
     y += rowH;
   }
-  return y + 6;
+  return y + 5;
 }
 
 async function downloadPurchaseNotePDF(id) {
@@ -176,7 +176,10 @@ async function buildPurchaseNotePDFDoc(note, items) {
   doc.setFillColor(...accent);
   doc.rect(L, 25, R - L, 1.3, 'F');
 
-  let y = 34;
+  // 32 rather than 34: the section rhythm below is trimmed by a millimetre
+  // or two throughout, which is what lets a note of up to six affected lines
+  // print on one page instead of spilling its closing half onto a second.
+  let y = 32;
 
   // ── Issued by / note details ──
   doc.setFontSize(9); doc.setFont('helvetica', 'bold'); doc.setTextColor(...accent);
@@ -184,7 +187,7 @@ async function buildPurchaseNotePDFDoc(note, items) {
   doc.text('NOTE DETAILS', pw / 2 + 4, y);
   doc.setDrawColor(178, 223, 219);
   doc.line(L, y + 1.5, R, y + 1.5);
-  y += 6;
+  y += 5.5;
 
   doc.setFontSize(8.5); doc.setFont('helvetica', 'normal'); doc.setTextColor(40, 40, 40);
   const issuedBy = [
@@ -207,13 +210,13 @@ async function buildPurchaseNotePDFDoc(note, items) {
   const blockTop = y;
   issuedWrapped.forEach((line, i) => doc.text(line, L, blockTop + i * 4.5, { maxWidth: colWidth }));
   metaWrapped.forEach((line, i) => doc.text(line, pw / 2 + 4, blockTop + i * 4.5));
-  y = blockTop + Math.max(issuedWrapped.length, metaWrapped.length) * 4.5 + 5;
+  y = blockTop + Math.max(issuedWrapped.length, metaWrapped.length) * 4.5 + 3.5;
 
   // ── Supplier ──
   doc.setFontSize(9); doc.setFont('helvetica', 'bold'); doc.setTextColor(...accent);
   doc.text('SUPPLIER', L, y);
   doc.line(L, y + 1.5, R, y + 1.5);
-  y += 6;
+  y += 5.5;
   doc.setFontSize(8.5); doc.setFont('helvetica', 'normal'); doc.setTextColor(40, 40, 40);
   const vendLines = wrapLines(doc, [
     note.vendor_name || '',
@@ -221,18 +224,18 @@ async function buildPurchaseNotePDFDoc(note, items) {
     note.state ? 'State: ' + note.state : ''
   ].filter(Boolean), R - L);
   vendLines.forEach((line, i) => doc.text(line, L, y + i * 4.5, { maxWidth: R - L }));
-  y += vendLines.length * 4.5 + 5;
+  y += vendLines.length * 4.5 + 3.5;
 
   // ── Reason ──
   if (note.reason) {
     doc.setFontSize(9); doc.setFont('helvetica', 'bold'); doc.setTextColor(...accent);
     doc.text('REASON', L, y);
     doc.line(L, y + 1.5, R, y + 1.5);
-    y += 6;
+    y += 5.5;
     doc.setFontSize(8.5); doc.setFont('helvetica', 'normal'); doc.setTextColor(40, 40, 40);
     const reasonLines = wrapLines(doc, [String(note.reason)], R - L);
     reasonLines.forEach((line, i) => doc.text(line, L, y + i * 4.5, { maxWidth: R - L }));
-    y += reasonLines.length * 4.5 + 5;
+    y += reasonLines.length * 4.5 + 3.5;
   }
 
   // ── Affected items ──
@@ -242,14 +245,17 @@ async function buildPurchaseNotePDFDoc(note, items) {
     y = drawPurchaseNoteItems(doc, noteItems, y, { L, R, accent, gstPct: note.gst_percentage });
   }
 
-  if (y > 210) { doc.addPage(); y = 20; }
-
-  // ── Tax breakup ──
-  doc.setFontSize(9); doc.setFont('helvetica', 'bold'); doc.setTextColor(...accent);
-  doc.text('TAX BREAKUP', L, y);
-  doc.line(L, y + 1.5, R, y + 1.5);
-  y += 8;
-
+  // ── Everything below the items is one closing unit ──
+  // The tax breakup, the total, the amount in words and the two notes are
+  // read together and must not be split, so the room for all of them is
+  // measured here - against the very floor the signature block uses below,
+  // and from the same constants the drawing code underneath uses, so the
+  // measurement cannot drift from what is actually drawn.
+  //
+  // It used to be "if (y > 210)": a fixed number with no relation to the
+  // height of what was about to be printed. A note of five lines ended just
+  // past it and was sent to a second page carrying nothing but the stamp and
+  // the footer, with some 60mm of the first page left blank.
   const half = pnRate(Number(note.gst_percentage || 0) / 2);
   const rows = [['Taxable Amount', formatNum(note.taxable_amount)],
     ['GST Rate', pnRate(note.gst_percentage) + '%']];
@@ -259,14 +265,48 @@ async function buildPurchaseNotePDFDoc(note, items) {
   if (+note.cess_amount > 0) rows.push(['Compensation Cess', formatNum(note.cess_amount)]);
   rows.push(['Total GST', formatNum(note.gst_amount)]);
 
+  // The closing rhythm, in one place. Each of these was a literal number a
+  // couple of millimetres larger; together they were what tipped an ordinary
+  // note over the page, so they are trimmed to what the type actually needs
+  // (8.5-9pt text on 4.5mm lines) and no further.
+  const PN_HEAD_GAP = 7;     // section heading to its first line
+  const PN_ROW_H = 5.5;      // one tax-breakup line
+  const PN_TOTAL_GAP = 13;   // the rule under the breakup to the line below the total
+  const PN_WORDS_GAP = 11;   // the Amount in Words block
+  const PN_NOTE_GAP = 6.5;   // each of the two italic notes
+  const closingH = PN_HEAD_GAP + rows.length * PN_ROW_H + 1 + PN_TOTAL_GAP
+    + PN_WORDS_GAP + PN_NOTE_GAP * 2;
+
+  // The foot of the page, worked out before anything below is drawn so the
+  // break decision and the signature agree on where the content ends.
+  const SEAL = 26;
+  const sealReserveH = sealData ? SEAL : (signatureData ? 18 : 14);
+  const SIG_BLOCK_H = 6 + sealReserveH + 5;
+  const footerH = 6 + 4 + 4;
+  const PAGE_BOTTOM = doc.internal.pageSize.height - 12;
+  const FOOTER_Y = PAGE_BOTTOM - footerH;
+  // The QR sits beside the stamp and is drawn whenever one can be made, so
+  // its row is reserved either way - 4mm more than a note without a stamp
+  // would strictly need, and never less than what gets drawn.
+  const SIG_ROW_H = Math.max(SIG_BLOCK_H + 3, 32);
+  const sigBlockY = FOOTER_Y - SIG_ROW_H;
+
+  if (y + closingH > sigBlockY) { doc.addPage(); y = 20; }
+
+  // ── Tax breakup ──
+  doc.setFontSize(9); doc.setFont('helvetica', 'bold'); doc.setTextColor(...accent);
+  doc.text('TAX BREAKUP', L, y);
+  doc.line(L, y + 1.5, R, y + 1.5);
+  y += PN_HEAD_GAP;
+
   const boxW = 80, boxX = R - boxW;
   const taxTop = y;
   doc.setFontSize(9); doc.setFont('helvetica', 'normal'); doc.setTextColor(60, 60, 60);
   rows.forEach((r, i) => {
-    doc.text(r[0], boxX, y + i * 5.5);
-    doc.text(r[0] === 'GST Rate' ? r[1] : 'Rs.' + r[1], R, y + i * 5.5, { align: 'right' });
+    doc.text(r[0], boxX, y + i * PN_ROW_H);
+    doc.text(r[0] === 'GST Rate' ? r[1] : 'Rs.' + r[1], R, y + i * PN_ROW_H, { align: 'right' });
   });
-  const ruleY = y + rows.length * 5.5 + 1;
+  const ruleY = y + rows.length * PN_ROW_H + 1;
   doc.setDrawColor(60, 60, 60);
   doc.line(boxX, ruleY, R, ruleY);
   doc.setFontSize(12); doc.setFont('helvetica', 'bold'); doc.setTextColor(...accent);
@@ -286,27 +326,30 @@ async function buildPurchaseNotePDFDoc(note, items) {
     bankWrapped.forEach((l, i) => doc.text(l, L, taxTop + 4.5 + i * 4));
     bankBottom = taxTop + 4.5 + bankWrapped.length * 4;
   }
-  y = Math.max(ruleY + 16, bankBottom + 6);
+  y = Math.max(ruleY + PN_TOTAL_GAP, bankBottom + 6);
 
   doc.setFontSize(9); doc.setFont('helvetica', 'normal'); doc.setTextColor(30, 30, 30);
   doc.text('Amount in Words:', L, y);
   doc.setFont('helvetica', 'bold');
   doc.text(numberToWordsINR(note.total_amount), L, y + 5, { maxWidth: R - L });
-  y += 13;
+  y += PN_WORDS_GAP;
 
   doc.setFont('helvetica', 'italic'); doc.setFontSize(8); doc.setTextColor(110, 110, 110);
   doc.text(isDebit
     ? '* This Debit Note increases the amount recoverable from the supplier against the purchase referenced above.'
     : '* This Credit Note reduces the amount payable to the supplier against the purchase referenced above.',
     L, y, { maxWidth: R - L });
-  y += 8;
+  y += PN_NOTE_GAP;
   doc.setFont('helvetica', 'italic'); doc.setFontSize(7.5); doc.setTextColor(130, 130, 130);
   doc.text('* A financial adjustment only. Goods physically returned are recorded on a Purchase Return.',
     L, y, { maxWidth: R - L });
-  y += 8;
+  y += PN_NOTE_GAP;
 
   if (bankLines.length && !bankBeside) {
-    if (y > 250) { doc.addPage(); y = 20; }
+    // Measured against the same floor, for the same reason as above: a fixed
+    // 250 either broke a block that fitted or let one run into the stamp.
+    const bankH = 4.5 + bankLines.length * 4 + 6;
+    if (y + bankH > sigBlockY) { doc.addPage(); y = 20; }
     doc.setFont('helvetica', 'bold'); doc.setFontSize(8.5); doc.setTextColor(...accent);
     doc.text('Bank Details', L, y);
     y += 4.5;
@@ -322,14 +365,9 @@ async function buildPurchaseNotePDFDoc(note, items) {
     `${purchaseNoteTitle(note)}: ${note.note_number}\nDate: ${formatDate(note.note_date)}\nAmount: Rs.${formatNum(note.total_amount)}`,
     p?.header_color);
   const [sealInk, sigInk] = await Promise.all([inkBoundsOf(sealData), inkBoundsOf(signatureData)]);
-  const SEAL = 26;
-  const sealReserveH = sealData ? SEAL : (signatureData ? 18 : 14);
-  const SIG_BLOCK_H = 6 + sealReserveH + 5;
-  const footerH = 6 + 4 + 4;
-  const PAGE_BOTTOM = doc.internal.pageSize.height - 12;
-  const FOOTER_Y = PAGE_BOTTOM - footerH;
-  const SIG_ROW_H = Math.max(SIG_BLOCK_H + 3, qrSource ? 32 : 0);
-  const sigBlockY = FOOTER_Y - SIG_ROW_H;
+  // sigBlockY, SEAL and the footer band were settled above, before the
+  // closing blocks were placed against them; the last check is the same one
+  // it always was - content that has reached the stamp's row starts a page.
   if (y > sigBlockY) doc.addPage();
 
   if (qrSource) {
@@ -373,18 +411,23 @@ async function buildPurchaseNotePDFDoc(note, items) {
   doc.setFontSize(8); doc.setTextColor(120, 120, 120);
   doc.text('Authorized Signatory', sealCx, authY, { align: 'center' });
 
-  // ── Footer ──
-  y = FOOTER_Y;
-  doc.setDrawColor(178, 223, 219);
-  doc.line(L, y, R, y);
-  y += 6;
-  doc.setFontSize(7.5); doc.setTextColor(140, 140, 140);
-  doc.text('This is a computer-generated Purchase ' + (isDebit ? 'Debit Note' : 'Credit Note') + '.',
-    pw / 2, y, { align: 'center' });
+  // ── Footer, on every page ──
+  // Drawn once, it landed on whichever page the document happened to end on:
+  // a note that ran to two sheets left the first one unfooted. The Purchase
+  // Order has always repeated its footer, and a continuation page of a note
+  // is no different.
+  const footerNote = 'This is a computer-generated Purchase ' + (isDebit ? 'Debit Note' : 'Credit Note') + '.';
   const contact = [p?.website, p?.email, p?.phone].filter(Boolean).join('  |  ');
-  if (contact) {
-    doc.text(contact, pw / 2, y + 4, { align: 'center' });
+  const pageCount = doc.internal.getNumberOfPages();
+  for (let pg = 1; pg <= pageCount; pg++) {
+    doc.setPage(pg);
+    doc.setDrawColor(178, 223, 219);
+    doc.line(L, FOOTER_Y, R, FOOTER_Y);
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(7.5); doc.setTextColor(140, 140, 140);
+    doc.text(footerNote, pw / 2, FOOTER_Y + 6, { align: 'center' });
+    if (contact) doc.text(contact, pw / 2, FOOTER_Y + 10, { align: 'center' });
   }
+  doc.setPage(pageCount);
 
   return doc;
 }

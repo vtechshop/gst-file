@@ -171,7 +171,8 @@ test('P9 the page carries the approved columns, and only the quantity is editabl
 
 test('P10 the page is reachable and loads what the PDF needs', () => {
   assert.match(PNHTML, /client\/js\/pages\/invoice-pdf\.js/);
-  assert.match(PNHTML, /client\/js\/pages\/purchase-note-pdf\.js\?v=1/);
+  // v=2: the note's page breaks were fixed under purchase-print-pagination.test.js
+  assert.match(PNHTML, /client\/js\/pages\/purchase-note-pdf\.js\?v=2/);
   assert.match(PNHTML, /client\/js\/pages\/purchase-notes\.js\?v=1/);
   assert.match(PNHTML, /AFFECTED PRODUCTS \/ ITEMS/);
   for (const id of ['pnPurchasePick', 'pnItemsSection', 'pnItemsSummary', 'pnUseItemsTotal']) {
