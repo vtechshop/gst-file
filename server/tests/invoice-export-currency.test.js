@@ -549,7 +549,7 @@ test('EX15 the save route accepts the new columns, and the page is served fresh'
     assert.ok(GENERIC.includes(`'${c}'`), 'the item allowlist carries ' + c);
   }
   for (const key of ['client/js/pages/invoice-items.js?v=43', 'client/js/pages/invoice-entry.js?v=39',
-    'client/js/pages/invoice-pdf.js?v=52', 'client/css/style.css?v=40']) {
+    'client/js/pages/invoice-pdf.js?v=52', 'client/css/style.css?v=41']) {
     assert.ok(HTML.includes(key), 'invoice.html loads ' + key);
   }
   // The rupee grid is shared with Proforma Entry, which never calls

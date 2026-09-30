@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>New Invoice - GST Management System</title>
-  <link rel="stylesheet" href="client/css/style.css?v=40">
+  <link rel="stylesheet" href="client/css/style.css?v=41">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.31/jspdf.plugin.autotable.min.js"></script>
@@ -255,10 +255,13 @@
           <div class="iv-section iv-sec-info">
             <!-- Invoice Info -->
             <div class="section-title mb-14">Invoice Information</div>
-            <!-- Domestic or export. The #exportToggle checkbox below in the
-                 options list is still the setting itself - the save, the
-                 edit restore and GSTR-1 all read it - and these two buttons
-                 are how it is operated. -->
+            <!-- Domestic or export. The #exportToggle checkbox in the options
+                 list below is still the setting itself - the save, the edit
+                 restore and GSTR-1 all read it - and these two buttons are how
+                 it is operated. #exportFields sits here, under the buttons that
+                 reveal it, rather than down in the options strip: from there it
+                 opened a screen and a half below the switch, so pressing Export
+                 changed nothing the user could see. -->
             <div class="form-group mb-16 iv-f-type">
               <label id="invTypeLabel">Invoice Type</label>
               <div class="iv-typeswitch" role="group" aria-labelledby="invTypeLabel">
@@ -268,6 +271,72 @@
                   onclick="setInvoiceType('export')">Export</button>
               </div>
               <small class="text-muted">Export invoices are reported in GSTR-1 Table 6A and can be billed in a foreign currency.</small>
+            </div>
+            <div id="exportFields" class="form-grid cols-4 mb-16 d-none">
+              <div class="form-group">
+                <label for="invExportType">Export Type *</label>
+                <select id="invExportType" class="form-control">
+                  <option value="WPAY">WPAY &mdash; with payment of IGST</option>
+                  <option value="WOPAY">WOPAY &mdash; under LUT / bond, no IGST</option>
+                </select>
+              </div>
+              <div class="form-group">
+                <label for="invPortCode">Port Code</label>
+                <input type="text" id="invPortCode" class="form-control uppercase" placeholder="INMAA1">
+              </div>
+              <div class="form-group">
+                <label for="invShippingBillNo">Shipping Bill No.</label>
+                <input type="text" id="invShippingBillNo" class="form-control">
+              </div>
+              <div class="form-group">
+                <label for="invShippingBillDate">Shipping Bill Date</label>
+                <input type="date" id="invShippingBillDate" class="form-control">
+              </div>
+              <div class="form-group">
+                <label for="invExportOf">Export of</label>
+                <select id="invExportOf" class="form-control">
+                  <option value="goods">Goods</option>
+                  <option value="services">Services &mdash; no shipping bill</option>
+                </select>
+              </div>
+              <div class="form-group">
+                <label for="invSezRecipient">SEZ recipient (if SEZ)</label>
+                <select id="invSezRecipient" class="form-control">
+                  <option value="">&mdash; not an SEZ supply &mdash;</option>
+                  <option value="unit">SEZ unit</option>
+                  <option value="developer">SEZ developer</option>
+                </select>
+              </div>
+              <div class="form-group">
+                <label for="invDestinationCountry">Country of Destination</label>
+                <input type="text" id="invDestinationCountry" class="form-control" placeholder="United States">
+              </div>
+              <div class="form-group">
+                <label for="invCurrency">Currency</label>
+                <select id="invCurrency" class="form-control" onchange="onInvoiceCurrencyChange()">
+                  <option value="">&mdash; billed in &#8377; INR &mdash;</option>
+                  <option value="USD">USD &mdash; US Dollar ($)</option>
+                  <option value="EUR">EUR &mdash; Euro (&euro;)</option>
+                  <option value="GBP">GBP &mdash; Pound Sterling (&pound;)</option>
+                  <option value="AED">AED &mdash; UAE Dirham (&#1583;.&#1573;)</option>
+                  <option value="SAR">SAR &mdash; Saudi Riyal (&#65020;)</option>
+                  <option value="AUD">AUD &mdash; Australian Dollar (A$)</option>
+                  <option value="CAD">CAD &mdash; Canadian Dollar (C$)</option>
+                  <option value="SGD">SGD &mdash; Singapore Dollar (S$)</option>
+                  <option value="OTHER">Other &mdash; type the code</option>
+                </select>
+              </div>
+              <div class="form-group d-none" id="invCurrencyOtherWrap">
+                <label for="invCurrencyOther">Currency Code</label>
+                <input type="text" id="invCurrencyOther" class="form-control uppercase" maxlength="8"
+                  placeholder="JPY" oninput="uppercaseKeepCursor(this); onInvoiceCurrencyChange();">
+              </div>
+              <div class="form-group">
+                <label for="invExchangeRate">Exchange Rate <span class="text-required">*</span></label>
+                <input type="number" id="invExchangeRate" class="form-control text-right" min="0" step="0.000001"
+                  placeholder="83.25" oninput="onInvoiceExchangeRateInput()">
+                <small class="text-muted" id="invExchangeRateHint"></small>
+              </div>
             </div>
             <div class="form-grid cols-3 mb-16">
               <div class="form-group iv-f-num">
@@ -368,11 +437,12 @@
               <span id="transportToggleLabel" class="fs-12 fw-700 text-gray-mid">Not Required</span>
             </div>
             <div class="iv-options">
-              <!-- Operated by the Invoice Type buttons at the top of this
-                   section; kept here, and kept a checkbox, because it IS the
-                   export setting that the save payload, the edit restore and
-                   the GSTR-1 export all read. Hidden rather than removed so
-                   there is one setting on the page instead of two. -->
+              <!-- Operated by the Invoice Type buttons in Invoice Information,
+                   which is also where the fields it reveals now live; kept here,
+                   and kept a checkbox, because it IS the export setting that the
+                   save payload, the edit restore and the GSTR-1 export all read.
+                   Hidden rather than removed so there is one setting on the page
+                   instead of two. -->
               <input type="checkbox" id="exportToggle" onchange="onExportToggleChange()"
                 class="d-none" aria-hidden="true" tabindex="-1">
               <span id="exportToggleLabel" class="d-none">No</span>
@@ -382,72 +452,6 @@
                   <span class="fs-12 fw-700">Leased vehicle at 65% rate</span>
                 </label>
                 <small class="text-muted">Bought and leased before 1 July 2017 &mdash; reported as <b>diff_percent 0.65</b>.</small>
-              </div>
-              <div id="exportFields" class="form-grid cols-4 mb-16 d-none">
-                <div class="form-group">
-                  <label for="invExportType">Export Type *</label>
-                  <select id="invExportType" class="form-control">
-                    <option value="WPAY">WPAY &mdash; with payment of IGST</option>
-                    <option value="WOPAY">WOPAY &mdash; under LUT / bond, no IGST</option>
-                  </select>
-                </div>
-                <div class="form-group">
-                  <label for="invPortCode">Port Code</label>
-                  <input type="text" id="invPortCode" class="form-control uppercase" placeholder="INMAA1">
-                </div>
-                <div class="form-group">
-                  <label for="invShippingBillNo">Shipping Bill No.</label>
-                  <input type="text" id="invShippingBillNo" class="form-control">
-                </div>
-                <div class="form-group">
-                  <label for="invShippingBillDate">Shipping Bill Date</label>
-                  <input type="date" id="invShippingBillDate" class="form-control">
-                </div>
-                <div class="form-group">
-                  <label for="invExportOf">Export of</label>
-                  <select id="invExportOf" class="form-control">
-                    <option value="goods">Goods</option>
-                    <option value="services">Services &mdash; no shipping bill</option>
-                  </select>
-                </div>
-                <div class="form-group">
-                  <label for="invSezRecipient">SEZ recipient (if SEZ)</label>
-                  <select id="invSezRecipient" class="form-control">
-                    <option value="">&mdash; not an SEZ supply &mdash;</option>
-                    <option value="unit">SEZ unit</option>
-                    <option value="developer">SEZ developer</option>
-                  </select>
-                </div>
-                <div class="form-group">
-                  <label for="invDestinationCountry">Country of Destination</label>
-                  <input type="text" id="invDestinationCountry" class="form-control" placeholder="United States">
-                </div>
-                <div class="form-group">
-                  <label for="invCurrency">Currency</label>
-                  <select id="invCurrency" class="form-control" onchange="onInvoiceCurrencyChange()">
-                    <option value="">&mdash; billed in &#8377; INR &mdash;</option>
-                    <option value="USD">USD &mdash; US Dollar ($)</option>
-                    <option value="EUR">EUR &mdash; Euro (&euro;)</option>
-                    <option value="GBP">GBP &mdash; Pound Sterling (&pound;)</option>
-                    <option value="AED">AED &mdash; UAE Dirham (&#1583;.&#1573;)</option>
-                    <option value="SAR">SAR &mdash; Saudi Riyal (&#65020;)</option>
-                    <option value="AUD">AUD &mdash; Australian Dollar (A$)</option>
-                    <option value="CAD">CAD &mdash; Canadian Dollar (C$)</option>
-                    <option value="SGD">SGD &mdash; Singapore Dollar (S$)</option>
-                    <option value="OTHER">Other &mdash; type the code</option>
-                  </select>
-                </div>
-                <div class="form-group d-none" id="invCurrencyOtherWrap">
-                  <label for="invCurrencyOther">Currency Code</label>
-                  <input type="text" id="invCurrencyOther" class="form-control uppercase" maxlength="8"
-                    placeholder="JPY" oninput="uppercaseKeepCursor(this); onInvoiceCurrencyChange();">
-                </div>
-                <div class="form-group">
-                  <label for="invExchangeRate">Exchange Rate <span class="text-required">*</span></label>
-                  <input type="number" id="invExchangeRate" class="form-control text-right" min="0" step="0.000001"
-                    placeholder="83.25" oninput="onInvoiceExchangeRateInput()">
-                  <small class="text-muted" id="invExchangeRateHint"></small>
-                </div>
               </div>
               <div class="d-flex align-center gap-10 mb-8 iv-option">
                 <label class="inv-toggle" title="Supplied through an e-commerce operator">

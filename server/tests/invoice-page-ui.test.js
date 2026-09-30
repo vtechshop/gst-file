@@ -37,9 +37,18 @@ const CONTROLS = [
   ['invShipAddress', ''],
   // Invoice Type, at the top of Invoice Information: two buttons operating
   // the #exportToggle checkbox further down, which is still the setting
-  // itself (invoice-export-currency.test.js).
+  // itself (invoice-export-currency.test.js), and the export fields they
+  // show, which sit with them rather than beside that checkbox.
   ['invTypeDomestic', "onclick=setInvoiceType('domestic')"],
   ['invTypeExport', "onclick=setInvoiceType('export')"],
+  // What those buttons reveal, immediately under them - see IP5.
+  ['invExportType', ''], ['invPortCode', ''], ['invShippingBillNo', ''], ['invShippingBillDate', ''],
+  ['invExportOf', ''], ['invSezRecipient', ''],
+  // Where the goods went, and the currency the buyer is billed in.
+  ['invDestinationCountry', ''],
+  ['invCurrency', 'onchange=onInvoiceCurrencyChange()'],
+  ['invCurrencyOther', 'oninput=uppercaseKeepCursor(this); onInvoiceCurrencyChange();'],
+  ['invExchangeRate', 'oninput=onInvoiceExchangeRateInput()'],
   ['autoInvToggle', 'onchange=onAutoToggleChange()'],
   ['invNum', ''], ['invSource', 'onchange=onInvoiceSourceChange()'], ['invDate', ''],
   ['invReverseCharge', ''], ['invGstCategory', 'onchange=onInvGstCategoryChange()'], ['invSupply', ''],
@@ -50,13 +59,6 @@ const CONTROLS = [
   ['transportToggle', 'onchange=onTransportToggleChange()'],
   ['exportToggle', 'onchange=onExportToggleChange()'],
   ['invDifferential65', ''],
-  ['invExportType', ''], ['invPortCode', ''], ['invShippingBillNo', ''], ['invShippingBillDate', ''],
-  ['invExportOf', ''], ['invSezRecipient', ''],
-  // Where the goods went, and the currency the buyer is billed in.
-  ['invDestinationCountry', ''],
-  ['invCurrency', 'onchange=onInvoiceCurrencyChange()'],
-  ['invCurrencyOther', 'oninput=uppercaseKeepCursor(this); onInvoiceCurrencyChange();'],
-  ['invExchangeRate', 'oninput=onInvoiceExchangeRateInput()'],
   ['ecomToggle', 'onchange=onEcomToggleChange()'],
   ['invEcomGstin', 'oninput=uppercaseKeepCursor(this)'], ['invEcomSupplyType', ''],
   ['invVehicleNo', 'oninput=uppercaseKeepCursor(this)'], ['invTransporter', ''], ['invTransportMode', ''],
@@ -118,7 +120,7 @@ test('IP3 the redesign only adds: wrappers carry nothing but a class, iv- classe
   }
   assert.ok(HTML.includes('<div class="content inv-page">'));
   // Moved by the export-invoice currency change (invoice-export-currency.test.js).
-  assert.ok(HTML.includes('client/css/style.css?v=40'));
+  assert.ok(HTML.includes('client/css/style.css?v=41'));
 });
 
 test('IP4 the page styles are scoped, and never undo a script toggle', () => {
@@ -146,4 +148,31 @@ test('IP4 the page styles are scoped, and never undo a script toggle', () => {
   assert.equal(/!important/.test(block), false, 'no !important');
   // Enter skips anything whose offsetParent is null; a fixed element has none.
   assert.equal(/position\s*:\s*fixed/.test(block), false, 'nothing fixed-position');
+});
+
+test('IP5 the export fields are revealed where the switch is, not a screen away', () => {
+  // The panel used to sit in the options strip inside the Transport section:
+  // pressing Export un-hid it 1529px further down the page, past the whole
+  // products grid, so nothing visibly happened. It belongs in the same
+  // section as the buttons that reveal it, after them and before the rest.
+  const info = HTML.slice(HTML.indexOf('<div class="iv-section iv-sec-info">'),
+                          HTML.indexOf('<div class="iv-section iv-sec-warranty">'));
+  assert.ok(info.includes('id="invTypeExport"'), 'the switch is in Invoice Information');
+  assert.ok(info.includes('id="exportFields"'), 'and so is the panel it reveals');
+  assert.ok(info.indexOf('id="invTypeExport"') < info.indexOf('id="exportFields"'),
+    'the panel follows the switch');
+  // every field the user came for, in that same block
+  const panel = info.slice(info.indexOf('id="exportFields"'));
+  for (const id of ['invExportType', 'invCurrency', 'invCurrencyOther', 'invExchangeRate',
+                    'invDestinationCountry', 'invPortCode', 'invShippingBillNo']) {
+    assert.ok(panel.includes('id="' + id + '"'), id + ' is in the revealed panel');
+  }
+  // the setting itself stays a checkbox in the options strip, hidden
+  const opts = HTML.slice(HTML.indexOf('<div class="iv-options">'));
+  assert.ok(opts.includes('id="exportToggle"'), 'the export setting is still the checkbox');
+  assert.equal(opts.slice(0, opts.indexOf('id="transportFields"')).includes('id="exportFields"'), false,
+    'the panel is no longer in the options strip');
+  // and the margins written for that strip no longer claim it
+  assert.equal(/\.iv-options > #exportFields/.test(CSS), false,
+    'style.css must not position the panel as a child of the options strip');
 });

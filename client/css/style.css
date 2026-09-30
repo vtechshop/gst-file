@@ -1934,7 +1934,9 @@ tr.row-skip { opacity: 0.5; }
   color: var(--iv-muted);
 }
 
-/* What each switch reveals: a tinted panel that names its switch. */
+/* What each switch reveals: a tinted panel that names its switch. #exportFields
+   is revealed by the Invoice Type buttons and sits beside them in Invoice
+   Information; the other two sit in the options strip and take its margins. */
 .inv-page #exportFields,
 .inv-page #ecomFields,
 .inv-page #transportFields {
@@ -1943,7 +1945,6 @@ tr.row-skip { opacity: 0.5; }
   border: 1px solid var(--iv-line);
   border-radius: 10px;
 }
-.inv-page .iv-options > #exportFields,
 .inv-page .iv-options > #ecomFields { margin: 0 16px 14px; }
 .inv-page #exportFields::before,
 .inv-page #ecomFields::before,
@@ -2113,7 +2114,6 @@ tr.row-skip { opacity: 0.5; }
   .inv-page .iv-sec-type { padding: 12px 16px; }
   .inv-page .iv-actions { padding: 12px 16px; border-radius: 12px; }
   .inv-page .iv-options > .iv-option > small.text-muted { flex-basis: 100%; max-width: none; margin-left: 48px; text-align: left; }
-  .inv-page .iv-options > #exportFields,
   .inv-page .iv-options > #ecomFields { margin: 0 12px 12px; }
 }
 @media (max-width: 640px) {
