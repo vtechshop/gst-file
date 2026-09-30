@@ -352,7 +352,7 @@ test('A17 the page loads the changed script under a new cache key only', () => {
   // currency (invoice-export-currency.test.js): the entry page, the grid
   // that now shows the buyer's currency, and the PDF that prints it.
   assert.match(HTML, /client\/js\/pages\/invoice-entry\.js\?v=39/);
-  assert.match(HTML, /client\/js\/pages\/invoice-items\.js\?v=42/);
+  assert.match(HTML, /client\/js\/pages\/invoice-items\.js\?v=43/);
   assert.match(HTML, /client\/js\/pages\/invoice-pdf\.js\?v=52/);
 });
 

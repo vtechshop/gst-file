@@ -157,6 +157,32 @@ test('EX1 a domestic invoice is rupees, start to finish', async () => {
   }
 });
 
+test('EX1b the Rate column is captioned in the currency the column is in', () => {
+  // Reported from the page: the cells changed to dollars but the heading
+  // still read "Rate (Rs.)", because the heading is written once when the
+  // section is built and the cells are written on every render.
+  const g = load();
+  g.run("renderItemsSectionShell('itemsSection');");
+  const header = () => g.els.itemsRateHeader.textContent;
+  assert.strictEqual(header(), 'Rate (₹)', 'a rupee invoice says rupees');
+
+  g.setLines(LINES);
+  g.chooseExport('USD', 83.25);
+  assert.strictEqual(header(), 'Rate ($)', 'an export in dollars says dollars');
+  assert.ok(g.grid().includes('$'), 'and so do the figures under it');
+
+  g.chooseExport('EUR', 90.5);
+  assert.strictEqual(header(), 'Rate (€)');
+
+  g.chooseDomestic();
+  assert.strictEqual(header(), 'Rate (₹)', 'and it goes back');
+  // The two captions that are NOT the invoice's currency stay put: Quick
+  // Add's Selling Price is the Product Master's rupee price, and Amount
+  // Received is the rupee ledger.
+  assert.match(ITEMS, /<label for="qapRate">Selling Price \(&#8377;\)<\/label>/);
+  assert.match(rd('invoice.html'), /Amount Received \(&#8377;\)/);
+});
+
 test('EX2 an export in USD bills the buyer in USD and reports rupees', async () => {
   const g = load();
   g.setLines(LINES);
@@ -522,7 +548,7 @@ test('EX15 the save route accepts the new columns, and the page is served fresh'
   for (const c of ['fx_rate', 'fx_taxable_value']) {
     assert.ok(GENERIC.includes(`'${c}'`), 'the item allowlist carries ' + c);
   }
-  for (const key of ['client/js/pages/invoice-items.js?v=42', 'client/js/pages/invoice-entry.js?v=39',
+  for (const key of ['client/js/pages/invoice-items.js?v=43', 'client/js/pages/invoice-entry.js?v=39',
     'client/js/pages/invoice-pdf.js?v=52', 'client/css/style.css?v=40']) {
     assert.ok(HTML.includes(key), 'invoice.html loads ' + key);
   }

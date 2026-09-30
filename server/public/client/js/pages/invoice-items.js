@@ -121,6 +121,7 @@ function setInvoiceCurrency(currency, exchangeRate) {
   // The rows are untouched: the same numbers, now read in a different
   // currency. Only how they are LABELLED changes, so switching back and
   // forth cannot alter what was typed.
+  paintItemsCurrencyLabels();
   renderItemsTable();
   computeInvoiceRollups();
 }
@@ -258,7 +259,7 @@ function renderItemsSectionShell(containerId) {
             <th>Unit</th>
             <th>GST Treatment</th>
             <th class="text-center">Qty</th>
-            <th class="text-right">Rate (&#8377;)</th>
+            <th class="text-right" id="itemsRateHeader">Rate (&#8377;)</th>
             <th class="text-center">Discount %</th>
             <th class="text-center">GST %</th>
             <th class="text-center">Cess %</th>
@@ -348,6 +349,7 @@ function renderItemsSectionShell(containerId) {
 
     <datalist id="itemsProductDatalist"></datalist>
   `;
+  paintItemsCurrencyLabels();
   ['b2bSupply','b2cSupply','invSupply'].forEach(id => document.getElementById(id)?.addEventListener('change', recalcAllRows));
 }
 
@@ -1257,6 +1259,19 @@ function computeInvoiceRollups() {
 function formatExchangeRate(rate) {
   const n = Number(rate) || 0;
   return String(Math.round(n * 1e6) / 1e6);
+}
+
+// The Rate column's caption. The cells under it already carry the invoice's
+// symbol; the heading is written once when the section is built, so it has to
+// be repainted when the currency changes - otherwise an export billed in
+// dollars reads "Rate (Rs.)" over a column of dollar figures.
+//
+// Only this one caption moves. "Selling Price" in Quick Add is the Product
+// Master's rupee price whatever the invoice is billed in, and "Amount
+// Received" is the rupee ledger, so both stay as they are.
+function paintItemsCurrencyLabels() {
+  const th = document.getElementById('itemsRateHeader');
+  if (th) th.textContent = 'Rate (' + invoiceCurrencySymbol() + ')';
 }
 
 function paintInvoiceFxSummary(figures, inrHeader) {
