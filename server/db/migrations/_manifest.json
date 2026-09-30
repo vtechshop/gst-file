@@ -53,6 +53,7 @@
     "migration_invoice_transport_charge.sql",
     "migration_cdn_note_items.sql",
     "migration_purchase_notes.sql",
-    "migration_proforma_transport_charge.sql"
+    "migration_proforma_transport_charge.sql",
+    "migration_invoice_export_currency.sql"
   ]
 }

@@ -543,7 +543,14 @@ const TABLES = {
       // transport_gst_amount is listed so it can be READ back, but the
       // invoice save path derives it from the charge rather than storing
       // what the browser sent - see routes/invoices.js.
-      'transport_charge','transport_gst_amount'],
+      'transport_charge','transport_gst_amount',
+      // An export billed in a foreign currency. currency_code NULL means the
+      // invoice is in rupees - every invoice raised before this. The rupee
+      // columns above stay rupees on an export too, because the returns, the
+      // ledgers and the reports all read them; these carry what the buyer was
+      // billed, so neither is derived from the other.
+      'currency_code','exchange_rate','fx_taxable_amount','fx_gst_amount',
+      'fx_total_amount','destination_country'],
     // The tax on the transport charge is DERIVED, so it has exactly one
     // writer: the invoice save path, which computes it from the charge it
     // just validated. Listed in `columns` above so it can be read back and
@@ -584,7 +591,14 @@ const TABLES = {
       // transport_gst_amount is listed so it can be READ back, but the
       // invoice save path derives it from the charge rather than storing
       // what the browser sent - see routes/invoices.js.
-      'transport_charge','transport_gst_amount'],
+      'transport_charge','transport_gst_amount',
+      // An export billed in a foreign currency. currency_code NULL means the
+      // invoice is in rupees - every invoice raised before this. The rupee
+      // columns above stay rupees on an export too, because the returns, the
+      // ledgers and the reports all read them; these carry what the buyer was
+      // billed, so neither is derived from the other.
+      'currency_code','exchange_rate','fx_taxable_amount','fx_gst_amount',
+      'fx_total_amount','destination_country'],
     // The tax on the transport charge is DERIVED, so it has exactly one
     // writer: the invoice save path, which computes it from the charge it
     // just validated. Listed in `columns` above so it can be read back and
@@ -675,6 +689,10 @@ const TABLES = {
       'gst_treatment','cess_rate','cess_amount',
       // Cover for this line, in months. Descriptive only.
       'warranty_period_months',
+      // The line as the buyer was billed it, on an export priced in a
+      // foreign currency. NULL on a domestic line; rate/taxable_value/
+      // total_amount above stay in rupees either way.
+      'fx_rate','fx_taxable_value','fx_total_amount',
       'sort_order','created_at','updated_at']
   },
   // Warranty register. Its own table on purpose: no Dashboard, Reports,

@@ -153,7 +153,9 @@ test('P9 warranty, QR, bank and signature all survive', () => {
   assert.match(PDF, /Bank Details for Payment/);
   assert.match(PDF, /Authorized Signatory/);
   assert.match(PDF, /doc\.text\('Bill Amount :', L \+ 2, ROW_C_Y \+ 5\.8\)/);
-  assert.match(PDF, /numberToWordsINR\(inv\.total_amount\)/);
+  // On an export billed abroad the words are the RUPEE total - the foreign
+  // figure is the Grand Total beside them - so the call now picks.
+  assert.match(PDF, /numberToWordsINR\(fx \? fx\.inrTotal : inv\.total_amount\)/);
 });
 
 test('P10 the GST columns are generated from the invoice, not fixed', () => {
@@ -247,7 +249,7 @@ test('P10f the HTML print view follows the same rule', () => {
 
 test('P11 the changed asset carries one new cache key on every page that loads it', () => {
   for (const p of PAGES) {
-    assert.ok(rd(p).includes('client/js/pages/invoice-pdf.js?v=51'),
+    assert.ok(rd(p).includes('client/js/pages/invoice-pdf.js?v=52'),
       p + ' must reference invoice-pdf.js at v=51');
   }
   // and nothing unrelated moved with it

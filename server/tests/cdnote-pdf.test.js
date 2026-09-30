@@ -328,10 +328,21 @@ const APPROVED_PO_PDF_SHA256 = 'b137174c046df225f56f0a29eccbcf64ede27598f3186da1
 
 test('C14 no other PDF module was modified', async () => {
   const { execSync } = require('child_process');
-  const changed = execSync('git status --porcelain -- client/js/pages/invoice-pdf.js '
-    + 'client/js/pages/sales-return-pdf.js',
+  const changed = execSync('git status --porcelain -- client/js/pages/sales-return-pdf.js',
   { cwd: ROOT, encoding: 'utf8' }).trim();
   assert.strictEqual(changed, '', 'the existing PDF modules must be untouched');
+
+  // invoice-pdf.js prints an export billed in a foreign currency under its
+  // own approved change (invoice-export-currency.test.js): the buyer's
+  // figures on the face of the invoice, the endorsement its export type
+  // carries, the rate and the rupee equivalent. It is therefore pinned by
+  // content rather than by "not modified" - this still fails if Credit/Debit
+  // Note work edits it, and a further change must approve its new revision
+  // here.
+  const invPdf = require('crypto').createHash('sha256')
+    .update(rd('client', 'js', 'pages', 'invoice-pdf.js').replace(/\r\n/g, '\n')).digest('hex');
+  assert.strictEqual(invPdf, 'ad47d1bee8a652ee3c8c87ee43cad0757348d4b7a39d10a9193f4cd6fb490167',
+    'invoice-pdf.js is not the approved revision (export invoices in a foreign currency)');
 
   // Line endings differ between checkouts; the content does not.
   const po = require('crypto').createHash('sha256')

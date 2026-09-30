@@ -64,9 +64,14 @@ test('PX3 it targets only this migration and never the runner', () => {
 
 test('PX4 prestart runs the Purchase Notes check first, then this one, and exposes it as its own command', () => {
   const pkg = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8'));
-  assert.deepStrictEqual(pkg.scripts.prestart.split('&&').map(s => s.trim()),
+  // Checks are appended in the order they were added, and joined with && so
+  // that any one of them failing stops the start. This one comes after the
+  // Purchase Notes check; what follows it is that later change's business
+  // (migrate-invoice-export-currency.test.js).
+  const checks = pkg.scripts.prestart.split('&&').map(s => s.trim());
+  assert.deepStrictEqual(checks.slice(0, 2),
     ['node scripts/migrate-purchase-notes.js', 'node scripts/migrate-proforma-transport.js'],
-    'both checks, in this order, joined so that either one failing stops the start');
+    'the Purchase Notes check, then this one, in that order');
   assert.strictEqual(pkg.scripts['migrate:proforma-transport'], 'node scripts/migrate-proforma-transport.js');
   assert.strictEqual(pkg.scripts.start, 'node src/app.js', 'start itself must stay unchanged');
 });
@@ -113,6 +118,28 @@ CREATE TABLE vendors (id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
 CREATE TABLE purchases (id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
   user_id UUID REFERENCES users(id) ON DELETE CASCADE NOT NULL,
   vendor_name TEXT NOT NULL, purchase_number TEXT NOT NULL, purchase_date DATE NOT NULL);
+`;
+
+// prestart also runs the export-currency check, which refuses a database
+// without the invoice tables - rightly, since that is not this application.
+// PX13 boots the real server, so its fixture carries them too, in the shape
+// they had BEFORE that migration (see migrate-invoice-export-currency.test.js
+// for that check's own cases).
+const INVOICE_DEPS = `
+CREATE TABLE b2b_invoices (id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
+  user_id UUID REFERENCES users(id) ON DELETE CASCADE NOT NULL,
+  invoice_number TEXT NOT NULL, invoice_date DATE NOT NULL,
+  taxable_amount DECIMAL(15,2) NOT NULL DEFAULT 0, gst_amount DECIMAL(15,2) NOT NULL DEFAULT 0,
+  total_amount DECIMAL(15,2) NOT NULL DEFAULT 0);
+CREATE TABLE b2c_invoices (id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
+  user_id UUID REFERENCES users(id) ON DELETE CASCADE NOT NULL,
+  invoice_number TEXT NOT NULL, invoice_date DATE NOT NULL,
+  taxable_amount DECIMAL(15,2) NOT NULL DEFAULT 0, gst_amount DECIMAL(15,2) NOT NULL DEFAULT 0,
+  total_amount DECIMAL(15,2) NOT NULL DEFAULT 0);
+CREATE TABLE invoice_items (id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
+  user_id UUID REFERENCES users(id) ON DELETE CASCADE NOT NULL,
+  invoice_id UUID NOT NULL, invoice_type TEXT NOT NULL,
+  product_name TEXT NOT NULL, rate DECIMAL(15,2) NOT NULL DEFAULT 0);
 `;
 
 async function admin(sql, params) {
@@ -364,16 +391,20 @@ async function npmStart() {
 }
 
 test('PX13 npm start runs Purchase Notes, then Proforma transport, then listens - and a failed check stops it', async () => {
-  await freshProbe(PROFORMA + PN_DEPS);
+  await freshProbe(PROFORMA + PN_DEPS + INVOICE_DEPS);
   try {
     const first = await npmStart();
     assert.ok(first.listened, 'the server must start once both checks pass:\n' + first.out);
     const pn = first.out.indexOf('[purchase-notes]');
     const pf = first.out.indexOf('[proforma-transport]');
     const pfDone = first.out.indexOf('[proforma-transport] schema check complete');
+    const iec = first.out.indexOf('[invoice-export-currency]');
+    const iecDone = first.out.indexOf('[invoice-export-currency] schema check complete');
     const up = first.out.indexOf('listening on');
     assert.ok(pn > -1 && pf > pn, `the Purchase Notes check runs first (${pn} < ${pf})`);
-    assert.ok(pfDone > pf && up > pfDone, `the server listens only after the transport check completes (${pfDone} < ${up})`);
+    assert.ok(iec > pfDone, `the export-currency check runs after this one (${pfDone} < ${iec})`);
+    assert.ok(iecDone > iec && up > iecDone,
+      `the server listens only after every targeted check completes (${iecDone} < ${up})`);
     assert.match(first.out, /\[purchase-notes\]\s+applying migration_purchase_notes\.sql/);
     assert.match(first.out, /\[proforma-transport\]\s+applying migration_proforma_transport_charge\.sql/);
 
@@ -381,7 +412,8 @@ test('PX13 npm start runs Purchase Notes, then Proforma transport, then listens 
     assert.ok(second.listened, 'a restart must start:\n' + second.out);
     assert.match(second.out, /\[purchase-notes\]\s+already present and compatible/);
     assert.match(second.out, /\[proforma-transport\]\s+already present and compatible/);
-    assert.equal(/applying/.test(second.out), false, 'a restart re-applies neither migration');
+    assert.match(second.out, /\[invoice-export-currency\]\s+already present and compatible/);
+    assert.equal(/applying/.test(second.out), false, 'a restart re-applies none of the migrations');
 
     // Now make the transport schema wrong: the start must be refused.
     await query('ALTER TABLE proforma_invoices DROP CONSTRAINT proforma_invoices_transport_gst_nonneg');

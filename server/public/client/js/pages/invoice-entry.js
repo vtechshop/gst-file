@@ -916,6 +916,9 @@ async function saveInvoice() {
   // existing invoice) still requires it up front as before.
   if (!invNum && !(autoMode && wasNewInvoice)) { showToast('Please enter an invoice number.', 'error'); return; }
   if (!invDate)  { showToast('Please enter the invoice date.', 'error'); return; }
+  // An export billed abroad needs a currency and a rate to convert it;
+  // a domestic invoice is never asked for either.
+  if (!validateInvoiceCurrency()) return;
   if (type === 'b2b' && !gstin) { showToast('B2B is selected — enter the customer\'s GST Number, or switch to B2C.', 'error'); return; }
   // The other half of the same rule: a B2C invoice carries no GST Number.
   // Choosing B2C clears it, so this only meets an invoice saved as B2C with
@@ -997,6 +1000,10 @@ async function saveInvoice() {
     ecom_gstin: isEcom ? getInvText('invEcomGstin').toUpperCase() : null,
     ecom_supply_type: isEcom ? (document.getElementById('invEcomSupplyType')?.value || 'through_operator') : null,
     export_of: isExport ? (document.getElementById('invExportOf')?.value || 'goods') : null,
+    // Where the goods went. Sent only on an export that says so, so a
+    // domestic invoice's payload carries no new key at all.
+    ...(isExport && getInvText('invDestinationCountry')
+      ? { destination_country: getInvText('invDestinationCountry') } : {}),
     sez_recipient_type: document.getElementById('invSezRecipient')?.value || null,
     differential_65: !!document.getElementById('invDifferential65')?.checked,
     // The LUT in force when this invoice was raised, copied onto it. The
@@ -1270,6 +1277,54 @@ document.addEventListener('keydown', (e) => {
 // An export is reported in GSTR-1 Table 6A rather than B2B, B2CL or
 // B2CS, because it is not a domestic supply. It still counts in the HSN
 // summary and its number is still reported in Table 13.
+// ── Invoice Type: Domestic or Export ────────────────────────
+// The two are one setting, and #exportToggle is where it lives - the save
+// payload, the edit restore, GSTR-1 and every test already read it. The
+// segmented control at the top of the page is how that checkbox is now
+// operated, which is why the checkbox is still here and still the thing
+// that is asked.
+//
+// The currencies an Indian exporter bills in most often. "Other" lets any
+// ISO code be typed, because this list is a convenience and not a rule.
+const INVOICE_CURRENCIES = [
+  { code: 'USD', symbol: '$', label: 'US Dollar' },
+  { code: 'EUR', symbol: '\u20AC', label: 'Euro' },
+  { code: 'GBP', symbol: '\u00A3', label: 'Pound Sterling' },
+  { code: 'AED', symbol: '\u062F.\u0625', label: 'UAE Dirham' },
+  { code: 'SAR', symbol: '\uFDFC', label: 'Saudi Riyal' },
+  { code: 'AUD', symbol: 'A$', label: 'Australian Dollar' },
+  { code: 'CAD', symbol: 'C$', label: 'Canadian Dollar' },
+  { code: 'SGD', symbol: 'S$', label: 'Singapore Dollar' }
+];
+
+function invoiceCurrencyByCode(code) {
+  const wanted = String(code || '').trim().toUpperCase();
+  if (!wanted) return null;
+  return INVOICE_CURRENCIES.find(c => c.code === wanted) || { code: wanted, symbol: wanted, label: wanted };
+}
+
+// The code actually in force: the picker, or what was typed beside "Other".
+function selectedInvoiceCurrencyCode() {
+  const picked = document.getElementById('invCurrency')?.value || '';
+  if (picked !== 'OTHER') return picked;
+  return (document.getElementById('invCurrencyOther')?.value || '').trim().toUpperCase();
+}
+
+function selectedInvoiceExchangeRate() {
+  const raw = (document.getElementById('invExchangeRate')?.value || '').trim();
+  const n = parseFloat(raw);
+  return Number.isFinite(n) ? n : 0;
+}
+
+// Pressed on the segmented control. Everything else follows from the
+// checkbox, so this sets it and lets onExportToggleChange() do the work.
+function setInvoiceType(kind) {
+  const t = document.getElementById('exportToggle');
+  if (!t) return;
+  t.checked = kind === 'export';
+  onExportToggleChange();
+}
+
 function onExportToggleChange() {
   const on = !!document.getElementById('exportToggle')?.checked;
   document.getElementById('exportFields')?.classList.toggle('d-none', !on);
@@ -1278,6 +1333,54 @@ function onExportToggleChange() {
     lbl.textContent = on ? 'Yes' : 'No';
     lbl.classList.toggle('text-gray-mid', !on);
   }
+  // The segmented control shows which one is in force.
+  const dom = document.getElementById('invTypeDomestic');
+  const exp = document.getElementById('invTypeExport');
+  if (dom && exp) {
+    dom.classList.toggle('active', !on);
+    exp.classList.toggle('active', on);
+    dom.setAttribute('aria-pressed', String(!on));
+    exp.setAttribute('aria-pressed', String(on));
+  }
+  applyInvoiceCurrency();
+}
+
+// Hands the grid the currency in force, or nothing at all when the invoice
+// is domestic. Called on every change to the type, the currency or the
+// rate; the grid re-renders and re-totals itself from there.
+function applyInvoiceCurrency() {
+  const on = !!document.getElementById('exportToggle')?.checked;
+  const code = on ? selectedInvoiceCurrencyCode() : '';
+  const rate = on ? selectedInvoiceExchangeRate() : 0;
+  // "Other" only takes effect once a code has been typed, so the grid is
+  // never labelled with an empty currency.
+  const other = document.getElementById('invCurrencyOtherWrap');
+  if (other) other.classList.toggle('d-none', !on || document.getElementById('invCurrency')?.value !== 'OTHER');
+  const hint = document.getElementById('invExchangeRateHint');
+  if (hint) hint.textContent = code && rate > 0 ? '1 ' + code + ' = \u20B9' + formatExchangeRate(rate) : '';
+  if (typeof setInvoiceCurrency === 'function') {
+    setInvoiceCurrency(code && rate > 0 ? invoiceCurrencyByCode(code) : null, rate);
+  }
+}
+
+function onInvoiceCurrencyChange() { applyInvoiceCurrency(); }
+function onInvoiceExchangeRateInput() { applyInvoiceCurrency(); }
+
+// Blocking checks for an export billed abroad. Domestic invoices never
+// reach these: no currency is asked for, and none is required.
+function validateInvoiceCurrency() {
+  if (!document.getElementById('exportToggle')?.checked) return true;
+  const code = selectedInvoiceCurrencyCode();
+  const rateRaw = (document.getElementById('invExchangeRate')?.value || '').trim();
+  // An export billed in rupees is a perfectly ordinary thing, so a currency
+  // is only demanded once one has been started.
+  if (!code && !rateRaw) return true;
+  if (!code) { showToast('Pick the currency this export is billed in.', 'error'); return false; }
+  if (!rateRaw) { showToast('Enter the exchange rate for 1 ' + code + ' in rupees.', 'error'); return false; }
+  const rate = parseFloat(rateRaw);
+  if (!Number.isFinite(rate)) { showToast('The exchange rate must be a number.', 'error'); return false; }
+  if (!(rate > 0)) { showToast('The exchange rate must be greater than zero.', 'error'); return false; }
+  return true;
 }
 
 // Called when an existing invoice is opened, so an export stays an export.
@@ -1292,6 +1395,14 @@ function restoreExportFields(inv) {
   set('invShippingBillDate', inv && inv.shipping_bill_date);
   set('invExportOf', (inv && inv.export_of) || 'goods');
   set('invSezRecipient', (inv && inv.sez_recipient_type) || '');
+  set('invDestinationCountry', inv && inv.destination_country);
+  // The currency it was billed in, exactly as stored - a reopened export
+  // shows the buyer's own figures again, not a division of the rupee ones.
+  const code = (inv && inv.currency_code) || '';
+  const known = INVOICE_CURRENCIES.some(c => c.code === code);
+  set('invCurrency', code ? (known ? code : 'OTHER') : '');
+  set('invCurrencyOther', code && !known ? code : '');
+  set('invExchangeRate', inv && inv.exchange_rate != null ? String(+inv.exchange_rate) : '');
   const d65i = document.getElementById('invDifferential65');
   if (d65i) d65i.checked = !!(inv && inv.differential_65);
   onExportToggleChange();

@@ -194,7 +194,32 @@ CREATE TABLE IF NOT EXISTS b2b_invoices (
   CONSTRAINT b2b_invoices_transport_charge_nonneg
     CHECK (transport_charge IS NULL OR transport_charge >= 0),
   CONSTRAINT b2b_invoices_transport_gst_nonneg
-    CHECK (transport_gst_amount IS NULL OR transport_gst_amount >= 0)
+    CHECK (transport_gst_amount IS NULL OR transport_gst_amount >= 0),
+
+  -- Export in a foreign currency, from migration_invoice_export_currency.sql.
+  -- NULL currency_code means the invoice is in rupees, which is what every
+  -- invoice raised before this was. The rupee columns above keep meaning
+  -- rupees on an export too - GSTR-1, GSTR-3B, the ledgers and every report
+  -- read them - and these hold what the buyer was actually billed, so
+  -- neither figure is ever derived from, or overwritten by, the other.
+  -- exchange_rate is rupees per ONE unit of the currency.
+  currency_code TEXT,
+  exchange_rate NUMERIC(14,6),
+  fx_taxable_amount NUMERIC(15,2),
+  fx_gst_amount NUMERIC(15,2),
+  fx_total_amount NUMERIC(15,2),
+  -- Where the goods went. Descriptive: the place of supply of an export is
+  -- decided by export_type, not by this.
+  destination_country TEXT,
+  CONSTRAINT b2b_invoices_currency_pair
+    CHECK ((currency_code IS NULL AND exchange_rate IS NULL)
+        OR (currency_code IS NOT NULL AND exchange_rate IS NOT NULL)),
+  CONSTRAINT b2b_invoices_exchange_rate_positive
+    CHECK (exchange_rate IS NULL OR exchange_rate > 0),
+  CONSTRAINT b2b_invoices_fx_amounts_nonneg
+    CHECK ((fx_taxable_amount IS NULL OR fx_taxable_amount >= 0)
+       AND (fx_gst_amount IS NULL OR fx_gst_amount >= 0)
+       AND (fx_total_amount IS NULL OR fx_total_amount >= 0))
 );
 
 -- ── B2C Invoices ─────────────────────────────────────
@@ -292,7 +317,32 @@ CREATE TABLE IF NOT EXISTS b2c_invoices (
   CONSTRAINT b2c_invoices_transport_charge_nonneg
     CHECK (transport_charge IS NULL OR transport_charge >= 0),
   CONSTRAINT b2c_invoices_transport_gst_nonneg
-    CHECK (transport_gst_amount IS NULL OR transport_gst_amount >= 0)
+    CHECK (transport_gst_amount IS NULL OR transport_gst_amount >= 0),
+
+  -- Export in a foreign currency, from migration_invoice_export_currency.sql.
+  -- NULL currency_code means the invoice is in rupees, which is what every
+  -- invoice raised before this was. The rupee columns above keep meaning
+  -- rupees on an export too - GSTR-1, GSTR-3B, the ledgers and every report
+  -- read them - and these hold what the buyer was actually billed, so
+  -- neither figure is ever derived from, or overwritten by, the other.
+  -- exchange_rate is rupees per ONE unit of the currency.
+  currency_code TEXT,
+  exchange_rate NUMERIC(14,6),
+  fx_taxable_amount NUMERIC(15,2),
+  fx_gst_amount NUMERIC(15,2),
+  fx_total_amount NUMERIC(15,2),
+  -- Where the goods went. Descriptive: the place of supply of an export is
+  -- decided by export_type, not by this.
+  destination_country TEXT,
+  CONSTRAINT b2c_invoices_currency_pair
+    CHECK ((currency_code IS NULL AND exchange_rate IS NULL)
+        OR (currency_code IS NOT NULL AND exchange_rate IS NOT NULL)),
+  CONSTRAINT b2c_invoices_exchange_rate_positive
+    CHECK (exchange_rate IS NULL OR exchange_rate > 0),
+  CONSTRAINT b2c_invoices_fx_amounts_nonneg
+    CHECK ((fx_taxable_amount IS NULL OR fx_taxable_amount >= 0)
+       AND (fx_gst_amount IS NULL OR fx_gst_amount >= 0)
+       AND (fx_total_amount IS NULL OR fx_total_amount >= 0))
 );
 
 -- No two invoices may share a number WITHIN A SERIES — a real DB-level
@@ -537,6 +587,18 @@ CREATE TABLE IF NOT EXISTS invoice_items (
   -- Cover for this line, in months. The start date is the invoice's own,
   -- so it is not copied here where it could disagree with it.
   warranty_period_months INTEGER,
+
+  -- The line as the buyer was billed it, on an export priced in a foreign
+  -- currency (migration_invoice_export_currency.sql). rate / taxable_value /
+  -- total_amount above stay in rupees for every reader that expects rupees;
+  -- these stay in the invoice's currency. NULL on a domestic line.
+  fx_rate NUMERIC(15,2),
+  fx_taxable_value NUMERIC(15,2),
+  fx_total_amount NUMERIC(15,2),
+  CONSTRAINT invoice_items_fx_amounts_nonneg
+    CHECK ((fx_rate IS NULL OR fx_rate >= 0)
+       AND (fx_taxable_value IS NULL OR fx_taxable_value >= 0)
+       AND (fx_total_amount IS NULL OR fx_total_amount >= 0)),
   created_at TIMESTAMPTZ DEFAULT NOW(),
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );

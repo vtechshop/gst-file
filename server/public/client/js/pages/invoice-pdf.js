@@ -403,6 +403,78 @@ function INVOICE_ITEM_COLUMN_STYLES(tableWidth, isIgst) {
 // Returns has:false for every invoice raised without a transport charge -
 // which is every invoice raised before this feature - and those print
 // through the untouched path below.
+// ── An invoice billed in a foreign currency ───────────────────────────
+// The stored row is rupees - that is what GSTR-1, the ledgers and every
+// report read - with what the buyer was actually billed kept beside it in
+// the fx_* columns. The buyer's copy shows the buyer's figures, so the row
+// is turned back into its billing currency ONCE here and the renderers
+// below print it exactly as they print a rupee invoice.
+//
+// Returns null for every domestic invoice, which is every invoice raised
+// before this existed, so nothing about that document changes.
+const INVOICE_PDF_CURRENCY_SYMBOLS = {
+  USD: '$', EUR: '\u20AC', GBP: '\u00A3', AED: 'AED ', SAR: 'SAR ',
+  AUD: 'A$', CAD: 'C$', SGD: 'S$', INR: 'Rs.'
+};
+
+function invoiceBillingFx(inv) {
+  const code = inv && inv.currency_code ? String(inv.currency_code).trim().toUpperCase() : '';
+  const rate = Number(inv && inv.exchange_rate) || 0;
+  if (!code || code === 'INR' || !(rate > 0)) return null;
+
+  // Stored where it was stored; divided only where it was not. The taxable
+  // value, the GST and the total are all stored, so the figures on the face
+  // of the invoice are the ones that were billed rather than a conversion
+  // of a conversion.
+  const r2 = v => Math.round((Number(v) || 0) * 100) / 100;
+  const conv = v => (v === null || v === undefined ? v : r2(Number(v) / rate));
+  const pick = (stored, fallback) => (stored === null || stored === undefined ? conv(fallback) : r2(stored));
+
+  const items = (inv.items || []).map(it => ({ ...it,
+    rate: pick(it.fx_rate, it.rate),
+    taxable_value: pick(it.fx_taxable_value, it.taxable_value),
+    total_amount: pick(it.fx_total_amount, it.total_amount),
+    gst_amount: conv(it.gst_amount), igst: conv(it.igst), cgst: conv(it.cgst),
+    sgst: conv(it.sgst), cess_amount: conv(it.cess_amount) }));
+
+  return {
+    code,
+    symbol: INVOICE_PDF_CURRENCY_SYMBOLS[code] || (code + ' '),
+    rate,
+    inrTotal: Number(inv.total_amount) || 0,
+    invoice: { ...inv, items,
+      taxable_amount: pick(inv.fx_taxable_amount, inv.taxable_amount),
+      gst_amount: pick(inv.fx_gst_amount, inv.gst_amount),
+      total_amount: pick(inv.fx_total_amount, inv.total_amount),
+      igst: conv(inv.igst), cgst: conv(inv.cgst), sgst: conv(inv.sgst),
+      cess_amount: conv(inv.cess_amount), round_off: conv(inv.round_off),
+      transport_charge: conv(inv.transport_charge),
+      transport_gst_amount: conv(inv.transport_gst_amount) }
+  };
+}
+
+// What an export invoice has to say on its face: the endorsement the export
+// type carries, and - when it was billed abroad - the rate it was converted
+// at and what that came to in rupees. Empty for a domestic invoice.
+function invoiceExportNoteLines(inv, fx) {
+  const lines = [];
+  const type = String((inv && inv.export_type) || '').trim().toUpperCase();
+  if (type === 'WOPAY') {
+    lines.push('SUPPLY MEANT FOR EXPORT UNDER BOND OR LETTER OF UNDERTAKING WITHOUT PAYMENT OF INTEGRATED TAX'
+      + (inv && inv.lut_number ? ' (LUT: ' + inv.lut_number + ')' : ''));
+  } else if (type === 'WPAY') {
+    lines.push('SUPPLY MEANT FOR EXPORT ON PAYMENT OF INTEGRATED TAX');
+  }
+  if (fx) {
+    // The rate as entered, to the six decimals the column holds - rounding
+    // it to paise would state a conversion the figures do not follow.
+    const shownRate = String(Math.round((Number(fx.rate) || 0) * 1e6) / 1e6);
+    lines.push('Billed in ' + fx.code + '. Exchange rate: 1 ' + fx.code + ' = Rs.' + shownRate);
+    lines.push('INR equivalent of the invoice total: Rs.' + formatNum(fx.inrTotal));
+  }
+  return lines;
+}
+
 function invoiceTransportParts(inv) {
   const charge = inv.transport_charge;
   if (charge === null || charge === undefined) {
@@ -533,6 +605,10 @@ const INVOICE_COPY_LABELS = [
 
 async function buildInvoicePDFDoc(inv) {
   const p = (typeof getCachedProfile === 'function') ? getCachedProfile() : null;
+  // Billed abroad? Then every figure below is that currency's, once, here -
+  // rather than each of the thirty places that print money having to ask.
+  const fx = invoiceBillingFx(inv);
+  if (fx) inv = fx.invoice;
   const accent = hexToRgb(p?.header_color);
   const { jsPDF } = window.jspdf;
   // A4 PORTRAIT, the shape a commercial bill is printed in and the shape a
@@ -920,7 +996,13 @@ async function buildInvoicePDFDoc(inv) {
     // lines. Whichever this profile carries, the signature must still fit.
     const termsTableH = termsPairs ? 6 + Math.ceil(termsPairs.length / 2) * 4.6 : 0;
     const termsProseH = termsProse.length ? 4 + termsProse.length * 3.4 : 0;
-    const ROW_D_H = Math.max(SIG_BLOCK_H + 3, termsProseH + termsTableH + 12);
+    // The export endorsement and the currency note are drawn under the two
+    // GST notes, so the row has to be tall enough for them as well - the
+    // same reasoning as the wrapped terms above: an unmeasured line here
+    // would run into the signature block.
+    const exportNotes = invoiceExportNoteLines(inv, fx);
+    const ROW_D_H = Math.max(SIG_BLOCK_H + 3,
+      termsProseH + termsTableH + 12 + exportNotes.length * 3.4);
 
     const CLOSE_H = ROW_A_H + ROW_B_H + ROW_C_H + ROW_D_H;
     const ROW_A_Y = PAGE_BOTTOM - footerH - CLOSE_H;
@@ -1006,7 +1088,7 @@ async function buildInvoicePDFDoc(inv) {
     // above and is only READ, row by row, into the cells - the Subtotal into
     // the strip, the taxes into the summary, and inv.total_amount into the
     // Grand Total box exactly as before.
-    const cellMoney = (v) => 'Rs.' + v;
+    const cellMoney = (v) => (fx ? fx.symbol : 'Rs.') + v;
 
     doc.setDrawColor(...RULE_INK);
     doc.setLineWidth(RULE_BOLD);                 // the same weight as the table
@@ -1078,7 +1160,9 @@ async function buildInvoicePDFDoc(inv) {
     doc.setFont('helvetica', 'bold'); doc.setFontSize(8); doc.setTextColor(0, 0, 0);
     doc.text('Bill Amount :', L + 2, ROW_C_Y + 5.8);
     doc.setFont('helvetica', 'normal'); doc.setFontSize(7.8);
-    doc.text(numberToWordsINR(inv.total_amount), L + 22, ROW_C_Y + 5.8,
+    // numberToWordsINR says "Rupees", so it is given the rupee total -
+    // the foreign figure is in the Grand Total box beside it.
+    doc.text(numberToWordsINR(fx ? fx.inrTotal : inv.total_amount), L + 22, ROW_C_Y + 5.8,
       { maxWidth: SPLIT - 24 - L });
     doc.setFont('helvetica', 'bold'); doc.setFontSize(11); doc.setTextColor(...accent);
     doc.text('Grand Total', SPLIT + 2, ROW_C_Y + 6.4);
@@ -1099,6 +1183,10 @@ async function buildInvoicePDFDoc(inv) {
     doc.text('* GST has been charged separately as shown above.', L + 2, termsY + 3);
     doc.text('Whether tax is payable under reverse charge: '
       + (inv.reverse_charge ? 'Yes' : 'No'), L + 2, termsY + 6.4);
+    // The endorsement first, because it is the one the law asks for.
+    exportNotes.forEach((line, i) => {
+      doc.text(doc.splitTextToSize(line, SPLIT - 4 - L), L + 2, termsY + 9.8 + i * 3.4);
+    });
 
     // ── Row D right: the seal and signature, unchanged in what it draws ──
     const sigBlockY = ROW_D_Y;
@@ -1261,6 +1349,10 @@ async function viewInvoiceHTML(type, id) {
 }
 
 async function buildInvoiceHTML(inv, opts) {
+  // Same conversion as the A4 renderer, for the same reason.
+  const fxHtml = invoiceBillingFx(inv);
+  if (fxHtml) inv = fxHtml.invoice;
+  const MONEY = fxHtml ? fxHtml.symbol : 'Rs.';
   opts = opts || {};
   const p = (typeof getCachedProfile === 'function') ? getCachedProfile() : null;
   const accentHex = p?.header_color || '#004d40';
@@ -1311,9 +1403,9 @@ async function buildInvoiceHTML(inv, opts) {
   // character for character the one it has always rendered.
   const tpHtml = invoiceTransportParts(inv);
   const transportRowsHtml = tpHtml.has
-    ? `<tr><td>Machine / Product Total</td><td>Rs.${formatNum(invoiceMachineTotal(inv, tpHtml))}</td></tr>`
-      + `<tr><td>Transport Charge</td><td>Rs.${formatNum(tpHtml.charge)}</td></tr>`
-      + `<tr><td>Transport GST</td><td>Rs.${formatNum(tpHtml.gst)}</td></tr>`
+    ? `<tr><td>Machine / Product Total</td><td>${MONEY}${formatNum(invoiceMachineTotal(inv, tpHtml))}</td></tr>`
+      + `<tr><td>Transport Charge</td><td>${MONEY}${formatNum(tpHtml.charge)}</td></tr>`
+      + `<tr><td>Transport GST</td><td>${MONEY}${formatNum(tpHtml.gst)}</td></tr>`
     : '';
   const roundOffRowHtml = Math.abs(inv.round_off) >= 0.005
     ? `<tr><td>Round Off</td><td class="r">${(inv.round_off >= 0 ? '+' : '') + formatNum(inv.round_off)}</td></tr>`
@@ -1500,21 +1592,23 @@ async function buildInvoiceHTML(inv, opts) {
 
   <div class="totrow">
     <div class="left">
-      <div class="words">Amount in Words:<b>${escHtml(numberToWordsINR(inv.total_amount))}</b></div>
+      <div class="words">Amount in Words:<b>${escHtml(numberToWordsINR(
+        fxHtml ? fxHtml.inrTotal : inv.total_amount))}</b></div>
       <div class="notes">
         GST has been charged separately as shown above.<br>
         Whether tax is payable under reverse charge: <b>${inv.reverse_charge ? 'Yes' : 'No'}</b>
+        ${invoiceExportNoteLines(inv, fxHtml).map(l => '<br>' + escHtml(l)).join('')}
       </div>
     </div>
     <div class="right">
       <table class="tot">
-        <tr><td>Sub Total (Taxable Value)</td><td>Rs.${formatNum(tpHtml.productTaxable)}</td></tr>
-        ${tpHtml.productCgst > 0 ? `<tr><td>CGST</td><td>Rs.${formatNum(tpHtml.productCgst)}</td></tr>` : ''}
-        ${tpHtml.productSgst > 0 ? `<tr><td>SGST</td><td>Rs.${formatNum(tpHtml.productSgst)}</td></tr>` : ''}
-        ${tpHtml.productIgst > 0 ? `<tr><td>IGST</td><td>Rs.${formatNum(tpHtml.productIgst)}</td></tr>` : ''}
+        <tr><td>Sub Total (Taxable Value)</td><td>${MONEY}${formatNum(tpHtml.productTaxable)}</td></tr>
+        ${tpHtml.productCgst > 0 ? `<tr><td>CGST</td><td>${MONEY}${formatNum(tpHtml.productCgst)}</td></tr>` : ''}
+        ${tpHtml.productSgst > 0 ? `<tr><td>SGST</td><td>${MONEY}${formatNum(tpHtml.productSgst)}</td></tr>` : ''}
+        ${tpHtml.productIgst > 0 ? `<tr><td>IGST</td><td>${MONEY}${formatNum(tpHtml.productIgst)}</td></tr>` : ''}
         ${transportRowsHtml}
         ${roundOffRowHtml}
-        <tr class="grand"><td>Grand Total</td><td>Rs.${formatNum(inv.total_amount)}</td></tr>
+        <tr class="grand"><td>Grand Total</td><td>${MONEY}${formatNum(inv.total_amount)}</td></tr>
       </table>
     </div>
   </div>

@@ -230,13 +230,19 @@ test('T16 transport is taxed exactly once', () => {
 });
 
 test('T16b the rollup reads the charge once and adds it in one place', () => {
+  // The arithmetic now lives in rollupFigures(), which computeInvoiceRollups()
+  // and the rupee equivalent of an export both call - one copy of the rule
+  // instead of two (invoice-export-currency.test.js). The rule itself is
+  // unchanged: the charge is read once per rollup and taxed once.
+  const math = ITEMS.slice(ITEMS.indexOf('function rollupFigures'),
+    ITEMS.indexOf('function computeInvoiceRollups'));
+  assert.strictEqual((math.match(/invoiceTransportTax\(/g) || []).length, 1,
+    'its tax is computed exactly once per rollup');
   const fn = ITEMS.slice(ITEMS.indexOf('function computeInvoiceRollups'),
-    ITEMS.indexOf('function validateInvoiceItems'));
+    ITEMS.indexOf('function paintInvoiceFxSummary'));
   assert.strictEqual((fn.match(/invoiceTransportCharge\(\)/g) || []).length, 1,
     'the charge is read exactly once per rollup');
-  assert.strictEqual((fn.match(/invoiceTransportTax\(/g) || []).length, 1,
-    'its tax is computed exactly once per rollup');
-  assert.strictEqual((fn.match(/transportCharge \|\| 0/g) || []).length, 1,
+  assert.strictEqual((math.match(/transportCharge \|\| 0/g) || []).length, 1,
     'the charge is added to the base exactly once');
 });
 

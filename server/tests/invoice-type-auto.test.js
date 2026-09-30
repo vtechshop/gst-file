@@ -348,11 +348,12 @@ test('A16 the invoice scanner still sets B2B through the same handlers', () => {
 });
 
 test('A17 the page loads the changed script under a new cache key only', () => {
-  assert.match(HTML, /client\/js\/pages\/invoice-entry\.js\?v=38/);
-  // invoice-items.js moved with it - the Proforma transport change touched
-  // both. The PDF module did not, and keeps its key.
-  assert.match(HTML, /client\/js\/pages\/invoice-items\.js\?v=41/);
-  assert.match(HTML, /client\/js\/pages\/invoice-pdf\.js\?v=51/);
+  // All three moved together for export invoices billed in a foreign
+  // currency (invoice-export-currency.test.js): the entry page, the grid
+  // that now shows the buyer's currency, and the PDF that prints it.
+  assert.match(HTML, /client\/js\/pages\/invoice-entry\.js\?v=39/);
+  assert.match(HTML, /client\/js\/pages\/invoice-items\.js\?v=42/);
+  assert.match(HTML, /client\/js\/pages\/invoice-pdf\.js\?v=52/);
 });
 
 test('A18 the server refuses B2C with a GST Number and B2B without one', () => {

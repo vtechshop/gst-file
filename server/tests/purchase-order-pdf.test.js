@@ -504,10 +504,18 @@ test('O14 both purchase order pages load the new renderer', () => {
 
 test('O15 no other PDF module was touched', () => {
   const { execSync } = require('child_process');
-  const changed = execSync('git status --porcelain -- client/js/pages/invoice-pdf.js '
-    + 'client/js/pages/sales-return-pdf.js '
+  const changed = execSync('git status --porcelain -- client/js/pages/sales-return-pdf.js '
     + 'client/js/pages/cdnote-pdf.js', { cwd: ROOT, encoding: 'utf8' }).trim();
   assert.strictEqual(changed, '', 'the other PDF modules must be untouched');
+
+  // invoice-pdf.js prints export invoices billed in a foreign currency under
+  // its own approved change (invoice-export-currency.test.js), so it is held
+  // to a content pin here rather than to "not modified": Purchase Order work
+  // still may not touch it, and a further change must approve its revision.
+  const invPdf = require('crypto').createHash('sha256')
+    .update(rd('client', 'js', 'pages', 'invoice-pdf.js').replace(/\r\n/g, '\n')).digest('hex');
+  assert.strictEqual(invPdf, 'ad47d1bee8a652ee3c8c87ee43cad0757348d4b7a39d10a9193f4cd6fb490167',
+    'invoice-pdf.js is not the approved revision (export invoices in a foreign currency)');
 
   // The Proforma PDF gained Transport Charge / Transport GST rows under its
   // own approved change (proforma-transport-charge.test.js), so it is pinned

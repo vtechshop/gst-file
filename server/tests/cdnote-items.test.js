@@ -323,10 +323,21 @@ test('W5 Sales Return and the other PDF modules are untouched', () => {
   const { execSync } = require('child_process');
   const changed = execSync('git status --porcelain -- server/src/routes/sales-returns.js '
     + 'client/js/pages/sales-returns.js client/js/pages/sales-return-pdf.js '
-    + 'client/js/pages/invoice-pdf.js '
     + 'client/js/gst/gstr1-export.js',
   { cwd: ROOT, encoding: 'utf8' }).trim();
   assert.strictEqual(changed, '', 'these files must be unchanged');
+
+  // invoice-pdf.js prints an export billed in a foreign currency under its
+  // own approved change (invoice-export-currency.test.js): the buyer's
+  // figures on the face of the invoice, the endorsement its export type
+  // carries, the rate and the rupee equivalent. It is therefore pinned by
+  // content rather than by "not modified" - this still fails if Credit/Debit
+  // Note work edits it, and a further change must approve its new revision
+  // here.
+  const invPdfSrc = fs.readFileSync(path.join(ROOT, 'client', 'js', 'pages', 'invoice-pdf.js'), 'utf8');
+  const invPdf = require('crypto').createHash('sha256').update(invPdfSrc.replace(/\r\n/g, '\n')).digest('hex');
+  assert.strictEqual(invPdf, 'ad47d1bee8a652ee3c8c87ee43cad0757348d4b7a39d10a9193f4cd6fb490167',
+    'invoice-pdf.js is not the approved revision (export invoices in a foreign currency)');
 
   // The Purchase Order PDF was redesigned under its own approved change, so
   // it is pinned by content rather than by "not modified": this still fails

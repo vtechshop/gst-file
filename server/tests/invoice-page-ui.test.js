@@ -35,6 +35,11 @@ const CONTROLS = [
   ['invShipState', 'onchange=onInvShipStateChange()'],
   ['invShipDistrict', 'onchange=onInvShipDistrictChange()'],
   ['invShipAddress', ''],
+  // Invoice Type, at the top of Invoice Information: two buttons operating
+  // the #exportToggle checkbox further down, which is still the setting
+  // itself (invoice-export-currency.test.js).
+  ['invTypeDomestic', "onclick=setInvoiceType('domestic')"],
+  ['invTypeExport', "onclick=setInvoiceType('export')"],
   ['autoInvToggle', 'onchange=onAutoToggleChange()'],
   ['invNum', ''], ['invSource', 'onchange=onInvoiceSourceChange()'], ['invDate', ''],
   ['invReverseCharge', ''], ['invGstCategory', 'onchange=onInvGstCategoryChange()'], ['invSupply', ''],
@@ -47,6 +52,11 @@ const CONTROLS = [
   ['invDifferential65', ''],
   ['invExportType', ''], ['invPortCode', ''], ['invShippingBillNo', ''], ['invShippingBillDate', ''],
   ['invExportOf', ''], ['invSezRecipient', ''],
+  // Where the goods went, and the currency the buyer is billed in.
+  ['invDestinationCountry', ''],
+  ['invCurrency', 'onchange=onInvoiceCurrencyChange()'],
+  ['invCurrencyOther', 'oninput=uppercaseKeepCursor(this); onInvoiceCurrencyChange();'],
+  ['invExchangeRate', 'oninput=onInvoiceExchangeRateInput()'],
   ['ecomToggle', 'onchange=onEcomToggleChange()'],
   ['invEcomGstin', 'oninput=uppercaseKeepCursor(this)'], ['invEcomSupplyType', ''],
   ['invVehicleNo', 'oninput=uppercaseKeepCursor(this)'], ['invTransporter', ''], ['invTransportMode', ''],
@@ -107,7 +117,8 @@ test('IP3 the redesign only adds: wrappers carry nothing but a class, iv- classe
     assert.ok(!/\bon[a-z]+="/.test(m[0]), 'and off elements with handlers: ' + m[0]);
   }
   assert.ok(HTML.includes('<div class="content inv-page">'));
-  assert.ok(HTML.includes('client/css/style.css?v=38'));
+  // Moved by the export-invoice currency change (invoice-export-currency.test.js).
+  assert.ok(HTML.includes('client/css/style.css?v=40'));
 });
 
 test('IP4 the page styles are scoped, and never undo a script toggle', () => {

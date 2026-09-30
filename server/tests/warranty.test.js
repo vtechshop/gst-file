@@ -287,9 +287,9 @@ test('W27 every asset whose contents changed carries its own cache key', () => {
   // Each pinned to the version its CURRENT contents were published under.
   for (const [file, want] of [['client/js/utilities/utils.js', 33],
                               ['client/js/core/config.js', 33],
-                              ['client/js/pages/invoice-pdf.js', 51],
+                              ['client/js/pages/invoice-pdf.js', 52],
                               ['client/js/pages/invoice-list.js', 34],
-                              ['client/js/pages/invoice-items.js', 41]]) {
+                              ['client/js/pages/invoice-items.js', 42]]) {
     assert.ok(page.includes(file + '?v=' + want), file + ' must be referenced at v=' + want);
   }
 });

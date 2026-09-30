@@ -102,6 +102,37 @@ function invoicePrincipalGstRate() {
 // total never runs away while someone is mid-keystroke; the server is what
 // refuses it (utils/validation.js), and validateInvoiceItems() is what stops
 // the save.
+// ── The currency this invoice is billed in ────────────
+// Null is rupees, and rupees is every invoice this page has ever written.
+// An export can be billed in the buyer's currency instead: the grid then
+// reads and shows the foreign figures, because that is what the exporter
+// types and what the buyer is charged. The rupee value is derived from it
+// at save time (invoiceHeaderInInr / invoiceLinesInInr) and never the other
+// way round, so the typed amount is never rounded through a conversion.
+//
+// Invoice Entry owns the choice and calls setInvoiceCurrency(); Proforma
+// Entry loads this same grid and never calls it, so nothing there changes.
+let invoiceCurrency = null;      // { code: 'USD', symbol: '$' }
+let invoiceExchangeRate = 0;     // rupees per ONE unit of that currency
+
+function setInvoiceCurrency(currency, exchangeRate) {
+  invoiceCurrency = (currency && currency.code) ? { code: currency.code, symbol: currency.symbol || currency.code } : null;
+  invoiceExchangeRate = invoiceCurrency ? (parseFloat(exchangeRate) || 0) : 0;
+  // The rows are untouched: the same numbers, now read in a different
+  // currency. Only how they are LABELLED changes, so switching back and
+  // forth cannot alter what was typed.
+  renderItemsTable();
+  computeInvoiceRollups();
+}
+
+function invoiceCurrencyCode() { return invoiceCurrency ? invoiceCurrency.code : 'INR'; }
+function invoiceCurrencySymbol() { return invoiceCurrency ? invoiceCurrency.symbol : '₹'; }
+function invoiceIsForeignCurrency() { return !!invoiceCurrency && invoiceExchangeRate > 0; }
+
+// One figure, converted once. Rounded to the paise, because that is what
+// the rupee columns and every return built on them hold.
+function toInvoiceInr(amount) { return round2((+amount || 0) * invoiceExchangeRate); }
+
 function invoiceTransportCharge() {
   if (!itemsTransportEnabled()) return null;
   const el = document.getElementById('itemsTransportCharge');
@@ -296,6 +327,23 @@ function renderItemsSectionShell(containerId) {
         <span class="label">Amount in Words</span>
         <span class="value fs-12 text-muted-sm text-right" id="itemsAmountWords"></span>
       </div>
+      <!-- Both figures, on an invoice billed abroad: what the buyer pays and
+           what the return reports. Hidden on every rupee invoice, so the
+           summary above is untouched for domestic work. -->
+      <div id="invFxSummary" class="d-none">
+        <div class="calc-row">
+          <span class="label" id="invFxTotalLabel">Invoice Total</span>
+          <span class="value fw-700 text-right" id="invFxTotal"></span>
+        </div>
+        <div class="calc-row">
+          <span class="label">Exchange Rate</span>
+          <span class="value fs-12 text-muted-sm text-right" id="invFxRate"></span>
+        </div>
+        <div class="calc-row">
+          <span class="label">INR Equivalent</span>
+          <span class="value fw-700 text-right" id="invFxInr"></span>
+        </div>
+      </div>
     </div>
 
     <datalist id="itemsProductDatalist"></datalist>
@@ -374,15 +422,26 @@ function resetInvoiceItems() {
 }
 
 function loadItemsIntoTable(rows) {
+  // An invoice billed abroad is reopened in the currency it was billed in.
+  // The stored rupee columns were DERIVED from these at save time, so
+  // reading them back would put 83,250 in a box that says $ - and re-saving
+  // would then convert it again. Invoice Entry sets the currency before it
+  // loads the lines (restoreExportFields runs first), so by here the answer
+  // is already known.
+  const foreign = invoiceIsForeignCurrency();
+  const billed = (r, fx, inr) => (foreign && r[fx] !== null && r[fx] !== undefined ? +r[fx] : (+r[inr] || 0));
   currentItems = rows.map(r => {
     itemsRowSeq++;
     return {
       rowId: 'row' + itemsRowSeq, product_id: r.product_id || null, product_name: r.product_name || '',
-      hsn_code: r.hsn_code || '', unit: r.unit || '', quantity: +r.quantity || 1, rate: +r.rate || 0,
+      hsn_code: r.hsn_code || '', unit: r.unit || '', quantity: +r.quantity || 1,
+      rate: billed(r, 'fx_rate', 'rate'),
       discount_percentage: +r.discount_percentage || 0, gst_percentage: +r.gst_percentage || 0,
       cess_rate: +r.cess_rate || 0, cess_amount: +r.cess_amount || 0,
-      taxable_value: +r.taxable_value || 0, gst_amount: +r.gst_amount || 0, igst: +r.igst || 0,
-      cgst: +r.cgst || 0, sgst: +r.sgst || 0, total_amount: +r.total_amount || 0,
+      taxable_value: billed(r, 'fx_taxable_value', 'taxable_value'),
+      gst_amount: +r.gst_amount || 0, igst: +r.igst || 0,
+      cgst: +r.cgst || 0, sgst: +r.sgst || 0,
+      total_amount: billed(r, 'fx_total_amount', 'total_amount'),
       // Reopening an invoice must not drop the cover each line was sold with.
       // NULL stays null rather than becoming 0, so the row reads as 'no
       // warranty' rather than a warranty of zero months.
@@ -404,6 +463,10 @@ function loadItemsIntoTable(rows) {
     };
   });
   if (!currentItems.length) currentItems.push(blankRow());
+  // The tax on a foreign line is not stored in that currency - only the
+  // rate, the value and the total are - so it is recomputed from the rate
+  // and the GST%, exactly as it would be if the line had just been typed.
+  if (foreign) { recalcAllRows(); return; }
   renderItemsTable();
   computeInvoiceRollups();
 }
@@ -470,9 +533,9 @@ function renderItemsTable() {
       <td><input type="number" class="form-control text-center" min="0" max="500" step="0.001" value="${row.cess_rate || 0}"
           title="Compensation cess — auto-filled from Product Master. Charged on the taxable value, not on the GST."
           oninput="onItemFieldChange('${row.rowId}','cess_rate',this.value)"></td>
-      <td class="text-right fw-600 item-taxable-cell">&#8377;${formatNum(row.taxable_value)}</td>
+      <td class="text-right fw-600 item-taxable-cell">${invoiceCurrencySymbol()}${formatNum(row.taxable_value)}</td>
       ${itemsWarrantyEnabled() ? `<td><select class="form-control text-center item-warranty-cell" onchange="onItemFieldChange('${row.rowId}','warranty_period_months',this.value)">${warrantyOptionsHtml(row.warranty_period_months)}</select></td>` : ''}
-      <td class="text-right fw-700 item-total-cell">&#8377;${formatNum(row.total_amount)}</td>
+      <td class="text-right fw-700 item-total-cell">${invoiceCurrencySymbol()}${formatNum(row.total_amount)}</td>
       <td><button type="button" class="btn btn-danger btn-sm btn-icon" onclick="removeItemRow('${row.rowId}')" title="Remove row"><i class="fas fa-trash"></i></button></td>
     </tr>`).join('');
 }
@@ -1034,8 +1097,8 @@ function updateRowComputedCells(row) {
   if (!tr) return;
   const taxableCell = tr.querySelector('.item-taxable-cell');
   const totalCell = tr.querySelector('.item-total-cell');
-  if (taxableCell) taxableCell.textContent = '₹' + formatNum(row.taxable_value);
-  if (totalCell) totalCell.textContent = '₹' + formatNum(row.total_amount);
+  if (taxableCell) taxableCell.textContent = invoiceCurrencySymbol() + formatNum(row.taxable_value);
+  if (totalCell) totalCell.textContent = invoiceCurrencySymbol() + formatNum(row.total_amount);
 }
 
 function recalcAllRows() {
@@ -1048,8 +1111,12 @@ function recalcAllRows() {
   persistItemsDraft();
 }
 
-function computeInvoiceRollups() {
-  const rows = currentItems.filter(r => r.product_name && r.taxable_value > 0);
+// The invoice's arithmetic, over whatever lines and delivery charge it is
+// handed. Pulled out of computeInvoiceRollups() so the rupee equivalent of
+// an export can be totalled by the SAME code rather than by a second copy
+// of it that could drift - see invoiceHeaderInInr(). Pure: it reads no
+// field and paints nothing.
+function rollupFigures(rows, transportCharge) {
   const productTaxable = round2(rows.reduce((s, r) => s + r.taxable_value, 0));
   const productIgst    = round2(rows.reduce((s, r) => s + r.igst, 0));
   const productCgst    = round2(rows.reduce((s, r) => s + r.cgst, 0));
@@ -1061,7 +1128,6 @@ function computeInvoiceRollups() {
   // else. The product figures above are computed before this and are not
   // touched by it - no line's Qty, Rate, Discount, GST%, Cess, Taxable
   // Value or Line Total changes because a delivery charge was billed.
-  const transportCharge = invoiceTransportCharge();
   const transportTax = invoiceTransportTax(transportCharge);
   const transportGst = transportTax.gstAmount;
 
@@ -1078,6 +1144,54 @@ function computeInvoiceRollups() {
   const grandTotal = Math.round(rawTotal);
   const roundOff = round2(grandTotal - rawTotal);
   const gstPercentage = taxable > 0 ? round2(gstAmt / taxable * 100) : 0;
+  return { productTaxable, taxable, igst, cgst, sgst, gstAmt, cess, rawTotal, grandTotal,
+    roundOff, gstPercentage, transportCharge, transportGst, transportRate: transportTax.rate };
+}
+
+// Every line as rupees, on an invoice billed in a foreign currency. Each
+// line's rupee total is rebuilt from its own rupee parts, so the line adds
+// up in both currencies instead of being two roundings of one number.
+function invoiceLinesInInr() {
+  return currentItems
+    .filter(r => r.product_name && r.taxable_value >= 0)
+    .map(r => {
+      const taxable_value = toInvoiceInr(r.taxable_value);
+      const igst = toInvoiceInr(r.igst);
+      const cgst = toInvoiceInr(r.cgst);
+      const sgst = toInvoiceInr(r.sgst);
+      const cess_amount = toInvoiceInr(r.cess_amount || 0);
+      const gst_amount = round2(igst + cgst + sgst);
+      return { ...r,
+        rate: toInvoiceInr(r.rate),
+        taxable_value, igst, cgst, sgst, gst_amount, cess_amount,
+        total_amount: round2(taxable_value + gst_amount + cess_amount),
+        // What the buyer was billed, carried alongside rather than instead:
+        // the rupee figures above are derived from these, never the reverse.
+        fx_rate: round2(r.rate),
+        fx_taxable_value: round2(r.taxable_value),
+        fx_total_amount: round2(r.total_amount) };
+    });
+}
+
+// What the return reports: the same invoice in rupees, totalled from the
+// converted lines so the header equals the sum of the lines it stores.
+function invoiceHeaderInInr() {
+  const charge = invoiceTransportCharge();
+  const f = rollupFigures(invoiceLinesInInr().filter(r => r.taxable_value > 0),
+    charge === null ? null : toInvoiceInr(charge));
+  return { taxable_amount: f.taxable, gst_percentage: f.gstPercentage, gst_amount: f.gstAmt,
+    igst: f.igst, cgst: f.cgst, sgst: f.sgst, cess_amount: f.cess,
+    total_amount: f.grandTotal, round_off: f.roundOff,
+    transport_charge: f.transportCharge,
+    transport_gst_amount: f.transportCharge === null ? null : round2(f.transportGst) };
+}
+
+function computeInvoiceRollups() {
+  const rows = currentItems.filter(r => r.product_name && r.taxable_value > 0);
+  const figures = rollupFigures(rows, invoiceTransportCharge());
+  const { taxable, igst, cgst, sgst, gstAmt, cess, grandTotal, roundOff, gstPercentage,
+    transportCharge, transportGst, productTaxable } = figures;
+  const transportTax = { rate: figures.transportRate };
 
   const set = (id, v) => { const el = document.getElementById(id); if (el) el.value = v; };
   set('itemsSubtotal', formatNum(taxable));
@@ -1107,8 +1221,13 @@ function computeInvoiceRollups() {
     : '';
   if (tNoteRow) tNoteRow.classList.toggle('d-none', !tNote);
   setTxt('itemsTransportNote', tNote);
+  // Rupees, always: numberToWordsINR says "Rupees", so on an export it has
+  // to be given the rupee equivalent rather than the dollar total. The
+  // foreign total is shown as a figure, beside it.
+  const inrHeader = invoiceIsForeignCurrency() ? invoiceHeaderInInr() : null;
   const wordsEl = document.getElementById('itemsAmountWords');
-  if (wordsEl) wordsEl.textContent = numberToWordsINR(grandTotal);
+  if (wordsEl) wordsEl.textContent = numberToWordsINR(inrHeader ? inrHeader.total_amount : grandTotal);
+  paintInvoiceFxSummary(figures, inrHeader);
 
   // Keep the Payment section's read-only balance preview in step with the
   // Grand Total — editing any item line changes what's owed, so the
@@ -1116,7 +1235,9 @@ function computeInvoiceRollups() {
   // because that function recomputes from here when called on its own;
   // handing it the value avoids recursing back into this one. Guarded by
   // typeof because this file also loads on pages with no payment section.
-  if (typeof renderInvPaymentPreview === 'function') renderInvPaymentPreview(grandTotal);
+  if (typeof renderInvPaymentPreview === 'function') {
+    renderInvPaymentPreview(inrHeader ? inrHeader.total_amount : grandTotal);
+  }
 
   // transport_gst_amount travels with the charge so the caller has the
   // whole picture, but the SERVER re-derives it from the charge before
@@ -1125,6 +1246,29 @@ function computeInvoiceRollups() {
   return { taxable_amount: taxable, gst_percentage: gstPercentage, gst_amount: gstAmt, igst, cgst, sgst, cess_amount: cess, total_amount: grandTotal, round_off: roundOff,
     transport_charge: transportCharge,
     transport_gst_amount: transportCharge === null ? null : round2(transportGst) };
+}
+
+// Both figures, side by side: what the buyer is billed and what the return
+// reports. Hidden entirely on a rupee invoice, so the Amount Summary looks
+// exactly as it always has.
+// A rate is not an amount: it is shown to the six decimals the column
+// holds, with trailing zeros trimmed, so 83.25 stays 83.25 and 90.123456
+// does not become 90.12.
+function formatExchangeRate(rate) {
+  const n = Number(rate) || 0;
+  return String(Math.round(n * 1e6) / 1e6);
+}
+
+function paintInvoiceFxSummary(figures, inrHeader) {
+  const box = document.getElementById('invFxSummary');
+  if (!box) return;
+  box.classList.toggle('d-none', !inrHeader);
+  if (!inrHeader) return;
+  const setTxt = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
+  setTxt('invFxTotalLabel', 'Invoice Total (' + invoiceCurrencyCode() + ')');
+  setTxt('invFxTotal', invoiceCurrencySymbol() + formatNum(figures.grandTotal));
+  setTxt('invFxRate', '1 ' + invoiceCurrencyCode() + ' = ₹' + formatExchangeRate(invoiceExchangeRate));
+  setTxt('invFxInr', '₹' + formatNum(inrHeader.total_amount));
 }
 
 function validateInvoiceItems() {
@@ -1248,8 +1392,27 @@ async function saveInvoiceWithItems(type, headerBase, editId, userId) {
     if (problem) { showToast(problem, 'error'); return false; }
   }
 
-  const header = { ...headerBase, ...computeInvoiceRollups() };
-  const items = currentItems
+  // The rollup, in the currency the invoice is billed in.
+  const rollups = computeInvoiceRollups();
+
+  // On a rupee invoice this is exactly what it has always been, and not one
+  // fx_* key is sent - so an older database, which has no such columns, is
+  // written precisely as before.
+  //
+  // On an export the rupee columns carry the converted value, because
+  // GSTR-1, GSTR-3B, the payment ledger and every report read them and all
+  // of those are rupee accounts; the fx_* columns carry what the buyer was
+  // actually billed. Neither is computed from the other twice.
+  const foreign = invoiceIsForeignCurrency();
+  const header = foreign
+    ? { ...headerBase, ...invoiceHeaderInInr(),
+        currency_code: invoiceCurrencyCode(),
+        exchange_rate: invoiceExchangeRate,
+        fx_taxable_amount: rollups.taxable_amount,
+        fx_gst_amount: rollups.gst_amount,
+        fx_total_amount: rollups.total_amount }
+    : { ...headerBase, ...rollups };
+  const items = (foreign ? invoiceLinesInInr() : currentItems)
     .filter(r => r.product_name && r.taxable_value >= 0)
     .map(r => ({
       product_id: r.product_id, product_name: r.product_name, hsn_code: r.hsn_code, unit: r.unit,
@@ -1262,6 +1425,9 @@ async function saveInvoiceWithItems(type, headerBase, editId, userId) {
       warranty_period_months: parseInt(r.warranty_period_months, 10) > 0
         ? parseInt(r.warranty_period_months, 10) : null,
       total_amount: r.total_amount,
+      // Undefined on a domestic line, so JSON.stringify drops the keys and
+      // the row written is the row this page has always written.
+      fx_rate: r.fx_rate, fx_taxable_value: r.fx_taxable_value, fx_total_amount: r.fx_total_amount,
       // The units being sold on this line, for a serial-tracked product.
       // The count must equal the quantity; the server is what enforces it.
       serials: Array.isArray(r.serials) ? r.serials : undefined

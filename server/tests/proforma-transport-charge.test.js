@@ -566,7 +566,11 @@ test('PT24 the save route derives the tax with the invoice\'s own three rules, f
 
 test('PT25 the migration is additive, re-runnable, runner-managed, and touches only proforma_invoices', () => {
   const order = JSON.parse(rd('server', 'db', 'migrations', '_manifest.json')).order;
-  assert.deepStrictEqual(order.slice(-2), ['migration_purchase_notes.sql', MIG_FILE]);
+  // Still in this order, now with the export-currency migration appended
+  // after it (invoice-export-currency.test.js).
+  const at = order.indexOf(MIG_FILE);
+  assert.ok(at > 0 && order[at - 1] === 'migration_purchase_notes.sql',
+    'the proforma migration still runs straight after the purchase-notes one');
 
   const code = MIG.replace(/--[^\n]*/g, '');
   for (const kw of ['UPDATE', 'DELETE', 'TRUNCATE', 'DROP', 'INSERT']) {
