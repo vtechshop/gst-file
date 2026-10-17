@@ -465,7 +465,9 @@ function importScannedInvoice() {
   // detectSupplyType()), so an explicit Place of Supply outranks the
   // customer's own state when the document prints both.
   setInvIfUntouched('invState', matchInvStateOption(inv.customer.place_of_supply || inv.customer.state));
-  setInvIfUntouched('invNum', inv.invoice_number);
+  // Deliberately not invNum: the number on the scanned document belongs to
+  // that document. This invoice is issued its own number by the server when
+  // it saves, and the box on the form is read-only.
   setInvIfUntouched('invDate', inv.invoice_date);
   // Supply type stays derived — detectSupplyType() decides it from the
   // business/customer state pair, exactly as for typed entry.
@@ -553,10 +555,10 @@ function importScannedItems(items) {
 }
 
 // Some fields arrive pre-populated by the form itself rather than by the
-// user: initInvoiceEntry() stamps invDate with today, invCustName with
-// "Walk-in Customer", and invNum with a generated number whenever
-// auto-numbering is on. Nobody typed those, so they must not block the
-// scanned document's own values the way a real edit does.
+// user: initInvoiceEntry() stamps invDate with today and invCustName with
+// "Walk-in Customer". Nobody typed those, so they must not block the
+// scanned document's own values the way a real edit does. (invNum is not
+// in this list because nothing scanned is ever written to it.)
 //
 // The customer-name rule is not restated here — isCustNameUntouched() in
 // js/invoice-entry.js is the form's own definition of "nobody has
@@ -565,7 +567,6 @@ function importScannedItems(items) {
 // text changes.
 function isInvFormDefault(id, current) {
   if (id === 'invDate') return typeof toISO === 'function' && current === toISO(new Date());
-  if (id === 'invNum') return typeof isAutoInvoiceOn === 'function' && isAutoInvoiceOn();
   if (id === 'invCustName') return typeof isCustNameUntouched === 'function' && isCustNameUntouched();
   return false;
 }

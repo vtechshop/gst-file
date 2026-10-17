@@ -3,14 +3,14 @@
 // transactions (BEGIN/COMMIT/ROLLBACK) rather than the generic
 // single-table CRUD router (routes/generic.js):
 //   1. POST /:type/save-with-items   — invoice header + line items + stock
-//   2. POST /reserve-number           — Auto Generate invoice numbering
+//   2. GET  /next-number              — preview of the next number
+//      POST /reserve-number           — same answer, for cached pages
 //   3. POST /:type/:id/cascade-delete — permanent delete cascade (items +
 //                                       HSN + stock reversal)
 //
-// Frontend call sites (unchanged signatures, only their internals swap
-// to a single fetch() each): js/invoice-items.js's saveInvoiceWithItems()
-// and cascadeInvoiceItemsDelete(), js/invoice-entry.js's
-// reserveNextInvoiceNumber().
+// Frontend call sites: js/invoice-items.js's saveInvoiceWithItems() and
+// cascadeInvoiceItemsDelete(), and js/invoice-entry.js's
+// generateInvoiceNo(), which reads the preview.
 const express = require('express');
 const pool = require('../config/pool');
 const { syncWarrantiesForInvoice } = require('../services/warranty-sync');
@@ -127,11 +127,132 @@ async function applyInvoiceSerials(client, userId, type, invoiceId, plan) {
   return { sold: soldNow, released: dropped };
 }
 
+// -- Invoice numbering ------------------------------------------------
+//
+// An invoice number is issued by the server and only by the server. The
+// browser has no say in it: the field on the page is a read-only preview,
+// and whatever number a payload happens to carry is discarded on the way
+// in (see the save route below). That is what makes the number on a saved
+// invoice trustworthy - it was computed from this database, inside the
+// transaction that wrote the invoice.
+//
+// Which numbers count as taken: only this user's, and only in this series.
+// Two series may legitimately both hold a 5 - they are different documents
+// in different books, and GSTR-1 reports them as such. Soft-deleted rows
+// still count, because a deleted invoice's number must never be reissued.
+async function takenNumbersFor(client, userId, series) {
+  const [{ rows: b2bRows }, { rows: b2cRows }] = await Promise.all([
+    client.query('SELECT invoice_number FROM b2b_invoices WHERE user_id = $1 AND invoice_source = $2', [userId, series]),
+    client.query('SELECT invoice_number FROM b2c_invoices WHERE user_id = $1 AND invoice_source = $2', [userId, series])
+  ]);
+  return new Set([...b2bRows, ...b2cRows].map(r => (r.invoice_number || '').toUpperCase()));
+}
+
+// Where this series' counter stands, and how it writes its numbers.
+//
+// The offline series keeps using invoice_number_format and
+// invoice_current_sequence - the format and counter that existed before
+// series did - so a business already numbering 138, 139, 140 carries on at
+// 141. Every other series reads its own entry in invoice_series_formats /
+// invoice_series_sequences.
+function seriesState(profile, series) {
+  const seriesSeqs = (profile && profile.invoice_series_sequences) || {};
+  const stored = series === DEFAULT_INVOICE_SOURCE
+    ? (profile && profile.invoice_current_sequence)
+    : seriesSeqs[series];
+  return {
+    format: invoiceSeriesFormat(profile, series),
+    seq: Math.max(1, parseInt(stored, 10) || 1)
+  };
+}
+
+// The next free number in a series, and the sequence value that produced
+// it. The counter is only a starting point: the scan walks forward past
+// anything already issued, so a counter that has fallen behind the saved
+// invoices - however it got there - heals itself on the next invoice
+// instead of colliding. It is never walked backwards, because a number
+// that was issued and then deleted must not come round again.
+function nextFreeNumber(profile, series, taken) {
+  const { format, seq: start } = seriesState(profile, series);
+  let seq = start;
+  let candidate = applyInvoiceNumberFormat(format, seq);
+  let guard = 0;
+  while (taken.has(candidate.toUpperCase()) && guard < 100000) {
+    seq++;
+    candidate = applyInvoiceNumberFormat(format, seq);
+    guard++;
+  }
+  // A format with no # in it cannot count, so uniqueness is bought the
+  // only other way available rather than handing out a duplicate.
+  if (guard >= 100000) candidate = candidate + '-' + Date.now();
+  return { invoiceNumber: candidate, seq, format };
+}
+
+const PROFILE_NUMBERING_COLS =
+  'invoice_number_format, invoice_current_sequence, invoice_series_sequences, invoice_series_formats';
+
+// What the next invoice in this series WOULD be. Reads only - no lock, no
+// counter movement - so the page can show it, redraw it and refresh it as
+// often as it likes without consuming anything.
+async function previewInvoiceNumberOn(client, userId, series) {
+  const { rows } = await client.query(
+    `SELECT ${PROFILE_NUMBERING_COLS} FROM profiles WHERE id = $1`, [userId]);
+  return nextFreeNumber(rows[0], series, await takenNumbersFor(client, userId, series));
+}
+
+// Issue the number, inside the caller's transaction.
+//
+// The profile row is locked FIRST, which serializes concurrent issues for
+// this user: the taken-numbers scan only runs once that lock is held, so
+// two simultaneous saves can never both read the same "next" number before
+// either commits. Reading before locking would reopen exactly the race
+// this exists to close.
+//
+// The counter moves on the caller's client, so it moves if and only if the
+// caller's transaction commits. An invoice that fails to save - a serial
+// mismatch, a stock guard, a dropped connection - leaves the counter where
+// it was, and the number it nearly took goes to the next invoice instead.
+async function assignInvoiceNumberOn(client, userId, series) {
+  const { rows } = await client.query(
+    `SELECT ${PROFILE_NUMBERING_COLS} FROM profiles WHERE id = $1 FOR UPDATE`, [userId]);
+  const issued = nextFreeNumber(rows[0], series, await takenNumbersFor(client, userId, series));
+
+  if (series === DEFAULT_INVOICE_SOURCE) {
+    await client.query('UPDATE profiles SET invoice_current_sequence = $1 WHERE id = $2',
+      [issued.seq + 1, userId]);
+  } else {
+    await client.query(
+      `UPDATE profiles
+          SET invoice_series_sequences = COALESCE(invoice_series_sequences, '{}'::jsonb) || jsonb_build_object($1::text, $2::int)
+        WHERE id = $3`, [series, issued.seq + 1, userId]);
+  }
+  return issued;
+}
+
+// Reclassifying a saved invoice (B2B <-> B2C) moves it to the other table,
+// which is an INSERT - but it is the same invoice and it keeps its own
+// number. The number is read from the row being moved, in this database,
+// so nothing is taken on trust from the payload beyond which row it is.
+async function numberOfMovedInvoice(client, userId, movedFrom) {
+  if (!movedFrom || typeof movedFrom !== 'object') return null;
+  const { type, id } = movedFrom;
+  if (type !== 'b2b' && type !== 'b2c') return null;
+  badId(id);
+  const { rows } = await client.query(
+    `SELECT invoice_number FROM ${invoiceTable(type)} WHERE id = $1 AND user_id = $2`,
+    [id, userId]);
+  if (!rows.length) {
+    const e = new Error('The invoice being reclassified no longer exists.');
+    e.status = 404; e.expose = true; throw e;
+  }
+  return rows[0].invoice_number;
+}
+
 router.post('/:type/save-with-items', asyncRoute(async (req, res) => {
   badType(req.params.type);
   const type = req.params.type;
   const table = invoiceTable(type);
-  const { editId, header, items } = req.body;
+  const { editId, header, items, movedFrom } = req.body;
   if (!header || typeof header !== 'object' || Array.isArray(header)) {
     const e = new Error('Invoice header is missing or malformed.'); e.status = 400; e.expose = true; throw e;
   }
@@ -199,6 +320,12 @@ router.post('/:type/save-with-items', asyncRoute(async (req, res) => {
     delete header.transport_gst_amount;
   }
 
+  // The number is the server's to decide, so the payload's copy of it is
+  // dropped here - before the column list is built - on every path. An edit
+  // keeps the number the invoice already has (nothing is written to that
+  // column at all), and a create is given one below, from this database.
+  delete header.invoice_number;
+
   const headerCols = TABLES[table].columns.filter(c => c !== 'id' && c !== 'user_id' && header && Object.prototype.hasOwnProperty.call(header, c));
   const itemCols = TABLES.invoice_items.columns.filter(c => !['id','user_id','invoice_id','invoice_type','sort_order','created_at','updated_at'].includes(c));
 
@@ -207,6 +334,7 @@ router.post('/:type/save-with-items', asyncRoute(async (req, res) => {
     await client.query('BEGIN');
 
     let invoiceId = editId;
+    let invoiceNumber = null;
     let oldItems = [];
     // Checked before the first write: a mismatched selection must leave the
     // invoice, the stock and the units exactly as they were.
@@ -216,11 +344,12 @@ router.post('/:type/save-with-items', asyncRoute(async (req, res) => {
       const values = headerCols.map(c => header[c]);
       const setClause = headerCols.map((c, i) => `${c} = $${i + 1}`).join(',');
       const { rows } = await client.query(
-        `UPDATE ${table} SET ${setClause} WHERE id = $${values.length + 1} AND user_id = $${values.length + 2} RETURNING id`,
+        `UPDATE ${table} SET ${setClause} WHERE id = $${values.length + 1} AND user_id = $${values.length + 2} RETURNING id, invoice_number`,
         [...values, editId, req.userId]
       );
       if (!rows.length) { const e = new Error('Invoice not found.'); e.status = 404; e.expose = true; throw e; }
       invoiceId = rows[0].id;
+      invoiceNumber = rows[0].invoice_number;
 
       const { rows: oldRows } = await client.query(
         'SELECT product_id, quantity FROM invoice_items WHERE invoice_id = $1 AND invoice_type = $2 AND user_id = $3',
@@ -228,8 +357,14 @@ router.post('/:type/save-with-items', asyncRoute(async (req, res) => {
       );
       oldItems = oldRows;
     } else {
-      const payload = { ...header, user_id: req.userId };
-      const cols = headerCols.concat('user_id');
+      // Issued inside this transaction, so the counter advances only if the
+      // invoice below actually commits - and under the profile-row lock, so
+      // two simultaneous creates cannot land on the same number.
+      const moved = await numberOfMovedInvoice(client, req.userId, movedFrom);
+      invoiceNumber = moved
+        || (await assignInvoiceNumberOn(client, req.userId, normaliseSource(header.invoice_source))).invoiceNumber;
+      const payload = { ...header, invoice_number: invoiceNumber, user_id: req.userId };
+      const cols = headerCols.concat('invoice_number', 'user_id');
       const placeholders = cols.map((_, i) => `$${i + 1}`).join(',');
       const values = cols.map(c => payload[c]);
       const { rows } = await client.query(`INSERT INTO ${table} (${cols.join(',')}) VALUES (${placeholders}) RETURNING id`, values);
@@ -326,7 +461,7 @@ router.post('/:type/save-with-items', asyncRoute(async (req, res) => {
       client, req.userId, type, invoiceId, header, savedItems, reserveDocumentNumberOn);
 
     await client.query('COMMIT');
-    res.json({ invoiceId, warranty, serials });
+    res.json({ invoiceId, invoiceNumber, warranty, serials });
   } catch (err) {
     await client.query('ROLLBACK');
     throw err;
@@ -335,70 +470,41 @@ router.post('/:type/save-with-items', asyncRoute(async (req, res) => {
   }
 }));
 
-// ── 2) Reserve the next Auto Generate invoice number, one transaction ──
-router.post('/reserve-number', asyncRoute(async (req, res) => {
+// -- 2) What the next invoice number WOULD be -------------------------
+//
+// Preview only. Numbering is automatic and the page's Invoice Number box
+// is read-only, so this exists to fill that box - and to refill it after
+// each save, when the counter has moved. It takes no lock and advances
+// nothing, so opening the page, switching series or leaving a draft
+// unsaved cannot consume a number or leave a gap.
+//
+// The number that actually gets stored is issued by the save itself
+// (assignInvoiceNumberOn, above), from this same arithmetic. The two can
+// only differ if someone else saves in between, which is exactly when the
+// preview SHOULD be stale - and the save, not the preview, decides.
+router.get('/next-number', asyncRoute(async (req, res) => {
+  const series = normaliseSource(req.query && req.query.source);
   const client = await pool.connect();
   try {
-    await client.query('BEGIN');
-    // Lock the profile row FIRST, serializing concurrent reservations for
-    // this user — the taken-numbers scan below only runs once that lock
-    // is held, so two simultaneous saves can never both read the same
-    // "next" number before either commits (reading before locking would
-    // reopen exactly the race this transaction exists to close).
-    const { rows: profRows } = await client.query(
-      `SELECT invoice_number_format, invoice_current_sequence,
-              invoice_series_sequences, invoice_series_formats
-         FROM profiles WHERE id = $1 FOR UPDATE`, [req.userId]
-    );
+    const { invoiceNumber, format } = await previewInvoiceNumberOn(client, req.userId, series);
+    res.json({ invoiceNumber, source: series, format });
+  } finally {
+    client.release();
+  }
+}));
 
-    // Each series counts on its own AND is written its own way. The shop
-    // counter reaching 170 must not push the website's next number past
-    // 5, and the website's numbers are W-00005, not 5.
-    //
-    // The offline series keeps using invoice_number_format and
-    // invoice_current_sequence — the format and counter that existed
-    // before series did — so a business already on Auto Generate carries
-    // on issuing exactly what it issued yesterday. Every other series
-    // reads its own entry in invoice_series_formats /
-    // invoice_series_sequences.
-    const series = normaliseSource(req.body && req.body.source);
-    const format = invoiceSeriesFormat(profRows[0], series);
-    const seriesSeqs = profRows[0]?.invoice_series_sequences || {};
-    const storedSeq = series === DEFAULT_INVOICE_SOURCE
-      ? profRows[0]?.invoice_current_sequence
-      : seriesSeqs[series];
-    let seq = Math.max(1, parseInt(storedSeq, 10) || 1);
-
-    // Only this series' numbers are "taken". Two series may legitimately
-    // both hold a 5 — they are different documents in different books.
-    const [{ rows: b2bRows }, { rows: b2cRows }] = await Promise.all([
-      client.query('SELECT invoice_number FROM b2b_invoices WHERE user_id = $1 AND invoice_source = $2', [req.userId, series]),
-      client.query('SELECT invoice_number FROM b2c_invoices WHERE user_id = $1 AND invoice_source = $2', [req.userId, series])
-    ]);
-    const taken = new Set([...b2bRows, ...b2cRows].map(r => (r.invoice_number || '').toUpperCase()));
-
-    let candidate = applyInvoiceNumberFormat(format, seq);
-    let guard = 0;
-    while (taken.has(candidate.toUpperCase()) && guard < 100000) {
-      seq++;
-      candidate = applyInvoiceNumberFormat(format, seq);
-      guard++;
-    }
-    if (guard >= 100000) candidate = candidate + '-' + Date.now(); // pathological format (no #) — guarantee uniqueness anyway
-
-    if (series === DEFAULT_INVOICE_SOURCE) {
-      await client.query('UPDATE profiles SET invoice_current_sequence = $1 WHERE id = $2', [seq + 1, req.userId]);
-    } else {
-      await client.query(
-        `UPDATE profiles
-            SET invoice_series_sequences = COALESCE(invoice_series_sequences, '{}'::jsonb) || jsonb_build_object($1::text, $2::int)
-          WHERE id = $3`, [series, seq + 1, req.userId]);
-    }
-    await client.query('COMMIT');
-    res.json({ invoiceNumber: candidate, source: series, format });
-  } catch (err) {
-    await client.query('ROLLBACK');
-    throw err;
+// Kept for older pages still cached in a browser, which call this before
+// saving. It used to hand out a number AND advance the counter, which is
+// how a save that then failed could burn a number. It now answers exactly
+// what GET /next-number answers and changes nothing: the save issues the
+// real number regardless of what the caller sends, so an old page saves
+// correctly and a counter can no longer move without an invoice behind it.
+router.post('/reserve-number', asyncRoute(async (req, res) => {
+  const series = normaliseSource(req.body && req.body.source);
+  const client = await pool.connect();
+  try {
+    const { invoiceNumber, format } = await previewInvoiceNumberOn(client, req.userId, series);
+    res.json({ invoiceNumber, source: series, format });
   } finally {
     client.release();
   }

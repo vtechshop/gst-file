@@ -450,15 +450,9 @@ async function openSettingsModal() {
         <div style="font-size:11px;font-weight:700;color:var(--text-muted);letter-spacing:1px;text-transform:uppercase;margin-bottom:12px;">
           <i class="fas fa-hashtag" style="color:var(--primary);margin-right:5px;"></i> Invoice Numbering
         </div>
-        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">
-          <div>
-            <div style="font-size:13px;font-weight:600;color:var(--text);">Auto Generate</div>
-            <div style="font-size:11.5px;color:var(--text-muted);">Off = type any invoice number yourself. On = the field is filled in automatically and read-only.</div>
-          </div>
-          <label class="inv-toggle" title="Toggle auto invoice numbering">
-            <input type="checkbox" id="setAutoInvToggle" ${profile?.invoice_auto_number ? 'checked' : ''}>
-            <span class="inv-toggle-track"><span class="inv-toggle-thumb"></span></span>
-          </label>
+        <div style="font-size:11.5px;color:var(--text-muted);margin-bottom:14px;">
+          Every invoice is numbered automatically, from the series it is raised in. The
+          number is issued when the invoice is saved and cannot be typed or edited.
         </div>
         <!-- One row per numbering book. Each keeps its own format and its
              own counter, so the shop can run 171, 172, 173 while the
@@ -760,10 +754,11 @@ async function submitInvoiceNumberingSettings() {
     else { formats[series] = format; sequences[series] = seq; }
   });
 
-  const autoOn = !!document.getElementById('setAutoInvToggle')?.checked;
-
+  // invoice_auto_number is deliberately not written: nothing reads it any
+  // more. The column is left alone rather than cleared, because rewriting a
+  // stored value to say something new is how old rows stop meaning what
+  // they said.
   const { error } = await saveUserProfile(user.id, {
-    invoice_auto_number: autoOn,
     invoice_number_format: offlineFormat,
     invoice_current_sequence: offlineSeq,
     invoice_series_formats: formats,
@@ -772,14 +767,12 @@ async function submitInvoiceNumberingSettings() {
   if (error) return;
 
   // Invoice Entry (js/invoice-entry.js) may or may not be loaded on
-  // whichever page this Settings modal was opened from — keep its own
-  // toggle/field in sync immediately if it is, no-op otherwise. The
-  // Source dropdown is rebuilt too: a series added here has to be
-  // pickable on the invoice without a reload, or adding one appears to
-  // have done nothing.
-  if (typeof updateAutoToggleUI === 'function') updateAutoToggleUI();
+  // whichever page this Settings modal was opened from — refresh its
+  // number preview immediately if it is, no-op otherwise. The Source
+  // dropdown is rebuilt too: a series added here has to be pickable on the
+  // invoice without a reload, or adding one appears to have done nothing.
   if (typeof populateInvoiceSourceOptions === 'function') populateInvoiceSourceOptions();
-  if (typeof generateInvoiceNo === 'function') generateInvoiceNo(user.id, true);
+  if (typeof generateInvoiceNo === 'function') generateInvoiceNo();
 }
 
 function defaultFinancialYear() {

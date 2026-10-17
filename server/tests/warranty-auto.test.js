@@ -107,11 +107,11 @@ test('A11 the competing manual create flow is gone', () => {
 });
 
 test('A12 the save reports what the register did, rather than assuming', () => {
-  assert.match(ITEMS, /const \{ invoiceId, warranty \} = await apiFetch/);
+  assert.match(ITEMS, /const \{ invoiceId, [^}]*warranty[^}]*\} = await apiFetch/);
   // What matters is that the warranty result is REPORTED rather than
   // assumed. What else travels with it is not this guard's business - the
   // serial result rides along now too.
-  assert.match(INVOICES, /res\.json\(\{ invoiceId, warranty[,}]/);
+  assert.match(INVOICES, /res\.json\(\{ invoiceId, [^}]*warranty[,}]/);
 });
 
 // ── tenant isolation ──

@@ -35,6 +35,9 @@ const CONTROLS = [
   ['invShipState', 'onchange=onInvShipStateChange()'],
   ['invShipDistrict', 'onchange=onInvShipDistrictChange()'],
   ['invShipAddress', ''],
+  // Numbering is automatic and has no control of its own any more: the
+  // Auto switch and the generate button are gone, and #invNum is a
+  // read-only preview (invoice-auto-number.test.js).
   // Invoice Type, at the top of Invoice Information: two buttons operating
   // the #exportToggle checkbox further down, which is still the setting
   // itself (invoice-export-currency.test.js), and the export fields they
@@ -49,7 +52,6 @@ const CONTROLS = [
   ['invCurrency', 'onchange=onInvoiceCurrencyChange()'],
   ['invCurrencyOther', 'oninput=uppercaseKeepCursor(this); onInvoiceCurrencyChange();'],
   ['invExchangeRate', 'oninput=onInvoiceExchangeRateInput()'],
-  ['autoInvToggle', 'onchange=onAutoToggleChange()'],
   ['invNum', ''], ['invSource', 'onchange=onInvoiceSourceChange()'], ['invDate', ''],
   ['invReverseCharge', ''], ['invGstCategory', 'onchange=onInvGstCategoryChange()'], ['invSupply', ''],
   ['invWarrantyPeriod', 'onchange=onWarrantyPeriodChange()'],

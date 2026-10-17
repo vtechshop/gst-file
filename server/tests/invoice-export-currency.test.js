@@ -548,7 +548,7 @@ test('EX15 the save route accepts the new columns, and the page is served fresh'
   for (const c of ['fx_rate', 'fx_taxable_value']) {
     assert.ok(GENERIC.includes(`'${c}'`), 'the item allowlist carries ' + c);
   }
-  for (const key of ['client/js/pages/invoice-items.js?v=43', 'client/js/pages/invoice-entry.js?v=39',
+  for (const key of ['client/js/pages/invoice-items.js?v=44', 'client/js/pages/invoice-entry.js?v=40',
     'client/js/pages/invoice-pdf.js?v=52', 'client/css/style.css?v=41']) {
     assert.ok(HTML.includes(key), 'invoice.html loads ' + key);
   }

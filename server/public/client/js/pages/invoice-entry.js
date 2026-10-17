@@ -38,7 +38,6 @@ async function initInvoiceEntry() {
   // The business-wide default recorded in Business Profile.
   const rcInit = document.getElementById('invReverseCharge');
   if (rcInit) rcInit.checked = !!getCachedProfile()?.reverse_charge_default;
-  updateAutoToggleUI();
   await loadInvoiceCustomersList(user.id);
   await initInvoiceItems(user.id, 'invoice');
   setInvValue('invDate', toISO(new Date()));
@@ -62,7 +61,7 @@ async function initInvoiceEntry() {
       setListReturnState(INVOICE_LIST_RETURN_KEY, { returnAfterCreate: false });
     }
     setInvValue('invCustName', 'Walk-in Customer');
-    generateInvoiceNo(user.id);
+    generateInvoiceNo();
     setupDraftAutosave(INVOICE_FORM_KEY, INVOICE_DRAFT_FIELDS);
     checkForDraft(INVOICE_FORM_KEY, INVOICE_DRAFT_FIELDS, 'invDraftBanner', 'restoreInvoiceDraftFull', 'discardInvoiceDraftFull');
 
@@ -320,38 +319,16 @@ function populateInvoiceStateOptions() {
   });
 }
 
-// ── Invoice Number Auto-generate (shared sequence across B2B + B2C —
-// the one-page form has a single Invoice Number field regardless of
-// classification) ──────────────────────────────────
-// Both the ON/OFF flag and the format+sequence used to generate a
-// number live on the business's own profile row (invoice_auto_number /
-// invoice_number_format / invoice_current_sequence — see Settings'
-// Invoice Numbering section, js/profile.js), not a raw localStorage
-// flag, so they're synced through the same profiles table every other
-// business setting already uses (backed by the Node.js + Postgres API
-// — see js/apiClient.js).
-function isAutoInvoiceOn() { return !!getCachedProfile()?.invoice_auto_number; }
-
-function updateAutoToggleUI() {
-  const on = isAutoInvoiceOn();
-  const cb = document.getElementById('autoInvToggle');
-  const lbl = document.getElementById('autoInvLabel');
-  const numEl = document.getElementById('invNum');
-  if (cb) cb.checked = on;
-  if (lbl) { lbl.textContent = on ? 'ON' : 'OFF'; lbl.style.color = on ? 'var(--primary)' : '#9e9e9e'; }
-  // Auto Generate = the field is machine-managed, not user-typed —
-  // read-only makes that visually unambiguous (Manual mode's field
-  // stays freely editable).
-  if (numEl) numEl.readOnly = on;
-}
-
-async function onAutoToggleChange() {
-  const on = !!document.getElementById('autoInvToggle')?.checked;
-  const user = await getCurrentUser();
-  if (user) await saveUserProfile(user.id, { invoice_auto_number: on }, true);
-  updateAutoToggleUI();
-  if (on && user) generateInvoiceNo(user.id, true);
-}
+// ── Invoice Number (shared sequence across B2B + B2C — the one-page
+// form has a single Invoice Number field regardless of classification) ──
+//
+// Numbering is automatic, always. There is no mode: no ON/OFF flag is
+// read, the field is read-only, and nothing on this page can put a
+// number of its own on an invoice. The format and the per-series counter
+// still live on the business's own profile row (invoice_number_format /
+// invoice_current_sequence / invoice_series_* — Settings' Invoice
+// Numbering section, js/profile.js), and the server reads them when it
+// issues the number.
 
 // ── Customer GST category ───────────────────────────
 // Which GSTR-1 table this supply belongs in. Stored on the invoice, not
@@ -453,58 +430,42 @@ function setInvoiceSourceValue(series) {
 // so the preview is redrawn. Editing an existing invoice keeps its
 // number — generateInvoiceNo() returns early there.
 function onInvoiceSourceChange() {
-  getCurrentUser().then(u => generateInvoiceNo(u?.id));
+  generateInvoiceNo();
 }
 
-// Preview-only: shows what the NEXT number would be, using the
-// persisted sequence counter and format, without consuming/advancing
-// the counter — that only happens once an invoice is actually saved,
-// via reserveNextInvoiceNumber() below. This keeps abandoned drafts
-// (page reload, never saved) from burning through numbers.
-async function generateInvoiceNo(userId, force) {
+// Fills the read-only Invoice Number box with what the next invoice in
+// the chosen series will be.
+//
+// Asked of the server, not computed here. The old version did the
+// arithmetic on the cached profile row, and that row is only refreshed by
+// a page load — so after saving an invoice the browser still held the old
+// counter and previewed the number it had just used. Reading it from the
+// database instead is right after a save, in a second tab, and after
+// another device's invoice, none of which the cache knows about.
+//
+// GET /invoices/next-number consumes nothing: an abandoned draft, a
+// reload or ten switches of the Invoice Source cannot burn a number. The
+// number that is actually stored is issued by the save itself, from the
+// same arithmetic, inside the transaction that writes the invoice.
+async function generateInvoiceNo() {
+  // An invoice that already exists keeps the number it was issued.
   if (invoiceEditId) return;
-  if (!force && !isAutoInvoiceOn()) return;
-  const uid = userId || (await getCurrentUser())?.id;
-  const profile = getCachedProfile() || (uid ? await loadUserProfile(uid) : null);
-  // Each series has its own format AND its own counter, so switching the
-  // Invoice Source switches both: Offline previews 171, Online previews
-  // W-00006. The offline series keeps reading the format and counter
-  // that existed before series did, so a business already on Auto
-  // Generate sees the same number it would have seen before. A series
-  // that has never issued an invoice starts at 1 in its own format.
-  //
-  // Both come from js/utils.js, whose twin on the server hands out the
-  // number that actually gets saved — so this preview is the same
-  // arithmetic, not a lookalike.
-  const series = getInvoiceSource();
-  setInvValue('invNum', applyInvoiceNumberFormat(
-    invoiceSeriesFormat(profile, series), invoiceSeriesSequence(profile, series)));
-}
-
-// The authoritative generator — called only right before an actual new
-// invoice is saved. Runs entirely inside one Postgres transaction
-// server-side now (server/routes/invoices.js's POST /reserve-number,
-// which locks the profile row before scanning both invoice tables —
-// INCLUDING soft-deleted rows, since a deleted invoice's number must
-// never be reissued — so two concurrent saves can never both land on
-// the same number, unlike the old client-side read-then-write version).
-// Returns null (after showing an error toast) if the reservation call
-// itself fails, e.g. the backend being unreachable.
-// The series is sent, because the number reserved must come from that
-// series' counter and must only avoid numbers already taken in that same
-// series — the shop's 138 does not block the website from issuing 138.
-async function reserveNextInvoiceNumber(userId, source) {
+  const note = document.getElementById('invNumNote');
   try {
-    const { invoiceNumber } = await apiFetch('/invoices/reserve-number', {
-      method: 'POST',
-      body: JSON.stringify({ source: source || INVOICE_SOURCE_DEFAULT })
-    });
-    return invoiceNumber;
+    const { invoiceNumber } = await apiFetch(
+      '/invoices/next-number?source=' + encodeURIComponent(getInvoiceSource()));
+    setInvValue('invNum', invoiceNumber || '');
+    if (note) note.textContent = INV_NUMBER_NOTE;
   } catch (error) {
-    handleApiError(error, 'Could not reserve an invoice number');
-    return null;
+    // The preview is a courtesy and blocks nothing: the save issues the
+    // real number whether or not this succeeded. Saying so is better than
+    // leaving a stale or invented number in the box.
+    setInvValue('invNum', '');
+    if (note) note.textContent = 'Preview unavailable — the number is issued when you save.';
   }
 }
+
+const INV_NUMBER_NOTE = 'Issued automatically when you save.';
 
 // ── Transport toggle ────────────────────────────────
 function onTransportToggleChange() {
@@ -881,7 +842,7 @@ async function loadInvoiceDuplicateDraft() {
   document.getElementById('invPageTitle').textContent = 'New Invoice (Duplicated)';
   showToast('Duplicated — review and Save to create a new invoice.', 'success');
   const user = await getCurrentUser();
-  if (user) generateInvoiceNo(user.id, true);
+  generateInvoiceNo();
 }
 
 // ── Save ─────────────────────────────────────────────
@@ -903,18 +864,16 @@ async function saveInvoice() {
 
   const type = getSelectedInvoiceType();
   const wasNewInvoice = !invoiceEditId;
-  const autoMode = isAutoInvoiceOn();
 
   if (!custName) { showToast('Please enter the customer name.', 'error'); return; }
   // State is only user-facing (and required) in B2B's form — B2C's is
   // hidden and auto-filled from the business profile by syncInvoiceTypeUI().
   if (type === 'b2b' && !state) { showToast('Please select a state.', 'error'); return; }
-  // In Auto Generate mode a brand-new invoice's number hasn't been
-  // reserved yet at this point (see below) — the field just shows a
-  // non-binding preview, which is allowed to be blank if e.g. the
-  // profile hasn't loaded yet. Manual mode (or editing/duplicating an
-  // existing invoice) still requires it up front as before.
-  if (!invNum && !(autoMode && wasNewInvoice)) { showToast('Please enter an invoice number.', 'error'); return; }
+  // There is deliberately no check on the Invoice Number here. A new
+  // invoice has not been given one yet — the box holds a preview, which
+  // is allowed to be blank — and an existing invoice keeps the one it
+  // already has. Either way the server decides it, so there is nothing
+  // for this form to require.
   if (!invDate)  { showToast('Please enter the invoice date.', 'error'); return; }
   // An export billed abroad needs a currency and a rate to convert it;
   // a domestic invoice is never asked for either.
@@ -940,43 +899,14 @@ async function saveInvoice() {
   // just avoids saving an invoice and then failing its payment.
   if (wasNewInvoice && !validateInvPaymentAmount()) return;
 
-  // Auto Generate: reserve the authoritative number now, right before
-  // the duplicate check — never trust the on-screen preview alone since
-  // another tab/session could have consumed it since it was shown. Never
-  // applies to editing/duplicating-in-place an existing invoice (that
-  // always keeps its own number); only a genuinely new invoice.
-  if (autoMode && wasNewInvoice) {
-    invNum = await reserveNextInvoiceNumber(user.id, source);
-    if (!invNum) return; // reserveNextInvoiceNumber() already showed an error toast
-    setInvValue('invNum', invNum);
-  }
-
   const isTypeChange = invoiceEditId && invoiceEditType && invoiceEditType !== type;
 
-  if (!invoiceEditId || isTypeChange) {
-    // Only within the same series. Two series may legitimately both hold
-    // a 5 — they are different documents in different books, and GSTR-1
-    // reports them as such.
-    // readMaybeOne(), not a bare destructure of `.data`. A `.single()`
-    // that finds nothing and a `.single()` whose REQUEST failed both
-    // arrive with no data, and reading them the same way meant a failed
-    // duplicate check was taken as "no duplicate" and the save went
-    // ahead — putting two documents on one number into a filing, which
-    // the Portal rejects and which has to be unpicked by hand. undefined
-    // means the check itself failed, so nothing is saved.
-    const [dupB2B, dupB2C] = await Promise.all([
-      readMaybeOne(_supabase.from('b2b_invoices').select('id').eq('user_id', user.id).eq('invoice_number', invNum).eq('invoice_source', source).single(),
-        'Could not check whether that invoice number is already used'),
-      readMaybeOne(_supabase.from('b2c_invoices').select('id').eq('user_id', user.id).eq('invoice_number', invNum).eq('invoice_source', source).single(),
-        'Could not check whether that invoice number is already used')
-    ]);
-    if (dupB2B === undefined || dupB2C === undefined) return;
-    const dupId = dupB2B?.id || dupB2C?.id;
-    // On a type change, the invoice being edited still has this exact
-    // number on its OLD table row (not deleted yet) — that's not a real
-    // duplicate, it's the record we're about to migrate off of.
-    if (dupId && dupId !== invoiceEditId) { showToast('Invoice number already exists!', 'error'); return; }
-  }
+  // No duplicate check runs here any more, because there is no longer a
+  // number to check. This form does not choose one: the save issues it,
+  // under a lock on the business's profile row, from a scan of the numbers
+  // that series has already used — so a free number is not something this
+  // page can hope for and then lose a race over, it is a property of the
+  // transaction that writes the invoice.
 
   const transportRequired = !!document.getElementById('transportToggle')?.checked;
   // An export is an invoice with a shipping bill against it. When the
@@ -988,7 +918,9 @@ async function saveInvoice() {
     user_id: user.id,
     customer_name: custName, phone, address, state,
     ...buildInvShipTo(),
-    invoice_number: invNum, invoice_date: invDate, supply_type: supply,
+    // No invoice_number: the server issues it (and ignores any that is
+    // sent). invNum above is only what the preview box is showing.
+    invoice_date: invDate, supply_type: supply,
     ...collectWarrantyHeader(),
     invoice_source: source,
     gst_category: gstCategory,
@@ -1034,7 +966,8 @@ async function saveInvoice() {
     // the table it's given, so a classification change is handled as
     // insert-into-new-table + permanently delete the old row (same as
     // any other delete — items+HSN+stock reversal, then the header).
-    invoiceId = await saveInvoiceWithItems(type, headerBase, null, user.id);
+    invoiceId = await saveInvoiceWithItems(type, headerBase, null, user.id,
+      { movedFrom: { type: invoiceEditType, id: invoiceEditId } });
     if (invoiceId) {
       const oldTable = invoiceEditType === 'b2b' ? 'b2b_invoices' : 'b2c_invoices';
       await cascadeInvoiceItemsDelete(invoiceEditType, invoiceEditId);
@@ -1075,7 +1008,11 @@ async function saveInvoice() {
   // to the invoice tables for it.
   await markProformaConverted(invoiceId, type);
 
-  showToast(wasNewInvoice ? 'Invoice saved successfully!' : 'Invoice updated successfully!');
+  const issuedNumber = typeof getLastSavedInvoiceNumber === 'function' ? getLastSavedInvoiceNumber() : '';
+  if (issuedNumber) setInvValue('invNum', issuedNumber);
+  showToast(wasNewInvoice
+    ? (issuedNumber ? `Invoice ${issuedNumber} saved successfully!` : 'Invoice saved successfully!')
+    : 'Invoice updated successfully!');
   clearDraft(INVOICE_FORM_KEY);
   clearItemsDraft(INVOICE_FORM_KEY);
   const banner = document.getElementById('invDraftBanner'); if (banner) banner.innerHTML = '';
@@ -1201,7 +1138,7 @@ function clearInvoiceFormFields() {
   clearItemsDraft(INVOICE_FORM_KEY);
   const banner = document.getElementById('invDraftBanner'); if (banner) banner.innerHTML = '';
 
-  getCurrentUser().then(u => { if (u) generateInvoiceNo(u.id); });
+  generateInvoiceNo();
 }
 
 function resetInvoiceForm() {

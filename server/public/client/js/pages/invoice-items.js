@@ -1396,7 +1396,12 @@ function clearItemsDraft(formKey) {
 // couldn't offer that. Signature and return value (invoiceId on
 // success, false on failure) are unchanged, so every caller
 // (js/invoice-entry.js, js/b2c.js, js/gstr1.js) needs no changes.
-async function saveInvoiceWithItems(type, headerBase, editId, userId) {
+// The number the last save issued. The save returns it because the server
+// decides it, so the page has no other way to know what was written.
+let lastSavedInvoiceNumber = '';
+function getLastSavedInvoiceNumber() { return lastSavedInvoiceNumber; }
+
+async function saveInvoiceWithItems(type, headerBase, editId, userId, opts) {
   if (!validateInvoiceItems()) return false;
 
   // A serial-tracked line must carry exactly one number per unit. Checked
@@ -1449,10 +1454,16 @@ async function saveInvoiceWithItems(type, headerBase, editId, userId) {
     }));
 
   try {
-    const { invoiceId, warranty } = await apiFetch(`/invoices/${type}/save-with-items`, {
+    const { invoiceId, invoiceNumber, warranty } = await apiFetch(`/invoices/${type}/save-with-items`, {
       method: 'POST',
-      body: JSON.stringify({ editId, header, items })
+      // movedFrom names the row a reclassified invoice is moving off, so the
+      // server can carry that invoice's own number across. No number is sent
+      // on any path - the server issues it.
+      body: JSON.stringify({ editId, header, items, movedFrom: opts && opts.movedFrom })
     });
+    // Which number the invoice was actually issued, as opposed to the
+    // preview the form was showing. Read back through the getter below.
+    lastSavedInvoiceNumber = invoiceNumber || '';
     // The register is written by the SAME transaction as the invoice, so
     // this only reports what already happened - it never has to ask for it,
     // and a failure there would have failed the save rather than passing

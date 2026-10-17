@@ -149,7 +149,7 @@ test('P12 both changed scripts carry a new cache key on every page', () => {
       checked++;
     }
     if (s.includes('client/js/pages/profile.js')) {
-      assert.ok(s.includes('client/js/pages/profile.js?v=39'), f + ' must load profile.js at v=39');
+      assert.ok(s.includes('client/js/pages/profile.js?v=40'), f + ' must load profile.js at v=40');
     }
   }
   assert.ok(checked >= 20, 'expected the sidebar pages to load product-sync.js');
