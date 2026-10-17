@@ -653,6 +653,12 @@ const TABLES = {
       // (routes/documents.js) from the charge and the principal supply's
       // rate, so nothing may set it directly.
       'transport_charge','transport_gst_amount',
+      // What the quotation asks for up front. A term of the quote, not a
+      // payment - it writes no receipt voucher, no advance adjustment and
+      // no payment row, and it changes none of the tax columns above. NULL
+      // means none was quoted and reads as zero. The balance is derived
+      // from this and total_amount, so there is no column for it.
+      'advance_amount',
       'created_at','updated_at'],
     immutable: ['transport_gst_amount'],
     validate: makeDistrictValidator([['state', 'district'], ['shipping_state', 'shipping_district']])

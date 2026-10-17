@@ -346,6 +346,43 @@ function validateTransportCharge(raw) {
   return { valid: true, value: round2(n) };
 }
 
+// What a quotation asks for up front.
+//
+// Blank is not zero: blank means no advance was quoted, which is what every
+// proforma raised before this field existed means, and it stores NULL. A
+// typed 0 is a real decision ("nothing up front") and stores 0.
+//
+// The cap is the quoted total, because an advance larger than the quote is
+// not an advance - it is a different conversation, and a balance below zero
+// would be printed on the document. The caller passes the total it is about
+// to store, so the two are judged together rather than one against a figure
+// read back later.
+function validateAdvanceAmount(raw, quotedTotal) {
+  if (raw === null || raw === undefined || raw === '') {
+    return { valid: true, value: null };
+  }
+  const isNumeric = typeof raw === 'number'
+    || (typeof raw === 'string' && raw.trim() !== '' && Number.isFinite(Number(raw)));
+  const n = isNumeric ? Number(raw) : NaN;
+
+  if (!Number.isFinite(n)) {
+    return { valid: false, error: 'Advance amount must be a number, or left blank for none.' };
+  }
+  if (n < 0) {
+    return { valid: false, error: 'Advance amount cannot be negative.' };
+  }
+  const value = round2(n);
+  const total = Number(quotedTotal);
+  if (Number.isFinite(total) && value > round2(total)) {
+    return {
+      valid: false,
+      error: 'Advance amount cannot be more than the quoted total of '
+        + round2(total).toFixed(2) + '.'
+    };
+  }
+  return { valid: true, value };
+}
+
 // The tax on that charge, at the principal supply's rate. Derived, never
 // accepted from the browser: the client shows it so the person can see what
 // they are billing, but what gets STORED is computed here from the charge
@@ -374,5 +411,6 @@ module.exports = {
   validateGstin, isValidPhone, normalizeIndianPhone,
   validateCustomerPayload, validateProductPayload, validateProfilePayload,
   validateDistrictPairs, makeDistrictValidator,
-  validateTransportCharge, transportGstAmount, principalGstRate, round2
+  validateTransportCharge,
+  validateAdvanceAmount, transportGstAmount, principalGstRate, round2
 };

@@ -20,10 +20,10 @@
   <script src="client/js/pages/profile.js?v=40"></script>
   <script src="client/js/pages/products.js?v=31"></script>
   <script src="client/js/core/drafts.js?v=29"></script>
-  <script src="client/js/pages/invoice-items.js?v=44"></script>
+  <script src="client/js/pages/invoice-items.js?v=45"></script>
   <script src="client/js/pages/invoice-pdf.js?v=52"></script>
-  <script src="client/js/pages/proforma-pdf.js?v=43"></script>
-  <script src="client/js/pages/proforma-entry.js?v=43"></script>
+  <script src="client/js/pages/proforma-pdf.js?v=44"></script>
+  <script src="client/js/pages/proforma-entry.js?v=44"></script>
 </head>
 <body>
 <div class="app-layout">
@@ -262,6 +262,40 @@
 
       <!-- The invoice product grid, mounted verbatim. -->
       <div id="itemsSection"></div>
+
+      <!-- What the quotation asks for up front, and what is left to pay.
+           A term of the quote, not a payment: nothing is received here, no
+           receipt voucher is written and the GST above does not move. The
+           balance is derived from the Grand Total and the advance, never
+           typed and never stored. -->
+      <div class="card mb-16">
+        <div class="card-header"><span class="card-title"><i class="fas fa-hand-holding-dollar"></i> Advance &amp; Balance</span></div>
+        <div class="card-body">
+          <div class="form-grid cols-2 mb-16">
+            <div class="form-group">
+              <label for="pfAdvanceAmount">Advance Amount (&#8377;)</label>
+              <input type="number" id="pfAdvanceAmount" class="form-control text-right" min="0" step="0.01"
+                placeholder="0.00" oninput="onProformaAdvanceInput()">
+              <div id="pfAdvanceError" class="fs-11 text-danger d-none" style="margin-top:4px;"></div>
+              <span class="fs-11 text-muted-sm">Optional. Leave blank or 0 if none is asked for up front.</span>
+            </div>
+            <div class="calc-box" id="pfAdvanceSummary">
+              <div class="calc-row">
+                <span class="label">Grand Total</span>
+                <span class="value"><input type="text" id="pfSummaryTotal" class="form-control calc-input-sm" readonly tabindex="-1" aria-label="Grand Total"></span>
+              </div>
+              <div class="calc-row">
+                <span class="label">Advance Amount</span>
+                <span class="value"><input type="text" id="pfSummaryAdvance" class="form-control calc-input-sm" readonly tabindex="-1" aria-label="Advance Amount"></span>
+              </div>
+              <div class="calc-row total">
+                <span class="label">Balance Amount</span>
+                <span class="value"><input type="text" id="pfSummaryBalance" class="form-control calc-input-total" readonly tabindex="-1" aria-label="Balance Amount"></span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
 
       <div class="card mb-16">
         <div class="card-body">

@@ -531,7 +531,12 @@ test('EX14 the migration is additive, listed, and matches what schema.sql declar
 
   const order = JSON.parse(rd('server', 'db', 'migrations', '_manifest.json')).order;
   assert.ok(order.includes('migration_invoice_export_currency.sql'), 'the runner knows about it');
-  assert.strictEqual(order[order.length - 1], 'migration_invoice_export_currency.sql', 'and runs it last');
+  // Not "last": a later migration (migration_proforma_advance.sql) has since
+  // been added after it. What matters is that it runs after the migration
+  // that creates the invoice tables it alters.
+  assert.ok(order.indexOf('migration_invoice_export_currency.sql')
+    > order.indexOf('migration_invoice_transport_charge.sql'),
+    'it runs after the columns it sits beside were added');
 
   // schema.sql is the current shape, so it declares the same columns.
   for (const c of headerCols.concat(['fx_rate', 'fx_taxable_value'])) {
@@ -548,7 +553,7 @@ test('EX15 the save route accepts the new columns, and the page is served fresh'
   for (const c of ['fx_rate', 'fx_taxable_value']) {
     assert.ok(GENERIC.includes(`'${c}'`), 'the item allowlist carries ' + c);
   }
-  for (const key of ['client/js/pages/invoice-items.js?v=44', 'client/js/pages/invoice-entry.js?v=40',
+  for (const key of ['client/js/pages/invoice-items.js?v=45', 'client/js/pages/invoice-entry.js?v=41',
     'client/js/pages/invoice-pdf.js?v=52', 'client/css/style.css?v=41']) {
     assert.ok(HTML.includes(key), 'invoice.html loads ' + key);
   }

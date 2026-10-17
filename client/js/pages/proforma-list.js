@@ -161,6 +161,11 @@ function importProformaIntoInvoice(id) {
     // quoted. Only the charge travels: the invoice derives its own tax from
     // it and its lines, at the principal supply's rate.
     transport_charge: r.transport_charge,
+    // What the quotation asked for up front. It travels so the invoice can
+    // SAY so, and for no other purpose: it fills in no payment field,
+    // records no receipt and marks nothing paid. See the note Invoice Entry
+    // shows, and the reasoning in loadInvoiceDraft().
+    advance_amount: r.advance_amount,
     // Read once by Invoice Entry and used only after a successful save.
     source_proforma_id: r.id,
     items

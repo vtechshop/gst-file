@@ -79,6 +79,11 @@ function proformaToRenderable(row, items) {
       ? null : +row.transport_charge,
     transport_gst_amount: (row.transport_gst_amount === null || row.transport_gst_amount === undefined)
       ? null : +row.transport_gst_amount,
+    // What the quotation asks for up front. NULL - every proforma older than
+    // the column, and every one quoted without an advance - prints no payment
+    // summary at all, so those documents are byte for byte what they were.
+    advance_amount: (row.advance_amount === null || row.advance_amount === undefined)
+      ? null : +row.advance_amount,
     // Round-off is DERIVED here, not stored - proforma_invoices has no
     // round_off column, exactly as the tax invoice has none. The taxable
     // value and every tax column above are passed through untouched, so
@@ -286,7 +291,20 @@ async function buildProformaPDFDoc(row, items) {
     totalsRows.push(['Round Off', (inv.round_off >= 0 ? '+' : '') + formatNum(inv.round_off)]);
   }
 
-  if (y + totalsRows.length * 5.5 + 60 > doc.internal.pageSize.height - 12) {
+  // What is asked for up front and what is left, printed only when an
+  // advance was actually quoted. The balance is computed here from the two
+  // stored figures rather than read from a column, so it cannot disagree with
+  // the Quoted Total printed directly above it.
+  const advance = (inv.advance_amount === null || inv.advance_amount === undefined)
+    ? null : round2(inv.advance_amount);
+  const paymentRows = advance === null ? [] : [
+    ['Advance Amount', formatNum(advance)],
+    ['Balance Amount Due', formatNum(round2(inv.total_amount - advance))]
+  ];
+
+  // Those rows live below the Quoted Total, so the space they need is part of
+  // the same question of whether this block still fits on this page.
+  if (y + totalsRows.length * 5.5 + paymentRows.length * 5.5 + 60 > doc.internal.pageSize.height - 12) {
     doc.addPage();
     y = drawHeader();
   }
@@ -302,6 +320,21 @@ async function buildProformaPDFDoc(row, items) {
   doc.setFontSize(12); doc.setFont('helvetica', 'bold'); doc.setTextColor(...accent);
   doc.text('Quoted Total', boxX, ruleY + 7);
   doc.text('Rs.' + formatNum(inv.total_amount), R, ruleY + 7, { align: 'right' });
+
+  // Advance and balance, in the same column and the same money format as
+  // everything above them. The balance is set in bold because it is the
+  // figure the customer acts on; the advance is not a receipt and is not
+  // described as one.
+  let totalsBottom = ruleY + 7;
+  if (paymentRows.length) {
+    doc.setFontSize(9); doc.setFont('helvetica', 'normal'); doc.setTextColor(60, 60, 60);
+    doc.text(paymentRows[0][0], boxX, totalsBottom + 7);
+    doc.text('Rs.' + paymentRows[0][1], R, totalsBottom + 7, { align: 'right' });
+    doc.setFont('helvetica', 'bold'); doc.setTextColor(30, 30, 30);
+    doc.text(paymentRows[1][0], boxX, totalsBottom + 13);
+    doc.text('Rs.' + paymentRows[1][1], R, totalsBottom + 13, { align: 'right' });
+    totalsBottom += 13;
+  }
 
   // ── Left column: bank details, words, validity, notes, terms ──
   let ly = y;
@@ -351,7 +384,10 @@ async function buildProformaPDFDoc(row, items) {
   const SEAL = 26;
   const sealReserveH = sealData ? SEAL : (signatureData ? 18 : 14);
   const bandTop = doc.internal.pageSize.height - 12 - 18 - (6 + sealReserveH + 5);
-  let sigY = Math.max(ruleY + 12, bandTop);
+  // Below whatever the right column actually printed. With no advance
+  // quoted totalsBottom IS ruleY + 7, so this is the ruleY + 12 it has
+  // always been and that document's layout does not move by a hair.
+  let sigY = Math.max(totalsBottom + 5, bandTop);
 
   // The same stamp block the tax invoice draws, measured the same way: every
   // size below is of the INK inside each file, never of the file's edges - see

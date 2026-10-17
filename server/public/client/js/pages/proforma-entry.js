@@ -39,6 +39,10 @@ async function initProformaEntry() {
   setProformaValue('pfValidUntil', proformaDefaultValidUntil(today));
   renderProformaValidityNote();
 
+  // A new quotation asks for nothing up front: the box starts at 0 and the
+  // summary shows the whole total as the balance.
+  restoreProformaAdvance(null);
+
   const id = new URLSearchParams(window.location.search).get('id');
   if (id) await loadProformaForEdit(id);
 }
@@ -226,6 +230,110 @@ function collectProformaItems() {
     }));
 }
 
+// ── Advance asked for up front, and the balance left ────────────────
+//
+// A term of the quotation, not a payment. Nothing here records money as
+// received: no receipt voucher (GSTR-1 11A), no advance adjustment (11B)
+// and no payments-ledger row. It also does not touch the GST or the Grand
+// Total - an advance changes who pays when, never what is owed.
+//
+// The balance is never typed and never stored. It is Grand Total minus the
+// advance, computed wherever it is shown, so the two figures on the screen
+// cannot disagree with the one in the database.
+const PROFORMA_ADVANCE_DEFAULT = 0;
+
+// What is in the box: null for blank (no advance quoted - what every
+// proforma raised before this field existed means), NaN for something that
+// is not a number, otherwise the rounded amount.
+function proformaAdvanceAmount() {
+  const raw = (document.getElementById('pfAdvanceAmount')?.value || '').trim();
+  if (raw === '') return null;
+  const n = Number(raw);
+  return Number.isFinite(n) ? round2(n) : NaN;
+}
+
+// The quoted total, from the same rollup the invoice uses, so the balance is
+// taken off exactly the figure the Grand Total box shows.
+function proformaQuotedTotal() {
+  return typeof computeInvoiceRollups === 'function'
+    ? (computeInvoiceRollups().total_amount || 0) : 0;
+}
+
+// Why this value cannot be quoted, in words a person can act on - or '' when
+// it can. The same two rules the save route enforces (utils/validation.js's
+// validateAdvanceAmount), so the form and the server never disagree about
+// what is acceptable.
+function proformaAdvanceProblem(total) {
+  const advance = proformaAdvanceAmount();
+  if (advance === null) return '';
+  if (Number.isNaN(advance)) return 'Advance amount must be a number, or left blank for none.';
+  if (advance < 0) return 'Advance amount cannot be negative.';
+  if (advance > round2(total)) {
+    return 'Advance amount cannot be more than the Grand Total of \u20B9' + formatNum(total) + '.';
+  }
+  return '';
+}
+
+// Paints the three figures and the inline message. Called by the grid every
+// time the totals move (invoice-items.js) and by the field's own oninput, so
+// the balance follows a changed line item as readily as a changed advance.
+function renderProformaAdvanceSummary(grandTotal) {
+  if (!document.getElementById('pfAdvanceSummary')) return; // not this page
+  const total = typeof grandTotal === 'number' ? grandTotal : proformaQuotedTotal();
+  const advance = proformaAdvanceAmount();
+  const quoted = Number.isNaN(advance) ? 0 : (advance || 0);
+  const problem = proformaAdvanceProblem(total);
+
+  const money = (id, v) => { const el = document.getElementById(id); if (el) el.value = '\u20B9' + formatNum(v); };
+  money('pfSummaryTotal', total);
+  money('pfSummaryAdvance', quoted);
+
+  // A balance below zero would be a nonsense to print, and showing 0.00
+  // would read as "nothing left to pay" - the opposite of the error raised.
+  const balanceEl = document.getElementById('pfSummaryBalance');
+  if (balanceEl) {
+    balanceEl.value = problem ? '\u2014' : '\u20B9' + formatNum(round2(total - quoted));
+  }
+
+  // The message does not block typing: the field keeps what was entered so
+  // it can be corrected, and Save refuses it - validateProformaAdvance().
+  const errEl = document.getElementById('pfAdvanceError');
+  if (errEl) {
+    errEl.textContent = problem;
+    errEl.classList.toggle('d-none', !problem);
+  }
+}
+
+function onProformaAdvanceInput() {
+  renderProformaAdvanceSummary(proformaQuotedTotal());
+}
+
+// The gate on Save. Returns false (having said why) rather than quietly
+// storing something the server would refuse anyway.
+function validateProformaAdvance(total) {
+  const problem = proformaAdvanceProblem(
+    typeof total === 'number' ? total : proformaQuotedTotal());
+  if (!problem) return true;
+  renderProformaAdvanceSummary(total);
+  showToast(problem, 'error');
+  document.getElementById('pfAdvanceAmount')?.focus();
+  return false;
+}
+
+// Opening a saved proforma, or starting a new one. A row older than the
+// column has no advance_amount at all, which is the same as none quoted, so
+// it opens showing the default and prints exactly as it always did.
+function restoreProformaAdvance(row) {
+  const el = document.getElementById('pfAdvanceAmount');
+  if (!el) return;
+  const stored = row && row.advance_amount !== null && row.advance_amount !== undefined
+    ? Number(row.advance_amount) : null;
+  el.value = stored === null || Number.isNaN(stored)
+    ? (row ? '' : String(PROFORMA_ADVANCE_DEFAULT))
+    : String(round2(stored));
+  renderProformaAdvanceSummary(proformaQuotedTotal());
+}
+
 async function saveProforma() {
   const user = await getCurrentUser();
   if (!user) return;
@@ -270,6 +378,13 @@ async function saveProforma() {
   // used to be taxable + gst summed here, which dropped the round-off AND the
   // cess, so the list and the PDF quoted a different amount from the screen.
   const quotedTotal = computeInvoiceRollups().total_amount;
+
+  // The advance is judged against that total before anything is sent - and
+  // before a proforma number is reserved below, so a Save this turns away
+  // never burns a number from the proforma book.
+  if (!validateProformaAdvance(quotedTotal)) return;
+  const advanceAmount = proformaAdvanceAmount();
+
   const document_ = {
     document_number: getProformaText('pfNumber') || '',
     document_date: date,
@@ -294,6 +409,10 @@ async function saveProforma() {
     // The charge only. Its tax is derived by the save route from this charge
     // and the line items, and nothing the browser sends for it is stored.
     transport_charge: transportCharge,
+    // What is asked for up front. null when nothing is, which is what a
+    // blank box means and what every older proforma already means. No tax
+    // column above moves because of it, and no payment is recorded.
+    advance_amount: advanceAmount,
     notes: getProformaText('pfNotes') || null,
     terms: getProformaText('pfTerms') || null,
     ...buildProformaExport()
@@ -402,6 +521,12 @@ async function loadProformaForEdit(id) {
   // which is every proforma saved before this, restores an empty box and the
   // totals it was saved with.
   restoreInvoiceTransport(rec);
+  // What this proforma asked for up front. AFTER the lines and the delivery
+  // charge, so the balance is taken off the total they add up to. A proforma
+  // saved before this column existed has no advance_amount at all, which is
+  // the same as none quoted: the box opens empty and the balance is the whole
+  // total, exactly as that proforma has always printed.
+  restoreProformaAdvance(rec);
   populateDistrictList('pfDistrictList', rec.state || '');
   renderProformaValidityNote();
 

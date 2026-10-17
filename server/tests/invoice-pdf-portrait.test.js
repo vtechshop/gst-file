@@ -254,7 +254,9 @@ test('P11 the changed asset carries one new cache key on every page that loads i
   }
   // and nothing unrelated moved with it
   assert.ok(rd('invoice.html').includes('client/js/utilities/utils.js?v=33'));
-  assert.ok(rd('proforma.html').includes('client/js/pages/proforma-pdf.js?v=43'));
+  // Moved by the proforma advance amount, which prints two rows of its own
+  // (proforma-advance.test.js) - not by anything in this change.
+  assert.ok(rd('proforma.html').includes('client/js/pages/proforma-pdf.js?v=44'));
   // Checked as "still versioned" rather than pinned: proforma-entry.js is
   // not this change's asset, and later work on it moves the key.
   assert.match(rd('proforma.html'), /client\/js\/pages\/proforma-entry\.js\?v=\d+/);

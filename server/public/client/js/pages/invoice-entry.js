@@ -830,6 +830,29 @@ async function loadInvoiceDuplicateDraft() {
   // change the quotation, and a save that fails must leave it alone.
   pendingProformaSourceId = draft.source_proforma_id || null;
 
+  // An advance on the quotation is a TERM of that quotation, not money this
+  // application has seen. Applying it here would mean writing a payment, and
+  // a payment says a customer paid - which no one has told us. So the figure
+  // is reported and nothing is filled in: the person who knows whether it
+  // arrived records it in Payment below, through the ledger that every other
+  // receipt goes through, and the usual duplicate guard applies because
+  // exactly one payment exists per thing actually received.
+  const quotedAdvance = round2(draft.advance_amount || 0);
+  if (quotedAdvance > 0) {
+    const banner = document.getElementById('invDraftBanner');
+    if (banner) {
+      banner.innerHTML = `
+      <div class="banner-success mb-16">
+        <i class="fas fa-hand-holding-dollar"></i>
+        <div class="banner-text">
+          <span>The quotation asked for an advance of &#8377;${formatNum(quotedAdvance)}.
+          It has not been recorded as received &mdash; if it has been, enter it under
+          Payment below before saving.</span>
+        </div>
+      </div>`;
+    }
+  }
+
   if (Array.isArray(draft.items) && draft.items.length) {
     loadItemsIntoTable(draft.items);
     // A delivery charge quoted on a proforma travels with it, so the invoice

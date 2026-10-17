@@ -25,7 +25,8 @@ const { requireAuth } = require('../middleware/auth');
 const { asyncRoute } = require('../middleware/errorHandler');
 const { applyInvoiceNumberFormat } = require('../utils/invoiceNumberFormat');
 const { TABLES } = require('./generic');
-const { validateTransportCharge, transportGstAmount, principalGstRate } = require('../utils/validation');
+const { validateTransportCharge, transportGstAmount, principalGstRate,
+        validateAdvanceAmount } = require('../utils/validation');
 
 const router = express.Router();
 router.use(requireAuth);
@@ -283,6 +284,21 @@ router.post('/:type/save', asyncRoute(async (req, res) => {
     }
     document.transport_charge = check.value;
     derivedTransportGst = gst;
+  }
+
+  // What the quotation asks for up front. Judged against the total being
+  // stored by this same save, so the pair on the row is always coherent.
+  //
+  // It changes nothing else: no tax column moves, no payment is recorded and
+  // no receipt voucher is written. Absent from the payload means the caller is
+  // not touching the advance, which is not the same as clearing it.
+  if (Object.prototype.hasOwnProperty.call(document, 'advance_amount')) {
+    const advance = validateAdvanceAmount(document.advance_amount, document.total_amount);
+    if (!advance.valid) {
+      const e = new Error(advance.error); e.status = 400; e.expose = true;
+      e.code = 'advance_amount_invalid'; throw e;
+    }
+    document.advance_amount = advance.value;
   }
 
   // A table may declare columns that exist and are readable but must not be

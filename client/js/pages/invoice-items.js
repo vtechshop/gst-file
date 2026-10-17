@@ -1240,6 +1240,12 @@ function computeInvoiceRollups() {
   if (typeof renderInvPaymentPreview === 'function') {
     renderInvPaymentPreview(inrHeader ? inrHeader.total_amount : grandTotal);
   }
+  // The Proforma page shows an advance and the balance left against this
+  // same total, so it has to follow the total the same way. Same guard and
+  // same reason: this file also loads on pages that have no such block.
+  if (typeof renderProformaAdvanceSummary === 'function') {
+    renderProformaAdvanceSummary(inrHeader ? inrHeader.total_amount : grandTotal);
+  }
 
   // transport_gst_amount travels with the charge so the caller has the
   // whole picture, but the SERVER re-derives it from the charge before

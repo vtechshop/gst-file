@@ -313,8 +313,9 @@ test('RS11 only the proforma changed: the invoice rollup and the invoice PDF rul
   assert.match(PF_ENTRY, /total_amount: quotedTotal,/);
   assert.equal(/total_amount: taxable \+ gst/.test(PF_ENTRY), false, 'the old sum is gone');
   const html = rd('proforma.html');
-  assert.ok(html.includes('client/js/pages/proforma-entry.js?v=43') && html.includes('client/js/pages/proforma-pdf.js?v=43'));
-  assert.ok(rd('proforma-list.html').includes('client/js/pages/proforma-pdf.js?v=43'));
+  // Moved by the proforma advance amount (proforma-advance.test.js).
+  assert.ok(html.includes('client/js/pages/proforma-entry.js?v=44') && html.includes('client/js/pages/proforma-pdf.js?v=44'));
+  assert.ok(rd('proforma-list.html').includes('client/js/pages/proforma-pdf.js?v=44'));
 });
 
 test('RS12 known and left alone: the saved gst_amount can sit a paisa off the split - the quote follows the invoice', async () => {

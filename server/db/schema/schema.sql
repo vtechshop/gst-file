@@ -1940,7 +1940,19 @@ CREATE TABLE IF NOT EXISTS proforma_invoices (
   CONSTRAINT proforma_invoices_transport_charge_nonneg
     CHECK (transport_charge IS NULL OR transport_charge >= 0),
   CONSTRAINT proforma_invoices_transport_gst_nonneg
-    CHECK (transport_gst_amount IS NULL OR transport_gst_amount >= 0)
+    CHECK (transport_gst_amount IS NULL OR transport_gst_amount >= 0),
+
+  -- What the quotation asks for up front, from
+  -- migration_proforma_advance.sql. A term of the quote, not a payment:
+  -- nothing has necessarily been received, so this writes no receipt
+  -- voucher, no advance adjustment and no payment, and it reaches no
+  -- return. NULL means no advance was quoted - which is what every
+  -- proforma older than this column means - and every reader treats NULL
+  -- as zero. The balance is total_amount - advance_amount and is derived
+  -- wherever it is shown, never stored.
+  advance_amount NUMERIC(14,2),
+  CONSTRAINT proforma_invoices_advance_amount_nonneg
+    CHECK (advance_amount IS NULL OR advance_amount >= 0)
 );
 
 CREATE TABLE IF NOT EXISTS proforma_invoice_items (
