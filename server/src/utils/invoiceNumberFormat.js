@@ -19,6 +19,47 @@ function applyInvoiceNumberFormat(format, seq) {
   return fmt + '-' + n;
 }
 
+// Which sequence number a given invoice number came from - the inverse of
+// applyInvoiceNumberFormat above, and written directly against it so the two
+// cannot drift: every branch here answers one branch there.
+//
+// It exists because a number typed by hand still has to move the counter. A
+// business that types 1 is telling us where its book is, and the next
+// automatic number has to continue from there rather than from wherever the
+// counter happened to be.
+//
+// null means "this number did not come out of this format" - a free-form
+// number like SPECIAL/2026 against INV-###. The caller leaves the counter
+// alone in that case, because there is no sequence to read from it.
+function sequenceFromInvoiceNumber(format, number) {
+  const fmt = (format || '').trim() || 'INV-###';
+  const value = String(number == null ? '' : number).trim();
+  if (!value) return null;
+
+  const esc = (t) => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const hashes = fmt.match(/#+/);
+
+  let re;
+  if (hashes) {
+    // The padded branch: INV-### <- INV-007. The digits may be longer than
+    // the run of #, because applyInvoiceNumberFormat only pads, never truncates.
+    re = new RegExp('^' + esc(fmt.slice(0, hashes.index)) + '(\\d+)'
+      + esc(fmt.slice(hashes.index + hashes[0].length)) + '$', 'i');
+  } else if (/^\d+$/.test(fmt)) {
+    // The bare-number branch: a format that is itself digits prints the
+    // sequence alone.
+    re = /^(\d+)$/;
+  } else {
+    // The fallback branch: a format with no # at all prints "<format>-<n>".
+    re = new RegExp('^' + esc(fmt) + '-(\\d+)$', 'i');
+  }
+
+  const m = re.exec(value);
+  if (!m) return null;
+  const seq = parseInt(m[1], 10);
+  return Number.isFinite(seq) && seq > 0 ? seq : null;
+}
+
 // The default format for a series nobody has configured yet.
 //
 // "online" is spelled out rather than derived because no rule could get
@@ -55,6 +96,7 @@ function invoiceSeriesFormat(profile, series) {
 
 module.exports = {
   applyInvoiceNumberFormat,
+  sequenceFromInvoiceNumber,
   invoiceSeriesFormat,
   defaultInvoiceSeriesFormat,
   INVOICE_SERIES_DEFAULT_FORMATS

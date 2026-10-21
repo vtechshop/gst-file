@@ -433,6 +433,71 @@ function onInvoiceSourceChange() {
   generateInvoiceNo();
 }
 
+// ── Automatic or manual numbering, for this invoice only ────────────
+//
+// Automatic is the default and is what nearly every invoice uses: the server
+// issues the number inside the transaction that writes the invoice. Manual
+// exists for the case automatic cannot serve - taking over a book that
+// started elsewhere, or correcting where the sequence sits - and it is a
+// decision about THIS invoice. It is deliberately not stored on the profile:
+// the next new invoice opens on Automatic again, so nobody is left in a mode
+// they chose once.
+//
+// What a typed number still does is move the book: save 1 by hand and the
+// next automatic number is 2. That happens on the server, in the same
+// transaction (applyManualInvoiceNumberOn), not here.
+let invoiceNumberMode = 'auto';
+const INV_NUMBER_MODE_DEFAULT = 'auto';
+
+function invoiceNumberingIsManual() { return invoiceNumberMode === 'manual'; }
+
+function setInvoiceNumberMode(mode) {
+  // An invoice that already exists keeps the number it was issued, so while
+  // editing there is no mode to choose: the chosen mode is left untouched and
+  // the switch is painted as unavailable rather than silently ignoring
+  // clicks. Called with the current mode from the edit loader for exactly
+  // that repaint.
+  const editing = !!invoiceEditId;
+  if (!editing) invoiceNumberMode = mode === 'manual' ? 'manual' : 'auto';
+  const manual = invoiceNumberingIsManual();
+
+  const auto = document.getElementById('invNumAuto');
+  const man = document.getElementById('invNumManual');
+  if (auto) {
+    auto.classList.toggle('active', !manual);
+    auto.setAttribute('aria-pressed', String(!manual));
+    auto.disabled = editing;
+  }
+  if (man) {
+    man.classList.toggle('active', manual);
+    man.setAttribute('aria-pressed', String(manual));
+    man.disabled = editing;
+  }
+
+  // Typed only on a NEW invoice in manual mode. An invoice being edited keeps
+  // its number whatever the server is told, so the box stays read-only.
+  const typeable = manual && !editing;
+  const numEl = document.getElementById('invNum');
+  if (numEl) {
+    numEl.readOnly = !typeable;
+    if (typeable) { numEl.removeAttribute('aria-readonly'); numEl.removeAttribute('tabindex'); }
+    else { numEl.setAttribute('aria-readonly', 'true'); numEl.setAttribute('tabindex', '-1'); }
+  }
+
+  const note = document.getElementById('invNumNote');
+  if (note) {
+    note.textContent = editing ? INV_NUMBER_NOTE_EDIT
+      : (manual ? INV_NUMBER_NOTE_MANUAL : INV_NUMBER_NOTE);
+  }
+
+  if (editing) return;
+  // Switching back to automatic throws away whatever was typed and shows what
+  // the server would issue; switching to manual keeps the previewed number as
+  // a starting point, which is usually the number the user wants to adjust.
+  if (!manual) generateInvoiceNo();
+  else if (numEl) numEl.focus();
+}
+
 // Fills the read-only Invoice Number box with what the next invoice in
 // the chosen series will be.
 //
@@ -450,6 +515,8 @@ function onInvoiceSourceChange() {
 async function generateInvoiceNo() {
   // An invoice that already exists keeps the number it was issued.
   if (invoiceEditId) return;
+  // Nor does a preview overwrite a number being typed by hand.
+  if (invoiceNumberingIsManual()) return;
   const note = document.getElementById('invNumNote');
   try {
     const { invoiceNumber } = await apiFetch(
@@ -466,6 +533,8 @@ async function generateInvoiceNo() {
 }
 
 const INV_NUMBER_NOTE = 'Issued automatically when you save.';
+const INV_NUMBER_NOTE_MANUAL = 'Typed by you. The next invoice continues from it.';
+const INV_NUMBER_NOTE_EDIT = 'This invoice keeps the number it was issued.';
 
 // ── Transport toggle ────────────────────────────────
 function onTransportToggleChange() {
@@ -671,6 +740,8 @@ async function loadInvoiceForEdit(type, id) {
   populateDistrictList('invShipDistrictList', rec.shipping_state || '');
   onInvShipSameChange();
   setInvValue('invNum', rec.invoice_number || '');
+  // Repaint only - invoiceEditId is already set, so this changes no mode.
+  setInvoiceNumberMode(invoiceNumberMode);
   setInvValue('invDate', rec.invoice_date || '');
   restoreWarrantyFields(rec);
   setInvValue('invSupply', rec.supply_type || 'intrastate');
@@ -892,11 +963,15 @@ async function saveInvoice() {
   // State is only user-facing (and required) in B2B's form — B2C's is
   // hidden and auto-filled from the business profile by syncInvoiceTypeUI().
   if (type === 'b2b' && !state) { showToast('Please select a state.', 'error'); return; }
-  // There is deliberately no check on the Invoice Number here. A new
-  // invoice has not been given one yet — the box holds a preview, which
-  // is allowed to be blank — and an existing invoice keeps the one it
-  // already has. Either way the server decides it, so there is nothing
-  // for this form to require.
+  // On automatic there is deliberately nothing to check here: the box holds
+  // a preview, which is allowed to be blank, and the server issues the real
+  // number. On manual the number IS the user's, so an empty box is a
+  // question to ask now rather than a refusal from the server later.
+  if (wasNewInvoice && invoiceNumberingIsManual() && !invNum) {
+    showToast('Enter an invoice number, or switch back to Auto.', 'error');
+    document.getElementById('invNum')?.focus();
+    return;
+  }
   if (!invDate)  { showToast('Please enter the invoice date.', 'error'); return; }
   // An export billed abroad needs a currency and a rate to convert it;
   // a domestic invoice is never asked for either.
@@ -941,8 +1016,11 @@ async function saveInvoice() {
     user_id: user.id,
     customer_name: custName, phone, address, state,
     ...buildInvShipTo(),
-    // No invoice_number: the server issues it (and ignores any that is
-    // sent). invNum above is only what the preview box is showing.
+    // On automatic no invoice_number is sent at all and the server issues
+    // one. On manual the typed number is sent to be JUDGED - the server still
+    // decides, refusing a blank or a duplicate and moving the counter to
+    // follow it (applyManualInvoiceNumberOn in routes/invoices.js).
+    ...(wasNewInvoice && invoiceNumberingIsManual() ? { invoice_number: invNum } : {}),
     invoice_date: invDate, supply_type: supply,
     ...collectWarrantyHeader(),
     invoice_source: source,
@@ -989,6 +1067,8 @@ async function saveInvoice() {
     // the table it's given, so a classification change is handled as
     // insert-into-new-table + permanently delete the old row (same as
     // any other delete — items+HSN+stock reversal, then the header).
+    // A reclassified invoice keeps its own number, so it is neither issued
+    // nor typed: the server reads it from the row being moved.
     invoiceId = await saveInvoiceWithItems(type, headerBase, null, user.id,
       { movedFrom: { type: invoiceEditType, id: invoiceEditId } });
     if (invoiceId) {
@@ -998,7 +1078,8 @@ async function saveInvoice() {
     }
   } else {
     if (!invoiceEditId) { headerBase.payment_status = 'unpaid'; headerBase.amount_paid = 0; }
-    invoiceId = await saveInvoiceWithItems(type, headerBase, invoiceEditId, user.id);
+    invoiceId = await saveInvoiceWithItems(type, headerBase, invoiceEditId, user.id,
+      { numberingMode: invoiceNumberingIsManual() ? 'manual' : 'auto' });
   }
   if (!invoiceId) return;
 
@@ -1124,8 +1205,9 @@ function clearInvoiceFormFields() {
   restoreInvoiceTransport(null);
   setInvValue('invSupply', 'intrastate');
   // Back to the default series, same as every other field here returns
-  // to its default. generateInvoiceNo() below then previews the offline
-  // counter, not whichever series was just used.
+  // to its default, BEFORE the numbering mode is reset below - so the preview
+  // that reset asks for is the offline counter's, not whichever series was
+  // just used.
   setInvoiceSourceValue(INVOICE_SOURCE_DEFAULT);
   setInvGstCategory(GST_CUSTOMER_CATEGORY_DEFAULT);
   const rcReset = document.getElementById('invReverseCharge');
@@ -1152,6 +1234,11 @@ function clearInvoiceFormFields() {
   resetInvoiceItems();
   invoiceEditId = null;
   invoiceEditType = null;
+  // Manual was a decision about the invoice just saved, not a mode to leave
+  // the business in. setInvoiceNumberMode() repaints the switch and asks the
+  // server for the next number, which is why it runs before the preview call
+  // at the foot of this function.
+  setInvoiceNumberMode(INV_NUMBER_MODE_DEFAULT);
   document.getElementById('invPageTitle').textContent = 'New Invoice';
   document.getElementById('invSaveBtn').innerHTML = '<i class="fas fa-save"></i> Save Invoice';
   updateClassifyBadge();
@@ -1160,8 +1247,6 @@ function clearInvoiceFormFields() {
   clearDraft(INVOICE_FORM_KEY);
   clearItemsDraft(INVOICE_FORM_KEY);
   const banner = document.getElementById('invDraftBanner'); if (banner) banner.innerHTML = '';
-
-  generateInvoiceNo();
 }
 
 function resetInvoiceForm() {

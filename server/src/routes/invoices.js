@@ -17,7 +17,8 @@ const { syncWarrantiesForInvoice } = require('../services/warranty-sync');
 const { reserveDocumentNumberOn } = require('./documents');
 const { requireAuth } = require('../middleware/auth');
 const { asyncRoute } = require('../middleware/errorHandler');
-const { applyInvoiceNumberFormat, invoiceSeriesFormat } = require('../utils/invoiceNumberFormat');
+const { applyInvoiceNumberFormat, invoiceSeriesFormat,
+        sequenceFromInvoiceNumber } = require('../utils/invoiceNumberFormat');
 const { TABLES } = require('./generic');
 const { applyStockDelta } = require('../services/stock-ledger');
 // Serial units move with the sale that moves them, in its transaction.
@@ -212,21 +213,76 @@ async function previewInvoiceNumberOn(client, userId, series) {
 // caller's transaction commits. An invoice that fails to save - a serial
 // mismatch, a stock guard, a dropped connection - leaves the counter where
 // it was, and the number it nearly took goes to the next invoice instead.
-async function assignInvoiceNumberOn(client, userId, series) {
-  const { rows } = await client.query(
-    `SELECT ${PROFILE_NUMBERING_COLS} FROM profiles WHERE id = $1 FOR UPDATE`, [userId]);
-  const issued = nextFreeNumber(rows[0], series, await takenNumbersFor(client, userId, series));
-
+// Where this series' counter is left pointing. The offline series keeps
+// using the column that existed before series did; every other series has its
+// own entry. One writer, so the two numbering modes cannot disagree about
+// where the counter lives.
+async function setSeriesCounterOn(client, userId, series, next) {
   if (series === DEFAULT_INVOICE_SOURCE) {
     await client.query('UPDATE profiles SET invoice_current_sequence = $1 WHERE id = $2',
-      [issued.seq + 1, userId]);
+      [next, userId]);
   } else {
     await client.query(
       `UPDATE profiles
           SET invoice_series_sequences = COALESCE(invoice_series_sequences, '{}'::jsonb) || jsonb_build_object($1::text, $2::int)
-        WHERE id = $3`, [series, issued.seq + 1, userId]);
+        WHERE id = $3`, [series, next, userId]);
   }
+}
+
+async function assignInvoiceNumberOn(client, userId, series) {
+  const { rows } = await client.query(
+    `SELECT ${PROFILE_NUMBERING_COLS} FROM profiles WHERE id = $1 FOR UPDATE`, [userId]);
+  const issued = nextFreeNumber(rows[0], series, await takenNumbersFor(client, userId, series));
+  await setSeriesCounterOn(client, userId, series, issued.seq + 1);
   return issued;
+}
+
+// A number the user typed, for an invoice being created in Manual mode.
+//
+// Manual is a choice about THIS invoice, not a mode the business is left in:
+// the page returns to Automatic for the next one. What the typed number does
+// leave behind is where the book now stands - type 1 and the next automatic
+// number is 2, even if the counter had wandered to 7. That is the whole point
+// of typing it, and it is why this moves the counter rather than merely
+// allowing the number through.
+//
+// The counter is set, not raised: a lower number is a correction, and
+// refusing to follow it downwards would mean the automatic sequence quietly
+// disagreed with the book the business is actually keeping. Nothing can
+// collide as a result, because the automatic side scans the numbers already
+// issued and walks past them.
+//
+// Everything here runs on the caller's client, under the same profile-row
+// lock the automatic path takes, and therefore commits or rolls back with the
+// invoice itself.
+async function applyManualInvoiceNumberOn(client, userId, series, raw) {
+  // Trimmed before it is judged OR stored, so a stray space cannot make two
+  // numbers that look identical fail to match each other later.
+  const number = String(raw == null ? '' : raw).trim();
+  if (!number) {
+    const e = new Error('Enter an invoice number, or switch back to automatic numbering.');
+    e.status = 400; e.expose = true; e.code = 'invoice_number_required'; throw e;
+  }
+
+  const { rows } = await client.query(
+    `SELECT ${PROFILE_NUMBERING_COLS} FROM profiles WHERE id = $1 FOR UPDATE`, [userId]);
+
+  // Only this series' numbers are "taken" - two books may legitimately both
+  // hold a 5. Compared case-insensitively, as the automatic side compares.
+  const taken = await takenNumbersFor(client, userId, series);
+  if (taken.has(number.toUpperCase())) {
+    const e = new Error(`Invoice number ${number} already exists in this series.`);
+    e.status = 409; e.expose = true; e.code = 'invoice_number_taken'; throw e;
+  }
+
+  // Where the book stands now. A number that did not come out of this
+  // series' format carries no sequence to read, so the counter is left
+  // exactly where it was rather than being moved on a guess.
+  const { format } = seriesState(rows[0], series);
+  const seq = sequenceFromInvoiceNumber(format, number);
+  if (seq !== null) await setSeriesCounterOn(client, userId, series, seq + 1);
+
+  return { invoiceNumber: number, seq, format };
 }
 
 // Reclassifying a saved invoice (B2B <-> B2C) moves it to the other table,
@@ -252,7 +308,7 @@ router.post('/:type/save-with-items', asyncRoute(async (req, res) => {
   badType(req.params.type);
   const type = req.params.type;
   const table = invoiceTable(type);
-  const { editId, header, items, movedFrom } = req.body;
+  const { editId, header, items, movedFrom, numberingMode } = req.body;
   if (!header || typeof header !== 'object' || Array.isArray(header)) {
     const e = new Error('Invoice header is missing or malformed.'); e.status = 400; e.expose = true; throw e;
   }
@@ -320,10 +376,16 @@ router.post('/:type/save-with-items', asyncRoute(async (req, res) => {
     delete header.transport_gst_amount;
   }
 
-  // The number is the server's to decide, so the payload's copy of it is
-  // dropped here - before the column list is built - on every path. An edit
-  // keeps the number the invoice already has (nothing is written to that
-  // column at all), and a create is given one below, from this database.
+  // Which numbering this invoice is being created under. Automatic unless
+  // the caller says otherwise, so a payload that says nothing - including one
+  // from an older page - is numbered by the server exactly as before.
+  const manualNumbering = numberingMode === 'manual';
+  // The typed number is read here and then removed from the header on every
+  // path, so the column is never written from the payload directly: an edit
+  // keeps the number the invoice already has, and a create is given one below
+  // - either issued from this database or the typed one, once it has been
+  // judged against it.
+  const typedNumber = header.invoice_number;
   delete header.invoice_number;
 
   const headerCols = TABLES[table].columns.filter(c => c !== 'id' && c !== 'user_id' && header && Object.prototype.hasOwnProperty.call(header, c));
@@ -360,9 +422,15 @@ router.post('/:type/save-with-items', asyncRoute(async (req, res) => {
       // Issued inside this transaction, so the counter advances only if the
       // invoice below actually commits - and under the profile-row lock, so
       // two simultaneous creates cannot land on the same number.
+      const series = normaliseSource(header.invoice_source);
       const moved = await numberOfMovedInvoice(client, req.userId, movedFrom);
-      invoiceNumber = moved
-        || (await assignInvoiceNumberOn(client, req.userId, normaliseSource(header.invoice_source))).invoiceNumber;
+      if (moved) {
+        invoiceNumber = moved;
+      } else if (manualNumbering) {
+        invoiceNumber = (await applyManualInvoiceNumberOn(client, req.userId, series, typedNumber)).invoiceNumber;
+      } else {
+        invoiceNumber = (await assignInvoiceNumberOn(client, req.userId, series)).invoiceNumber;
+      }
       const payload = { ...header, invoice_number: invoiceNumber, user_id: req.userId };
       const cols = headerCols.concat('invoice_number', 'user_id');
       const placeholders = cols.map((_, i) => `$${i + 1}`).join(',');

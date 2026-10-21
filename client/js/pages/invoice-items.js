@@ -1463,9 +1463,13 @@ async function saveInvoiceWithItems(type, headerBase, editId, userId, opts) {
     const { invoiceId, invoiceNumber, warranty } = await apiFetch(`/invoices/${type}/save-with-items`, {
       method: 'POST',
       // movedFrom names the row a reclassified invoice is moving off, so the
-      // server can carry that invoice's own number across. No number is sent
-      // on any path - the server issues it.
-      body: JSON.stringify({ editId, header, items, movedFrom: opts && opts.movedFrom })
+      // server can carry that invoice's own number across. numberingMode says
+      // whether the header carries a number the user typed; without it the
+      // server numbers the invoice itself, which is the default and what an
+      // older page sends.
+      body: JSON.stringify({ editId, header, items,
+        movedFrom: opts && opts.movedFrom,
+        numberingMode: opts && opts.numberingMode })
     });
     // Which number the invoice was actually issued, as opposed to the
     // preview the form was showing. Read back through the getter below.

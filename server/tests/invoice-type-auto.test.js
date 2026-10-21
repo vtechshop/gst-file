@@ -33,6 +33,7 @@ function load() {
     value, checked: false, textContent: '', innerHTML: '', className: '', readOnly: false, disabled: false,
     style: {}, dataset: {}, onclick: null,
     classList: { add: noop, remove: noop, toggle: noop, contains: () => false },
+    setAttribute: noop, removeAttribute: noop, getAttribute: () => null,
     addEventListener: noop, dispatchEvent: noop, focus: noop, select: noop, scrollIntoView: noop
   });
   const el = id => { if (!store.has(id)) store.set(id, mk()); return store.get(id); };
@@ -351,8 +352,8 @@ test('A17 the page loads the changed script under a new cache key only', () => {
   // All three moved together for export invoices billed in a foreign
   // currency (invoice-export-currency.test.js): the entry page, the grid
   // that now shows the buyer's currency, and the PDF that prints it.
-  assert.match(HTML, /client\/js\/pages\/invoice-entry\.js\?v=41/);
-  assert.match(HTML, /client\/js\/pages\/invoice-items\.js\?v=45/);
+  assert.match(HTML, /client\/js\/pages\/invoice-entry\.js\?v=42/);
+  assert.match(HTML, /client\/js\/pages\/invoice-items\.js\?v=46/);
   assert.match(HTML, /client\/js\/pages\/invoice-pdf\.js\?v=52/);
 });
 
