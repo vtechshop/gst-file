@@ -55,14 +55,18 @@ test('N1 a new invoice opens on Automatic, with the number read-only', () => {
 test('N1b choosing Manual makes the number typeable, and only then', () => {
   const fn = ENTRY.slice(ENTRY.indexOf('function setInvoiceNumberMode('));
   const body = fn.slice(0, fn.indexOf('\n}'));
-  // Typeable on a NEW invoice in manual mode, and in no other case.
-  assert.match(body, /const typeable = manual && !editing;/);
+  // Manual is what makes the box typeable - on a new invoice and on one
+  // being edited alike.
+  assert.match(body, /const typeable = manual;/);
   assert.match(body, /numEl\.readOnly = !typeable;/);
   // The preview never types over what the user is entering.
   assert.match(ENTRY, /if \(invoiceNumberingIsManual\(\)\) return;/);
-  // Both buttons are unavailable while editing, because the number cannot move.
-  assert.match(body, /auto\.disabled = editing;/);
-  assert.match(body, /man\.disabled = editing;/);
+  // Both modes stay offered while editing; neither button is disabled.
+  assert.match(body, /auto\.disabled = false;/);
+  assert.match(body, /man\.disabled = false;/);
+  // Automatic on an EXISTING invoice means "keep what it has", never a fresh
+  // number - that would renumber an issued document behind the user's back.
+  assert.match(body, /if \(editing\) \{ if \(numEl\) numEl\.value = invoiceEditNumber \|\| ''; return; \}/);
 });
 
 // (required test 5 - the mode is not remembered)
@@ -107,7 +111,7 @@ test('N3 a number is sent only in Manual, and the column is never written from t
   // The header carries a number only on a new invoice in manual mode.
   const header = ENTRY.slice(ENTRY.indexOf('const headerBase = {'));
   const built = header.slice(0, header.indexOf('};'));
-  assert.match(built, /\.\.\.\(wasNewInvoice && invoiceNumberingIsManual\(\) \? \{ invoice_number: invNum \} : \{\}\),/);
+  assert.match(built, /\.\.\.\(invoiceNumberingIsManual\(\) \? \{ invoice_number: invNum \} : \{\}\),/);
   assert.equal(/^\s*invoice_number:\s*invNum,/m.test(built), false,
     'and never unconditionally');
 
@@ -177,13 +181,41 @@ test('N6 a reclassified invoice keeps its own number, read from the database', (
   assert.match(ITEMS, /movedFrom: opts && opts\.movedFrom/);
 });
 
-test('N7 an edit never writes the number column', () => {
+test('N7 an edit writes the number only through the rename check', () => {
   const fn = ROUTE.slice(ROUTE.indexOf("router.post('/:type/save-with-items'"));
-  // invoice_number is deleted from the header for every path, so the UPDATE
-  // branch cannot include it in its SET clause whatever was sent.
+  // The payload's copy is still dropped before the column list is built, so
+  // the only way into that column on an edit is renameInvoiceNumberOn().
   assert.ok(fn.indexOf('delete header.invoice_number') < fn.indexOf('if (editId) {'));
-  // The edit branch reports the number the row already carries.
+  assert.match(fn, /const renamedTo = manualNumbering\s*\n\s*\? await renameInvoiceNumberOn\(client, req\.userId, type, editId, typedNumber\)\s*\n\s*: null;/);
+  // On automatic, or when the number is unchanged, the column is not in the
+  // SET clause at all.
+  assert.match(fn, /const editCols = renamedTo === null \? headerCols : headerCols\.concat\('invoice_number'\);/);
   assert.match(fn, /RETURNING id, invoice_number/);
+});
+
+test('N7b a rename is refused while another document still names the invoice', () => {
+  const fn = ROUTE.slice(ROUTE.indexOf('async function renameInvoiceNumberOn'));
+  const body = fn.slice(0, fn.indexOf('\n}'));
+  // Checked BEFORE the duplicate scan and before the counter is touched, so a
+  // refused rename changes nothing at all.
+  assert.ok(body.indexOf('documentsNamingInvoice') < body.indexOf('already exists in this series'));
+  assert.ok(body.indexOf('documentsNamingInvoice') < body.indexOf('setSeriesCounterOn'));
+  assert.match(body, /e\.code = 'invoice_number_referenced'/);
+  // Every table that keeps a copy of the number is in the list, matched by
+  // the invoice id so no guess is made about how each spells the table.
+  for (const t of ['eway_bills', 'sales_returns', 'revised_invoices', 'cdn_notes',
+                   'advance_adjustments', 'warranties']) {
+    assert.ok(ROUTE.includes("table: '" + t + "'"), t + ' is checked before a renumber');
+  }
+  const refs = ROUTE.slice(ROUTE.indexOf('async function documentsNamingInvoice'));
+  assert.match(refs.slice(0, refs.indexOf('\n}')), /to_regclass/,
+    'a table an older database has not got is skipped, not fatal');
+  // And nothing rewrites those copies.
+  for (const t of ['eway_bills', 'sales_returns', 'revised_invoices', 'cdn_notes',
+                   'advance_adjustments', 'warranties']) {
+    assert.equal(new RegExp('UPDATE ' + t).test(ROUTE), false,
+      'the invoice route must never rewrite ' + t);
+  }
 });
 
 test('N8 a scanned document cannot name this invoice', () => {
@@ -303,13 +335,26 @@ test('N25 Auto and Manual behave, and neither asks twice', async () => {
   assert.strictEqual(sb.__el('invNum').readOnly, true, 'and the field is read-only again');
   assert.strictEqual(sb.__el('invNum').value, '7');
 
-  // Editing an existing invoice: the mode cannot be changed and nothing is asked.
-  sb.__run("invoiceEditId = 'inv-1'; __nextNumberCalls.length = 0;");
+  // Editing an existing invoice: both modes work, and Automatic means "keep
+  // the number this invoice has" - it must never fetch a fresh one.
+  sb.__run("invoiceEditId = 'inv-1'; invoiceEditNumber = 'INV-077'; __nextNumberCalls.length = 0;");
+  sb.__el('invNum').value = 'INV-077';
+
   sb.__run("setInvoiceNumberMode('manual');");
   await settle();
-  assert.strictEqual(sb.__run('invoiceNumberMode'), 'auto', 'the mode is left alone while editing');
-  assert.strictEqual(sb.__calls(), 0, 'and no number is fetched for an invoice that has one');
-  assert.strictEqual(sb.__el('invNumManual').disabled, true, 'the switch says so');
+  assert.strictEqual(sb.__run('invoiceNumberMode'), 'manual', 'Manual is available while editing');
+  assert.strictEqual(sb.__el('invNum').readOnly, false, 'and the number becomes editable');
+  assert.strictEqual(sb.__el('invNum').value, 'INV-077', 'prefilled with what it already has');
+  assert.strictEqual(sb.__el('invNumManual').disabled, false, 'the switch is live');
+  assert.strictEqual(sb.__calls(), 0, 'and nothing is fetched');
+
+  sb.__el('invNum').value = 'INV-099';            // a change in progress
+  sb.__run("setInvoiceNumberMode('auto');");
+  await settle();
+  assert.strictEqual(sb.__el('invNum').value, 'INV-077',
+    'Automatic restores the invoice own number rather than renumbering it');
+  assert.strictEqual(sb.__calls(), 0, 'and still asks the server for nothing');
+  assert.strictEqual(sb.__el('invNum').readOnly, true);
 });
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -784,17 +829,18 @@ test('N22b when a typed number IS the one automatic is about to issue, one wins 
   assert.deepStrictEqual(rows, [], 'the table holds no number twice, whichever way it went');
 });
 
-// (required test 10, with a manual number)
-test('N23 editing an invoice created manually keeps its number', async () => {
+// (required tests 1 and 5)
+test('N23 editing on Automatic keeps the number, whatever the payload says', async () => {
   const created = await saveManual('MANUAL-EDIT-1');
   assert.equal(created.status, 200, JSON.stringify(created.body));
   const id = created.body.invoiceId;
   const seqBefore = await storedSequence();
 
+  // Automatic on an existing invoice means "keep it" - and a number in the
+  // payload is ignored, because the mode was not manual.
   const edited = await api('POST', '/api/invoices/b2c/save-with-items', {
     editId: id,
-    numberingMode: 'manual',
-    header: { ...invoicePayload().header, customer_name: 'Renamed Co', invoice_number: 'RENAMED-9' },
+    header: { ...invoicePayload().header, customer_name: 'Renamed Co', invoice_number: 'SNEAKY-9' },
     items: invoicePayload().items
   });
   assert.equal(edited.status, 200, JSON.stringify(edited.body));
@@ -802,9 +848,170 @@ test('N23 editing an invoice created manually keeps its number', async () => {
 
   const { rows } = await db.query(
     'SELECT invoice_number, customer_name FROM b2c_invoices WHERE id = $1', [id]);
-  assert.equal(rows[0].invoice_number, 'MANUAL-EDIT-1', 'even asked to rename it');
+  assert.equal(rows[0].invoice_number, 'MANUAL-EDIT-1', 'a client-supplied number cannot bypass the mode');
   assert.equal(rows[0].customer_name, 'Renamed Co', 'while the edit itself landed');
   assert.equal(await storedSequence(), seqBefore, 'and the sequence did not move');
+});
+
+// (required tests 4, 6, 7, 8)
+test('N26 an existing invoice can be renumbered on Manual, and the book follows', async () => {
+  // A plain numeric book, so the counter move is readable.
+  await db.query("UPDATE profiles SET invoice_number_format = '#' WHERE id = $1", [USER]);
+  const created = await saveManual('4001');
+  assert.equal(created.status, 200, JSON.stringify(created.body));
+  const id = created.body.invoiceId;
+  const itemsBefore = await db.query(
+    'SELECT count(*)::int n, sum(total_amount) t FROM invoice_items WHERE invoice_id = $1', [id]);
+
+  const renamed = await api('POST', '/api/invoices/b2c/save-with-items', {
+    editId: id,
+    numberingMode: 'manual',
+    header: { ...invoicePayload().header, invoice_number: '4100' },
+    items: invoicePayload().items
+  });
+  assert.equal(renamed.status, 200, JSON.stringify(renamed.body));
+  assert.equal(renamed.body.invoiceNumber, '4100', 'the new number is reported back');
+  assert.equal(renamed.body.invoiceId, id, 'and it is the same invoice, not a new row');
+
+  const { rows } = await db.query(
+    'SELECT invoice_number, total_amount FROM b2c_invoices WHERE id = $1', [id]);
+  assert.equal(rows[0].invoice_number, '4100', 'the stored number changed');
+  assert.equal(Number(rows[0].total_amount), 1180, 'and the money did not');
+
+  // Items survived the edit, by id.
+  const itemsAfter = await db.query(
+    'SELECT count(*)::int n, sum(total_amount) t FROM invoice_items WHERE invoice_id = $1', [id]);
+  assert.equal(itemsAfter.rows[0].n, itemsBefore.rows[0].n, 'the line items are still there');
+  assert.equal(Number(itemsAfter.rows[0].t), Number(itemsBefore.rows[0].t));
+
+  // (required test 8) the book now continues from the number actually issued.
+  assert.equal(await storedSequence(), 4101);
+  assert.equal((await nextNumber()).body.invoiceNumber, '4101');
+});
+
+// (required test 6)
+test('N27 a rename onto another invoice number is refused; onto its own is a no-op', async () => {
+  const a = await saveManual('5001');
+  const b = await saveManual('5002');
+  const seqBefore = await storedSequence();
+
+  const clash = await api('POST', '/api/invoices/b2c/save-with-items', {
+    editId: b.body.invoiceId,
+    numberingMode: 'manual',
+    header: { ...invoicePayload().header, invoice_number: '5001' },
+    items: invoicePayload().items
+  });
+  assert.equal(clash.status, 409, JSON.stringify(clash.body));
+  assert.match(clash.body.error.message, /already exists in this series/i);
+
+  // Both rows are exactly as they were.
+  const { rows } = await db.query(
+    'SELECT invoice_number FROM b2c_invoices WHERE id = ANY($1) ORDER BY invoice_number',
+    [[a.body.invoiceId, b.body.invoiceId]]);
+  assert.deepStrictEqual(rows.map(r => r.invoice_number), ['5001', '5002']);
+  assert.equal(await storedSequence(), seqBefore, 'and the counter did not move');
+
+  // Saving an invoice with the number it already has is not a duplicate of
+  // itself: it is accepted, and changes nothing.
+  const same = await api('POST', '/api/invoices/b2c/save-with-items', {
+    editId: b.body.invoiceId,
+    numberingMode: 'manual',
+    header: { ...invoicePayload().header, customer_name: 'Same Number Co', invoice_number: '5002' },
+    items: invoicePayload().items
+  });
+  assert.equal(same.status, 200, JSON.stringify(same.body));
+  assert.equal(same.body.invoiceNumber, '5002');
+  assert.equal(await storedSequence(), seqBefore, 'an unchanged number moves no counter');
+  const { rows: after } = await db.query(
+    'SELECT customer_name FROM b2c_invoices WHERE id = $1', [b.body.invoiceId]);
+  assert.equal(after[0].customer_name, 'Same Number Co', 'while the rest of the edit landed');
+});
+
+// (required test 7)
+test('N28 a failed rename leaves the number and the counter untouched', async () => {
+  const created = await saveManual('6001');
+  const id = created.body.invoiceId;
+  const seqBefore = await storedSequence();
+
+  // Blank.
+  const blank = await api('POST', '/api/invoices/b2c/save-with-items', {
+    editId: id, numberingMode: 'manual',
+    header: { ...invoicePayload().header, invoice_number: '   ' },
+    items: invoicePayload().items
+  });
+  assert.equal(blank.status, 400);
+
+  // Refused inside the transaction, after the rename has been accepted: a
+  // line item whose product does not exist. The number must roll back with it.
+  const failed = await api('POST', '/api/invoices/b2c/save-with-items', {
+    editId: id, numberingMode: 'manual',
+    header: { ...invoicePayload().header, invoice_number: '6500' },
+    items: [{ ...invoicePayload().items[0], product_id: '00000000-0000-4000-8000-000000000000' }]
+  });
+  assert.ok(failed.status >= 400, 'the save failed: ' + JSON.stringify(failed.body));
+
+  const { rows } = await db.query('SELECT invoice_number FROM b2c_invoices WHERE id = $1', [id]);
+  assert.equal(rows[0].invoice_number, '6001', 'the number rolled back');
+  assert.equal(await storedSequence(), seqBefore, 'and so did the counter');
+});
+
+test('N29 an invoice another document already names cannot be renumbered', async () => {
+  const created = await saveManual('7001');
+  const id = created.body.invoiceId;
+  const seqBefore = await storedSequence();
+
+  // A warranty record naming this invoice - the cheapest of the six to make,
+  // and the check matches on the invoice id whichever table it is.
+  const warrantyTable = (await db.query("SELECT to_regclass('public.warranties') t")).rows[0].t;
+  if (!warrantyTable) return;   // an older scratch database: nothing to prove
+  await db.query(
+    `INSERT INTO warranties (user_id, warranty_number, invoice_id, invoice_type, invoice_number,
+       invoice_date, customer_name, product_name, warranty_period_months,
+       warranty_start_date, warranty_until, status)
+     VALUES ($1,'WR-7001',$2,'b2c','7001','2026-10-21','Anand Caterers',
+             'Idli Steamer 12 Tray',12,'2026-10-21','2027-10-21','active')`,
+    [USER, id]);
+
+  const refused = await api('POST', '/api/invoices/b2c/save-with-items', {
+    editId: id, numberingMode: 'manual',
+    header: { ...invoicePayload().header, invoice_number: '7500' },
+    items: invoicePayload().items
+  });
+  assert.equal(refused.status, 409, JSON.stringify(refused.body));
+  assert.match(refused.body.error.message, /warranty record/i);
+  assert.equal(refused.body.error.code, 'invoice_number_referenced');
+
+  const { rows } = await db.query('SELECT invoice_number FROM b2c_invoices WHERE id = $1', [id]);
+  assert.equal(rows[0].invoice_number, '7001', 'the invoice keeps its number');
+  assert.equal(await storedSequence(), seqBefore, 'and the counter is untouched');
+  // The warranty record itself was not rewritten either.
+  const { rows: w } = await db.query(
+    'SELECT invoice_number FROM warranties WHERE invoice_id = $1', [id]);
+  assert.equal(w[0].invoice_number, '7001', 'the record still names what it was issued');
+  await db.query('DELETE FROM warranties WHERE invoice_id = $1', [id]);
+});
+
+// (required test 9)
+test('N30 two renames of the same invoice at once cannot both land', async () => {
+  const created = await saveManual('8001');
+  const id = created.body.invoiceId;
+  const rename = (number) => api('POST', '/api/invoices/b2c/save-with-items', {
+    editId: id, numberingMode: 'manual',
+    header: { ...invoicePayload().header, invoice_number: number },
+    items: invoicePayload().items
+  });
+  const results = await Promise.all([rename('8100'), rename('8200')]);
+  const ok = results.filter(r => r.status === 200);
+  assert.ok(ok.length >= 1, 'at least one succeeded: ' + JSON.stringify(results.map(r => r.status)));
+
+  const { rows } = await db.query('SELECT invoice_number FROM b2c_invoices WHERE id = $1', [id]);
+  assert.ok(['8100', '8200'].includes(rows[0].invoice_number),
+    'the invoice carries one of the two, not a mixture: ' + rows[0].invoice_number);
+
+  const { rows: dupes } = await db.query(
+    'SELECT invoice_number, COUNT(*) c FROM b2c_invoices WHERE user_id = $1 GROUP BY invoice_number HAVING COUNT(*) > 1',
+    [USER]);
+  assert.deepStrictEqual(dupes, [], 'and no number is held twice');
 });
 
 test('teardown', async () => {

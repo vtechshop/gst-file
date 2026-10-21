@@ -361,7 +361,10 @@ test('W5 Sales Return and the other PDF modules are untouched', () => {
   // Revised again, under its own approved change, for the round-off fix: a
   // proforma saved now stores the invoice's rounded Grand Total and prints its
   // round-off and cess from it (proforma-roundoff-save.test.js).
-  const APPROVED_PROFORMA_PDF_SHA256 = 'c58e758714b70c16de29003886fffa40c9e4d22a725445806028766e84d06be3';
+  // And again for the advance amount: the quotation prints what it asks for up
+  // front and the balance left, under the Quoted Total, and the signature band
+  // now follows the bottom of that column (proforma-advance.test.js).
+  const APPROVED_PROFORMA_PDF_SHA256 = '96a577b46ca52860dc0aa61df861054014946a92a015b9af5378d56f9ab57f18';
   const pfSrc = fs.readFileSync(path.join(ROOT, 'client', 'js', 'pages', 'proforma-pdf.js'), 'utf8');
   const pf = require('crypto').createHash('sha256').update(pfSrc.replace(/\r\n/g, '\n')).digest('hex');
   assert.strictEqual(pf, APPROVED_PROFORMA_PDF_SHA256,

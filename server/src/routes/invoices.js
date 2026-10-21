@@ -285,6 +285,105 @@ async function applyManualInvoiceNumberOn(client, userId, series, raw) {
   return { invoiceNumber: number, seq, format };
 }
 
+// Documents that name an invoice by its NUMBER as well as by its id.
+//
+// Every one of them links by id too, so a renumber never breaks a
+// relationship. What it would break is the text: an e-way bill filed with the
+// portal, a credit note's "original invoice", a revised invoice, a GSTR-1
+// 11B adjustment or a warranty certificate would go on naming a number the
+// invoice no longer carries. Those copies are deliberate historical
+// snapshots - schema.sql says so beside advance_adjustments - and rewriting
+// them would alter records that have already been filed or handed out.
+//
+// So the number is not changed once any of them exists. That is a refusal,
+// not a silent rewrite and not a guess: the caller is told exactly which
+// documents are in the way.
+const INVOICE_NUMBER_REFERENCES = [
+  { table: 'eway_bills', column: 'invoice_id', label: 'e-way bill' },
+  { table: 'sales_returns', column: 'original_invoice_id', label: 'sales return' },
+  { table: 'revised_invoices', column: 'original_invoice_id', label: 'revised invoice' },
+  { table: 'cdn_notes', column: 'original_invoice_id', label: 'credit/debit note' },
+  { table: 'advance_adjustments', column: 'invoice_id', label: 'advance adjustment' },
+  { table: 'warranties', column: 'invoice_id', label: 'warranty record' }
+];
+
+// Matched on the id alone. The id is a UUID and unique across both invoice
+// tables, so this needs no guess about how each table spells which table the
+// invoice came from, and a table an older database has not got is skipped.
+async function documentsNamingInvoice(client, userId, invoiceId) {
+  const found = [];
+  for (const ref of INVOICE_NUMBER_REFERENCES) {
+    const { rows: exists } = await client.query('SELECT to_regclass($1) AS t', ['public.' + ref.table]);
+    if (!exists[0].t) continue;
+    const { rows } = await client.query(
+      `SELECT count(*)::int AS n FROM ${ref.table} WHERE user_id = $1 AND ${ref.column} = $2`,
+      [userId, invoiceId]);
+    if (rows[0].n > 0) found.push(`${rows[0].n} ${ref.label}${rows[0].n === 1 ? '' : 's'}`);
+  }
+  return found;
+}
+
+// Changing the number on an invoice that already exists.
+//
+// Returns the new number when there is one to write, or null when the user
+// sent the number it already has - in which case nothing is written and the
+// counter is left alone, so re-saving an invoice unchanged is free.
+//
+// Runs on the caller's client, inside the save's transaction: the number, the
+// counter and the invoice itself commit together or not at all.
+async function renameInvoiceNumberOn(client, userId, type, editId, raw) {
+  const number = String(raw == null ? '' : raw).trim();
+  if (!number) {
+    const e = new Error('Enter an invoice number, or switch back to automatic numbering.');
+    e.status = 400; e.expose = true; e.code = 'invoice_number_required'; throw e;
+  }
+
+  // The row being renamed, locked for the rest of this transaction. Its own
+  // series is read from the database rather than taken from the payload: the
+  // book an invoice belongs to is not something a rename gets to change.
+  const { rows: current } = await client.query(
+    `SELECT invoice_number, invoice_source FROM ${invoiceTable(type)}
+      WHERE id = $1 AND user_id = $2 FOR UPDATE`, [editId, userId]);
+  if (!current.length) { const e = new Error('Invoice not found.'); e.status = 404; e.expose = true; throw e; }
+  if (current[0].invoice_number === number) return null;
+
+  const series = normaliseSource(current[0].invoice_source);
+
+  // Nothing else may already be naming it - see the note above.
+  const naming = await documentsNamingInvoice(client, userId, editId);
+  if (naming.length) {
+    const e = new Error(
+      `This invoice's number cannot be changed: ${naming.join(', ')} already name it. `
+      + 'Those records keep the number as it was issued, and rewriting them would change '
+      + 'documents that have already been filed or given to a customer.');
+    e.status = 409; e.expose = true; e.code = 'invoice_number_referenced'; throw e;
+  }
+
+  // Free within this series, with the invoice being renamed excluded from
+  // the comparison against itself.
+  for (const t of ['b2b_invoices', 'b2c_invoices']) {
+    const params = [userId, number, series];
+    let where = 'user_id = $1 AND UPPER(invoice_number) = UPPER($2) AND invoice_source = $3';
+    if (t === invoiceTable(type)) { params.push(editId); where += ` AND id <> $${params.length}`; }
+    const { rows: clash } = await client.query(`SELECT 1 FROM ${t} WHERE ${where} LIMIT 1`, params);
+    if (clash.length) {
+      const e = new Error(`Invoice number ${number} already exists in this series.`);
+      e.status = 409; e.expose = true; e.code = 'invoice_number_taken'; throw e;
+    }
+  }
+
+  // The book follows the number that was actually issued, exactly as it does
+  // when one is typed on a new invoice. A number that did not come out of
+  // this series' format carries no sequence to read, so the counter stays.
+  const { rows: prof } = await client.query(
+    `SELECT ${PROFILE_NUMBERING_COLS} FROM profiles WHERE id = $1 FOR UPDATE`, [userId]);
+  const { format } = seriesState(prof[0], series);
+  const seq = sequenceFromInvoiceNumber(format, number);
+  if (seq !== null) await setSeriesCounterOn(client, userId, series, seq + 1);
+
+  return number;
+}
+
 // Reclassifying a saved invoice (B2B <-> B2C) moves it to the other table,
 // which is an INSERT - but it is the same invoice and it keeps its own
 // number. The number is read from the row being moved, in this database,
@@ -403,8 +502,15 @@ router.post('/:type/save-with-items', asyncRoute(async (req, res) => {
     const serialPlan = await planInvoiceSerials(client, req.userId, items);
 
     if (editId) {
-      const values = headerCols.map(c => header[c]);
-      const setClause = headerCols.map((c, i) => `${c} = $${i + 1}`).join(',');
+      // An existing invoice keeps its number unless the user explicitly chose
+      // Manual and sent a different one. Judged before anything is written,
+      // and written in the same statement as the rest of the edit.
+      const renamedTo = manualNumbering
+        ? await renameInvoiceNumberOn(client, req.userId, type, editId, typedNumber)
+        : null;
+      const editCols = renamedTo === null ? headerCols : headerCols.concat('invoice_number');
+      const values = editCols.map(c => (c === 'invoice_number' ? renamedTo : header[c]));
+      const setClause = editCols.map((c, i) => `${c} = $${i + 1}`).join(',');
       const { rows } = await client.query(
         `UPDATE ${table} SET ${setClause} WHERE id = $${values.length + 1} AND user_id = $${values.length + 2} RETURNING id, invoice_number`,
         [...values, editId, req.userId]
