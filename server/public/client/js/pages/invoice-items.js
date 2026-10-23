@@ -63,6 +63,17 @@ function itemsTransportEnabled() {
   return itemsFormPrefix === 'invoice' || itemsFormPrefix === 'proforma';
 }
 
+// Where a line falls back to PCS rather than to "Select Unit".
+//
+// A quotation is priced per piece far more often than not, and a blank unit
+// on it is simply a box the person has to fill in again for every line. A tax
+// invoice is a different matter: its unit becomes a UQC on a GSTR-1 line, so
+// there the Product Master's silence is left as silence and the person says
+// what the goods are counted in. Hence Proforma only.
+function itemsUnitFallsBackToDefault() {
+  return itemsFormPrefix === 'proforma';
+}
+
 // The rate a delivery charge is taxed at: the rate of the PRINCIPAL SUPPLY
 // on this invoice, never a rate of transport's own.
 //
@@ -875,7 +886,13 @@ function applyProductToRow(row, product) {
   row.product_id = p.id;
   row.product_name = p.name;
   row.hsn_code = p.hsn_code || '';
-  row.unit = p.unit || '';
+  // The Product Master stays authoritative wherever it actually says
+  // something (item-unit-default.test.js U7). What changed is the silent
+  // case: a product with no unit used to blank the row, throwing away the
+  // PCS a new row opens on and making the person choose again on every line.
+  // On a quotation that falls back to the default instead; on an invoice it
+  // still clears, because a UQC nobody chose does not belong on a return.
+  row.unit = p.unit || (itemsUnitFallsBackToDefault() ? DEFAULT_ITEM_UNIT : '');
   row.gst_percentage = +p.gst_percentage || 0;
   row.cess_rate = +p.cess_rate || 0;
   row.rate = +p.default_rate || 0;
