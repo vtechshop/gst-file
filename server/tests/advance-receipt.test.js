@@ -28,6 +28,7 @@ const VOUCHERS_HTML = rd('vouchers.html');
 const DOCS = rd('server', 'src', 'routes', 'documents.js');
 const GEN = rd('server', 'src', 'routes', 'generic.js');
 const SCHEMA = rd('server', 'db', 'schema', 'schema.sql');
+const CSS = rd('client', 'css', 'style.css');
 const MIG_FILE = 'migration_receipt_voucher_payment.sql';
 const MIG = rd('server', 'db', 'migrations', MIG_FILE);
 
@@ -485,7 +486,8 @@ function vouchersSandbox(opts) {
     // Not loaded: apiClient.js and the rest of the page's stack. Only the few
     // names vouchers.js reaches for are provided, so a test failure points at
     // vouchers.js rather than at someone else's module.
-    readAll: async () => [(o.items || [])],
+    readAll: async () => (o.readFails ? undefined
+      : [o.proformas !== undefined ? o.proformas : (o.items || [])]),
     _supabase: { from: () => ({ select: () => ({ eq: () => ({}) }) }) },
     showToast: noop, handleApiError: noop, apiFetch: async () => ({}),
     getCachedProfile: () => ({ state: 'Tamil Nadu' }),
@@ -513,11 +515,13 @@ const FORM_QUOTE = {
   total_amount: 1750, status: 'issued'
 };
 
-const FORM_FORM_QUOTE_LINES = [
+const FORM_QUOTE_LINES = [
   { sort_order: 2, product_name: 'Mixer Grinder', hsn_code: '8509', quantity: 1,
-    unit: 'PCS', rate: 1200, gst_percentage: 18, total_amount: 1416 },
+    unit: 'PCS', rate: 1200, gst_percentage: 18, discount_percentage: 5,
+    gst_treatment: 'taxable', total_amount: 1416 },
   { sort_order: 1, product_name: 'Wall Bracket', hsn_code: '7308', quantity: 2,
-    unit: 'PCS', rate: 141.53, gst_percentage: 18, total_amount: 334 }
+    unit: 'PCS', rate: 141.53, gst_percentage: 18, discount_percentage: 0,
+    gst_treatment: 'taxable', total_amount: 334 }
 ];
 
 test('AR17 picking a quotation fills the party but never the amount', () => {
@@ -537,7 +541,7 @@ test('AR17 picking a quotation fills the party but never the amount', () => {
 });
 
 test('AR18 the quotation lines render read-only, with every column and a grand total', async () => {
-  const sb = vouchersSandbox({ items: FORM_FORM_QUOTE_LINES });
+  const sb = vouchersSandbox({ items: FORM_QUOTE_LINES });
   sb.evalIn('vProformas = ' + JSON.stringify([FORM_QUOTE]));
   sb.el('vProforma').value = FORM_QUOTE.id;
 
@@ -547,8 +551,21 @@ test('AR18 the quotation lines render read-only, with every column and a grand t
   const body = sb.el('vQuoteItemsBody').innerHTML;
   // Sorted by sort_order, so the bracket (1) precedes the grinder (2).
   assert.ok(body.indexOf('Wall Bracket') < body.indexOf('Mixer Grinder'), 'sort_order is honoured');
-  for (const v of ['8509', 'PCS', '1,200.00', '18%', '1,416.00']) {
+  for (const v of ['8509', 'PCS', '1,200.00', '18%', '5%', '1,416.00', 'Taxable']) {
     assert.match(body, new RegExp(v.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')), 'shows ' + v);
+  }
+
+  // Ten cells per row, matching the ten headers the markup declares, in the
+  // order a tax invoice lists its products.
+  const firstRow = body.slice(body.indexOf('<tr>'), body.indexOf('</tr>'));
+  assert.strictEqual((firstRow.match(/<td/g) || []).length, 10, 'ten cells');
+  const heads = VOUCHERS_HTML.slice(VOUCHERS_HTML.indexOf('id="vQuoteItemsTable"'));
+  const thead = heads.slice(0, heads.indexOf('</thead>'));
+  // <thead> itself starts with <th, so the delimiter matters here.
+  assert.strictEqual((thead.match(/<th[\s>]/g) || []).length, 10, 'ten headers');
+  for (const h of ['Product / Description', 'HSN', 'Unit', 'GST Treatment', 'Qty',
+                   'Rate (&#8377;)', 'Discount %', 'GST %', 'Line Total']) {
+    assert.ok(thead.includes(h), 'header: ' + h);
   }
   // A customer name containing markup is shown as text, not injected.
   const summary = sb.el('vQuoteSummary').innerHTML;
@@ -561,8 +578,26 @@ test('AR18 the quotation lines render read-only, with every column and a grand t
   assert.match(sb.el('vQuoteItemsTotal').innerHTML, /GRAND TOTAL \(2 items\)/);
   assert.match(sb.el('vQuoteItemsTotal').innerHTML, /1,750\.00/);
   // Nothing in the panel is an input: it is reference data on a receipt, and
-  // a receipt is not a tax invoice.
-  assert.equal(/<input|<select|contenteditable/.test(body + summary), false);
+  // a receipt is not a tax invoice. The invoice's Products grid is editable,
+  // so this is the one way the two deliberately differ.
+  assert.equal(/<input|<select|<textarea|<button|contenteditable/.test(body + summary), false);
+  const panel = VOUCHERS_HTML.slice(VOUCHERS_HTML.indexOf('id="vQuotePanel"'));
+  const panelHtml = panel.slice(0, panel.indexOf('id="vBalanceBox"'));
+  assert.equal(/<input|<textarea|contenteditable|<select/.test(panelHtml), false,
+    'and the markup declares no field either');
+
+  // It wears the shared table styling, which is where the dark header, the
+  // padding and the distinct total row come from.
+  assert.match(panelHtml, /class="data-table quote-table-fixed"/);
+  assert.match(panelHtml, /class="table-wrapper quote-table-wrapper mb-20"/);
+  assert.match(panelHtml, /<div class="section-title mb-14">Products/, 'a Products heading');
+  assert.match(CSS, /\.quote-table-fixed \{ table-layout: fixed;/);
+  assert.match(CSS, /\.data-table thead tr \{ background: var\(--primary-dark\); color: #fff; \}/,
+    'the dark header and white labels come from the shared rule');
+  assert.match(CSS, /\.data-table tfoot tr \{ background: var\(--primary-xlight\); font-weight: 700; \}/,
+    'as does the distinct total row');
+  assert.match(CSS, /@media \(max-width: 768px\)[\s\S]{0,400}quote-table-fixed/,
+    'and it has a narrow-screen rule');
 
   // Choosing "no quotation" puts it away again - standalone receipts stay
   // possible, which is the flow that existed before any of this.
@@ -842,6 +877,67 @@ test('AR27 the quotation link survives a save and an edit', async () => {
   assert.strictEqual(rows[0].proforma_invoice_id, q);
   assert.strictEqual(rows[0].payment_method, 'upi');
   assert.strictEqual(rows[0].reference_number, 'UPI-99');
+});
+
+test('AR28 an empty quotation list says why, instead of a selector that does nothing', async () => {
+  // The products table appears when a quotation is selected, so it can never
+  // appear if there is nothing to select. That used to look identical to a
+  // working selector, which is the likeliest reason the table was reported
+  // missing while the render path was provably fine.
+  const none = vouchersSandbox({ proformas: [] });
+  await none.loadVoucherProformas();
+  assert.strictEqual(none.el('vProformaNote').classList.contains('d-none'), false);
+  assert.match(none.el('vProformaNote').textContent, /No quotations yet/);
+
+  // A list of nothing but cancelled quotations is a different problem.
+  const cancelled = vouchersSandbox({
+    proformas: [{ id: 'pf-x', document_number: 'PI-1', customer_name: 'A',
+                  total_amount: 100, status: 'cancelled' }]
+  });
+  await cancelled.loadVoucherProformas();
+  assert.match(cancelled.el('vProformaNote').textContent, /Every quotation is cancelled/);
+
+  // And a failed read is a third - readAll has already shown its own error,
+  // so this only has to stop the selector looking merely empty.
+  const broken = vouchersSandbox({ readFails: true });
+  await broken.loadVoucherProformas();
+  assert.match(broken.el('vProformaNote').textContent, /could not be loaded/);
+
+  // With quotations to offer, the note stays out of the way.
+  const ok = vouchersSandbox({ proformas: [FORM_QUOTE] });
+  await ok.loadVoucherProformas();
+  assert.strictEqual(ok.el('vProformaNote').textContent, '');
+  assert.strictEqual(ok.el('vProformaNote').classList.contains('d-none'), true);
+  assert.strictEqual(ok.el('vProforma').options.length, 2, 'the placeholder and the quotation');
+});
+
+test('AR29 the quotation list is re-read when the receipt form is opened', () => {
+  // It was loaded once when the page opened, so a quotation written since
+  // then could not be received against until the page was reloaded.
+  const fn = VOUCHERS_JS.slice(VOUCHERS_JS.indexOf('async function onVoucherTypeChange'));
+  const body = fn.slice(0, fn.indexOf('\n}'));
+  assert.match(body, /if \(voucherIsReceipt\(\)\) await loadVoucherProformas\(\);/);
+  assert.match(body, /await renderVoucherQuotePanel\(\);/, 'and the panel follows');
+});
+
+test('AR30 the quotation tax shown is the quotation\'s own saved figures', async () => {
+  const sb = vouchersSandbox({ items: FORM_QUOTE_LINES });
+  sb.evalIn('vProformas = ' + JSON.stringify([{ ...FORM_QUOTE, igst: 0, cgst: 133.48, sgst: 133.47 }]));
+  sb.el('vProforma').value = 'pf-1';
+  await sb.renderVoucherQuotePanel();
+
+  const summary = sb.el('vQuoteSummary').innerHTML;
+  assert.match(summary, /Taxable Value[\s\S]{0,80}1,483\.05/);
+  assert.match(summary, /CGST[\s\S]{0,80}133\.48/);
+  assert.match(summary, /SGST[\s\S]{0,80}133\.47/);
+  assert.equal(/IGST/.test(summary), false, 'an intrastate quotation shows no IGST line');
+  assert.match(summary, /Grand Total[\s\S]{0,80}1,750\.00/);
+
+  // The receipt's own tax is a separate box and is never derived from these.
+  const fn = VOUCHERS_JS.slice(VOUCHERS_JS.indexOf('async function renderVoucherQuotePanel'));
+  const body = fn.slice(0, fn.indexOf('\n}'));
+  assert.equal(/vTaxable|vIgst|vCgst|vSgst|voucherAmounts/.test(body), false,
+    'the panel writes none of the voucher tax fields');
 });
 
 test('teardown', async () => {

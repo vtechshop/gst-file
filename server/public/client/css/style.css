@@ -603,6 +603,60 @@ table.data-table {
 .items-table-fixed th:nth-child(9),  .items-table-fixed td:nth-child(9)  { width: 100px; }  /* Cess %         */
 .items-table-fixed th:nth-child(10), .items-table-fixed td:nth-child(10) { width: 170px; }  /* Taxable Value  */
 .items-table-fixed th:nth-child(11), .items-table-fixed td:nth-child(11) { width: 170px; }  /* Total          */
+/* ── The quotation an advance was received against ────────────────────
+   The read-only twin of .items-table-fixed above. A receipt shows what was
+   quoted so the customer can see which products the money is against, so it
+   wants the same grid the Products section has - same header, same padding,
+   same column rhythm - while carrying no inputs at all.
+
+   It is a separate class rather than a reuse of .items-table-fixed because
+   those widths are addressed by nth-child against the tax invoice's own
+   column order. This table has its own order (and a leading index the
+   editable grid has no use for), so sharing them would have silently
+   mis-sized every column from the second one on.
+
+   Cess % and Taxable Value are deliberately absent: a receipt reports the
+   tax due on the advance, which is the voucher's own figure, and reprinting
+   the quotation's per-line tax base invites it to be read as the receipt's. */
+.quote-table-fixed { table-layout: fixed; width: 1424px; max-width: none; }
+.quote-table-fixed th:nth-child(1),  .quote-table-fixed td:nth-child(1)  { width: 64px;  }  /* #             */
+.quote-table-fixed th:nth-child(2),  .quote-table-fixed td:nth-child(2)  { width: 320px; }  /* Product       */
+.quote-table-fixed th:nth-child(3),  .quote-table-fixed td:nth-child(3)  { width: 140px; }  /* HSN           */
+.quote-table-fixed th:nth-child(4),  .quote-table-fixed td:nth-child(4)  { width: 120px; }  /* Unit          */
+.quote-table-fixed th:nth-child(5),  .quote-table-fixed td:nth-child(5)  { width: 170px; }  /* GST Treatment */
+.quote-table-fixed th:nth-child(6),  .quote-table-fixed td:nth-child(6)  { width: 90px;  }  /* Qty           */
+.quote-table-fixed th:nth-child(7),  .quote-table-fixed td:nth-child(7)  { width: 130px; }  /* Rate          */
+.quote-table-fixed th:nth-child(8),  .quote-table-fixed td:nth-child(8)  { width: 110px; }  /* Discount %    */
+.quote-table-fixed th:nth-child(9),  .quote-table-fixed td:nth-child(9)  { width: 110px; }  /* GST %         */
+.quote-table-fixed th:nth-child(10), .quote-table-fixed td:nth-child(10) { width: 170px; }  /* Line Total    */
+
+/* Same sticky header as the Products grid, for the same reason: the wrapper
+   is a bounded scroll area, so the column labels have to stay with the rows
+   they label. The background is restated because a sticky cell leaves the
+   row's own painting behind as it detaches. */
+.quote-table-fixed thead th {
+  position: sticky;
+  top: 0;
+  z-index: 50;
+  background: var(--primary-dark);
+}
+
+/* A quotation with many lines should not push the balance figures off the
+   screen - the receipt's own arithmetic is what the user came here to read. */
+.quote-table-wrapper { max-height: 42vh; overflow-y: auto; }
+
+/* On a narrow screen the fixed grid is wider than the viewport, which is what
+   .table-wrapper's horizontal scroll is for. Trimming the padding and the
+   index column buys back the width that matters most - the product name -
+   without collapsing the grid into something unreadable. */
+@media (max-width: 768px) {
+  .quote-table-wrapper { max-height: 50vh; }
+  .quote-table-fixed thead th,
+  .quote-table-fixed tbody td { padding-left: 10px; padding-right: 10px; }
+  .quote-table-fixed th:nth-child(1), .quote-table-fixed td:nth-child(1) { width: 44px; }
+  .quote-table-fixed th:nth-child(2), .quote-table-fixed td:nth-child(2) { width: 220px; }
+}
+
 /* Warranty variant: the tax invoice grid carries one extra column between
    Taxable Value and Total. Proforma Entry mounts the SAME component without
    it, so the widths above stay as they are and only this variant shifts -

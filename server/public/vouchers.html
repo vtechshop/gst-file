@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Vouchers &amp; Self Invoices - GST Management System</title>
-  <link rel="stylesheet" href="client/css/style.css?v=35">
+  <link rel="stylesheet" href="client/css/style.css?v=42">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
   <script src="shared/india-districts.js?v=29"></script>
   <script src="client/js/api/apiClient.js?v=29"></script>
@@ -19,7 +19,7 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.31/jspdf.plugin.autotable.min.js"></script>
   <script src="client/js/pages/invoice-pdf.js?v=52"></script>
   <script src="client/js/pages/receipt-pdf.js?v=3"></script>
-  <script src="client/js/pages/vouchers.js?v=32"></script>
+  <script src="client/js/pages/vouchers.js?v=33"></script>
 
 </head>
 <body>
@@ -244,20 +244,31 @@
                 <select id="vProforma" class="form-control" onchange="onVoucherProformaChange()">
                   <option value="">&mdash; no quotation &mdash;</option>
                 </select>
+                <div id="vProformaNote" class="fs-11 text-muted-sm d-none"></div>
               </div>
             </div>
             <div id="vQuotePanel" class="d-none">
               <div class="section-title mb-14">Quotation Details
                 <span class="fs-11 text-muted-sm">(from the selected quotation &mdash; read only)</span></div>
               <div class="calc-box mb-16" id="vQuoteSummary"></div>
-              <div class="table-wrapper mb-20">
-                <table class="data-table">
+
+              <div class="section-title mb-14">Products
+                <span class="fs-11 text-muted-sm">(what the quotation covers &mdash; not editable here)</span></div>
+              <div class="table-wrapper quote-table-wrapper mb-20">
+                <table class="data-table quote-table-fixed" id="vQuoteItemsTable">
                   <thead>
-                    <tr><th>#</th><th>Product / Description</th><th>HSN</th>
-                        <th style="text-align:center;">Qty</th><th>Unit</th>
-                        <th style="text-align:right;">Rate</th>
-                        <th style="text-align:right;">GST %</th>
-                        <th style="text-align:right;">Line Total</th></tr>
+                    <tr>
+                      <th class="text-center">#</th>
+                      <th>Product / Description</th>
+                      <th>HSN</th>
+                      <th>Unit</th>
+                      <th>GST Treatment</th>
+                      <th class="text-center">Qty</th>
+                      <th class="text-right">Rate (&#8377;)</th>
+                      <th class="text-center">Discount %</th>
+                      <th class="text-center">GST %</th>
+                      <th class="text-right">Line Total</th>
+                    </tr>
                   </thead>
                   <tbody id="vQuoteItemsBody"></tbody>
                   <tfoot id="vQuoteItemsTotal"></tfoot>

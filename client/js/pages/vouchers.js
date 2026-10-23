@@ -141,6 +141,21 @@ async function loadVoucherProformas() {
     sel.add(new Option(`${r.document_number || ''} — ${r.customer_name || ''}`
       + ` (${formatCurrency(+r.total_amount || 0)})`, r.id));
   }
+
+  // Said out loud: the three reasons the list can be empty need different
+  // things done about them, and all three used to look like a selector that
+  // simply did nothing when used.
+  const note = document.getElementById('vProformaNote');
+  if (note) {
+    note.textContent = !rows
+      ? 'Quotations could not be loaded, so none can be selected.'
+      : open.length === 0
+        ? (vProformas.length
+            ? 'Every quotation is cancelled, so none can be received against.'
+            : 'No quotations yet — create one under Proforma Invoice to show its products here.')
+        : '';
+    note.classList.toggle('d-none', !note.textContent);
+  }
 }
 
 function voucherProformaById(id) { return vProformas.find(r => r.id === id) || null; }
@@ -199,6 +214,12 @@ async function renderVoucherQuotePanel() {
     row('Customer GSTIN', escItemHtml(quote.gst_number) || '&mdash;') +
     row('Place of Supply', escItemHtml(quote.state) || '&mdash;') +
     row('Taxable Value', '₹' + formatNum(quote.taxable_amount)) +
+    // The quotation's own tax, as the quotation stored it. Nothing is
+    // recomputed from the lines, and none of it is the tax due on the advance
+    // - that is the voucher's own figure, in its own box.
+    (+quote.igst ? row('IGST', '₹' + formatNum(quote.igst)) : '') +
+    (+quote.cgst ? row('CGST', '₹' + formatNum(quote.cgst)) : '') +
+    (+quote.sgst ? row('SGST', '₹' + formatNum(quote.sgst)) : '') +
     row('GST', '₹' + formatNum(quote.gst_amount)) +
     `<div class="calc-row total"><span class="label">Grand Total</span><span class="value">₹${formatNum(quote.total_amount)}</span></div>`;
 
@@ -210,20 +231,22 @@ async function renderVoucherQuotePanel() {
   if (body) body.innerHTML = items.length
     ? items.map((it, i) => `
       <tr>
-        <td>${i + 1}</td>
+        <td class="text-center">${i + 1}</td>
         <td>${escItemHtml(it.product_name)}</td>
         <td>${escItemHtml(it.hsn_code) || '&mdash;'}</td>
-        <td style="text-align:center;">${formatNum(it.quantity)}</td>
         <td>${escItemHtml(it.unit) || '&mdash;'}</td>
-        <td style="text-align:right;">₹${formatNum(it.rate)}</td>
-        <td style="text-align:right;">${(+it.gst_percentage || 0)}%</td>
-        <td style="text-align:right;font-weight:700;">₹${formatNum(it.total_amount)}</td>
+        <td>${escItemHtml(gstTreatmentLabel(it.gst_treatment))}</td>
+        <td class="text-center">${formatNum(it.quantity)}</td>
+        <td class="text-right">₹${formatNum(it.rate)}</td>
+        <td class="text-center">${(+it.discount_percentage || 0)}%</td>
+        <td class="text-center">${(+it.gst_percentage || 0)}%</td>
+        <td class="text-right">₹${formatNum(it.total_amount)}</td>
       </tr>`).join('')
-    : '<tr><td colspan="8" class="empty-state">This quotation has no line items.</td></tr>';
+    : '<tr><td colspan="10" class="empty-state">This quotation has no line items.</td></tr>';
 
   const foot = document.getElementById('vQuoteItemsTotal');
-  if (foot) foot.innerHTML = `<tr><td colspan="7" style="font-weight:700;">GRAND TOTAL (${items.length} ${items.length === 1 ? 'item' : 'items'})</td>
-    <td style="text-align:right;font-weight:700;">₹${formatNum(quote.total_amount)}</td></tr>`;
+  if (foot) foot.innerHTML = `<tr><td colspan="9">GRAND TOTAL (${items.length} ${items.length === 1 ? 'item' : 'items'})</td>
+    <td class="text-right">₹${formatNum(quote.total_amount)}</td></tr>`;
 }
 
 // The customer the money came from is the customer the quotation was made out
@@ -361,6 +384,9 @@ async function onVoucherTypeChange() {
   const pay = document.getElementById('vReceiptPayment');
   if (pay) pay.classList.toggle('d-none', !voucherIsReceipt());
   showReceiptActions(null);
+  // Re-read on the way in, so a quotation created since the page opened can
+  // be received against without reloading the whole page.
+  if (voucherIsReceipt()) await loadVoucherProformas();
   renderVoucherBalance();
   await renderVoucherQuotePanel();
   document.getElementById('vGstinHint').textContent =
