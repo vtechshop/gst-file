@@ -184,6 +184,10 @@ async function buildReceiptPDFDoc(voucher, quotation, items, previousReceived) {
   if (fig.linked) summary.push(['Quotation Total', formatNum(fig.total)]);
   if (fig.linked && fig.previous > 0) summary.push(['Advance Received Earlier', formatNum(fig.previous)]);
   summary.push(['Advance Received Now', formatNum(fig.now)]);
+  // Worth a line only where it says something the two figures above do not.
+  if (fig.linked && fig.previous > 0) {
+    summary.push(['Total Advance Paid', formatNum(round2(fig.previous + fig.now))]);
+  }
 
   doc.setFontSize(9); doc.setFont('helvetica', 'normal'); doc.setTextColor(60, 60, 60);
   summary.forEach((r, i) => {

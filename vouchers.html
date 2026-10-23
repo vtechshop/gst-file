@@ -18,8 +18,8 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.31/jspdf.plugin.autotable.min.js"></script>
   <script src="client/js/pages/invoice-pdf.js?v=52"></script>
-  <script src="client/js/pages/receipt-pdf.js?v=2"></script>
-  <script src="client/js/pages/vouchers.js?v=31"></script>
+  <script src="client/js/pages/receipt-pdf.js?v=3"></script>
+  <script src="client/js/pages/vouchers.js?v=32"></script>
 
 </head>
 <body>
@@ -274,8 +274,16 @@
                 <span class="label">Advance Received Earlier</span>
                 <span class="value" id="vQuotePrev">&#8377;0.00</span>
               </div>
+              <div class="calc-row">
+                <span class="label">Current Advance Received</span>
+                <span class="value" id="vQuoteNow">&#8377;0.00</span>
+              </div>
+              <div class="calc-row">
+                <span class="label">Total Advance Paid</span>
+                <span class="value" id="vQuotePaid">&#8377;0.00</span>
+              </div>
               <div class="calc-row total">
-                <span class="label">Balance After This Receipt</span>
+                <span class="label">Balance Payable</span>
                 <span class="value" id="vQuoteBalance">&#8377;0.00</span>
               </div>
               <div id="vBalanceError" class="fs-11 text-danger d-none" style="margin-top:6px;"></div>

@@ -252,12 +252,19 @@ function renderVoucherBalance() {
   if (!quote) { if (err) err.classList.add('d-none'); return; }
 
   const total = round2(+quote.total_amount || 0);
+  // Only receipts that still stand, and never this one if it is being
+  // edited. The quotation's own advance_amount is a payment term rather than
+  // money received, so it is not read here.
   const previous = voucherReceivedAgainst(quote.id, vEditId || null);
+  // The amount being typed: counted in the preview, saved by nothing.
   const now = round2(parseFloat(voucherFieldValue('vAmount')) || 0);
+  const paid = round2(previous + now);
   money('vQuoteTotal', total);
   money('vQuotePrev', previous);
+  money('vQuoteNow', now);
+  money('vQuotePaid', paid);
 
-  const balance = round2(total - previous - now);
+  const balance = round2(total - paid);
   const over = balance < 0;
   const balEl = document.getElementById('vQuoteBalance');
   // A negative balance is not a balance: showing one would read as though

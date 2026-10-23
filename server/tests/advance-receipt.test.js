@@ -731,6 +731,119 @@ test('AR23 cancelling an advance hands its room back, and the record is kept', a
   assert.strictEqual(still[0].status, 'cancelled');
 });
 
+test('AR24 the five figures a customer asks about, and they follow the typing', () => {
+  const sb = vouchersSandbox();
+  sb.evalIn('vProformas = ' + JSON.stringify([FORM_QUOTE]));
+  sb.evalIn('vDocs = ' + JSON.stringify([
+    { id: 'r1', proforma_invoice_id: 'pf-1', advance_amount: 500, status: 'issued' },
+    { id: 'r2', proforma_invoice_id: 'pf-1', advance_amount: 300, status: 'cancelled' }
+  ]));
+  sb.el('vProforma').value = 'pf-1';
+
+  // The worked example, continued: 1,750 quoted, 500 already received, 250
+  // being received now. The cancelled 300 is not money held.
+  sb.el('vAmount').value = '250';
+  sb.renderVoucherBalance();
+  const shown = (id) => sb.el(id).textContent;
+  assert.match(shown('vQuoteTotal'), /1,750\.00/, 'Quotation Total');
+  assert.match(shown('vQuotePrev'), /500\.00/, 'Advance Received Earlier');
+  assert.match(shown('vQuoteNow'), /250\.00/, 'Current Advance Received');
+  assert.match(shown('vQuotePaid'), /750\.00/, 'Total Advance Paid = 500 + 250');
+  assert.match(shown('vQuoteBalance'), /1,000\.00/, 'Balance Payable = 1750 - 750');
+
+  // Typing a different amount moves the three figures that depend on it, and
+  // leaves the two that do not.
+  sb.el('vAmount').value = '1250';
+  sb.renderVoucherBalance();
+  assert.match(shown('vQuoteTotal'), /1,750\.00/, 'the quotation did not change');
+  assert.match(shown('vQuotePrev'), /500\.00/, 'nor what was received before');
+  assert.match(shown('vQuoteNow'), /1,250\.00/);
+  assert.match(shown('vQuotePaid'), /1,750\.00/);
+  assert.match(shown('vQuoteBalance'), /0\.00/, 'the quotation is settled exactly');
+  assert.strictEqual(sb.el('vBalanceError').classList.contains('d-none'), true);
+
+  // An empty amount box is nothing received, not NaN.
+  sb.el('vAmount').value = '';
+  sb.renderVoucherBalance();
+  assert.match(shown('vQuoteNow'), /^\u20B90\.00$/);
+  assert.match(shown('vQuotePaid'), /500\.00/);
+  assert.match(shown('vQuoteBalance'), /1,250\.00/);
+
+  // And the labels are the ones the customer was promised.
+  assert.match(VOUCHERS_HTML, /Current Advance Received/);
+  assert.match(VOUCHERS_HTML, /Total Advance Paid/);
+  assert.match(VOUCHERS_HTML, /Balance Payable/);
+});
+
+test('AR25 cancelling or deleting a receipt refreshes the figure on screen', () => {
+  // Both paths reload the rows; without recomputing, the box kept showing the
+  // old arithmetic while a quotation was still selected.
+  for (const name of ['cancelVoucher', 'deleteVoucher']) {
+    const fn = VOUCHERS_JS.slice(VOUCHERS_JS.indexOf('async function ' + name));
+    const body = fn.slice(0, fn.indexOf('\n}'));
+    assert.match(body, /await loadVouchers\(\);/, name + ' reloads the receipts');
+    assert.match(body, /renderVoucherBalance\(\);/, name + ' then recomputes the balance');
+  }
+});
+
+test('AR26 a receipt with no quotation saves, and is capped by nothing', async () => {
+  // Every other test here links a quotation. This is the flow that existed
+  // before any of it: money received against no particular quotation.
+  const saved = await saveReceipt({ payment_method: 'cash', advance_amount: 2500, total_value: 2500 });
+  assert.strictEqual(saved.status, 200, JSON.stringify(saved.body));
+  const doc = saved.body.document;
+  assert.strictEqual(doc.proforma_invoice_id, null, 'no quotation, and no invented one');
+  assert.strictEqual(Number(doc.advance_amount), 2500);
+  assert.ok(doc.document_number, 'and it is numbered like any other receipt');
+
+  // An explicit empty string is the same thing as none - that is what the
+  // form sends when the selector is on "no quotation".
+  const blank = await saveReceipt({ proforma_invoice_id: '', advance_amount: 10, total_value: 10 });
+  assert.strictEqual(blank.status, 200, JSON.stringify(blank.body));
+  assert.strictEqual(blank.body.document.proforma_invoice_id, null);
+
+  // The amount still has to be real money, quotation or no quotation.
+  const zero = await saveReceipt({ advance_amount: 0, total_value: 0 });
+  assert.strictEqual(zero.status, 400, JSON.stringify(zero.body));
+  assert.strictEqual(zero.body.error.code, 'receipt_amount_invalid');
+});
+
+test('AR27 the quotation link survives a save and an edit', async () => {
+  const { rows: pf } = await db.query(
+    `INSERT INTO proforma_invoices (user_id, document_number, document_date, customer_name,
+       state, district, supply_type, total_amount)
+     VALUES ($1,'PI-T0006','2026-10-23','Anand Caterers','Tamil Nadu','Coimbatore','intrastate',900)
+     RETURNING id`, [USER]);
+  const q = pf[0].id;
+
+  const saved = await saveReceipt({ proforma_invoice_id: q, payment_method: 'upi',
+    reference_number: 'UPI-99', advance_amount: 400, total_value: 400 });
+  assert.strictEqual(saved.status, 200, JSON.stringify(saved.body));
+  const id = saved.body.document.id;
+  assert.strictEqual(saved.body.document.proforma_invoice_id, q, 'stored on save');
+
+  // Editing only the amount must leave the link, method and reference alone.
+  const edited = await api('POST', '/api/documents/receipt_voucher/save', {
+    editId: id,
+    document: { ...receipt().document, document_number: saved.body.document.document_number,
+      proforma_invoice_id: q, payment_method: 'upi', reference_number: 'UPI-99',
+      advance_amount: 600, total_value: 600 }
+  });
+  assert.strictEqual(edited.status, 200, JSON.stringify(edited.body));
+  const after = edited.body.document;
+  assert.strictEqual(after.proforma_invoice_id, q, 'and still stored after the edit');
+  assert.strictEqual(after.payment_method, 'upi');
+  assert.strictEqual(after.reference_number, 'UPI-99');
+  assert.strictEqual(Number(after.advance_amount), 600);
+
+  // Read back from the table rather than the response, so this is what a
+  // later edit would actually load into the form.
+  const { rows } = await db.query('SELECT * FROM receipt_vouchers WHERE id = $1', [id]);
+  assert.strictEqual(rows[0].proforma_invoice_id, q);
+  assert.strictEqual(rows[0].payment_method, 'upi');
+  assert.strictEqual(rows[0].reference_number, 'UPI-99');
+});
+
 test('teardown', async () => {
   if (server) { server.kill(); await new Promise(r => server.on('exit', r)); }
   await db.end();
