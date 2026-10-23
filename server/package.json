@@ -4,7 +4,7 @@
   "description": "Secure server-side proxy: fetches the Product Master from the company website using a server-held API key, so that key never reaches the Billing System's browser JavaScript.",
   "main": "src/app.js",
   "scripts": {
-    "prestart": "node scripts/migrate-purchase-notes.js && node scripts/migrate-proforma-transport.js && node scripts/migrate-invoice-export-currency.js && node scripts/migrate-proforma-advance.js",
+    "prestart": "node scripts/migrate-purchase-notes.js && node scripts/migrate-proforma-transport.js && node scripts/migrate-invoice-export-currency.js && node scripts/migrate-proforma-advance.js && node scripts/migrate-receipt-voucher-payment.js",
     "start": "node src/app.js",
     "dev": "node --watch src/app.js",
     "test": "node --test",
@@ -15,7 +15,8 @@
     "migrate:purchase-notes": "node scripts/migrate-purchase-notes.js",
     "migrate:proforma-transport": "node scripts/migrate-proforma-transport.js",
     "migrate:invoice-export-currency": "node scripts/migrate-invoice-export-currency.js",
-    "migrate:proforma-advance": "node scripts/migrate-proforma-advance.js"
+    "migrate:proforma-advance": "node scripts/migrate-proforma-advance.js",
+    "migrate:receipt-voucher-payment": "node scripts/migrate-receipt-voucher-payment.js"
   },
   "dependencies": {
     "bcryptjs": "^3.0.3",

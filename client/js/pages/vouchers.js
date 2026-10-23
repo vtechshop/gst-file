@@ -86,6 +86,9 @@ async function initVouchers() {
   if (rate) rate.innerHTML = GST_RATE_SLABS.map(r => `<option value="${r}"${r === 18 ? ' selected' : ''}>${r}%</option>`).join('');
 
   await loadVoucherMasters();
+  // The quotations an advance can be received against. Loaded once, beside
+  // the other masters this page needs.
+  await loadVoucherProformas();
   await onVoucherTypeChange();
 }
 
@@ -99,6 +102,135 @@ async function loadVoucherMasters() {
 }
 
 // ── Type switch ─────────────────────────────────────
+// ── An advance actually received, and the quotation it is against ────
+//
+// A Receipt Voucher is the GST document for money a customer has paid in
+// advance; GSTR-1 already reports it in Table 11A. These helpers add the two
+// facts a customer's receipt needs - how the money arrived and which
+// quotation it was against - and the figure that follows from them.
+//
+// The balance is worked out from the quotation's stored total and the
+// receipts already recorded against it. It is shown here and printed on the
+// receipt, and it is never stored: the server recomputes it under a lock
+// when the voucher is saved, which is what actually stops two receipts
+// jointly overshooting a quotation.
+//
+// A proforma's own advance_amount is a payment TERM, not money received, and
+// is deliberately not read anywhere here.
+let vProformas = [], vProformaItems = {}, vLastSaved = null;
+
+function voucherIsReceipt() { return vType() === 'receipt_voucher'; }
+
+async function loadVoucherProformas() {
+  const sel = document.getElementById('vProforma');
+  if (!sel) return;
+  const rows = await readAll([
+    _supabase.from('proforma_invoices').select('*').eq('user_id', vUserId)
+  ], 'Could not load quotations');
+  vProformas = (rows && rows[0]) || [];
+  // Newest first, and cancelled quotations are not offered: money is not
+  // received against an offer that was withdrawn.
+  const open = vProformas
+    .filter(r => String(r.status || '').toLowerCase() !== 'cancelled')
+    .sort((a, b) => String(b.document_date || '').localeCompare(String(a.document_date || '')));
+  // Built with the DOM rather than with a string, so a customer name that
+  // contains a quote or an angle bracket is text and never markup.
+  sel.innerHTML = '';
+  sel.add(new Option('— no quotation —', ''));
+  for (const r of open) {
+    sel.add(new Option(`${r.document_number || ''} — ${r.customer_name || ''}`
+      + ` (${formatCurrency(+r.total_amount || 0)})`, r.id));
+  }
+}
+
+function voucherProformaById(id) { return vProformas.find(r => r.id === id) || null; }
+
+// What has already been received against a quotation, from the vouchers
+// this page has loaded. The server is what enforces the cap; this is so the
+// person sees the same arithmetic before they press Save.
+function voucherReceivedAgainst(proformaId, excludeId) {
+  return round2((vReceiptVouchers || [])
+    .filter(r => r.proforma_invoice_id === proformaId && r.id !== excludeId)
+    .reduce((sum, r) => sum + (+r.advance_amount || 0), 0));
+}
+
+function renderVoucherBalance() {
+  const box = document.getElementById('vBalanceBox');
+  if (!box) return;
+  const id = (document.getElementById('vProforma') || {}).value || '';
+  const quote = id ? voucherProformaById(id) : null;
+  const money = (elId, v) => { const el = document.getElementById(elId); if (el) el.textContent = '\u20B9' + formatNum(v); };
+
+  box.classList.toggle('d-none', !quote);
+  const err = document.getElementById('vBalanceError');
+  if (!quote) { if (err) err.classList.add('d-none'); return; }
+
+  const total = round2(+quote.total_amount || 0);
+  const previous = voucherReceivedAgainst(quote.id, vEditId || null);
+  const now = round2(parseFloat(val('vAmount')) || 0);
+  money('vQuoteTotal', total);
+  money('vQuotePrev', previous);
+
+  const balance = round2(total - previous - now);
+  const over = balance < 0;
+  const balEl = document.getElementById('vQuoteBalance');
+  // A negative balance is not a balance: showing one would read as though
+  // the overpayment had been accepted.
+  if (balEl) balEl.textContent = over ? '\u2014' : '\u20B9' + formatNum(balance);
+  if (err) {
+    err.textContent = over
+      ? `This receipt is more than the ${formatCurrency(round2(total - previous))} still due on `
+        + `${quote.document_number || 'this quotation'}.`
+      : '';
+    err.classList.toggle('d-none', !over);
+  }
+}
+
+function onVoucherProformaChange() { renderVoucherBalance(); }
+
+// What the last save wrote, so the receipt can be printed from exactly that
+// rather than from whatever the form holds afterwards.
+function showReceiptActions(voucher) {
+  vLastSaved = voucher || null;
+  for (const id of ['vPrintBtn', 'vPdfBtn']) {
+    const b = document.getElementById(id);
+    if (b) b.classList.toggle('d-none', !(voucher && voucher.id));
+  }
+}
+
+async function receiptPdfArgs() {
+  if (!vLastSaved) return null;
+  const quote = vLastSaved.proforma_invoice_id ? voucherProformaById(vLastSaved.proforma_invoice_id) : null;
+  let items = [];
+  if (quote) {
+    if (!vProformaItems[quote.id]) {
+      const rows = await readAll([
+        _supabase.from('proforma_invoice_items').select('*').eq('proforma_invoice_id', quote.id)
+      ], 'Could not load the quotation lines');
+      vProformaItems[quote.id] = ((rows && rows[0]) || [])
+        .slice().sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0));
+    }
+    items = vProformaItems[quote.id];
+  }
+  // What was received BEFORE this voucher, which is what the receipt prints.
+  const previous = quote ? voucherReceivedAgainst(quote.id, vLastSaved.id) : 0;
+  return { voucher: vLastSaved, quote, items, previous };
+}
+
+async function downloadSavedReceipt() {
+  const a = await receiptPdfArgs();
+  if (!a) { showToast('Save the receipt first.', 'error'); return; }
+  try { await downloadReceiptDocument(a.voucher, a.quote, a.items, a.previous); }
+  catch (e) { handleApiError(e, 'Could not generate the receipt'); }
+}
+
+async function printSavedReceipt() {
+  const a = await receiptPdfArgs();
+  if (!a) { showToast('Save the receipt first.', 'error'); return; }
+  try { await printReceiptDocument(a.voucher, a.quote, a.items, a.previous); }
+  catch (e) { handleApiError(e, 'Could not print the receipt'); }
+}
+
 async function onVoucherTypeChange() {
   const f = vForm(), spec = vSpec();
   resetVoucherForm(true);
@@ -136,6 +268,11 @@ async function onVoucherTypeChange() {
   document.getElementById('vCessGroup').classList.toggle('d-none', !f.taxed);
   document.getElementById('vTaxBox').classList.toggle('d-none', !f.taxed);
   document.getElementById('vPosGroup').classList.toggle('d-none', !f.needsPos);
+  // Money received is a receipt voucher's business only.
+  const pay = document.getElementById('vReceiptPayment');
+  if (pay) pay.classList.toggle('d-none', !voucherIsReceipt());
+  showReceiptActions(null);
+  renderVoucherBalance();
   document.getElementById('vGstinHint').textContent =
     f.party === 'supplier' ? '(blank if unregistered — which is why this document exists)' : '(optional)';
 
@@ -244,6 +381,9 @@ function voucherAmounts() {
 }
 
 function recalcVoucher() {
+  // The quotation balance is a function of the amount being entered, so it
+  // follows the same keystrokes the tax box does.
+  renderVoucherBalance();
   const a = voucherAmounts();
   const set = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = '₹' + formatNum(v); };
   set('vTaxable', a.taxable); set('vIgst', a.igst); set('vCgst', a.cgst);
@@ -369,6 +509,14 @@ async function saveVoucher() {
     doc.gst_percentage = a.rate; doc.igst = a.igst; doc.cgst = a.cgst;
     doc.sgst = a.sgst; doc.cess = a.cess; doc.total_value = a.total;
   }
+  if (voucherIsReceipt()) {
+    // Judged by the server: the method must be one the payments ledger
+    // knows, and the quotation must belong to this business and still have
+    // room for this much (routes/documents.js).
+    doc.payment_method = val('vPaymentMethod') || null;
+    doc.reference_number = val('vReference') || null;
+    doc.proforma_invoice_id = val('vProforma') || null;
+  }
   if (f.original) {
     const ref = val('vOriginalRef');
     if (f.original === 'receipt_voucher') doc.receipt_voucher_id = ref;
@@ -378,13 +526,18 @@ async function saveVoucher() {
   }
 
   try {
-    await apiFetch(`/documents/${vType()}/save`, {
+    const saved = await apiFetch(`/documents/${vType()}/save`, {
       method: 'POST', body: JSON.stringify({ editId: vEditId, document: doc })
     });
+    const wasReceipt = voucherIsReceipt();
     showToast(vEditId ? 'Document updated.' : 'Document saved.');
     resetVoucherForm();
     await loadVouchers();
     await loadVoucherOriginals();
+    // Offered after the save, from the row the server actually wrote - the
+    // receipt then prints the stored number, date and amount rather than
+    // whatever the cleared form holds.
+    if (wasReceipt && saved && saved.document) showReceiptActions(saved.document);
   } catch (e) {
     handleApiError(e, 'Could not save the document');
   }

@@ -15,7 +15,11 @@
   <script src="client/js/utilities/utils.js?v=33"></script>
   <script src="client/js/core/search.js?v=29"></script>
   <script src="client/js/pages/profile.js?v=40"></script>
-  <script src="client/js/pages/vouchers.js?v=29"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.31/jspdf.plugin.autotable.min.js"></script>
+  <script src="client/js/pages/invoice-pdf.js?v=52"></script>
+  <script src="client/js/pages/receipt-pdf.js?v=1"></script>
+  <script src="client/js/pages/vouchers.js?v=30"></script>
 
 </head>
 <body>
@@ -214,6 +218,51 @@
             <div class="calc-row total"><span class="label">Total</span><span class="value" id="vTotal">&#8377;0.00</span></div>
           </div>
 
+          <!-- Money actually received: how it arrived, and what it was
+               received against. A Receipt Voucher only - a payment or refund
+               voucher is a different document and vouchers.js hides this. -->
+          <div id="vReceiptPayment" class="d-none">
+            <div class="form-grid cols-3 mb-16">
+              <div class="form-group">
+                <label for="vPaymentMethod">Payment Mode</label>
+                <select id="vPaymentMethod" class="form-control">
+                  <option value="">&mdash; not recorded &mdash;</option>
+                  <option value="cash">Cash</option>
+                  <option value="upi">UPI</option>
+                  <option value="bank_transfer">Bank Transfer</option>
+                  <option value="cheque">Cheque</option>
+                  <option value="card">Card</option>
+                  <option value="other">Other</option>
+                </select>
+              </div>
+              <div class="form-group">
+                <label for="vReference">Payment Reference</label>
+                <input type="text" id="vReference" class="form-control" placeholder="UPI ref / cheque no.">
+              </div>
+              <div class="form-group">
+                <label for="vProforma">Against Quotation</label>
+                <select id="vProforma" class="form-control" onchange="onVoucherProformaChange()">
+                  <option value="">&mdash; no quotation &mdash;</option>
+                </select>
+              </div>
+            </div>
+            <div class="calc-box mb-16" id="vBalanceBox">
+              <div class="calc-row">
+                <span class="label">Quotation Total</span>
+                <span class="value" id="vQuoteTotal">&#8377;0.00</span>
+              </div>
+              <div class="calc-row">
+                <span class="label">Advance Received Earlier</span>
+                <span class="value" id="vQuotePrev">&#8377;0.00</span>
+              </div>
+              <div class="calc-row total">
+                <span class="label">Balance After This Receipt</span>
+                <span class="value" id="vQuoteBalance">&#8377;0.00</span>
+              </div>
+              <div id="vBalanceError" class="fs-11 text-danger d-none" style="margin-top:6px;"></div>
+            </div>
+          </div>
+
           <div class="form-grid cols-2 mb-16">
             <div class="form-group">
               <label for="vDescription">Description</label>
@@ -228,6 +277,8 @@
           <div class="btn-group">
             <button type="button" class="btn btn-primary" id="vSaveBtn" onclick="saveVoucher()"><i class="fas fa-save"></i> Save Document</button>
             <button type="button" class="btn btn-secondary" onclick="resetVoucherForm()"><i class="fas fa-redo"></i> Reset</button>
+            <button type="button" class="btn btn-secondary d-none" id="vPrintBtn" onclick="printSavedReceipt()"><i class="fas fa-print"></i> Print Receipt</button>
+            <button type="button" class="btn btn-secondary d-none" id="vPdfBtn" onclick="downloadSavedReceipt()"><i class="fas fa-file-pdf"></i> Download Receipt</button>
           </div>
         </div>
       </div>

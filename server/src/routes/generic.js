@@ -409,7 +409,13 @@ const TABLES = {
     columns: ['id','user_id','document_number','document_date','document_series','status',
       'customer_id','party_name','party_gstin','place_of_supply','supply_type','description',
       'advance_amount','gst_percentage','igst','cgst','sgst','cess','total_value',
-      'adjusted_amount','notes','created_at','updated_at']
+      'adjusted_amount','notes',
+      // How the money arrived, and the quotation it was received against.
+      // Judged by the save route (routes/documents.js): the method must be one
+      // the payments ledger knows, and the quotation must belong to the same
+      // business and still have room for this much.
+      'payment_method','reference_number','proforma_invoice_id',
+      'created_at','updated_at']
   },
   payment_vouchers: {
     columns: ['id','user_id','document_number','document_date','document_series','status',

@@ -26,7 +26,7 @@ const { asyncRoute } = require('../middleware/errorHandler');
 const { applyInvoiceNumberFormat } = require('../utils/invoiceNumberFormat');
 const { TABLES } = require('./generic');
 const { validateTransportCharge, transportGstAmount, principalGstRate,
-        validateAdvanceAmount } = require('../utils/validation');
+        validateAdvanceAmount, round2 } = require('../utils/validation');
 
 const router = express.Router();
 router.use(requireAuth);
@@ -234,6 +234,95 @@ router.post('/reserve-number', asyncRoute(async (req, res) => {
 }));
 
 // ── 2) Create or update a document, with its audit entry ──
+// ── Money actually received: a Receipt Voucher ───────────────────────
+//
+// A receipt voucher is the GST document for an advance a customer has
+// actually paid, and GSTR-1 reports it in Table 11A. These rules are about
+// the two facts the voucher now also carries - how the money arrived, and
+// which quotation it was received against - and about the one figure that
+// must never be allowed to go wrong: how much of that quotation is left.
+//
+// The six the payments ledger has always allowed. One vocabulary describes
+// money received whichever door it came in by, so a report can group an
+// advance and an invoice payment together without translating.
+const RECEIPT_PAYMENT_METHODS = ['cash', 'upi', 'bank_transfer', 'cheque', 'card', 'other'];
+
+// What a quotation still has room for, in the caller's transaction.
+//
+// The quotation row is locked FIRST and the receipts against it are summed
+// only once that lock is held, so two receipts arriving together cannot each
+// read the same remaining balance and both be allowed. `exclude` is the
+// voucher being edited, which is not its own competitor for the room it
+// already occupies.
+async function proformaRoomLeftOn(client, userId, proformaId, exclude) {
+  const { rows: quote } = await client.query(
+    `SELECT document_number, total_amount FROM proforma_invoices
+      WHERE id = $1 AND user_id = $2 FOR UPDATE`, [proformaId, userId]);
+  if (!quote.length) {
+    const e = new Error('That quotation could not be found.');
+    e.status = 404; e.expose = true; e.code = 'proforma_not_found'; throw e;
+  }
+  const params = [userId, proformaId];
+  let where = 'user_id = $1 AND proforma_invoice_id = $2';
+  if (exclude) { params.push(exclude); where += ` AND id <> $${params.length}`; }
+  const { rows: taken } = await client.query(
+    `SELECT COALESCE(SUM(advance_amount), 0)::numeric AS received
+       FROM receipt_vouchers WHERE ${where}`, params);
+
+  const total = round2(Number(quote[0].total_amount) || 0);
+  const received = round2(Number(taken[0].received) || 0);
+  return { number: quote[0].document_number, total, received, left: round2(total - received) };
+}
+
+// Everything a receipt voucher says about the payment itself, judged before
+// a single column is written.
+async function validateReceiptPayment(client, userId, document, editId) {
+  if (Object.prototype.hasOwnProperty.call(document, 'payment_method')) {
+    const raw = document.payment_method;
+    const method = raw === null || raw === undefined || raw === '' ? null : String(raw).trim().toLowerCase();
+    if (method !== null && !RECEIPT_PAYMENT_METHODS.includes(method)) {
+      const e = new Error('Payment method must be one of: ' + RECEIPT_PAYMENT_METHODS.join(', ') + '.');
+      e.status = 400; e.expose = true; e.code = 'payment_method_unknown'; throw e;
+    }
+    document.payment_method = method;
+  }
+  if (Object.prototype.hasOwnProperty.call(document, 'reference_number')) {
+    const ref = String(document.reference_number == null ? '' : document.reference_number).trim();
+    document.reference_number = ref || null;
+  }
+
+  // A receipt acknowledges money received, so there has to be some.
+  if (Object.prototype.hasOwnProperty.call(document, 'advance_amount')) {
+    const n = Number(document.advance_amount);
+    if (!Number.isFinite(n) || n <= 0) {
+      const e = new Error('Enter the amount actually received - it must be more than zero.');
+      e.status = 400; e.expose = true; e.code = 'receipt_amount_invalid'; throw e;
+    }
+    document.advance_amount = round2(n);
+  }
+
+  if (!Object.prototype.hasOwnProperty.call(document, 'proforma_invoice_id')) return;
+  const linked = document.proforma_invoice_id;
+  if (linked === null || linked === undefined || linked === '') {
+    document.proforma_invoice_id = null;
+    return;
+  }
+  badId(linked);
+
+  // Ownership is proved from the authenticated session, never taken from the
+  // payload: the quotation must be this business's own.
+  const room = await proformaRoomLeftOn(client, userId, linked, editId || null);
+  const amount = round2(Number(document.advance_amount) || 0);
+  if (amount > room.left) {
+    const e = new Error(
+      `Quotation ${room.number} has ${room.left.toFixed(2)} left to receive`
+      + (room.received > 0 ? ` (total ${room.total.toFixed(2)}, already received ${room.received.toFixed(2)})` : '')
+      + `, and this receipt is for ${amount.toFixed(2)}.`);
+    e.status = 409; e.expose = true; e.code = 'receipt_exceeds_quotation'; throw e;
+  }
+  document.proforma_invoice_id = linked;
+}
+
 router.post('/:type/save', asyncRoute(async (req, res) => {
   const type = String(req.params.type).trim().toLowerCase();
   const spec = docSpec(type);
@@ -292,7 +381,12 @@ router.post('/:type/save', asyncRoute(async (req, res) => {
   // It changes nothing else: no tax column moves, no payment is recorded and
   // no receipt voucher is written. Absent from the payload means the caller is
   // not touching the advance, which is not the same as clearing it.
-  if (Object.prototype.hasOwnProperty.call(document, 'advance_amount')) {
+  // A quotation's advance is a TERM of that quotation, capped by its total.
+  // receipt_vouchers.advance_amount is a different fact in a column of the
+  // same name - money actually received - and validateReceiptPayment() is its
+  // authority, so this rule is scoped to the document it was written for
+  // rather than to every table that shares the column name.
+  if (type === 'proforma_invoice' && Object.prototype.hasOwnProperty.call(document, 'advance_amount')) {
     const advance = validateAdvanceAmount(document.advance_amount, document.total_amount);
     if (!advance.valid) {
       const e = new Error(advance.error); e.status = 400; e.expose = true;
@@ -325,6 +419,14 @@ router.post('/:type/save', asyncRoute(async (req, res) => {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
+
+    // A receipt voucher's payment details, and the room left on the quotation
+    // it is received against. Judged here - inside the transaction, under the
+    // quotation's own row lock - so it commits or rolls back with the voucher
+    // and two receipts arriving together cannot jointly overshoot.
+    if (type === 'receipt_voucher') {
+      await validateReceiptPayment(client, req.userId, document, editId);
+    }
 
     // ── The document number ──
     //

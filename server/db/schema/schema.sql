@@ -1372,6 +1372,21 @@ CREATE TABLE IF NOT EXISTS receipt_vouchers (
   -- left.
   adjusted_amount DECIMAL(15,2) NOT NULL DEFAULT 0,
   notes TEXT,
+
+  -- How the money arrived and what it was received against, from
+  -- migration_receipt_voucher_payment.sql. The method vocabulary is the
+  -- payments ledger's own six, so one set of words describes money received
+  -- whichever door it came in by. proforma_invoice_id carries no foreign key
+  -- on purpose: a receipt records money that genuinely changed hands and must
+  -- outlive the quotation it was taken against - the save route proves the
+  -- quotation belongs to the same business instead. The balance is derived
+  -- from that quotation's total and the receipts against it, never stored.
+  payment_method TEXT,
+  reference_number TEXT,
+  proforma_invoice_id UUID,
+  CONSTRAINT receipt_vouchers_payment_method_known
+    CHECK (payment_method IS NULL OR payment_method IN ('cash','upi','bank_transfer','cheque','card','other')),
+
   created_at TIMESTAMPTZ DEFAULT NOW(),
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
