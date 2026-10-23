@@ -113,8 +113,13 @@ test('AR5 a quotation advance term is never read as money received', () => {
     'the receipt reads only the voucher amount');
   const fn = VOUCHERS_JS.slice(VOUCHERS_JS.indexOf('function voucherReceivedAgainst'));
   const body = fn.slice(0, fn.indexOf('\n}'));
-  assert.match(body, /vReceiptVouchers/, 'what is already received comes from receipt vouchers');
+  // vDocs is the receipt_vouchers table whenever this form is open, and it is
+  // the only ledger consulted - the quotation's own advance_amount is not.
+  assert.match(body, /vDocs/, 'what is already received comes from receipt vouchers');
+  assert.match(body, /voucherIsReceipt\(\)/, 'and only when this form is the receipt');
   assert.match(body, /proforma_invoice_id === proformaId/);
+  assert.equal(/advance_amount \|\| 0\)\), 0\)\);[\s\S]*total_amount/.test(body), false,
+    'it never reaches for the quotation total');
 });
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -436,6 +441,294 @@ test('AR16 editing a receipt does not count it against itself', async () => {
   assert.strictEqual(again.status, 200, JSON.stringify(again.body));
   assert.strictEqual(again.body.document.payment_method, 'cheque', 'the edit landed');
   assert.strictEqual(Number(await receiptsFor(q)), 1000, 'and it is still one receipt');
+});
+
+// ═══════════════════════════════════════════════════════════════════════
+//  4. The quotation shown on the form: its lines, its party, its arithmetic
+// ═══════════════════════════════════════════════════════════════════════
+
+// vouchers.js only declares - it has no top-level side effects - so it can be
+// loaded into a context and its functions called one at a time. The DOM stub
+// keeps one element per id so a write by the code under test is readable back.
+function vouchersSandbox(opts) {
+  const o = opts || {};
+  const els = {};
+  const el = (id) => {
+    if (!els[id]) {
+      const node = {
+        id, value: '', innerHTML: '', textContent: '', options: [],
+        classList: {
+          _s: new Set(),
+          add(c) { this._s.add(c); }, remove(c) { this._s.delete(c); },
+          contains(c) { return this._s.has(c); },
+          toggle(c, on) { if (on === undefined) on = !this._s.has(c); on ? this._s.add(c) : this._s.delete(c); }
+        },
+        add(opt) { this.options.push(opt); }
+      };
+      els[id] = node;
+    }
+    return els[id];
+  };
+  const sb = {
+    console, Math, Date, JSON, Number, String, Array, Object, RegExp, Intl,
+    parseInt, parseFloat, isFinite, isNaN, Promise, Set, Map,
+    Option: function (text, value) { return { text, value }; },
+    document: {
+      getElementById: (id) => (o.missing && o.missing.includes(id) ? null : el(id)),
+      querySelector: () => null, querySelectorAll: () => [],
+      addEventListener: noop, createElement: () => ({ style: {} })
+    },
+    localStorage: { getItem: () => null, setItem: noop, removeItem: noop },
+    sessionStorage: { getItem: () => null, setItem: noop, removeItem: noop },
+    location: { hostname: 'x', href: '', origin: 'http://x' },
+    navigator: { userAgent: 'node' },
+    // Not loaded: apiClient.js and the rest of the page's stack. Only the few
+    // names vouchers.js reaches for are provided, so a test failure points at
+    // vouchers.js rather than at someone else's module.
+    readAll: async () => [(o.items || [])],
+    _supabase: { from: () => ({ select: () => ({ eq: () => ({}) }) }) },
+    showToast: noop, handleApiError: noop, apiFetch: async () => ({}),
+    getCachedProfile: () => ({ state: 'Tamil Nadu' }),
+    recalcVoucher: noop, validateVoucherForm: () => ({}),
+    gstDocumentTypeSpec: () => ({ series: 'RV', portalName: '11A' }),
+    gstDocumentTypeLabel: (k) => k, gstDocumentTypeEnabled: () => true,
+    INDIAN_STATES: ['Tamil Nadu', 'Kerala'], GST_RATE_SLABS: [0, 5, 12, 18, 28],
+    compareInvoiceNumbers: (a, b) => String(a).localeCompare(String(b))
+  };
+  sb.window = sb; sb.globalThis = sb;
+  vm.createContext(sb);
+  vm.runInContext(rd('client', 'js', 'utilities', 'utils.js'), sb, { filename: 'utils.js' });
+  vm.runInContext(VOUCHERS_JS, sb, { filename: 'vouchers.js' });
+  sb.evalIn = (expr) => vm.runInContext(expr, sb);
+  sb.el = el;
+  // This page edits three document types; everything here is the receipt.
+  el('vDocType').value = 'receipt_voucher';
+  return sb;
+}
+
+const FORM_QUOTE = {
+  id: 'pf-1', document_number: 'PI/2026/004', document_date: '2026-10-20',
+  customer_name: 'Ravi & Co <Chennai>', gst_number: '33AAAAA0000A1Z5',
+  state: 'Tamil Nadu', taxable_amount: 1483.05, gst_amount: 266.95,
+  total_amount: 1750, status: 'issued'
+};
+
+const FORM_FORM_QUOTE_LINES = [
+  { sort_order: 2, product_name: 'Mixer Grinder', hsn_code: '8509', quantity: 1,
+    unit: 'PCS', rate: 1200, gst_percentage: 18, total_amount: 1416 },
+  { sort_order: 1, product_name: 'Wall Bracket', hsn_code: '7308', quantity: 2,
+    unit: 'PCS', rate: 141.53, gst_percentage: 18, total_amount: 334 }
+];
+
+test('AR17 picking a quotation fills the party but never the amount', () => {
+  const sb = vouchersSandbox();
+  sb.evalIn('vProformas = ' + JSON.stringify([FORM_QUOTE]));
+  sb.el('vProforma').value = FORM_QUOTE.id;
+  sb.el('vAmount').value = '500';
+
+  sb.applyQuotationParty(sb.voucherProformaById(FORM_QUOTE.id));
+  assert.strictEqual(sb.el('vPartyName').value, FORM_QUOTE.customer_name);
+  assert.strictEqual(sb.el('vPartyGstin').value, FORM_QUOTE.gst_number);
+  // proforma_invoices has no place_of_supply column; the quotation's state is
+  // the place of supply, which is what the voucher's own field holds.
+  assert.strictEqual(sb.el('vPos').value, 'Tamil Nadu');
+  // (required test 6) The quoted advance is a TERM. Money received is typed.
+  assert.strictEqual(sb.el('vAmount').value, '500', 'the amount is left alone');
+});
+
+test('AR18 the quotation lines render read-only, with every column and a grand total', async () => {
+  const sb = vouchersSandbox({ items: FORM_FORM_QUOTE_LINES });
+  sb.evalIn('vProformas = ' + JSON.stringify([FORM_QUOTE]));
+  sb.el('vProforma').value = FORM_QUOTE.id;
+
+  await sb.renderVoucherQuotePanel();
+
+  assert.strictEqual(sb.el('vQuotePanel').classList.contains('d-none'), false, 'the panel is shown');
+  const body = sb.el('vQuoteItemsBody').innerHTML;
+  // Sorted by sort_order, so the bracket (1) precedes the grinder (2).
+  assert.ok(body.indexOf('Wall Bracket') < body.indexOf('Mixer Grinder'), 'sort_order is honoured');
+  for (const v of ['8509', 'PCS', '1,200.00', '18%', '1,416.00']) {
+    assert.match(body, new RegExp(v.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')), 'shows ' + v);
+  }
+  // A customer name containing markup is shown as text, not injected.
+  const summary = sb.el('vQuoteSummary').innerHTML;
+  // escItemHtml escapes & " and <, which is what stops a tag forming; a lone
+  // > is harmless and is left as itself.
+  assert.equal(/<Chennai/.test(summary), false, 'the party name cannot open a tag');
+  assert.match(summary, /&lt;Chennai>/);
+  assert.match(summary, /Ravi &amp; Co/);
+  // (required test 3) The grand total of the quotation, not of the receipt.
+  assert.match(sb.el('vQuoteItemsTotal').innerHTML, /GRAND TOTAL \(2 items\)/);
+  assert.match(sb.el('vQuoteItemsTotal').innerHTML, /1,750\.00/);
+  // Nothing in the panel is an input: it is reference data on a receipt, and
+  // a receipt is not a tax invoice.
+  assert.equal(/<input|<select|contenteditable/.test(body + summary), false);
+
+  // Choosing "no quotation" puts it away again - standalone receipts stay
+  // possible, which is the flow that existed before any of this.
+  sb.el('vProforma').value = '';
+  await sb.renderVoucherQuotePanel();
+  assert.strictEqual(sb.el('vQuotePanel').classList.contains('d-none'), true);
+});
+
+test('AR19 what was received earlier comes from the receipts actually loaded', () => {
+  const sb = vouchersSandbox();
+  sb.evalIn('vProformas = ' + JSON.stringify([FORM_QUOTE]));
+
+  // The regression this guards: the figure used to be read from the refund
+  // voucher's picker list, which a receipt form never fills, so the screen
+  // showed nothing received however many receipts existed. vDocs IS the
+  // receipt_vouchers table whenever this form is open.
+  sb.evalIn('vDocs = ' + JSON.stringify([
+    { id: 'r1', proforma_invoice_id: 'pf-1', advance_amount: 500, status: 'issued' },
+    { id: 'r2', proforma_invoice_id: 'pf-1', advance_amount: 250, status: 'issued' },
+    { id: 'r3', proforma_invoice_id: 'pf-other', advance_amount: 999, status: 'issued' }
+  ]));
+  assert.strictEqual(sb.voucherReceivedAgainst('pf-1', null), 750,
+    'both receipts against this quotation, and nothing from another');
+  assert.strictEqual(sb.voucherReceivedAgainst('pf-1', 'r2'), 500,
+    'the receipt being edited is not its own competitor');
+
+  // (required test 10) And the balance that follows from it.
+  sb.el('vProforma').value = 'pf-1';
+  sb.el('vAmount').value = '1000';
+  sb.renderVoucherBalance();
+  assert.match(sb.el('vQuoteTotal').textContent, /1,750\.00/);
+  assert.match(sb.el('vQuotePrev').textContent, /750\.00/);
+  // 1750 - 750 - 1000 settles the quotation exactly, which is a balance.
+  assert.match(sb.el('vQuoteBalance').textContent, /0\.00/);
+  assert.strictEqual(sb.el('vBalanceError').classList.contains('d-none'), true);
+
+  // One rupee more than is due is refused, not quietly absorbed.
+  sb.el('vAmount').value = '1200';
+  sb.renderVoucherBalance();
+  assert.strictEqual(sb.el('vQuoteBalance').textContent, '\u2014',
+    'a negative balance is not shown as one');
+  assert.strictEqual(sb.el('vBalanceError').classList.contains('d-none'), false);
+
+  // The worked example, with nothing received before it.
+  sb.evalIn('vDocs = []');
+  sb.el('vAmount').value = '500';
+  sb.renderVoucherBalance();
+  assert.match(sb.el('vQuoteBalance').textContent, /1,250\.00/, '1750 - 0 - 500');
+  assert.strictEqual(sb.el('vBalanceError').classList.contains('d-none'), true);
+});
+
+test('AR20 a cancelled receipt releases the room it held', () => {
+  const sb = vouchersSandbox();
+  sb.evalIn('vProformas = ' + JSON.stringify([FORM_QUOTE]));
+  sb.evalIn('vDocs = ' + JSON.stringify([
+    { id: 'r1', proforma_invoice_id: 'pf-1', advance_amount: 500, status: 'issued' },
+    { id: 'r2', proforma_invoice_id: 'pf-1', advance_amount: 250, status: 'cancelled' }
+  ]));
+  assert.strictEqual(sb.voucherReceivedAgainst('pf-1', null), 500,
+    'only the receipt still standing is held against the quotation');
+
+  // (requirement 3) And so the balance on screen offers that room back.
+  sb.el('vProforma').value = 'pf-1';
+  sb.el('vAmount').value = '1250';
+  sb.renderVoucherBalance();
+  assert.match(sb.el('vQuotePrev').textContent, /500\.00/, 'not 750');
+  assert.match(sb.el('vQuoteBalance').textContent, /0\.00/, '1750 - 500 - 1250');
+  assert.strictEqual(sb.el('vBalanceError').classList.contains('d-none'), true,
+    'a receipt that fits the freed room is not flagged');
+
+  // The screen and the enforcer must read the same condition, or one of them
+  // promises room the other refuses.
+  assert.match(DOCS, /AND status <> 'cancelled'/,
+    'the server leaves cancelled receipts out of the sum too');
+  const fn = VOUCHERS_JS.slice(VOUCHERS_JS.indexOf('function voucherReceivedAgainst'));
+  assert.match(fn.slice(0, fn.indexOf('\n}')), /!== 'cancelled'/);
+});
+
+test('AR21 the payment facts do not outlive their receipt, and come back on edit', () => {
+  const reset = VOUCHERS_JS.slice(VOUCHERS_JS.indexOf('function resetVoucherForm'));
+  const resetBody = reset.slice(0, reset.indexOf('\n}'));
+  for (const id of ['vPaymentMethod', 'vReference', 'vProforma']) {
+    assert.match(resetBody, new RegExp(id), 'a new form clears ' + id);
+  }
+  assert.match(resetBody, /vQuotePanel/, 'and puts the quotation panel away');
+
+  // Opening a saved receipt must show what it recorded; without this the
+  // fields came up empty and the next save wrote the blanks back.
+  assert.match(VOUCHERS_JS, /setVoucherValue\('vPaymentMethod', r\.payment_method/);
+  assert.match(VOUCHERS_JS, /setVoucherValue\('vReference', r\.reference_number/);
+  assert.match(VOUCHERS_JS, /setVoucherValue\('vProforma', r\.proforma_invoice_id/);
+  // The selector lists open quotations only, so a receipt taken against one
+  // since cancelled needs its option put back or the link is lost on save.
+  assert.match(VOUCHERS_JS, /Quotation no longer listed/);
+});
+
+test('AR22 the printed table shows the quoted rate and GST, and no false receipt', () => {
+  // (required test 9) The quotation's figures are printed as the quotation's.
+  assert.match(RECEIPT_PDF, /'#', 'Description', 'HSN', 'Qty', 'Unit', 'Rate', 'GST %', 'Amount'/);
+  assert.match(RECEIPT_PDF, /\(\+it\.gst_percentage \|\| 0\) \+ '%'/);
+  // Money received is the voucher's own amount, and the only figure the words
+  // are written from. The quotation total is labelled as the quotation's.
+  assert.match(RECEIPT_PDF, /\['Advance Received Now', formatNum\(fig\.now\)\]/);
+  assert.match(RECEIPT_PDF, /\['Quotation Total', formatNum\(fig\.total\)\]/);
+  assert.match(RECEIPT_PDF, /numberToWordsINR\(fig\.now\)/);
+
+  // And the figures themselves, from the real function.
+  const sb = pdfSandbox();
+  const f = sb.receiptFigures({ advance_amount: 500 }, FORM_QUOTE, 0);
+  assert.strictEqual(f.now, 500, 'received');
+  assert.strictEqual(f.total, 1750, 'quoted');
+  assert.notStrictEqual(f.now, f.total, 'the quotation total is never the amount received');
+});
+
+test('AR23 cancelling an advance hands its room back, and the record is kept', async () => {
+  const { rows: pf } = await db.query(
+    `INSERT INTO proforma_invoices (user_id, document_number, document_date, customer_name,
+       state, district, supply_type, total_amount)
+     VALUES ($1,'PI-T0005','2026-10-23','Anand Caterers','Tamil Nadu','Coimbatore','intrastate',1750)
+     RETURNING id`, [USER]);
+  const q = pf[0].id;
+  // What is actually held against the quotation, which is the figure the cap
+  // is computed from - as opposed to receiptsFor(), which counts every row
+  // ever written and so also proves nothing was deleted.
+  const heldAgainst = async () => Number((await db.query(
+    `SELECT COALESCE(SUM(advance_amount),0)::numeric s FROM receipt_vouchers
+      WHERE proforma_invoice_id = $1 AND status <> 'cancelled'`, [q])).rows[0].s);
+
+  const first = await saveReceipt({ proforma_invoice_id: q, advance_amount: 1750, total_value: 1750 });
+  assert.strictEqual(first.status, 200, JSON.stringify(first.body));
+  const firstId = first.body.document.id;
+  assert.strictEqual(await heldAgainst(), 1750, 'the quotation is fully received against');
+
+  // With nothing left, a further receipt is refused.
+  const blocked = await saveReceipt({ proforma_invoice_id: q, advance_amount: 100, total_value: 100 });
+  assert.strictEqual(blocked.status, 409, JSON.stringify(blocked.body));
+  assert.strictEqual(blocked.body.error.code, 'receipt_exceeds_quotation');
+
+  // Cancel it.
+  const cancelled = await api('POST', '/api/documents/receipt_voucher/' + firstId + '/cancel', { reason: '' });
+  assert.strictEqual(cancelled.status, 200, JSON.stringify(cancelled.body));
+
+  // (requirement 5) The receipt is still there, with its number and amount.
+  const { rows: kept } = await db.query('SELECT * FROM receipt_vouchers WHERE id = $1', [firstId]);
+  assert.strictEqual(kept.length, 1, 'the row was kept, not deleted');
+  assert.strictEqual(kept[0].status, 'cancelled');
+  assert.strictEqual(Number(kept[0].advance_amount), 1750, 'and it still records what was received');
+  assert.strictEqual(kept[0].document_number, first.body.document.document_number,
+    'a cancelled document keeps its number');
+  assert.strictEqual(Number(await receiptsFor(q)), 1750, 'the history is intact');
+
+  // (requirements 1 and 2) But it no longer occupies room.
+  assert.strictEqual(await heldAgainst(), 0);
+  const again = await saveReceipt({ proforma_invoice_id: q, advance_amount: 1750, total_value: 1750 });
+  assert.strictEqual(again.status, 200, JSON.stringify(again.body));
+  assert.strictEqual(await heldAgainst(), 1750, 'the freed room was taken by the new receipt');
+
+  // (requirement 4) And a genuine overpayment is still refused afterwards.
+  const over = await saveReceipt({ proforma_invoice_id: q, advance_amount: 0.01, total_value: 0.01 });
+  assert.strictEqual(over.status, 409, JSON.stringify(over.body));
+  assert.strictEqual(await heldAgainst(), 1750, 'and nothing was written');
+
+  // The cancelled receipt is not resurrected by any of this.
+  const { rows: still } = await db.query(
+    "SELECT status FROM receipt_vouchers WHERE id = $1", [firstId]);
+  assert.strictEqual(still[0].status, 'cancelled');
 });
 
 test('teardown', async () => {

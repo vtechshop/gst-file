@@ -150,12 +150,13 @@ async function buildReceiptPDFDoc(voucher, quotation, items, previousReceived) {
     String(+it.quantity || 0),
     String(it.unit || ''),
     formatNum(it.rate),
+    (+it.gst_percentage || 0) + '%',
     formatNum(it.total_amount)
   ]);
   if (rows.length) {
     doc.autoTable({
       startY: y,
-      head: [['#', 'Description', 'HSN', 'Qty', 'Unit', 'Rate', 'Amount']],
+      head: [['#', 'Description', 'HSN', 'Qty', 'Unit', 'Rate', 'GST %', 'Amount']],
       body: rows,
       theme: 'grid',
       margin: { left: L, right: RECEIPT_PAGE.margin },
@@ -167,7 +168,8 @@ async function buildReceiptPDFDoc(voucher, quotation, items, previousReceived) {
         3: { cellWidth: 12, halign: 'right' },
         4: { cellWidth: 14 },
         5: { cellWidth: 22, halign: 'right' },
-        6: { cellWidth: 24, halign: 'right' }
+        6: { cellWidth: 16, halign: 'right' },
+        7: { cellWidth: 24, halign: 'right' }
       }
     });
     y = doc.lastAutoTable.finalY + 6;

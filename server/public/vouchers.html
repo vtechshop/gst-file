@@ -18,8 +18,8 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.31/jspdf.plugin.autotable.min.js"></script>
   <script src="client/js/pages/invoice-pdf.js?v=52"></script>
-  <script src="client/js/pages/receipt-pdf.js?v=1"></script>
-  <script src="client/js/pages/vouchers.js?v=30"></script>
+  <script src="client/js/pages/receipt-pdf.js?v=2"></script>
+  <script src="client/js/pages/vouchers.js?v=31"></script>
 
 </head>
 <body>
@@ -246,6 +246,25 @@
                 </select>
               </div>
             </div>
+            <div id="vQuotePanel" class="d-none">
+              <div class="section-title mb-14">Quotation Details
+                <span class="fs-11 text-muted-sm">(from the selected quotation &mdash; read only)</span></div>
+              <div class="calc-box mb-16" id="vQuoteSummary"></div>
+              <div class="table-wrapper mb-20">
+                <table class="data-table">
+                  <thead>
+                    <tr><th>#</th><th>Product / Description</th><th>HSN</th>
+                        <th style="text-align:center;">Qty</th><th>Unit</th>
+                        <th style="text-align:right;">Rate</th>
+                        <th style="text-align:right;">GST %</th>
+                        <th style="text-align:right;">Line Total</th></tr>
+                  </thead>
+                  <tbody id="vQuoteItemsBody"></tbody>
+                  <tfoot id="vQuoteItemsTotal"></tfoot>
+                </table>
+              </div>
+            </div>
+
             <div class="calc-box mb-16" id="vBalanceBox">
               <div class="calc-row">
                 <span class="label">Quotation Total</span>

@@ -254,6 +254,9 @@ const RECEIPT_PAYMENT_METHODS = ['cash', 'upi', 'bank_transfer', 'cheque', 'card
 // read the same remaining balance and both be allowed. `exclude` is the
 // voucher being edited, which is not its own competitor for the room it
 // already occupies.
+//
+// Cancelled receipts are left out: a cancelled advance is no longer held, so
+// its room returns to the quotation and can be received again.
 async function proformaRoomLeftOn(client, userId, proformaId, exclude) {
   const { rows: quote } = await client.query(
     `SELECT document_number, total_amount FROM proforma_invoices
@@ -262,8 +265,11 @@ async function proformaRoomLeftOn(client, userId, proformaId, exclude) {
     const e = new Error('That quotation could not be found.');
     e.status = 404; e.expose = true; e.code = 'proforma_not_found'; throw e;
   }
+  // status is NOT NULL DEFAULT 'issued', and the cancel route is the only
+  // thing that writes 'cancelled' (it guards on status <> 'cancelled' too),
+  // so this is the same condition read from the other side.
   const params = [userId, proformaId];
-  let where = 'user_id = $1 AND proforma_invoice_id = $2';
+  let where = "user_id = $1 AND proforma_invoice_id = $2 AND status <> 'cancelled'";
   if (exclude) { params.push(exclude); where += ` AND id <> $${params.length}`; }
   const { rows: taken } = await client.query(
     `SELECT COALESCE(SUM(advance_amount), 0)::numeric AS received
