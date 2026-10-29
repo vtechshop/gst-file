@@ -57,7 +57,17 @@ const TABLES = ['b2b_invoices', 'b2c_invoices', 'invoice_items'];
 // Pinned deliberately. If the migration file is ever edited, this check stops
 // rather than applying something that was never reviewed - and the mismatch
 // is reported with both values so the difference is obvious.
-const APPROVED_CHECKSUM = 'e4bca783d214e5626bce67223ba506d319af7d4df6995d21079a200f91bf0026';
+//
+// This is the hash of the COMMITTED blob, which is what every host checks
+// out. It must never be taken from a Windows working copy: .gitattributes
+// pins *.sql to `eol=lf`, so git stores LF while a Windows checkout can hold
+// CRLF, and checksum() hashes the bytes as they are read. The original pin
+// here was computed from a CRLF working copy, so it matched on the author's
+// machine and could NOT match on Linux - which made this runner exit 1 on
+// every deploy, and `prestart` chains with && so it blocked the whole start.
+// tests/migration-checksum-pins.test.js now compares every pin against
+// `git show HEAD:<file>`, so this cannot recur silently.
+const APPROVED_CHECKSUM = 'cb29566dcb50c4f632fa0c4e9ae86cd5b41ee5fa8b8c0633d5714c95b6b55512';
 
 const TAG = '[invoice-export-currency]';
 const log = (msg) => console.log(`${TAG} ${msg}`);

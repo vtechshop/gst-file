@@ -71,7 +71,16 @@ test('MG3 the script restates nothing: it reads the file and reuses the migrator
   // restating it.)
   // Read as code: the header comment explains which columns the feature
   // writes, which is documentation, not a second copy of the schema.
-  const code = SRC.split(String.fromCharCode(10)).map(l => l.replace(/^\s*\/\/.*$/, '')).join(' ');
+  // The trailing CR is removed first. On a Windows clone git checks this file
+  // out with CRLF (core.autocrlf=true here), and JavaScript's `.` does not
+  // match a carriage return, so `$` could never reach the end of such a line
+  // and NOTHING was stripped - leaving every column named in the header
+  // comment to fail the assertions below. This passed only because the
+  // working copy happened to hold LF; it is not something to rely on.
+  const code = SRC.split(String.fromCharCode(10))
+    .map(l => l.replace(/\r$/, ''))
+    .map(l => l.replace(/^\s*\/\/.*$/, ''))
+    .join(' ');
   for (const col of ['currency_code', 'exchange_rate', 'fx_taxable_amount', 'fx_gst_amount',
     'fx_total_amount', 'destination_country', 'fx_rate', 'fx_taxable_value']) {
     assert.strictEqual(code.includes(col), false, 'the script does not name ' + col);
