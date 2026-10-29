@@ -290,7 +290,10 @@ test('PT13 mixed rates block a charge - and only a charge', async () => {
   assert.match(blocked.toasts.at(-1).m, /more than one GST rate/);
 
   const fine = await saveWith(undefined, { items });
-  assert.strictEqual(fine.calls.length, 2, 'without delivery, mixed rates save as they always have');
+  // One request, not two: the browser used to reserve a number first and the
+  // save now issues it itself, so a successful save is a single call.
+  assert.strictEqual(fine.calls.length, 1, 'without delivery, mixed rates save as they always have');
+  assert.match(fine.calls[0].url, /\/documents\/proforma_invoice\/save/);
 });
 
 test('PT14 the save uses the invoice engine once, validates first, and never sends the tax', () => {
@@ -299,8 +302,14 @@ test('PT14 the save uses the invoice engine once, validates first, and never sen
   assert.strictEqual((fn.match(/invoiceTransportTax\(/g) || []).length, 1);
   assert.strictEqual((fn.match(/transportCharge \|\| 0/g) || []).length, 1, 'into the base exactly once');
   assert.ok(fn.indexOf('validateInvoiceTransport()') > -1);
-  assert.ok(fn.indexOf('validateInvoiceTransport()') < fn.indexOf('reserve-number'),
-    'the charge is checked before a number is reserved');
+  // It used to read "before a number is reserved". Nothing is reserved before
+  // the save any more, so the charge is checked before the save is SENT - and
+  // the number, being issued inside the save's own transaction, rolls back
+  // with it even if a later guard refuses the write.
+  assert.ok(fn.indexOf('validateInvoiceTransport()') < fn.indexOf('/documents/proforma_invoice/save'),
+    'the charge is checked before the save is sent');
+  assert.equal(/reserve-number/.test(fn), false,
+    'the browser no longer reserves a number');
   assert.equal(/transport_gst_amount/.test(fn), false, 'the derived tax is never sent');
 });
 

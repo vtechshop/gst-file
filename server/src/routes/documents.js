@@ -3,9 +3,11 @@
 // Three things the generic CRUD router cannot do for these documents,
 // each needing a transaction or a rule the router has no opinion about:
 //
-//   1. POST /documents/reserve-number  — issue the next number from a
-//      document type's own numbering book, serialized the same way
-//      invoice numbering is.
+//   1. GET  /documents/:type/next-number — preview the next number from a
+//      document type's own numbering book, consuming nothing.
+//      POST /documents/reserve-number      — issue one, serialized the same
+//      way invoice numbering is. A type marked `autoNumber` needs neither:
+//      its save issues the number in the transaction that writes the row.
 //   2. POST /documents/:type/save      — write the document AND its
 //      audit entry in one transaction, so a document can never exist
 //      without a record of who made it.
@@ -60,7 +62,14 @@ const DOCUMENT_TABLES = {
   proforma_invoice: { table: 'proforma_invoices', series: 'proforma_invoice',
                      items: 'proforma_invoice_items', itemsFk: 'proforma_invoice_id',
                      // Carries the quoted delivery charge; see the save route.
-                     transport: true },
+                     transport: true,
+                     // Offers Automatic/Manual numbering the way a tax invoice
+                     // does: a blank number on a NEW quotation means "issue me
+                     // one", and the save issues it. Opt-in per type, because
+                     // every other book here is written by a page that reserves
+                     // its number first and for which a blank number is a
+                     // mistake, not a request.
+                     autoNumber: true },
 
   // An order to a supplier. It joins this registry for the numbering and
   // the duplicate check; everything a purchase order does BEYOND being a
@@ -163,26 +172,33 @@ async function writeAudit(client, userId, type, table, id, number, action, chang
   );
 }
 
-// ── 1) Reserve the next number for a document type ──
-//
-// Deliberately separate from POST /invoices/reserve-number: that one
-// counts invoices per invoice_source and must keep doing exactly that.
-// This counts documents per document type, from its own columns on
 // The numbering core, on a caller-supplied client so it can run INSIDE
 // someone else's transaction. Auto-registering a warranty during an invoice
 // save has to draw its number in that same transaction: a number taken and
 // then rolled back would leave a hole in the book, and one taken outside it
 // could survive an invoice that never committed.
 //
-// The profile row is locked first - the same ordering the invoice reservation
-// uses, so two simultaneous saves cannot read the same "next" number.
-async function reserveDocumentNumberOn(client, userId, documentType) {
+// Each document type counts from its own entry in
+// profiles.document_series_sequences, so no book can advance another and
+// none of them can move an invoice counter.
+//
+// The arithmetic is shared by the preview and the reservation so the two can
+// never disagree about what "next" means - the same arrangement
+// previewInvoiceNumberOn and assignInvoiceNumberOn have in routes/invoices.js.
+//
+// `lock` is the whole difference. A reservation takes the profile row FOR
+// UPDATE first, which serializes concurrent issues for this user: the
+// taken-numbers scan only runs once that lock is held, so two simultaneous
+// saves can never both read the same "next" number before either commits.
+// A preview takes no lock and writes nothing, so it can be redrawn as often
+// as the page likes without consuming a number.
+async function nextDocumentNumberOn(client, userId, documentType, lock) {
   const { table, series } = docSpec(documentType);
   const type = String(documentType).trim().toLowerCase();
 
   const { rows: prof } = await client.query(
     `SELECT document_series_sequences, document_series_formats
-       FROM profiles WHERE id = $1 FOR UPDATE`, [userId]);
+       FROM profiles WHERE id = $1${lock ? ' FOR UPDATE' : ''}`, [userId]);
   const seqs = prof[0]?.document_series_sequences || {};
   const formats = prof[0]?.document_series_formats || {};
   const format = (formats[series] && String(formats[series]).trim())
@@ -198,25 +214,69 @@ async function reserveDocumentNumberOn(client, userId, documentType) {
     [userId, series]);
   const used = new Set(taken.map(r => (r.document_number || '').toUpperCase()));
 
+  // The counter is only a starting point: the scan walks forward past
+  // anything already issued, so a counter that has fallen behind the saved
+  // documents heals itself on the next one instead of colliding.
   let candidate = applyInvoiceNumberFormat(format, seq);
   let guard = 0;
   while (used.has(candidate.toUpperCase()) && guard < 100000) {
     seq++; candidate = applyInvoiceNumberFormat(format, seq); guard++;
   }
 
+  return { documentNumber: candidate, series, format, seq };
+}
+
+// What the next document in this book WOULD be. Reads only - no lock, no
+// counter movement - so a page can show it, redraw it and refresh it as often
+// as it likes without consuming anything.
+async function previewDocumentNumberOn(client, userId, documentType) {
+  return nextDocumentNumberOn(client, userId, documentType, false);
+}
+
+async function reserveDocumentNumberOn(client, userId, documentType) {
+  const issued = await nextDocumentNumberOn(client, userId, documentType, true);
+  // The counter moves on the caller's client, so it moves if and only if the
+  // caller's transaction commits.
   await client.query(
     `UPDATE profiles
         SET document_series_sequences =
             COALESCE(document_series_sequences, '{}'::jsonb) || jsonb_build_object($1::text, $2::int)
-      WHERE id = $3`, [series, seq + 1, userId]);
-  return { documentNumber: candidate, series, format };
+      WHERE id = $3`, [issued.series, issued.seq + 1, userId]);
+  return issued;
 }
+
+// ── 1a) Preview the next number for a document type ──
+//
+// Consumes nothing: an abandoned draft, a reload or ten switches between
+// Automatic and Manual cannot burn a number. The number that actually gets
+// stored is issued by the save itself, from this same arithmetic, inside the
+// transaction that writes the document. The two can only differ if someone
+// else saves in between, which is exactly when the preview SHOULD be stale -
+// and the save, not the preview, decides.
+//
+// The counterpart of GET /invoices/next-number, for the document books.
+router.get('/:type/next-number', asyncRoute(async (req, res) => {
+  const type = String(req.params.type).trim().toLowerCase();
+  const client = await pool.connect();
+  try {
+    const { documentNumber, series, format } =
+      await previewDocumentNumberOn(client, req.userId, type);
+    res.json({ documentNumber, series, format });
+  } finally {
+    client.release();
+  }
+}));
 
 // ── 1) Reserve the next number for a document type ──
 //
 // Deliberately separate from POST /invoices/reserve-number: that one counts
 // invoices per invoice_source and must keep doing exactly that. This counts
 // documents per document type and cannot move an invoice counter.
+//
+// Still consuming, and still used by the pages that reserve before saving.
+// A type carrying `autoNumber` no longer needs it: its save issues the number
+// itself, in the transaction that writes the row, so nothing is burned by a
+// save that fails.
 router.post('/reserve-number', asyncRoute(async (req, res) => {
   const client = await pool.connect();
   try {
@@ -426,6 +486,33 @@ router.post('/:type/save', asyncRoute(async (req, res) => {
   try {
     await client.query('BEGIN');
 
+    // ── One lock for all numbering, automatic and manual alike ──
+    //
+    // The automatic path takes this lock inside reserveDocumentNumberOn. The
+    // manual path took none, and that was a real hole: a typed number and an
+    // issued one could pass each other, because the duplicate check below
+    // cannot see a row another transaction has inserted but not committed.
+    // Two saves racing for PI-00001 - one typing it, one being given it -
+    // therefore both passed and both wrote, leaving two rows claiming the same
+    // number. Two concurrent MANUAL saves of the same number did the same.
+    //
+    // routes/invoices.js takes this same lock in every one of its numbering
+    // paths, the manual one included (applyManualInvoiceNumberOn), for exactly
+    // this reason. Holding it here serializes all of this user's numbering for
+    // the length of the transaction, so the scan and the duplicate check both
+    // run against a book nobody else is writing.
+    //
+    // Taken FIRST, before the row locks below, so every transaction that needs
+    // both acquires them in the same order and no pair of saves can deadlock.
+    // Only when this save will actually touch a number - a plain edit that
+    // sends none needs no lock and should not serialize against one.
+    const numberCol = spec.numberCol || 'document_number';
+    const willNumber = (spec.autoNumber && !editId)
+      || Object.prototype.hasOwnProperty.call(document, numberCol);
+    if (willNumber) {
+      await client.query('SELECT 1 FROM profiles WHERE id = $1 FOR UPDATE', [req.userId]);
+    }
+
     // A receipt voucher's payment details, and the room left on the quotation
     // it is received against. Judged here - inside the transaction, under the
     // quotation's own row lock - so it commits or rolls back with the voucher
@@ -450,7 +537,39 @@ router.post('/:type/save', asyncRoute(async (req, res) => {
     // Checked inside the transaction, and the book is scoped by user_id and
     // document_series exactly as reserveDocumentNumberOn() scopes it, so
     // another tenant using the same number is not a conflict.
-    const numberCol = spec.numberCol || 'document_number';
+    //
+    // Both checks live in the second block below. The first issues a number
+    // when the caller asked for one, and then falls into them - so an issued
+    // number is held to exactly the same two rules as a typed one.
+
+    // ── Automatic numbering, for a type that offers it ──
+    //
+    // A blank number on a NEW document of such a type means "issue me one",
+    // and it is issued HERE - under the profile-row lock, inside the
+    // transaction that writes the document. Two consequences, both the reason
+    // this is not done in the browser beforehand:
+    //
+    //   - a save that then fails burns nothing. The counter moves only if
+    //     this transaction commits, so a refused advance, a duplicate number
+    //     or a dropped connection leaves no hole in the book.
+    //   - two simultaneous saves cannot take the same number, because the
+    //     lock serializes the scan that chooses it.
+    //
+    // On a document that ALREADY exists a blank number is a mistake, never a
+    // reason to renumber an offer the customer may already be holding - so an
+    // edit is deliberately excluded here and falls through to the refusal
+    // below. Manual mode sends a number and simply never reaches this.
+    if (spec.autoNumber && !editId
+        && !String(document[numberCol] == null ? '' : document[numberCol]).trim()) {
+      const issued = await reserveDocumentNumberOn(client, req.userId, type);
+      document[numberCol] = issued.documentNumber;
+      // `allowed` was computed from the keys the caller sent, before this
+      // transaction opened. A caller that omitted the number entirely - rather
+      // than sending it blank - would otherwise have the issued number
+      // dropped from the INSERT and hit the NOT NULL constraint instead.
+      if (!allowed.includes(numberCol)) allowed.push(numberCol);
+    }
+
     if (Object.prototype.hasOwnProperty.call(document, numberCol)) {
       const number = String(document[numberCol] == null ? '' : document[numberCol]).trim();
       if (!number) {

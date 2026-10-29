@@ -262,15 +262,54 @@ test('P24 the invoice tables gained no columns for this feature', () => {
 const PFENTRY = fs.readFileSync(path.join(ROOT, 'client', 'js', 'pages', 'proforma-entry.js'), 'utf8');
 const DOCROUTE = fs.readFileSync(path.join(ROOT, 'server', 'src', 'routes', 'documents.js'), 'utf8');
 
-test('P25 saving a new proforma reserves a number from the proforma book', () => {
+test('P25 a new proforma is given a number by the save, from the proforma book', () => {
   const fn = PFENTRY.slice(PFENTRY.indexOf('async function saveProforma'));
   const body = fn.slice(0, fn.search(/\r?\n\}\r?\n/));
-  assert.match(body, /\/documents\/reserve-number/,
-    'saveProforma must reserve a number - document_number is NOT NULL');
-  assert.match(body, /documentType: 'proforma_invoice'/,
-    'it must reserve from the proforma book, not another document type');
-  assert.ok(body.indexOf('/documents/proforma_invoice/save') > body.indexOf('reserve-number'),
-    'the number must be reserved before the save, not after');
+
+  // The browser sends no number at all on automatic, so there is nothing for
+  // it to get wrong - and on an edit that same absence is what leaves the
+  // stored number untouched.
+  assert.match(body, /proformaNumberingIsManual\(\) \? \{ document_number/,
+    'the number is sent only when the user typed one');
+  assert.equal(/reserve-number/.test(body), false,
+    'the browser must not reserve a number before saving');
+
+  // The save issues it, for this type, from this type's own book.
+  assert.match(DOCROUTE, /if \(spec\.autoNumber && !editId/,
+    'the save route must issue a number for an autoNumber type');
+  assert.match(DOCROUTE, /await reserveDocumentNumberOn\(client, req\.userId, type\)/,
+    'and draw it from the book named by the URL, never one sent by the client');
+  const spec = DOCROUTE.slice(DOCROUTE.indexOf('proforma_invoice: { table:'));
+  assert.match(spec.slice(0, spec.indexOf('},')), /autoNumber: true/,
+    'the proforma type must opt in to automatic numbering');
+
+  // Inside the transaction that writes the row, which is the whole point: a
+  // refused save moves no counter.
+  const begin = DOCROUTE.indexOf("await client.query('BEGIN')");
+  const issue = DOCROUTE.indexOf('if (spec.autoNumber && !editId');
+  const insert = DOCROUTE.indexOf('INSERT INTO ${table}');
+  assert.ok(begin > -1 && issue > begin && issue < insert,
+    'the number must be issued between BEGIN and the INSERT');
+});
+
+test('P25b the proforma preview consumes nothing', () => {
+  // A page may redraw the preview as often as it likes. Only the reservation
+  // takes the lock and moves the counter; the preview does neither.
+  assert.match(DOCROUTE, /async function previewDocumentNumberOn\(/);
+  assert.match(DOCROUTE, /router\.get\('\/:type\/next-number'/,
+    'the non-consuming preview endpoint must exist');
+
+  const preview = DOCROUTE.slice(DOCROUTE.indexOf('async function previewDocumentNumberOn('));
+  const previewBody = preview.slice(0, preview.indexOf(String.fromCharCode(10) + '}'));
+  assert.equal(/FOR UPDATE/.test(previewBody), false, 'a preview takes no lock');
+  assert.equal(/UPDATE profiles/.test(previewBody), false, 'a preview moves no counter');
+
+  // The reservation does both, so the two cannot be confused.
+  const reserve = DOCROUTE.slice(DOCROUTE.indexOf('async function reserveDocumentNumberOn('));
+  const reserveBody = reserve.slice(0, reserve.indexOf(String.fromCharCode(10) + '}'));
+  assert.match(reserveBody, /UPDATE profiles/, 'a reservation moves the counter');
+  assert.match(reserveBody, /nextDocumentNumberOn\(client, userId, documentType, true\)/,
+    'and takes the lock, by asking for it');
 });
 
 test('P26 the proforma book has its own number format', () => {

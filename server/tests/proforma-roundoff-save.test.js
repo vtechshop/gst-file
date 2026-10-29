@@ -314,7 +314,7 @@ test('RS11 only the proforma changed: the invoice rollup and the invoice PDF rul
   assert.equal(/total_amount: taxable \+ gst/.test(PF_ENTRY), false, 'the old sum is gone');
   const html = rd('proforma.html');
   // Moved by the proforma advance amount (proforma-advance.test.js).
-  assert.ok(html.includes('client/js/pages/proforma-entry.js?v=44') && html.includes('client/js/pages/proforma-pdf.js?v=44'));
+  assert.ok(html.includes('client/js/pages/proforma-entry.js?v=45') && html.includes('client/js/pages/proforma-pdf.js?v=44'));
   assert.ok(rd('proforma-list.html').includes('client/js/pages/proforma-pdf.js?v=44'));
 });
 

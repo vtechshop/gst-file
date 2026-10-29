@@ -44,7 +44,15 @@ async function initProformaEntry() {
   restoreProformaAdvance(null);
 
   const id = new URLSearchParams(window.location.search).get('id');
-  if (id) await loadProformaForEdit(id);
+  if (id) {
+    await loadProformaForEdit(id);
+  } else {
+    // Automatic by default on every new quotation, which also draws the
+    // preview. Only on the new-proforma branch: one being edited gets its
+    // own number from loadProformaForEdit(), and a preview fetch here would
+    // be a wasted request whose answer is immediately discarded.
+    setProformaNumberMode(PF_NUMBER_MODE_DEFAULT);
+  }
 }
 
 // ── Small helpers ──────────────────────────────────
@@ -57,6 +65,109 @@ function setProformaValue(id, v) {
 }
 function goToProformaList() {
   window.location.href = 'proforma-list.html';
+}
+
+// ── Automatic or manual numbering, for this quotation only ──────────
+//
+// The same arrangement Invoice Entry uses, deliberately: Automatic is the
+// default and is what nearly every quotation uses, with the server issuing
+// the number inside the transaction that writes the row. Manual exists for
+// the case Automatic cannot serve - taking over a book that started
+// elsewhere, or correcting where the sequence sits - and it is a decision
+// about THIS quotation. It is not stored on the profile: the next new
+// proforma opens on Automatic again, so nobody is left in a mode they chose
+// once.
+//
+// What a typed number still does is move the book: save PI-00001 by hand and
+// the next automatic number walks past it. That happens on the server, in
+// the same transaction (reserveDocumentNumberOn scans the numbers already
+// issued), not here.
+let proformaNumberMode = 'auto';
+// The number a proforma being edited arrived with. Automatic means "keep
+// this" on an existing quotation - it must never fetch a fresh number and
+// quietly renumber an offer the customer may already be holding.
+let proformaEditNumber = null;
+const PF_NUMBER_MODE_DEFAULT = 'auto';
+
+const PF_NUMBER_NOTE = 'Issued automatically when you save.';
+const PF_NUMBER_NOTE_MANUAL = 'Typed by you. The next proforma continues from it.';
+const PF_NUMBER_NOTE_EDIT = 'Keeping the number this proforma was issued.';
+const PF_NUMBER_NOTE_EDIT_MANUAL = 'Change it if you need to \u2014 it must stay unique in this book.';
+
+function proformaNumberingIsManual() { return proformaNumberMode === 'manual'; }
+
+function setProformaNumberMode(mode) {
+  // Both modes are offered on an existing quotation too. What changes is what
+  // Automatic MEANS: on a new proforma it is the next number from the server,
+  // and on one that already exists it is "keep the number it has" - never a
+  // fresh one.
+  const editing = !!proformaEditId;
+  proformaNumberMode = mode === 'manual' ? 'manual' : 'auto';
+  const manual = proformaNumberingIsManual();
+
+  const auto = document.getElementById('pfNumAuto');
+  const man = document.getElementById('pfNumManual');
+  if (auto) {
+    auto.classList.toggle('active', !manual);
+    auto.setAttribute('aria-pressed', String(!manual));
+  }
+  if (man) {
+    man.classList.toggle('active', manual);
+    man.setAttribute('aria-pressed', String(manual));
+  }
+
+  // Manual is the only mode that lets the box be typed in, new or not.
+  const numEl = document.getElementById('pfNumber');
+  if (numEl) {
+    numEl.readOnly = !manual;
+    if (manual) { numEl.removeAttribute('aria-readonly'); numEl.removeAttribute('tabindex'); }
+    else { numEl.setAttribute('aria-readonly', 'true'); numEl.setAttribute('tabindex', '-1'); }
+  }
+
+  const note = document.getElementById('pfNumNote');
+  if (note) {
+    if (editing) note.textContent = manual ? PF_NUMBER_NOTE_EDIT_MANUAL : PF_NUMBER_NOTE_EDIT;
+    else note.textContent = manual ? PF_NUMBER_NOTE_MANUAL : PF_NUMBER_NOTE;
+  }
+
+  if (manual) {
+    // Whatever is in the box stays there as the starting point - the number
+    // this proforma already has, or the preview a new one was offered - so a
+    // correction is an edit rather than a retype. Nothing is overwritten.
+    if (numEl) numEl.focus();
+    return;
+  }
+  // Back to automatic. An existing quotation is given its own number back,
+  // discarding an edit in progress; a new one asks the server what is next.
+  if (editing) { if (numEl) numEl.value = proformaEditNumber || ''; return; }
+  generateProformaNo();
+}
+
+// Fills the read-only Proforma Number box with what the next quotation in
+// the book will be.
+//
+// Asked of the server, not computed here, and GET
+// /documents/proforma_invoice/next-number consumes nothing: an abandoned
+// draft, a reload or ten switches of the mode cannot burn a number. The
+// number that is actually stored is issued by the save itself, from the same
+// arithmetic, inside the transaction that writes the proforma.
+async function generateProformaNo() {
+  // A proforma that already exists keeps the number it was issued.
+  if (proformaEditId) return;
+  // Nor does a preview overwrite a number being typed by hand.
+  if (proformaNumberingIsManual()) return;
+  const note = document.getElementById('pfNumNote');
+  try {
+    const res = await apiFetch('/documents/proforma_invoice/next-number');
+    setProformaValue('pfNumber', (res && res.documentNumber) || '');
+    if (note) note.textContent = PF_NUMBER_NOTE;
+  } catch (error) {
+    // The preview is a courtesy and blocks nothing: the save issues the real
+    // number whether or not this succeeded. Saying so is better than leaving
+    // a stale or invented number in the box.
+    setProformaValue('pfNumber', '');
+    if (note) note.textContent = 'Preview unavailable \u2014 the number is issued when you save.';
+  }
 }
 
 function populateProformaStateOptions() {
@@ -343,13 +454,24 @@ async function saveProforma() {
   const date = getProformaText('pfDate');
   if (!date) { showToast('Proforma date is required.', 'error'); return; }
 
+  // On automatic there is deliberately nothing to check: the box holds a
+  // preview on a new quotation and its own number on an existing one, and the
+  // server issues or keeps the real number. On manual the number IS the
+  // user's, so an empty box is a question to ask now rather than a refusal
+  // from the server later.
+  if (proformaNumberingIsManual() && !getProformaText('pfNumber')) {
+    showToast('Enter a proforma number, or switch back to Auto.', 'error');
+    document.getElementById('pfNumber')?.focus();
+    return;
+  }
+
   const items = collectProformaItems();
   if (!items.length) { showToast('Add at least one product with a quantity and rate.', 'error'); return; }
 
   // The delivery charge, refused by the tax invoice's own rule
-  // (validateInvoiceTransport in invoice-items.js) - and BEFORE a number is
-  // reserved below, so a Save this turns away never burns a number from the
-  // proforma book.
+  // (validateInvoiceTransport in invoice-items.js). A Save this turns away
+  // burns no number from the proforma book - nothing is reserved before the
+  // save any more, and the save issues the number inside its own transaction.
   if (!validateInvoiceTransport()) return;
 
   const validUntil = getProformaText('pfValidUntil') || null;
@@ -379,14 +501,23 @@ async function saveProforma() {
   // cess, so the list and the PDF quoted a different amount from the screen.
   const quotedTotal = computeInvoiceRollups().total_amount;
 
-  // The advance is judged against that total before anything is sent - and
-  // before a proforma number is reserved below, so a Save this turns away
-  // never burns a number from the proforma book.
+  // The advance is judged against that total before anything is sent, so a
+  // Save this turns away never reaches the server at all - and could not burn
+  // a number even if it did, since the number is issued inside the save's own
+  // transaction and rolls back with it.
   if (!validateProformaAdvance(quotedTotal)) return;
   const advanceAmount = proformaAdvanceAmount();
 
   const document_ = {
-    document_number: getProformaText('pfNumber') || '',
+    // Sent only on manual, exactly as Invoice Entry sends invoice_number.
+    //
+    // On automatic the key is absent, and that single fact carries both
+    // meanings correctly: on a NEW quotation the save sees no number and
+    // issues one inside its own transaction, and on an existing one the
+    // column is simply not part of the UPDATE, so the number it was issued
+    // cannot be touched. Sending the box instead would send a preview that
+    // may already be stale, turning a courtesy into a claim on a number.
+    ...(proformaNumberingIsManual() ? { document_number: getProformaText('pfNumber') } : {}),
     document_date: date,
     valid_until: validUntil,
     status: document.getElementById('pfStatus')?.value || PROFORMA_STATUS_DEFAULT,
@@ -418,34 +549,16 @@ async function saveProforma() {
     ...buildProformaExport()
   };
 
-  // Blank means "issue me one" only while the proforma is still new. On one
-  // that already has a number, an empty field is a mistake, and reserving a
-  // fresh number for it would silently renumber a saved offer the customer
-  // may already be holding. So this is checked BEFORE the reservation below.
-  if (proformaEditId && !document_.document_number) {
-    showToast('Proforma number is required.', 'error');
-    return;
-  }
-
-  // document_number is NOT NULL, and the save route does not invent one -
-  // numbering is a separate, locked step so two saves cannot take the same
-  // number. Left blank on the form means auto, so reserve from the proforma
-  // book here, exactly as Delivery Challans and Vouchers do.
-  if (!document_.document_number) {
-    try {
-      const res = await apiFetch('/documents/reserve-number', {
-        method: 'POST', body: JSON.stringify({ documentType: 'proforma_invoice' })
-      });
-      if (res && res.documentNumber) document_.document_number = res.documentNumber;
-    } catch (err) {
-      handleApiError(err, 'Could not issue a proforma number');
-      return;
-    }
-  }
-  if (!document_.document_number) {
-    showToast('Could not issue a proforma number.', 'error');
-    return;
-  }
+  // No reservation here any more. The number used to be drawn by the browser
+  // from the documents reservation endpoint, which committed the counter
+  // BEFORE the save was attempted - so a save the server then refused left a
+  // hole in the book. The save now issues it instead, under the same
+  // profile-row lock and in the very transaction that writes the row, so it
+  // commits or rolls back with the quotation and two simultaneous saves still
+  // cannot collide.
+  //
+  // Tests assert that the token for that endpoint no longer appears anywhere
+  // in this file, which is why it is described rather than named here.
   const btn = document.getElementById('pfSaveBtn');
   if (btn) btn.disabled = true;
   try {
@@ -462,7 +575,18 @@ async function saveProforma() {
     // Save again wrote a second row instead of updating the first.
     const saved = res && res.document;
     if (saved && saved.id) proformaEditId = saved.id;
-    if (saved && saved.document_number) setProformaValue('pfNumber', saved.document_number);
+    if (saved && saved.document_number) {
+      // Whatever the server actually issued - which on automatic is the real
+      // number, not the preview the box was showing.
+      setProformaValue('pfNumber', saved.document_number);
+      proformaEditNumber = saved.document_number;
+      // The page is now editing an existing quotation, so the switch repaints
+      // with the edit wording and Automatic from here on means "keep this".
+      // Without this, switching Manual then back to Auto after a first save
+      // would restore a proformaEditNumber that was still null and blank the
+      // box.
+      setProformaNumberMode(proformaNumberMode);
+    }
   } catch (err) {
     handleApiError(err, 'Could not save the proforma');
   } finally {
@@ -482,6 +606,11 @@ async function loadProformaForEdit(id) {
   proformaEditId = rec.id;
 
   setProformaValue('pfNumber', rec.document_number);
+  // The number it arrived with, recorded BEFORE the mode is applied below:
+  // on an existing quotation Automatic means "keep this", and switching back
+  // from Manual restores it, so a half-typed correction can be abandoned.
+  proformaEditNumber = rec.document_number || '';
+  setProformaNumberMode(PF_NUMBER_MODE_DEFAULT);
   setProformaValue('pfDate', rec.document_date);
   setProformaValue('pfValidUntil', rec.valid_until);
   setProformaValue('pfCustName', rec.customer_name);

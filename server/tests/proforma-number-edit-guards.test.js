@@ -23,12 +23,32 @@ test('P1 the number field is not locked when an existing proforma is opened', ()
     'nothing on this page should be made read-only on load');
 });
 
-test('P2 the input itself is an ordinary editable field', () => {
+test('P2 the field starts read-only because Automatic is the default, and the switch unlocks it', () => {
+  // Revised for Auto/Manual numbering. The markup now ships read-only on
+  // purpose: Automatic is the default, and in Automatic the box holds a
+  // preview the server will replace, so typing into it would be misleading.
+  // That is NOT the defect P1 guards - the field is still renumberable, by
+  // choosing Manual, exactly as a tax invoice's is.
   const input = HTML.match(/<input[^>]*id="pfNumber"[^>]*>/)[0];
-  assert.equal(/readonly|disabled/i.test(input), false,
-    'the markup must not lock the field either');
+  assert.match(input, /readonly/i, 'Automatic mode must not invite typing');
+  assert.equal(/disabled/i.test(input), false,
+    'disabled would be unrecoverable - read-only is what the switch toggles');
+  // A browser suggestion must never become the number of a quotation.
+  assert.match(input, /autocomplete="off"/,
+    'autofill must not be able to supply a proforma number');
+
   // One field, not a second "edit number" control beside it.
   assert.strictEqual((HTML.match(/id="pfNumber"/g) || []).length, 1);
+
+  // And the switch that unlocks it, with Auto pre-selected.
+  assert.match(HTML, /id="pfNumAuto"[^>]*class="active"/,
+    'Auto must be the mode a new proforma opens in');
+  assert.match(HTML, /id="pfNumManual"/);
+  assert.match(HTML, /setProformaNumberMode\('auto'\)/);
+  assert.match(HTML, /setProformaNumberMode\('manual'\)/);
+  // The one place that clears readOnly is the mode switch.
+  assert.match(ENTRY, /numEl\.readOnly = !manual;/,
+    'Manual is the only thing that makes the box typeable');
 });
 
 test('P3 a saved proforma is updated in place, never re-created', () => {
@@ -48,14 +68,30 @@ test('P4 the page reads the id back off the document, not off the envelope', () 
 });
 
 test('P5 clearing the number on a saved proforma is refused, not auto-renumbered', () => {
-  // The blank check must come BEFORE the reserve-number call, or an empty
-  // field would silently issue a fresh number for an offer already sent.
-  const blankAt = ENTRY.indexOf('if (proformaEditId && !document_.document_number)');
-  const reserveAt = ENTRY.indexOf("/documents/reserve-number");
-  assert.ok(blankAt > -1, 'the blank guard must exist');
-  assert.ok(reserveAt > -1, 'the reservation must still exist');
-  assert.ok(blankAt < reserveAt,
-    'the blank guard must run before a number is reserved');
+  // The same guarantee, now enforced on the SERVER rather than by the order
+  // of two calls in the browser - which is strictly stronger, because it
+  // also holds for a direct API caller.
+  //
+  // It used to read: the blank check must come before the browser's
+  // reserve-number call. The browser no longer reserves at all; the save
+  // issues the number itself, and its automatic branch is gated on there
+  // being no editId. So a blank number on an existing proforma cannot reach
+  // the issuing path and falls through to the required-number refusal.
+  assert.equal(/\/documents\/reserve-number/.test(ENTRY), false,
+    'the browser must no longer reserve a number before saving');
+
+  const autoAt = DOCS.indexOf('if (spec.autoNumber && !editId');
+  assert.ok(autoAt > -1, 'the automatic branch must be gated on !editId');
+
+  // ...and the refusal it falls through to still exists, after it.
+  const requiredAt = DOCS.indexOf('number is required.');
+  assert.ok(requiredAt > autoAt,
+    'a blank number on an edit must still reach the required-number refusal');
+
+  // The browser asks the same question first, so Manual with an empty box is
+  // answered on the page instead of by a round trip.
+  assert.match(ENTRY, /proformaNumberingIsManual\(\) && !getProformaText\('pfNumber'\)/,
+    'an empty Manual number is caught before the save is sent');
 });
 
 test('P6 the server validates the number inside the transaction', () => {

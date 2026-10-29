@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>New Proforma - GST Management System</title>
-  <link rel="stylesheet" href="client/css/style.css?v=35">
+  <link rel="stylesheet" href="client/css/style.css?v=43">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.31/jspdf.plugin.autotable.min.js"></script>
@@ -23,7 +23,7 @@
   <script src="client/js/pages/invoice-items.js?v=47"></script>
   <script src="client/js/pages/invoice-pdf.js?v=52"></script>
   <script src="client/js/pages/proforma-pdf.js?v=44"></script>
-  <script src="client/js/pages/proforma-entry.js?v=44"></script>
+  <script src="client/js/pages/proforma-entry.js?v=45"></script>
 </head>
 <body>
 <div class="app-layout">
@@ -106,7 +106,7 @@
       </div>
     </div>
 
-    <div class="content">
+    <div class="content pf-page">
       <!--
         A quotation, not a tax invoice. The party block, the Ship To block and
         the product grid are the SAME components Invoice Entry uses - the grid
@@ -117,9 +117,28 @@
         <div class="card-header"><span class="card-title"><i class="fas fa-file-contract"></i> Proforma Details</span></div>
         <div class="card-body">
           <div class="form-grid cols-3 mb-16">
+            <!-- Automatic by default, every time. Manual is a choice about
+                 THIS quotation: it is not remembered, and the next new
+                 proforma opens on Automatic again. The number itself is
+                 issued and judged by the server either way, inside the
+                 transaction that writes the row - see the autoNumber branch
+                 in server/src/routes/documents.js. The box is a preview in
+                 Automatic mode, so it is read-only there and carries no
+                 autocomplete: a browser suggestion must never become the
+                 number of a quotation. -->
             <div class="form-group">
-              <label for="pfNumber">Proforma Number <span class="text-required">*</span></label>
-              <input type="text" id="pfNumber" class="form-control" placeholder="Auto">
+              <div class="d-flex align-center gap-10">
+                <label for="pfNumber">Proforma Number <span class="text-required">*</span></label>
+                <div class="iv-typeswitch" role="group" aria-label="Proforma numbering">
+                  <button type="button" id="pfNumAuto" class="active" aria-pressed="true"
+                    onclick="setProformaNumberMode('auto')">Auto</button>
+                  <button type="button" id="pfNumManual" aria-pressed="false"
+                    onclick="setProformaNumberMode('manual')">Manual</button>
+                </div>
+              </div>
+              <input type="text" id="pfNumber" class="form-control" autocomplete="off"
+                     readonly aria-readonly="true" tabindex="-1">
+              <span class="fs-11 text-muted-sm" id="pfNumNote">Issued automatically when you save.</span>
             </div>
             <div class="form-group">
               <label for="pfDate">Proforma Date <span class="text-required">*</span></label>

@@ -109,7 +109,10 @@ function load({ supply = 'intrastate' } = {}) {
     if (typeof GST_CUSTOMER_CATEGORY_DEFAULT === 'undefined') GST_CUSTOMER_CATEGORY_DEFAULT = 'regular';
     apiFetch = async function (url, opts) {
       __calls.push({ url: url, body: opts && opts.body ? JSON.parse(opts.body) : null });
-      if (/reserve-number/.test(url)) return { documentNumber: 'PI-00001' };
+      // Nothing should reach this any more: the save issues the number. Left
+      // as a tripwire rather than a working stub, so a reintroduced browser
+      // reservation fails loudly instead of passing quietly.
+      if (/reserve-number/.test(url)) throw new Error('saveProforma must not reserve a number');
       return { document: { id: 'pf1', document_number: 'PI-00001' }, items: [] };
     };
     itemsFormPrefix = 'proforma';
@@ -265,10 +268,16 @@ test('PA7 Save refuses those values, before a number is reserved', async () => {
     assert.equal(r.calls.some(c => /reserve-number/.test(c.url)), false,
       'a refused Save must not burn a proforma number');
   }
-  // The gate sits after the total is known and before the number is reserved.
+  // The gate sits after the total is known and before the save is SENT. It
+  // used to read "before the number is reserved"; nothing is reserved before
+  // the save any more - the save issues the number inside its own
+  // transaction, so a refused write moves no counter either way.
   const fn = PF_ENTRY.slice(PF_ENTRY.indexOf('async function saveProforma()'));
   assert.ok(fn.indexOf('validateProformaAdvance(quotedTotal)') > fn.indexOf('const quotedTotal ='));
-  assert.ok(fn.indexOf('validateProformaAdvance(quotedTotal)') < fn.indexOf('reserve-number'));
+  assert.ok(fn.indexOf('validateProformaAdvance(quotedTotal)')
+    < fn.indexOf('/documents/proforma_invoice/save'),
+    'the advance is judged before the save is sent');
+  assert.equal(/reserve-number/.test(fn), false, 'the browser reserves nothing');
 });
 
 // ═══ 4. What is stored ════════════════════════════════════════════════
