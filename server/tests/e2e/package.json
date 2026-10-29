@@ -1,0 +1,14 @@
+{
+  "name": "gst-e2e",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Browser end-to-end tests. A package of its own so that @playwright/test can be installed without appearing in server/package.json - see the comment in playwright.config.js.",
+  "scripts": {
+    "test": "playwright test",
+    "test:desktop": "playwright test --project=chromium-desktop",
+    "install:browser": "playwright install chromium"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.62.1"
+  }
+}

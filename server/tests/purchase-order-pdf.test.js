@@ -524,8 +524,11 @@ test('O15 no other PDF module was touched', () => {
   // Revised again, under its own approved change, for the round-off fix: a
   // proforma saved now stores the invoice's rounded Grand Total and prints its
   // round-off and cess from it (proforma-roundoff-save.test.js).
+  // Revised again for the proforma advance amount (91e529b): a quotation
+  // can carry an advance TERM, and the PDF prints the Advance and Balance
+  // rows that follow from it (proforma-advance.test.js).
   const pf = require('crypto').createHash('sha256')
     .update(rd('client', 'js', 'pages', 'proforma-pdf.js').replace(/\r\n/g, '\n')).digest('hex');
-  assert.strictEqual(pf, 'c58e758714b70c16de29003886fffa40c9e4d22a725445806028766e84d06be3',
-    'proforma-pdf.js is not the approved Proforma revision (transport, then round-off)');
+  assert.strictEqual(pf, '96a577b46ca52860dc0aa61df861054014946a92a015b9af5378d56f9ab57f18',
+    'proforma-pdf.js is not the approved Proforma revision (transport, round-off, then advance)');
 });

@@ -14,3 +14,21 @@ npm-debug.log*
 tmp/
 GSTR1_*.json
 *.gstr1.json
+
+# jsPDF for the PDF render tests. The browser loads it from a CDN, so it is
+# deliberately not a server dependency - server/scripts/test-full.js looks for
+# a copy here when node_modules and JSPDF_PATH have none. A local cache of
+# someone else's minified build does not belong in the history.
+server/tests/vendor/
+
+# Playwright run output: the HTML report, per-failure traces and screenshots,
+# and the state file global-setup writes for the specs to read. All produced
+# by a run and none of it worth a place in the history.
+server/tests/e2e/.report/
+server/tests/e2e/.artifacts/
+server/tests/e2e/.state.json
+
+# server/tests/e2e is its own npm package, so that @playwright/test stays out
+# of server/package.json - which Hostinger installs on the production host and
+# render.yaml builds with a plain `npm install`. Its install lands here.
+server/tests/e2e/node_modules/

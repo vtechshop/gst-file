@@ -8,6 +8,7 @@
     "start": "node src/app.js",
     "dev": "node --watch src/app.js",
     "test": "node --test",
+    "test:full": "node scripts/test-full.js",
     "build:public": "node scripts/build-public.js",
     "migrate": "node src/db/migrator.js up",
     "migrate:status": "node src/db/migrator.js status",

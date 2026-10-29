@@ -125,6 +125,16 @@ CREATE TABLE purchases (id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
 // PX13 boots the real server, so its fixture carries them too, in the shape
 // they had BEFORE that migration (see migrate-invoice-export-currency.test.js
 // for that check's own cases).
+// The dependency the fifth prestart check looks for, and nothing more: it
+// aborts on "required table receipt_vouchers is missing" and adds the three
+// payment columns itself, so the table's bare existence is the whole
+// requirement. Kept to the id/user_id shape the probes above use rather than
+// grown into a copy of schema.sql.
+const RECEIPT_DEPS = `
+CREATE TABLE receipt_vouchers (id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
+  user_id UUID REFERENCES users(id) ON DELETE CASCADE NOT NULL);
+`;
+
 const INVOICE_DEPS = `
 CREATE TABLE b2b_invoices (id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
   user_id UUID REFERENCES users(id) ON DELETE CASCADE NOT NULL,
@@ -391,7 +401,7 @@ async function npmStart() {
 }
 
 test('PX13 npm start runs Purchase Notes, then Proforma transport, then listens - and a failed check stops it', async () => {
-  await freshProbe(PROFORMA + PN_DEPS + INVOICE_DEPS);
+  await freshProbe(PROFORMA + PN_DEPS + INVOICE_DEPS + RECEIPT_DEPS);
   try {
     const first = await npmStart();
     assert.ok(first.listened, 'the server must start once both checks pass:\n' + first.out);
@@ -403,8 +413,16 @@ test('PX13 npm start runs Purchase Notes, then Proforma transport, then listens 
     const up = first.out.indexOf('listening on');
     assert.ok(pn > -1 && pf > pn, `the Purchase Notes check runs first (${pn} < ${pf})`);
     assert.ok(iec > pfDone, `the export-currency check runs after this one (${pfDone} < ${iec})`);
-    assert.ok(iecDone > iec && up > iecDone,
-      `the server listens only after every targeted check completes (${iecDone} < ${up})`);
+    assert.ok(iecDone > iec, `the export-currency check completes before it (${iec} < ${iecDone})`);
+    // The rest of the chain, in order. Both were added to prestart after this
+    // test was written, and naming them is what keeps "every targeted check"
+    // below honest as the chain grows.
+    const advDone = first.out.indexOf('[proforma-advance] schema check complete');
+    const rvDone = first.out.indexOf('[receipt-voucher-payment] schema check complete');
+    assert.ok(advDone > iecDone, `the proforma-advance check runs after it (${iecDone} < ${advDone})`);
+    assert.ok(rvDone > advDone, `the receipt-voucher check runs after that (${advDone} < ${rvDone})`);
+    assert.ok(up > rvDone,
+      `the server listens only after every targeted check completes (${rvDone} < ${up})`);
     assert.match(first.out, /\[purchase-notes\]\s+applying migration_purchase_notes\.sql/);
     assert.match(first.out, /\[proforma-transport\]\s+applying migration_proforma_transport_charge\.sql/);
 

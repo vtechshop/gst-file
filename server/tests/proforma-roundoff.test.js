@@ -102,9 +102,12 @@ test('R7 the Proforma layout is otherwise unchanged', () => {
                         'Quoted Total', 'Amount in Words:', 'Authorized Signatory']) {
     assert.ok(PDF.includes(marker), marker + ' must still be printed');
   }
-  // the page-break guard sizes itself from the row count, so the extra row
-  // cannot push the totals off the page silently
-  assert.match(PDF, /y \+ totalsRows\.length \* 5\.5 \+ 60 > doc\.internal\.pageSize\.height - 12/);
+  // The page-break guard sizes itself from the row counts rather than from a
+  // constant, so no extra row can push the totals off the page silently. It
+  // counts the payment rows too since the advance amount landed (91e529b):
+  // those sit below the Quoted Total, so their height is part of the same
+  // question of whether the block still fits.
+  assert.match(PDF, /y \+ totalsRows\.length \* 5\.5 \+ paymentRows\.length \* 5\.5 \+ 60 > doc\.internal\.pageSize\.height - 12/);
 });
 
 test('R8 the tax invoice PDF is untouched', () => {
@@ -117,8 +120,8 @@ test('R9 the changed asset carries a new cache key on every page that loads it',
   const pages = ['proforma.html', 'proforma-list.html'];
   for (const p of pages) {
     const html = rd(p);
-    assert.ok(html.includes('client/js/pages/proforma-pdf.js?v=43'),
-      p + ' must reference proforma-pdf.js at v=43');
+    assert.ok(html.includes('client/js/pages/proforma-pdf.js?v=44'),
+      p + ' must reference proforma-pdf.js at v=44');
   }
   // and nothing unrelated moved with it
   // proforma-entry.js is checked as "still versioned", not pinned to a
