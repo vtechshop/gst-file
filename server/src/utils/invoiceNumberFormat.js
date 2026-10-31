@@ -60,6 +60,42 @@ function sequenceFromInvoiceNumber(format, number) {
   return Number.isFinite(seq) && seq > 0 ? seq : null;
 }
 
+// Is this format usable? null when it is, a sentence to show when it is not.
+//
+// applyInvoiceNumberFormat() above tolerates anything, which is right for a
+// formatter but means nothing ever refuses a format that cannot do its job.
+// These are the three ways a format is genuinely broken, judged against that
+// function's own behaviour rather than against a new syntax:
+//
+//   - empty. The formatter would silently substitute INV-### and the user
+//     would be looking at a format they never chose.
+//   - more than one run of #. Only the FIRST run is substituted, so
+//     'PI-###/###' issues PI-001/### - literal hashes inside a document
+//     number, which is never what anyone meant.
+//   - unreasonably long, or carrying control characters. The number ends up
+//     in a PDF, a filename and a GSTR-1 row.
+//
+// A format with no # at all is deliberately allowed: the formatter has a
+// documented branch for it ('INV' -> INV-1), and the invoice Settings screen
+// tells users so.
+const NUMBER_FORMAT_MAX = 40;
+
+function numberFormatProblem(format) {
+  const fmt = String(format == null ? '' : format).trim();
+  if (!fmt) return 'Enter a number format, for example PI-#####.';
+  if (fmt.length > NUMBER_FORMAT_MAX) {
+    return `Keep the format to ${NUMBER_FORMAT_MAX} characters or fewer.`;
+  }
+  // eslint-disable-next-line no-control-regex
+  if (/[\u0000-\u001f\u007f]/.test(fmt)) {
+    return 'The format cannot contain line breaks or control characters.';
+  }
+  if ((fmt.match(/#+/g) || []).length > 1) {
+    return 'Use a single run of # for the number — PI-##### gives PI-00001.';
+  }
+  return null;
+}
+
 // The default format for a series nobody has configured yet.
 //
 // "online" is spelled out rather than derived because no rule could get
@@ -99,5 +135,7 @@ module.exports = {
   sequenceFromInvoiceNumber,
   invoiceSeriesFormat,
   defaultInvoiceSeriesFormat,
+  numberFormatProblem,
+  NUMBER_FORMAT_MAX,
   INVOICE_SERIES_DEFAULT_FORMATS
 };

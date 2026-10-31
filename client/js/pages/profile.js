@@ -382,6 +382,12 @@ async function openSettingsModal() {
   const noProfile = !profile?.business_name;
   const stats = typeof getStorageStats === 'function' ? await getStorageStats() : {};
   const productSyncConfig = await fetchProductSyncConfig();
+  // The proforma book's current format, counter and next number, read from the
+  // server rather than assembled here: the default format and the
+  // walk-past-taken-numbers rule live in server/src/routes/documents.js, and a
+  // second copy of either in the browser is a copy that can disagree with what
+  // actually gets issued.
+  const proformaNumbering = await fetchProformaNumbering();
   // Remembered outside the markup so submitProductSyncSettings() can refuse
   // to write a form that was rendered from a failed read.
   _productSyncConfigUnavailable = !!productSyncConfig.unavailable;
@@ -472,6 +478,52 @@ async function openSettingsModal() {
         </div>
         <p class="fs-11 text-muted-sm mb-10"><b>#</b> marks the running sequence &mdash; <code>###</code> = 001, 002&hellip; &nbsp;<code>#####</code> = 00001, 00002&hellip; Everything else in the format is kept exactly as typed, so <code>W-#####</code> gives W-00001. No <b>#</b>? A plain number (<code>1</code>) counts up on its own (1, 2, 3&hellip;); any other text gets the sequence appended (<code>INV</code> &rarr; INV-1, INV-2).</p>
         <button class="btn btn-primary btn-sm" onclick="submitInvoiceNumberingSettings()"><i class="fas fa-save"></i> Save Numbering Settings</button>
+      </div>
+
+      <!-- Proforma Numbering -->
+      <!-- A separate book from every invoice series above, and deliberately a
+           separate section: a quotation is not a tax invoice, and changing one
+           format must never touch the other. It writes
+           document_series_formats.proforma_invoice; the invoice columns are
+           not in this form at all. -->
+      <div style="padding:18px 22px;border-bottom:1px solid var(--border);" id="setProformaNumberingCard">
+        <div style="font-size:11px;font-weight:700;color:var(--text-muted);letter-spacing:1px;text-transform:uppercase;margin-bottom:12px;">
+          <i class="fas fa-file-contract" style="color:var(--primary);margin-right:5px;"></i> Proforma Numbering
+        </div>
+        <div style="font-size:11.5px;color:var(--text-muted);margin-bottom:14px;">
+          Quotations are numbered from their own book, separate from every Invoice Source above.
+          Changing this never affects an invoice number, and never renumbers a proforma that is
+          already saved &mdash; it applies to the next one issued automatically.
+        </div>
+        ${proformaNumbering.unavailable ? `
+          <div style="background:#fff3e0;border:1px solid #ffb300;border-radius:8px;padding:12px 14px;display:flex;align-items:center;gap:10px;">
+            <i class="fas fa-exclamation-triangle" style="color:#f57c00;font-size:18px;"></i>
+            <div>
+              <div style="font-size:13px;font-weight:600;color:#e65100;">Could not load the proforma format</div>
+              <div style="font-size:12px;color:#888;">Close and reopen Settings to try again. Nothing here can be saved until it loads, so an unsaved blank cannot overwrite your format.</div>
+            </div>
+          </div>
+        ` : `
+          <div class="table-wrapper mb-10">
+            <table class="data-table">
+              <thead><tr><th>Document</th><th>Number Format</th><th>Next Number</th><th>Next proforma will be</th></tr></thead>
+              <tbody>
+                <tr>
+                  <td><span class="badge badge-info">Proforma Invoice</span></td>
+                  <td><input type="text" id="setProformaFormat" class="form-control"
+                        value="${e(proformaNumbering.format)}" maxlength="40"
+                        oninput="updateSettingsProformaPreview()" aria-label="Proforma number format"></td>
+                  <td class="fw-700" id="setProformaSeq">${e(String(proformaNumbering.seq))}</td>
+                  <td class="fw-700 text-primary-dark" id="setProformaPreview">${e(proformaNumbering.documentNumber)}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <p class="fs-11 text-muted-sm mb-10" id="setProformaFormatError" style="color:var(--danger);display:none;"></p>
+          <p class="fs-11 text-muted-sm mb-10"><b>#</b> marks the running sequence &mdash; <code>###</code> = 001, 002&hellip; &nbsp;<code>#####</code> = 00001, 00002&hellip; Everything else is kept exactly as typed, so <code>PI-#####</code> gives PI-00001 and <code>QT/2026/###</code> gives QT/2026/001. The default is <code>PI-#####</code>.</p>
+          <p class="fs-11 text-muted-sm mb-10">Next Number is this book's own counter and is shown for reference &mdash; it is not edited here, because lowering it would reissue numbers already given out. The number itself is issued when the proforma is saved.</p>
+          <button class="btn btn-primary btn-sm" onclick="submitProformaNumberingSettings()"><i class="fas fa-save"></i> Save Proforma Format</button>
+        `}
       </div>
 
       <!-- Company Branding -->
@@ -713,6 +765,97 @@ function updateSettingsInvPreview() {
     const out = document.querySelector(`#setSeriesRows .set-series-preview[data-series="${CSS.escape(series)}"]`);
     if (out) out.textContent = applyInvoiceNumberFormat(format, seq);
   });
+}
+
+// ── Proforma Numbering (Settings) ───────────
+//
+// One book, so one row rather than the invoice table's one-row-per-series.
+// Everything it needs comes from GET /documents/proforma_invoice/next-number,
+// which consumes nothing: reading it here, or ten times over, cannot burn a
+// proforma number.
+const PROFORMA_NUMBER_SERIES = 'proforma_invoice';
+
+async function fetchProformaNumbering() {
+  try {
+    const res = await apiFetch('/documents/' + PROFORMA_NUMBER_SERIES + '/next-number');
+    return {
+      format: String((res && res.format) || ''),
+      seq: Math.max(1, parseInt(res && res.seq, 10) || 1),
+      documentNumber: String((res && res.documentNumber) || '')
+    };
+  } catch (err) {
+    // Reported rather than falling back to a blank box, for the reason
+    // fetchProductSyncConfig() gives: an empty format field looks exactly
+    // like "not configured", and saving it would overwrite a real format
+    // with the default.
+    handleApiError(err, 'Could not load your proforma number format');
+    return { format: '', seq: 1, documentNumber: '', unavailable: true };
+  }
+}
+
+// The live example, recomputed from the box on every keystroke with the same
+// formatter the server uses to issue the real number.
+function updateSettingsProformaPreview() {
+  const el = document.getElementById('setProformaFormat');
+  const out = document.getElementById('setProformaPreview');
+  const errEl = document.getElementById('setProformaFormatError');
+  if (!el || !out) return;
+  const seq = Math.max(1, parseInt(document.getElementById('setProformaSeq')?.textContent, 10) || 1);
+  const problem = numberFormatProblem(el.value);
+  if (errEl) {
+    errEl.textContent = problem || '';
+    errEl.style.display = problem ? '' : 'none';
+  }
+  // A broken format gets no invented example - showing one would suggest the
+  // number it would issue, which is the thing being refused.
+  out.textContent = problem ? '—' : applyInvoiceNumberFormat(el.value, seq);
+}
+
+async function submitProformaNumberingSettings() {
+  const user = await getCurrentUser();
+  if (!user) return;
+  const el = document.getElementById('setProformaFormat');
+  if (!el) return;
+
+  const format = String(el.value || '').trim();
+  // Refused here as well as on the server, so the answer is immediate and the
+  // reason is the same sentence either way.
+  const problem = numberFormatProblem(format);
+  if (problem) {
+    showToast(problem, 'error');
+    updateSettingsProformaPreview();
+    el.focus();
+    return;
+  }
+
+  // Merged into whatever else the column holds. Written as a whole object, so
+  // any other document book's format - a challan's, a purchase order's - has
+  // to be carried forward rather than dropped.
+  const prior = getCachedProfile();
+  const formats = { ...((prior && prior.document_series_formats) || {}) };
+  formats[PROFORMA_NUMBER_SERIES] = format;
+
+  // Only this column. The invoice format columns are deliberately absent from
+  // this payload: a proforma format change must not write them at all.
+  const { error } = await saveUserProfile(user.id, { document_series_formats: formats });
+  if (error) return;
+
+  // The proforma page may or may not be the page this modal was opened from.
+  // Refresh its preview immediately if it is, no-op otherwise - the saved
+  // format has to show up without a reload, or saving looks like it did
+  // nothing. generateProformaNo() itself declines to touch a number being
+  // typed by hand, or one an existing proforma already carries.
+  if (typeof generateProformaNo === 'function') generateProformaNo();
+
+  // And re-read the book, so Next Number and the example reflect what the
+  // server now says rather than what this form assumed.
+  const fresh = await fetchProformaNumbering();
+  if (!fresh.unavailable) {
+    const seqEl = document.getElementById('setProformaSeq');
+    if (seqEl) seqEl.textContent = String(fresh.seq);
+    if (el) el.value = fresh.format;
+    updateSettingsProformaPreview();
+  }
 }
 
 async function submitInvoiceNumberingSettings() {

@@ -11,6 +11,9 @@ const validator = require('validator');
 // Not a port: one file, both runtimes, so the API can only accept a
 // State + District pair the dropdown could actually have produced.
 const { isValidStateDistrict } = require('../../shared/india-districts');
+// The number-format syntax lives in one place and is judged by one function;
+// see validateProfilePayload's document_series_formats check.
+const { numberFormatProblem } = require('./invoiceNumberFormat');
 
 const GST_VALID_STATE_CODES = new Set([
   '01', '02', '03', '04', '05', '06', '07', '08', '09', '10',
@@ -151,6 +154,31 @@ function validateProfilePayload(payload) {
 
   if (has('pan') && str('pan') && !PAN_FORMAT_REGEX.test(str('pan').toUpperCase())) {
     errors.pan = 'PAN must be 10 characters, e.g. ABCDE1234F.';
+  }
+
+  // Document numbering formats (proforma and the other document books).
+  //
+  // Checked here as well as in the browser, because the browser is not the
+  // only way this column gets written and a format that cannot issue a usable
+  // number would go on producing bad document numbers until someone noticed.
+  //
+  // Deliberately NOT applied to invoice_number_format or
+  // invoice_series_formats: those have always been stored as typed, every
+  // value currently in them is already accepted, and tightening them here
+  // would reject profiles that save successfully today. Invoice numbering is
+  // left exactly as it is.
+  if (has('document_series_formats')) {
+    const formats = payload.document_series_formats;
+    if (formats === null || typeof formats !== 'object' || Array.isArray(formats)) {
+      errors.document_series_formats = 'Document number formats must be an object.';
+    } else {
+      const bad = [];
+      for (const [series, format] of Object.entries(formats)) {
+        const problem = numberFormatProblem(format);
+        if (problem) bad.push(`${series}: ${problem}`);
+      }
+      if (bad.length) errors.document_series_formats = bad.join(' ');
+    }
   }
 
   Object.assign(errors, validateDistrictPairs(payload, [['state', 'district']]));

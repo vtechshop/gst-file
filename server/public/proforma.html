@@ -15,9 +15,9 @@
   <script src="client/js/core/config.js?v=33"></script>
   <script src="client/js/api/product-sync.js?v=39"></script>
   <script src="client/js/core/auth.js?v=29"></script>
-  <script src="client/js/utilities/utils.js?v=33"></script>
+  <script src="client/js/utilities/utils.js?v=34"></script>
   <script src="client/js/core/search.js?v=29"></script>
-  <script src="client/js/pages/profile.js?v=40"></script>
+  <script src="client/js/pages/profile.js?v=41"></script>
   <script src="client/js/pages/products.js?v=31"></script>
   <script src="client/js/core/drafts.js?v=29"></script>
   <script src="client/js/pages/invoice-items.js?v=47"></script>
@@ -135,6 +135,12 @@
                   <button type="button" id="pfNumManual" aria-pressed="false"
                     onclick="setProformaNumberMode('manual')">Manual</button>
                 </div>
+                <!-- Opens the same Settings modal the Invoice Number's Format
+                     link opens, which now carries a Proforma Numbering section
+                     of its own. One modal, two books: the proforma format is
+                     stored in document_series_formats and cannot touch an
+                     invoice format. -->
+                <a href="javascript:void(0)" class="fs-11 text-muted-sm" onclick="openSettingsModal()" title="Configure the auto-numbering format"><i class="fas fa-cog"></i> Format</a>
               </div>
               <input type="text" id="pfNumber" class="form-control" autocomplete="off"
                      readonly aria-readonly="true" tabindex="-1">

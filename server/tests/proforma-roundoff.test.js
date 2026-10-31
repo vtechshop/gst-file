@@ -128,5 +128,5 @@ test('R9 the changed asset carries a new cache key on every page that loads it',
   // number: it is not this change's asset, and later work on it legitimately
   // moves the key.
   assert.match(rd('proforma.html'), /client\/js\/pages\/proforma-entry\.js\?v=\d+/);
-  assert.ok(rd('proforma.html').includes('client/js/utilities/utils.js?v=33'));
+  assert.ok(rd('proforma.html').includes('client/js/utilities/utils.js?v=34'));
 });

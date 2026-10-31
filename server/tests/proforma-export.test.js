@@ -241,7 +241,7 @@ test('X10 the changed script carries a new cache key', () => {
   // by proforma-roundoff.test.js instead, which is the change that moved it —
   // asserting it here too would make one asset's version the business of two
   // unrelated tests.
-  assert.ok(PF_HTML.includes('client/js/utilities/utils.js?v=33'),
+  assert.ok(PF_HTML.includes('client/js/utilities/utils.js?v=34'),
     'utils.js did not change, so its key must not move');
   assert.ok(PF_HTML.includes('client/js/api/apiClient.js?v=29'),
     'apiClient.js did not change, so its key must not move');

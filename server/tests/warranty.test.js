@@ -285,7 +285,7 @@ test('W26 fetchInvoiceRecord carries the warranty header fields to the PDF', () 
 test('W27 every asset whose contents changed carries its own cache key', () => {
   const page = rd('invoice-list.html');
   // Each pinned to the version its CURRENT contents were published under.
-  for (const [file, want] of [['client/js/utilities/utils.js', 33],
+  for (const [file, want] of [['client/js/utilities/utils.js', 34],
                               ['client/js/core/config.js', 33],
                               ['client/js/pages/invoice-pdf.js', 52],
                               ['client/js/pages/invoice-list.js', 34],

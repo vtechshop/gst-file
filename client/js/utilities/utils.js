@@ -67,6 +67,37 @@ function applyInvoiceNumberFormat(format, seq) {
   return fmt + '-' + n;
 }
 
+// Is this format usable? null when it is, a sentence to show when it is not.
+//
+// The browser copy of server/src/utils/invoiceNumberFormat.js's
+// numberFormatProblem() - same rule, two runtimes, exactly as
+// applyInvoiceNumberFormat above is the browser copy of the server's. A test
+// runs both over the same cases so they cannot drift.
+//
+// The three ways a format is genuinely broken, judged against what
+// applyInvoiceNumberFormat actually does rather than against a new syntax:
+// empty (the formatter would silently substitute INV-###), more than one run
+// of # (only the FIRST is substituted, so 'PI-###/###' issues PI-001/### with
+// literal hashes in a document number), and unreasonably long or carrying
+// control characters. A format with NO # is deliberately allowed - the
+// formatter has a documented branch for it, 'INV' giving INV-1.
+const NUMBER_FORMAT_MAX = 40;
+
+function numberFormatProblem(format) {
+  const fmt = String(format == null ? '' : format).trim();
+  if (!fmt) return 'Enter a number format, for example PI-#####.';
+  if (fmt.length > NUMBER_FORMAT_MAX) {
+    return 'Keep the format to ' + NUMBER_FORMAT_MAX + ' characters or fewer.';
+  }
+  if (/[\u0000-\u001f\u007f]/.test(fmt)) {
+    return 'The format cannot contain line breaks or control characters.';
+  }
+  if ((fmt.match(/#+/g) || []).length > 1) {
+    return 'Use a single run of # for the number — PI-##### gives PI-00001.';
+  }
+  return null;
+}
+
 // ── GST registration ────────────────────────────────────────
 // What kind of registration the business holds. This decides what it may
 // file and what documents it issues, so it is written down once here and

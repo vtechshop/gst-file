@@ -259,9 +259,13 @@ router.get('/:type/next-number', asyncRoute(async (req, res) => {
   const type = String(req.params.type).trim().toLowerCase();
   const client = await pool.connect();
   try {
-    const { documentNumber, series, format } =
+    const { documentNumber, series, format, seq } =
       await previewDocumentNumberOn(client, req.userId, type);
-    res.json({ documentNumber, series, format });
+    // `seq` and `format` are what the Settings screen needs to show a live
+    // example of a format the user is still typing: without the sequence it
+    // could only echo the number this book would issue under the format
+    // already saved. Neither is a secret and neither is consumed by reading.
+    res.json({ documentNumber, series, format, seq });
   } finally {
     client.release();
   }

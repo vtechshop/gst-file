@@ -253,7 +253,7 @@ test('P11 the changed asset carries one new cache key on every page that loads i
       p + ' must reference invoice-pdf.js at v=51');
   }
   // and nothing unrelated moved with it
-  assert.ok(rd('invoice.html').includes('client/js/utilities/utils.js?v=33'));
+  assert.ok(rd('invoice.html').includes('client/js/utilities/utils.js?v=34'));
   // Moved by the proforma advance amount, which prints two rows of its own
   // (proforma-advance.test.js) - not by anything in this change.
   assert.ok(rd('proforma.html').includes('client/js/pages/proforma-pdf.js?v=44'));
