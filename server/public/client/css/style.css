@@ -2314,3 +2314,242 @@ tr.row-skip { opacity: 0.5; }
   cursor: default;
 }
 /* end New Purchase - Unit select */
+
+/* =====================================================================
+   Invoice List page (invoice-list.html)
+   ---------------------------------------------------------------------
+   Presentation only, scoped under .inv-list-page. The page kept its
+   markup and gained class hooks (inv-list-card, inv-list-head,
+   inv-list-filters, inv-list-sort, inv-list-migrate, inv-list-scroll,
+   inv-list-table) and nothing else, so invoice-list.js still finds every
+   id it renders into and the sort, the filters, the pager and all nine
+   row actions behave exactly as they did.
+
+   What was actually wrong. Nothing put an outer margin on the card:
+   .content's 24px padding is the only side spacing the page has, and
+   .main-content already fills everything the fixed sidebar leaves. The
+   width was being lost INSIDE the card.
+
+     Twelve columns of .data-table padding (14px a side) spent 336px of
+     the table on nothing but gaps, and the Actions cell carries nine
+     icon buttons - around 340px on its own. That puts the table's
+     natural width near 1550px against the ~1362px a 1650px screen
+     leaves after the sidebar and the page padding, so Payment and
+     Actions sat past the card's right edge, reachable only through a
+     6px scrollbar ten rows further down. That is the "right-side
+     columns are not fully visible".
+
+     The filter cluster wants about 1280px (220 + 130 + 130 + 100 + 130
+     + 150 + 220 of controls, ~160 for Series Migration, plus the gaps)
+     while only ~1196px was left beside the card title once .card-header
+     had taken its padding. It broke across lines under
+     justify-content:space-between and left a ragged right edge - the
+     uneven space around the header.
+
+   What this section does. The toolbar gets a row of its own and every
+   control grows into it, so it ends flush with the card at any width.
+   The table spends less of itself on padding, keeps every figure
+   readable, and scrolls inside its own wrapper - never the page, never
+   the sidebar - with Actions pinned to the right edge so a row's
+   buttons are on screen whatever the horizontal scroll position.
+   ===================================================================== */
+.inv-list-page {
+  --il-cell-x: 11px;
+  --il-font: 13px;
+  --il-head-font: 12px;
+  --il-ctl-h: 36px;
+  --il-ctl-font: 13px;
+  --il-act-btn: 28px;
+  --il-act-gap: 4px;
+  --il-pad-x: 18px;
+  --il-ink: var(--primary-dark);
+  --il-line: #e7eeec;
+  --il-rail: #eceff1;
+}
+/* The app's own dark theme (Profile > Dark theme) swaps the same tokens.
+   --card-bg and --primary-xlight are already swapped at :root, so the
+   row and hover backgrounds below need no dark variant. */
+:root[data-theme="dark"] .inv-list-page {
+  --il-ink: #80cbc4;
+  --il-line: #2c3a37;
+  --il-rail: #121a19;
+}
+
+/* The intro line is prose, so it stops at a readable measure instead of
+   running the whole width of a wide screen. The card below it is not
+   capped - it takes the entire content column. */
+.inv-list-page .inv-list-intro { max-width: 104ch; }
+.inv-list-page .inv-list-card { width: 100%; }
+/* The shared card title is dark teal, which disappears on a dark card. */
+.inv-list-page .inv-list-head .card-title { color: var(--il-ink); }
+
+/* -- Filters: one full-width toolbar ------------------------------------ */
+.inv-list-page .inv-list-head {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 12px;
+  padding: 14px var(--il-pad-x);
+}
+.inv-list-page .inv-list-filters {
+  width: 100%;
+  gap: 8px;
+  align-items: center;
+}
+/* Every control may shrink below its content, so the row fills the card
+   exactly rather than wrapping the moment the fixed .w-* widths add up to
+   more than the space available. */
+.inv-list-page .inv-list-filters > * { min-width: 0; }
+.inv-list-page .inv-list-filters .form-control {
+  height: var(--il-ctl-h);
+  padding-top: 0;
+  padding-bottom: 0;
+  font-size: var(--il-ctl-font);
+  text-overflow: ellipsis;
+}
+/* width:auto only on the direct children. The search box is an <input>
+   inside .search-input-wrap, and an input at width:auto takes its default
+   size attribute rather than filling its wrapper, so it keeps width:100%. */
+.inv-list-page .inv-list-filters > .form-control { width: auto; flex: 1 1 108px; min-width: 92px; }
+.inv-list-page .inv-list-filters > .search-input-wrap {
+  flex: 2 1 190px;
+  min-width: 150px;
+  max-width: none;
+}
+/* The sort control holds the longest label on the row. */
+.inv-list-page .inv-list-filters > .inv-list-sort { flex: 2 1 196px; min-width: 168px; }
+.inv-list-page .inv-list-filters > .inv-list-migrate {
+  flex: 0 0 auto;
+  margin-left: auto;
+  height: var(--il-ctl-h);
+}
+
+/* -- The list ---------------------------------------------------------- */
+.inv-list-page .inv-list-scroll {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+/* The app's 6px rail is easy to miss ten rows below the header, and it is
+   the only way to reach the columns that do not fit. */
+.inv-list-page .inv-list-scroll::-webkit-scrollbar { height: 10px; }
+.inv-list-page .inv-list-scroll::-webkit-scrollbar-track { background: var(--il-rail); }
+.inv-list-page .inv-list-scroll::-webkit-scrollbar-thumb { background: var(--primary-light); border-radius: 5px; }
+/* One table holds both thead and tbody, and the layout stays auto, so a
+   column's header and its cells are measured together and cannot drift
+   out of alignment. */
+.inv-list-page .inv-list-table { min-width: 100%; font-size: var(--il-font); }
+.inv-list-page .inv-list-table thead th {
+  padding: 11px var(--il-cell-x);
+  font-size: var(--il-head-font);
+}
+.inv-list-page .inv-list-table tbody td { padding: 9px var(--il-cell-x); }
+.inv-list-page .inv-list-table tfoot td { padding: 10px var(--il-cell-x); }
+/* Total, Paid and Balance line up digit for digit down the column. */
+.inv-list-page .inv-list-table td:nth-child(8),
+.inv-list-page .inv-list-table td:nth-child(9),
+.inv-list-page .inv-list-table td:nth-child(10) { font-variant-numeric: tabular-nums; }
+/* Nine actions on every row, so each button is a measured square rather
+   than text padding wrapped around an icon. */
+.inv-list-page .inv-list-table .action-btns { gap: var(--il-act-gap); }
+.inv-list-page .inv-list-table .action-btns .btn {
+  width: var(--il-act-btn);
+  height: var(--il-act-btn);
+  padding: 0;
+  justify-content: center;
+}
+
+/* Actions stays against the right edge while the middle of the row
+   scrolls underneath it. A sticky cell is transparent by default, so each
+   one paints the background its row would otherwise have shown, and the
+   inset shadow draws the edge a collapsed border cannot. A row's
+   just-updated highlight plays on the row behind the cell, so it shows
+   across the rest of the row rather than under the buttons. */
+.inv-list-page .inv-list-table thead th:last-child,
+.inv-list-page .inv-list-table tbody td:last-child,
+.inv-list-page .inv-list-table tfoot td:last-child {
+  position: sticky;
+  right: 0;
+}
+.inv-list-page .inv-list-table thead th:last-child {
+  z-index: 3;
+  background: var(--primary-dark);
+  box-shadow: inset 1px 0 0 rgba(255, 255, 255, 0.16);
+}
+.inv-list-page .inv-list-table tbody td:last-child {
+  z-index: 1;
+  background: var(--card-bg);
+  box-shadow: inset 1px 0 0 var(--il-line), inset 0 -1px 0 var(--border);
+}
+.inv-list-page .inv-list-table tbody tr:hover td:last-child { background: var(--primary-xlight); }
+.inv-list-page .inv-list-table tfoot td:last-child {
+  z-index: 2;
+  background: var(--primary-xlight);
+  box-shadow: inset 1px 0 0 var(--il-line), inset 0 2px 0 var(--primary-light);
+}
+/* The loading, empty and no-match rows are a single cell spanning the
+   table, which is also its last child: it scrolls with the rest instead
+   of pinning itself to the right. Declared after the rules above so it
+   wins on source order at equal specificity. */
+.inv-list-page .inv-list-table tbody td[colspan] {
+  position: static;
+  background: none;
+  box-shadow: none;
+}
+.inv-list-page .inv-list-table tbody tr:hover td[colspan] { background: none; }
+
+/* -- Narrower screens -------------------------------------------------- */
+/* A 1650px screen leaves about 1362px beside the sidebar, 1440px about
+   1152px and 1366px about 1078px, so the spacing steps down and the
+   twelve columns keep sitting side by side for as long as they can. */
+@media (max-width: 1499px) {
+  .inv-list-page {
+    --il-cell-x: 9px;
+    --il-font: 12.5px;
+    --il-act-btn: 27px;
+    --il-act-gap: 3px;
+  }
+}
+@media (max-width: 1366px) {
+  .inv-list-page {
+    --il-cell-x: 8px;
+    --il-head-font: 11.5px;
+    --il-ctl-font: 12.5px;
+    --il-pad-x: 16px;
+  }
+}
+/* Below this the columns cannot fit whatever the padding, so the table
+   takes a comfortable width back and scrolls inside its wrapper: figures
+   are never squeezed into something unreadable, and because the wrapper
+   is the scroll container neither the page nor the sidebar moves. */
+@media (max-width: 1180px) {
+  .inv-list-page {
+    --il-cell-x: 12px;
+    --il-font: 13px;
+    --il-head-font: 12px;
+    --il-act-btn: 30px;
+    --il-act-gap: 5px;
+  }
+  .inv-list-page .inv-list-table { min-width: 1180px; }
+}
+/* Tablet and phone: the toolbar stops trying to be one line. Search takes
+   the first row, the five filters sit three and then two up beneath it,
+   and Series Migration spans the full width rather than hanging off the
+   right of a short row. Controls grow to a touch-sized height. */
+@media (max-width: 768px) {
+  .inv-list-page { --il-ctl-h: 42px; }
+  .inv-list-page .inv-list-head { padding: 12px 14px; }
+  .inv-list-page .inv-list-filters > .search-input-wrap { flex: 1 1 100%; }
+  .inv-list-page .inv-list-filters > .form-control { flex: 1 1 calc(33.333% - 6px); }
+  .inv-list-page .inv-list-filters > .inv-list-sort { flex: 1 1 100%; }
+  .inv-list-page .inv-list-filters > .inv-list-migrate {
+    flex: 1 1 100%;
+    margin-left: 0;
+    justify-content: center;
+  }
+}
+@media (max-width: 640px) {
+  .inv-list-page .inv-list-filters > .form-control { flex: 1 1 calc(50% - 4px); }
+}
+@media (max-width: 480px) {
+  .inv-list-page .inv-list-filters > .form-control { flex: 1 1 100%; }
+}
+/* end Invoice List */
