@@ -149,7 +149,10 @@ test('P12 both changed scripts carry a new cache key on every page', () => {
       checked++;
     }
     if (s.includes('client/js/pages/profile.js')) {
-      assert.ok(s.includes('client/js/pages/profile.js?v=41'), f + ' must load profile.js at v=41');
+      // profile.js is shared, and the editable proforma counter moved it
+      // (proforma-sequence-edit.test.js SEQ25). Still pinned, so an
+      // accidental bump is caught here too.
+      assert.ok(s.includes('client/js/pages/profile.js?v=42'), f + ' must load profile.js at v=42');
     }
   }
   assert.ok(checked >= 20, 'expected the sidebar pages to load product-sync.js');

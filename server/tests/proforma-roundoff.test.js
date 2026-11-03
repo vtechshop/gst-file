@@ -128,5 +128,7 @@ test('R9 the changed asset carries a new cache key on every page that loads it',
   // number: it is not this change's asset, and later work on it legitimately
   // moves the key.
   assert.match(rd('proforma.html'), /client\/js\/pages\/proforma-entry\.js\?v=\d+/);
-  assert.ok(rd('proforma.html').includes('client/js/utilities/utils.js?v=34'));
+  // utils.js is pinned at the version the editable proforma counter moved
+  // it to (proforma-sequence-edit.test.js SEQ25), not by anything here.
+  assert.ok(rd('proforma.html').includes('client/js/utilities/utils.js?v=35'));
 });

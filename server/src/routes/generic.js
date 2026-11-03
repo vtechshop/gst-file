@@ -259,6 +259,15 @@ const TABLES = {
       'document_series_sequences','document_series_formats',
       'created_at',
       'hsn_digits_required','aggregate_turnover_band'],
+    // Readable, never directly writable: a document counter is only safe to
+    // change against the numbers that book has already issued, and this
+    // router cannot see them. Lowering it blind would hand an issued number
+    // to a second document, so the counter is set through
+    // POST /api/documents/:type/number-settings, which takes the profile-row
+    // lock and checks the book first. Left in `columns` above so the column
+    // still reads normally; the server's own issue path writes it in SQL,
+    // inside the transaction that writes the document.
+    immutable: ['document_series_sequences'],
     validate: validateProfilePayload
   },
   customers: {

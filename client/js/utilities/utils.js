@@ -98,6 +98,43 @@ function numberFormatProblem(format) {
   return null;
 }
 
+// Is this next-number usable? null when it is, a sentence to show when not.
+//
+// The browser copy of server/src/utils/invoiceNumberFormat.js's
+// sequenceProblem() - same rule, two runtimes, exactly as
+// numberFormatProblem above is the browser copy of the server's. A test runs
+// both over the same cases so they cannot drift.
+//
+// Deliberately strict about what a number IS. parseInt('169abc') is 169 and
+// parseInt('1.9') is 1, so a counter read with parseInt alone would quietly
+// accept text that means something else to whoever typed it. A counter is a
+// run of digits or it is a mistake.
+//
+// This is the immediate answer only. Whether a VALID number is also SAFE -
+// whether it would reissue a number the book has already given out - cannot
+// be known in the browser, and is decided by
+// POST /api/documents/:type/number-settings against the stored documents.
+const SEQUENCE_MAX = 99999999;
+
+function sequenceProblem(value) {
+  if (value === null || value === undefined) return 'Enter the next number, for example 169.';
+  if (typeof value === 'boolean' || typeof value === 'object') {
+    return 'Enter the next number as a whole number, for example 169.';
+  }
+  const raw = String(value).trim();
+  if (!raw) return 'Enter the next number, for example 169.';
+  if (/^[+-]/.test(raw)) {
+    return 'The next number must be a positive whole number, not ' + raw + '.';
+  }
+  if (!/^\d+$/.test(raw)) {
+    return 'The next number must be a whole number, not ' + raw + '.';
+  }
+  const n = parseInt(raw, 10);
+  if (!Number.isSafeInteger(n) || n < 1) return 'The next number must be 1 or more.';
+  if (n > SEQUENCE_MAX) return 'Keep the next number at ' + SEQUENCE_MAX + ' or below.';
+  return null;
+}
+
 // ── GST registration ────────────────────────────────────────
 // What kind of registration the business holds. This decides what it may
 // file and what documents it issues, so it is written down once here and

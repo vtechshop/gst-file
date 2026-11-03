@@ -366,10 +366,13 @@ test('IL11 only this page\'s cache key moved', () => {
   assert.equal(keys['invoice-list.html'], '44');
   assert.equal(Object.values(keys).filter((v) => v === '44').length, 1,
     'the key is unused elsewhere, so no page can serve a cached copy of the old stylesheet to this one');
-  // The scripts were not touched, so their keys must not have moved either.
+  // This page's own script was not touched, so its key must not have moved.
   assert.ok(HTML.includes('client/js/pages/invoice-list.js?v=34'));
-  assert.ok(HTML.includes('client/js/utilities/utils.js?v=34'));
-  assert.ok(HTML.includes('client/js/pages/profile.js?v=41'));
+  // utils.js and profile.js are shared, and the editable proforma counter
+  // moved both together (proforma-sequence-edit.test.js SEQ25). Pinned
+  // rather than ignored so an accidental bump is still caught here.
+  assert.ok(HTML.includes('client/js/utilities/utils.js?v=35'));
+  assert.ok(HTML.includes('client/js/pages/profile.js?v=42'));
 });
 
 test('IL12 the server/public mirrors are byte-identical', () => {

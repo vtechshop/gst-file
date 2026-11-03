@@ -222,20 +222,38 @@ test('F11 invoice formats are deliberately NOT subjected to the new rule', () =>
 
 // ═══ 4. Separation from invoice numbering ═════════════════════════════
 
-test('F12 saving the proforma format writes ONE column, and no invoice column', () => {
+test('F12 saving proforma numbering writes only document columns, and no invoice column', () => {
   const fn = PROFILE.slice(PROFILE.indexOf('async function submitProformaNumberingSettings('));
   const body = fn.slice(0, fn.indexOf('\nasync function submitInvoiceNumberingSettings'));
 
-  assert.match(body, /saveUserProfile\(user\.id, \{ document_series_formats: formats \}\)/,
-    'it must save exactly that one column');
+  // The browser no longer assembles the column itself - it posts this book's
+  // own two settings and the server merges them (see F19 for why). What has
+  // not changed, and is the point of this test, is that an invoice column is
+  // not within reach of a proforma save.
+  assert.match(body, /'\/documents\/' \+ PROFORMA_NUMBER_SERIES \+ '\/number-settings'/,
+    'it must post to the proforma book\'s own endpoint');
   for (const col of ['invoice_number_format', 'invoice_current_sequence',
     'invoice_series_formats', 'invoice_series_sequences']) {
     assert.strictEqual(body.includes(col), false,
       'the proforma save must never mention ' + col);
   }
-  // And it must not clobber another document book's format.
-  assert.match(body, /\.\.\.\(\(prior && prior\.document_series_formats\) \|\| \{\}\)/,
-    'other document books must be carried forward');
+
+  // And the endpoint it posts to must MERGE rather than replace, or saving a
+  // proforma format would drop a challan's or a purchase order's.
+  const route = DOCS.slice(DOCS.indexOf("router.post('/:type/number-settings'"));
+  const handler = route.slice(0, route.indexOf('\n}));'));
+  for (const col of ['document_series_formats', 'document_series_sequences']) {
+    assert.ok(handler.includes(
+      col + " = COALESCE(" + col + ", '{}'::jsonb) "),
+      col + ' must be merged into, not overwritten');
+  }
+  assert.match(handler, /jsonb_build_object\(\$1::text/,
+    'and merged under this book\'s key alone');
+  for (const col of ['invoice_number_format', 'invoice_current_sequence',
+    'invoice_series_formats', 'invoice_series_sequences']) {
+    assert.strictEqual(handler.includes(col), false,
+      'the endpoint must never mention ' + col);
+  }
 });
 
 test('F13 saving an invoice format writes no document column', () => {
@@ -312,25 +330,45 @@ test('F18 a format change never rewrites a stored proforma number', () => {
     'saving a format must not touch the proforma table at all');
 });
 
-test('F19 the Next Number counter is shown but not editable here', () => {
-  // Deliberate: the invoice screen lets a counter be typed and has to
-  // special-case re-seeding to avoid reissuing numbers already given out.
-  // This screen does not offer that, so it cannot cause it.
+test('F19 the Next Number counter is editable, and never written unvalidated', () => {
+  // This test used to assert the opposite - that the counter was display-only
+  // - because this screen offered no way to type one and so could not reissue
+  // a number. The counter is editable now, which means the rule it was
+  // standing in for has to be enforced rather than avoided: see
+  // proforma-sequence-edit.test.js for the whole contract. What matters here
+  // is that it is an input, and that the save does NOT go through
+  // PATCH /profiles, where no duplicate check could run.
   assert.match(PROFILE, /id="setProformaSeq"/);
   const card = PROFILE.slice(PROFILE.indexOf('id="setProformaNumberingCard"'));
   const body = card.slice(0, card.indexOf('<!-- Company Branding -->'));
-  assert.strictEqual(/id="setProformaSeq"[^>]*<input/.test(body), false,
-    'the counter cell must not contain an input');
+  assert.match(body, /<input type="number" id="setProformaSeq"[\s\S]{0,200}min="1"/,
+    'the counter cell must hold a whole-number input');
+
   const fn = PROFILE.slice(PROFILE.indexOf('async function submitProformaNumberingSettings('));
   const save = fn.slice(0, fn.indexOf('\nasync function submitInvoiceNumberingSettings'));
-  assert.strictEqual(/document_series_sequences/.test(save), false,
-    'and the save must never write a counter');
+  // Comments stripped first: this function EXPLAINS why it does not call
+  // saveUserProfile(), and a test that read the explanation as the thing it
+  // forbids would fail on the function's own documentation.
+  const code = save.replace(/^\s*\/\/.*$/gm, '');
+  assert.strictEqual(/saveUserProfile\(/.test(code), false,
+    'the counter must not be written through the generic profile PATCH');
+  assert.match(code, /number-settings/,
+    'it goes to the endpoint that holds the profile-row lock and checks the book');
+
+  // And that door is the only one: the column is immutable through the
+  // generic router, so a validated endpoint is not sitting beside an
+  // unvalidated one writing the same column.
+  const prof = GEN.slice(GEN.indexOf('profiles: {'));
+  const entry = prof.slice(0, prof.indexOf('customers: {'));
+  assert.match(entry, /immutable:\s*\[[^\]]*'document_series_sequences'/,
+    'document_series_sequences must be immutable through PATCH /profiles');
 });
 
 // ═══ 6. Cache keys ════════════════════════════════════════════════════
 
 test('F20 the changed shared assets carry new cache keys, in lockstep', () => {
-  // utils.js gained numberFormatProblem and profile.js the new section. A page
+  // utils.js gained numberFormatProblem and later sequenceProblem; profile.js
+  // gained the section and then the editable counter that calls it. A page
   // that loaded the new profile.js against a cached old utils.js would throw
   // a ReferenceError the moment the format was saved, so the two move together
   // on every page that loads them.
@@ -339,9 +377,9 @@ test('F20 the changed shared assets carry new cache keys, in lockstep', () => {
   assert.ok(withProfile.length >= 38, 'expected the shared pair on many pages');
   for (const f of withProfile) {
     const html = rd(f);
-    assert.ok(html.includes('client/js/utilities/utils.js?v=34'),
-      f + ' must load utils.js at v=34');
-    assert.ok(html.includes('client/js/pages/profile.js?v=41'),
-      f + ' must load profile.js at v=41');
+    assert.ok(html.includes('client/js/utilities/utils.js?v=35'),
+      f + ' must load utils.js at v=35');
+    assert.ok(html.includes('client/js/pages/profile.js?v=42'),
+      f + ' must load profile.js at v=42');
   }
 });

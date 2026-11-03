@@ -513,16 +513,18 @@ async function openSettingsModal() {
                   <td><input type="text" id="setProformaFormat" class="form-control"
                         value="${e(proformaNumbering.format)}" maxlength="40"
                         oninput="updateSettingsProformaPreview()" aria-label="Proforma number format"></td>
-                  <td class="fw-700" id="setProformaSeq">${e(String(proformaNumbering.seq))}</td>
+                  <td><input type="number" id="setProformaSeq" class="form-control"
+                        value="${e(String(proformaNumbering.seq))}" min="1" step="1"
+                        oninput="updateSettingsProformaPreview()" aria-label="Next proforma number"></td>
                   <td class="fw-700 text-primary-dark" id="setProformaPreview">${e(proformaNumbering.documentNumber)}</td>
                 </tr>
               </tbody>
             </table>
           </div>
-          <p class="fs-11 text-muted-sm mb-10" id="setProformaFormatError" style="color:var(--danger);display:none;"></p>
+          <p class="fs-11 mb-10" id="setProformaFormatError" style="color:var(--danger);display:none;"></p>
           <p class="fs-11 text-muted-sm mb-10"><b>#</b> marks the running sequence &mdash; <code>###</code> = 001, 002&hellip; &nbsp;<code>#####</code> = 00001, 00002&hellip; Everything else is kept exactly as typed, so <code>PI-#####</code> gives PI-00001 and <code>QT/2026/###</code> gives QT/2026/001. The default is <code>PI-#####</code>.</p>
-          <p class="fs-11 text-muted-sm mb-10">Next Number is this book's own counter and is shown for reference &mdash; it is not edited here, because lowering it would reissue numbers already given out. The number itself is issued when the proforma is saved.</p>
-          <button class="btn btn-primary btn-sm" onclick="submitProformaNumberingSettings()"><i class="fas fa-save"></i> Save Proforma Format</button>
+          <p class="fs-11 text-muted-sm mb-10">Next Number is this book's own counter &mdash; set it to continue from wherever your quotations are already numbered. Whole numbers of 1 or more. A counter that would hand out a number this book has already issued is refused when you save, and the message says which number is in the way, so lowering it cannot reissue a proforma a customer is already holding. The number itself is issued when the proforma is saved, and skips anything already taken.</p>
+          <button class="btn btn-primary btn-sm" onclick="submitProformaNumberingSettings()"><i class="fas fa-save"></i> Save Proforma Numbering</button>
         `}
       </div>
 
@@ -797,48 +799,82 @@ async function fetchProformaNumbering() {
 // formatter the server uses to issue the real number.
 function updateSettingsProformaPreview() {
   const el = document.getElementById('setProformaFormat');
+  const seqEl = document.getElementById('setProformaSeq');
   const out = document.getElementById('setProformaPreview');
   const errEl = document.getElementById('setProformaFormatError');
   if (!el || !out) return;
-  const seq = Math.max(1, parseInt(document.getElementById('setProformaSeq')?.textContent, 10) || 1);
-  const problem = numberFormatProblem(el.value);
+
+  // Both boxes are judged, and the format's complaint is shown first because
+  // a format that cannot issue a number makes the counter moot.
+  const raw = seqEl ? seqEl.value : '';
+  const problem = numberFormatProblem(el.value) || sequenceProblem(raw);
   if (errEl) {
     errEl.textContent = problem || '';
     errEl.style.display = problem ? '' : 'none';
   }
-  // A broken format gets no invented example - showing one would suggest the
-  // number it would issue, which is the thing being refused.
-  out.textContent = problem ? '—' : applyInvoiceNumberFormat(el.value, seq);
+  // A broken format or counter gets no invented example - showing one would
+  // suggest the number it would issue, which is the thing being refused.
+  out.textContent = problem
+    ? '—'
+    : applyInvoiceNumberFormat(el.value, parseInt(String(raw).trim(), 10));
 }
 
 async function submitProformaNumberingSettings() {
   const user = await getCurrentUser();
   if (!user) return;
   const el = document.getElementById('setProformaFormat');
-  if (!el) return;
+  const seqEl = document.getElementById('setProformaSeq');
+  if (!el || !seqEl) return;
 
   const format = String(el.value || '').trim();
+  const rawSeq = String(seqEl.value || '').trim();
   // Refused here as well as on the server, so the answer is immediate and the
-  // reason is the same sentence either way.
-  const problem = numberFormatProblem(format);
-  if (problem) {
-    showToast(problem, 'error');
+  // reason is the same sentence either way. The format is reported first: one
+  // that cannot issue a number makes the counter moot.
+  const formatProblem = numberFormatProblem(format);
+  const seqIssue = sequenceProblem(rawSeq);
+  if (formatProblem || seqIssue) {
+    showToast(formatProblem || seqIssue, 'error');
     updateSettingsProformaPreview();
-    el.focus();
+    (formatProblem ? el : seqEl).focus();
     return;
   }
 
-  // Merged into whatever else the column holds. Written as a whole object, so
-  // any other document book's format - a challan's, a purchase order's - has
-  // to be carried forward rather than dropped.
-  const prior = getCachedProfile();
-  const formats = { ...((prior && prior.document_series_formats) || {}) };
-  formats[PROFORMA_NUMBER_SERIES] = format;
+  // Both settings, one request, one transaction - so a counter the server
+  // refuses as unsafe leaves the format unwritten too, and the screen can
+  // never end up showing half a save.
+  //
+  // Deliberately NOT saveUserProfile(): the counter cannot be judged from the
+  // payload alone. Whether this number would reissue one already given out is
+  // a question about the stored proformas, and only the server can answer it,
+  // under the same row lock that issuing a number takes. The counter is
+  // immutable through PATCH /profiles for exactly that reason.
+  let saved;
+  try {
+    saved = await apiFetch('/documents/' + PROFORMA_NUMBER_SERIES + '/number-settings', {
+      method: 'POST',
+      body: JSON.stringify({ format, seq: parseInt(rawSeq, 10) })
+    });
+  } catch (err) {
+    // The refusal names the number in the way and the next free counter, so
+    // it is shown as the server wrote it rather than replaced by a generic
+    // line - see describeApiError(), which prefers the server's message.
+    handleApiError(err, 'Could not save your proforma numbering');
+    return;
+  }
+  showToast('Saved!', 'success');
 
-  // Only this column. The invoice format columns are deliberately absent from
-  // this payload: a proforma format change must not write them at all.
-  const { error } = await saveUserProfile(user.id, { document_series_formats: formats });
-  if (error) return;
+  // The cached profile is what the rest of this screen reads, and this save
+  // bypassed saveUserProfile(), which is what normally refreshes it. Keeping
+  // the one key in step stops a later read of the cache from handing back the
+  // format that was there before this save.
+  const cached = getCachedProfile();
+  if (cached) {
+    cached.document_series_formats = {
+      ...(cached.document_series_formats || {}),
+      [PROFORMA_NUMBER_SERIES]: (saved && saved.format) ? saved.format : format
+    };
+  }
 
   // The proforma page may or may not be the page this modal was opened from.
   // Refresh its preview immediately if it is, no-op otherwise - the saved
@@ -851,9 +887,8 @@ async function submitProformaNumberingSettings() {
   // server now says rather than what this form assumed.
   const fresh = await fetchProformaNumbering();
   if (!fresh.unavailable) {
-    const seqEl = document.getElementById('setProformaSeq');
-    if (seqEl) seqEl.textContent = String(fresh.seq);
-    if (el) el.value = fresh.format;
+    seqEl.value = String(fresh.seq);
+    el.value = fresh.format;
     updateSettingsProformaPreview();
   }
 }

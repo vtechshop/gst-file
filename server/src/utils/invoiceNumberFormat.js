@@ -96,6 +96,97 @@ function numberFormatProblem(format) {
   return null;
 }
 
+// ── The counter a numbering book is sitting on ────────────────────────
+//
+// A format says what a number LOOKS like; the sequence says which one comes
+// next. Settings lets both be typed, so both need a rule, and the rule for
+// the counter lives here beside numberFormatProblem() for the same reason
+// that one does: the browser refuses a bad value immediately and the server
+// refuses it again authoritatively, and there must be exactly one definition
+// of "bad" for the two answers to agree.
+//
+// Deliberately strict about what a number IS. parseInt('169abc') is 169 and
+// parseInt('1.9') is 1, so a counter read with parseInt alone would quietly
+// accept text that means something else to whoever typed it. A counter is a
+// run of digits or it is a mistake.
+const SEQUENCE_MAX = 99999999;
+
+function sequenceProblem(value) {
+  if (value === null || value === undefined) return 'Enter the next number, for example 169.';
+  if (typeof value === 'boolean' || typeof value === 'object') {
+    return 'Enter the next number as a whole number, for example 169.';
+  }
+  const raw = String(value).trim();
+  if (!raw) return 'Enter the next number, for example 169.';
+  if (/^[+-]/.test(raw)) {
+    return 'The next number must be a positive whole number, not ' + raw + '.';
+  }
+  if (!/^\d+$/.test(raw)) {
+    // Catches 1.5, 1e3, '12 34', '169abc' and anything else that is not
+    // simply digits. One sentence for all of them: the difference between
+    // "a decimal" and "not a number at all" does not change what to do.
+    return 'The next number must be a whole number, not ' + raw + '.';
+  }
+  const n = parseInt(raw, 10);
+  if (!Number.isSafeInteger(n) || n < 1) return 'The next number must be 1 or more.';
+  if (n > SEQUENCE_MAX) return 'Keep the next number at ' + SEQUENCE_MAX + ' or below.';
+  return null;
+}
+
+// The first sequence at or after `seq` whose formatted number is not already
+// issued, given the numbers this book has used (upper-cased).
+//
+// This is the "the counter is only a starting point" rule, extracted so the
+// two places that need it cannot drift: nextDocumentNumberOn() walks forward
+// past anything already issued when a number is ISSUED, and the Settings
+// endpoint uses the same walk to say which counter would actually be free. A
+// counter that has fallen behind the saved documents heals itself on the
+// next one rather than colliding.
+//
+// The guard is a ceiling on the walk, not on the book: a pathological run of
+// a hundred thousand consecutive numbers stops the scan rather than hanging
+// the request, and the caller's duplicate check then refuses the result.
+const SEQUENCE_SCAN_GUARD = 100000;
+
+function firstFreeSequence(format, seq, usedUpper) {
+  let n = Math.max(1, parseInt(seq, 10) || 1);
+  let candidate = applyInvoiceNumberFormat(format, n);
+  let guard = 0;
+  while (usedUpper.has(candidate.toUpperCase()) && guard < SEQUENCE_SCAN_GUARD) {
+    n++;
+    candidate = applyInvoiceNumberFormat(format, n);
+    guard++;
+  }
+  return { seq: n, documentNumber: candidate };
+}
+
+// Would setting this book's counter to `seq` reissue a number?
+//
+// The question Settings has to answer before it writes a counter, and the
+// reason a counter cannot simply be stored as typed: lowering it onto a
+// number the book has already given out would hand that number to a second
+// document. Answered against the numbers actually in the book rather than
+// against the counter, because the counter is the thing being changed.
+//
+// `taken` is the issued numbers, as a Set of upper-cased strings or any
+// iterable of raw ones. Case is not significant, exactly as the duplicate
+// check on save treats it.
+function sequenceConflict(format, seq, taken) {
+  const usedUpper = taken instanceof Set
+    ? taken
+    : new Set((taken || []).map(v => String(v == null ? '' : v).trim().toUpperCase()));
+  const n = Math.max(1, parseInt(seq, 10) || 1);
+  const candidate = applyInvoiceNumberFormat(format, n);
+  const conflict = usedUpper.has(candidate.toUpperCase());
+  // What to offer instead. Only meaningful when there IS a conflict, and it
+  // is the same walk the save would do, so the suggestion can never be a
+  // number that would itself be refused.
+  const free = conflict
+    ? firstFreeSequence(format, n, usedUpper)
+    : { seq: n, documentNumber: candidate };
+  return { conflict, candidate, nextFree: free.seq, nextFreeNumber: free.documentNumber };
+}
+
 // The default format for a series nobody has configured yet.
 //
 // "online" is spelled out rather than derived because no rule could get
@@ -136,6 +227,11 @@ module.exports = {
   invoiceSeriesFormat,
   defaultInvoiceSeriesFormat,
   numberFormatProblem,
+  sequenceProblem,
+  firstFreeSequence,
+  sequenceConflict,
   NUMBER_FORMAT_MAX,
+  SEQUENCE_MAX,
+  SEQUENCE_SCAN_GUARD,
   INVOICE_SERIES_DEFAULT_FORMATS
 };

@@ -25,7 +25,8 @@ const express = require('express');
 const pool = require('../config/pool');
 const { requireAuth } = require('../middleware/auth');
 const { asyncRoute } = require('../middleware/errorHandler');
-const { applyInvoiceNumberFormat } = require('../utils/invoiceNumberFormat');
+const { applyInvoiceNumberFormat, numberFormatProblem, sequenceProblem,
+        firstFreeSequence, sequenceConflict } = require('../utils/invoiceNumberFormat');
 const { TABLES } = require('./generic');
 const { validateTransportCharge, transportGstAmount, principalGstRate,
         validateAdvanceAmount, round2 } = require('../utils/validation');
@@ -217,13 +218,13 @@ async function nextDocumentNumberOn(client, userId, documentType, lock) {
   // The counter is only a starting point: the scan walks forward past
   // anything already issued, so a counter that has fallen behind the saved
   // documents heals itself on the next one instead of colliding.
-  let candidate = applyInvoiceNumberFormat(format, seq);
-  let guard = 0;
-  while (used.has(candidate.toUpperCase()) && guard < 100000) {
-    seq++; candidate = applyInvoiceNumberFormat(format, seq); guard++;
-  }
+  //
+  // The walk itself is firstFreeSequence() in utils/invoiceNumberFormat.js,
+  // shared with the Settings endpoint below so the number this issues and
+  // the counter that endpoint calls free can never disagree.
+  const free = firstFreeSequence(format, seq, used);
 
-  return { documentNumber: candidate, series, format, seq };
+  return { documentNumber: free.documentNumber, series, format, seq: free.seq };
 }
 
 // What the next document in this book WOULD be. Reads only - no lock, no
@@ -266,6 +267,149 @@ router.get('/:type/next-number', asyncRoute(async (req, res) => {
     // could only echo the number this book would issue under the format
     // already saved. Neither is a secret and neither is consumed by reading.
     res.json({ documentNumber, series, format, seq });
+  } finally {
+    client.release();
+  }
+}));
+
+// -- 1b) Configure a book's format and counter --
+//
+// Settings writes a numbering book here rather than through PATCH /profiles,
+// and the difference is the whole point: the counter cannot be judged from
+// the payload alone. Lowering it onto a number the book has already issued
+// would hand that number to a second document, and only the database knows
+// which numbers those are. So the rule lives where the documents are, under
+// the same profile-row lock that issuing a number takes.
+//
+// document_series_sequences is immutable through the generic profiles router
+// (see TABLES.profiles in routes/generic.js) precisely so that this is the
+// only door: a validated endpoint beside an unvalidated one writing the same
+// column is not validation.
+//
+// Writes only the keys for THIS book, merged into whatever else the two
+// columns hold, so another book's format or counter is carried forward
+// rather than dropped. The invoice columns are not touched here at all --
+// invoice numbering keeps its own screen and its own columns.
+//
+// Both fields are optional and judged independently: sending a format alone
+// leaves the counter where it is, and sending a counter alone leaves the
+// format alone. Nothing is written unless everything sent is acceptable.
+router.post('/:type/number-settings', asyncRoute(async (req, res) => {
+  const type = String(req.params.type).trim().toLowerCase();
+  const spec = docSpec(type);                       // 400 for a type with no book
+  const { table, series } = spec;
+  const body = (req.body && typeof req.body === 'object') ? req.body : {};
+  const has = (k) => Object.prototype.hasOwnProperty.call(body, k);
+
+  // -- Shape, before any lock is taken or anything is read --
+  //
+  // A payload that cannot be right is refused without touching the database,
+  // so a bad value cannot serialize anyone else's numbering behind it.
+  let format = null;
+  if (has('format')) {
+    format = String(body.format == null ? '' : body.format).trim();
+    const problem = numberFormatProblem(format);
+    if (problem) {
+      const e = new Error(problem);
+      e.status = 400; e.expose = true; e.code = 'number_format_invalid'; throw e;
+    }
+  }
+  let seq = null;
+  if (has('seq')) {
+    const problem = sequenceProblem(body.seq);
+    if (problem) {
+      const e = new Error(problem);
+      e.status = 400; e.expose = true; e.code = 'sequence_invalid'; throw e;
+    }
+    seq = parseInt(String(body.seq).trim(), 10);
+  }
+  if (format === null && seq === null) {
+    const e = new Error('Send a format, a next number, or both.');
+    e.status = 400; e.expose = true; e.code = 'nothing_to_save'; throw e;
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    // The same lock reserveDocumentNumberOn() takes, and taken first for the
+    // same reason: the taken-numbers scan below has to run against a book
+    // nobody else is writing, or two settings saves -- or a settings save and
+    // a document save -- could each decide a number was free.
+    const { rows: prof } = await client.query(
+      `SELECT document_series_sequences, document_series_formats
+         FROM profiles WHERE id = $1 FOR UPDATE`, [req.userId]);
+    if (!prof.length) {
+      const e = new Error('Your profile could not be found.');
+      e.status = 404; e.expose = true; e.code = 'profile_not_found'; throw e;
+    }
+    const seqs = prof[0].document_series_sequences || {};
+    const formats = prof[0].document_series_formats || {};
+
+    // What the book will be numbering with once this save lands: the value
+    // sent, or the one already stored, or the default for the book.
+    const effFormat = format !== null
+      ? format
+      : ((formats[series] && String(formats[series]).trim())
+         || DEFAULT_DOCUMENT_FORMATS[series] || DEFAULT_DOCUMENT_FORMATS[type] || 'DOC-#####');
+    const effSeq = seq !== null ? seq : Math.max(1, parseInt(seqs[series], 10) || 1);
+
+    // -- The numbers this book has already given out --
+    //
+    // Scoped by user_id and document_series exactly as the issue path and the
+    // save's duplicate check scope it, so another tenant's numbers and another
+    // book's numbers are not conflicts.
+    const numberCol = spec.numberCol || 'document_number';
+    const { rows: taken } = await client.query(
+      `SELECT ${numberCol} AS document_number FROM ${table} WHERE user_id = $1 AND document_series = $2`,
+      [req.userId, series]);
+    const used = new Set(taken.map(r => (r.document_number || '').trim().toUpperCase()));
+
+    const verdict = sequenceConflict(effFormat, effSeq, used);
+    if (verdict.conflict) {
+      // Refused, and the message says which number is in the way and what
+      // would work instead -- a bare "invalid" would leave the only way
+      // forward as guessing.
+      const label = numberLabel(type, true);
+      const e = new Error(
+        `${label} ${verdict.candidate} has already been issued, so the next number cannot be `
+        + `${effSeq} - that would give the same number to two documents. `
+        + `The next free number in this book is ${verdict.nextFree} (${verdict.nextFreeNumber}).`);
+      // No structured payload beyond this: errorHandler forwards `fields`
+      // and nothing else, so anything attached here would never reach the
+      // browser. The sentence above carries both numbers instead.
+      e.status = 409; e.expose = true; e.code = 'sequence_already_issued';
+      throw e;
+    }
+
+    // -- Write, and only what was sent --
+    //
+    // jsonb || jsonb_build_object merges one key into the column, so every
+    // other book keeps its own value. Writing the format only when a format
+    // was sent is what makes "change the counter" leave the format alone.
+    const sets = [];
+    const params = [series];
+    if (format !== null) {
+      params.push(effFormat);
+      sets.push(`document_series_formats = COALESCE(document_series_formats, '{}'::jsonb) `
+                + `|| jsonb_build_object($1::text, $${params.length}::text)`);
+    }
+    if (seq !== null) {
+      params.push(effSeq);
+      sets.push(`document_series_sequences = COALESCE(document_series_sequences, '{}'::jsonb) `
+                + `|| jsonb_build_object($1::text, $${params.length}::int)`);
+    }
+    params.push(req.userId);
+    await client.query(`UPDATE profiles SET ${sets.join(', ')} WHERE id = $${params.length}`, params);
+
+    await client.query('COMMIT');
+
+    // The book as it now stands, so the screen shows what the server says
+    // rather than what the form assumed.
+    res.json({ series, format: effFormat, seq: effSeq, documentNumber: verdict.candidate });
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
   } finally {
     client.release();
   }

@@ -125,7 +125,18 @@ test('P9 auto-numbering is untouched', () => {
   // The generator still counts from the profile sequence and skips numbers
   // already taken, so a manually renamed document cannot corrupt the book.
   assert.match(DOCS, /async function reserveDocumentNumberOn\(client, userId, documentType\)/);
-  assert.match(DOCS, /while \(used\.has\(candidate\.toUpperCase\(\)\) && guard < 100000\)/);
+  // The skip-forward walk moved into utils/invoiceNumberFormat.js when the
+  // proforma counter became editable, so the same walk decides what to
+  // issue and what counter Settings will accept. Same behaviour, one copy:
+  // asserted here as the delegation, and exercised in
+  // proforma-sequence-edit.test.js (SEQ10, SEQ11, SEQ12).
+  assert.match(DOCS, /const free = firstFreeSequence\(format, seq, used\);/);
+  assert.match(DOCS, /firstFreeSequence[\s\S]{0,200}require\('\.\.\/utils\/invoiceNumberFormat'\)/);
+  const walk = require('../src/utils/invoiceNumberFormat');
+  assert.deepStrictEqual(
+    walk.firstFreeSequence('PI-#####', 2, new Set(['PI-00002', 'PI-00003'])),
+    { seq: 4, documentNumber: 'PI-00004' },
+    'an occupied number must still be skipped');
   assert.match(DOCS, /SET document_series_sequences =/);
   assert.match(DOCS, /proforma_invoice: 'PI-#####'/);
 });
