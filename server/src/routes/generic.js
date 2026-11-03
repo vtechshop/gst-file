@@ -424,6 +424,13 @@ const TABLES = {
       // the payments ledger knows, and the quotation must belong to the same
       // business and still have room for this much.
       'payment_method','reference_number','proforma_invoice_id',
+      // The order the advance was received against, and whether it is a
+      // goods or a services advance - which is what decides whether any GST
+      // is payable on it (Notification 66/2017-Central Tax). From
+      // migration_receipt_voucher_order.sql; the taxable value, GST amount
+      // and order total are derived from these, never stored.
+      'supply_nature','party_address','payment_date',
+      'order_quantity','order_rate','order_amount','packing_charge','order_gst_rate',
       'created_at','updated_at']
   },
   payment_vouchers: {

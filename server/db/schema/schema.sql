@@ -1387,6 +1387,44 @@ CREATE TABLE IF NOT EXISTS receipt_vouchers (
   CONSTRAINT receipt_vouchers_payment_method_known
     CHECK (payment_method IS NULL OR payment_method IN ('cash','upi','bank_transfer','cheque','card','other')),
 
+  -- The order the advance was received against, and how it is taxed, from
+  -- migration_receipt_voucher_order.sql.
+  --
+  -- supply_nature is the one that matters: Section 31(3)(d) requires a
+  -- receipt voucher for every advance, but Notification 66/2017-Central Tax
+  -- relieved every registered person other than a composition taxpayer from
+  -- paying tax on an advance for a supply of GOODS - tax is due when the
+  -- invoice is issued. For services tax is due on receipt (Section 13(2)).
+  -- Until this column existed nothing on the voucher said which case it was.
+  -- NULL means nobody recorded it, and such a voucher keeps exactly the GST
+  -- it was issued with.
+  --
+  -- The order columns carry the order for a receipt with no quotation behind
+  -- it. The taxable value (order_amount + packing_charge), the order's GST
+  -- amount and its total are DERIVED wherever they are shown, never stored,
+  -- for the reason the balance is not stored: a figure that can be computed
+  -- from stored ones must not be able to disagree with them.
+  supply_nature TEXT,
+  party_address TEXT,
+  payment_date DATE,
+  order_quantity NUMERIC(14,3),
+  order_rate NUMERIC(14,2),
+  order_amount NUMERIC(14,2),
+  packing_charge NUMERIC(14,2),
+  order_gst_rate NUMERIC(5,2),
+  CONSTRAINT receipt_vouchers_supply_nature_known
+    CHECK (supply_nature IS NULL OR supply_nature IN ('goods','services')),
+  CONSTRAINT receipt_vouchers_order_amount_nonneg
+    CHECK (order_amount IS NULL OR order_amount >= 0),
+  CONSTRAINT receipt_vouchers_packing_charge_nonneg
+    CHECK (packing_charge IS NULL OR packing_charge >= 0),
+  CONSTRAINT receipt_vouchers_order_rate_nonneg
+    CHECK (order_rate IS NULL OR order_rate >= 0),
+  CONSTRAINT receipt_vouchers_order_quantity_nonneg
+    CHECK (order_quantity IS NULL OR order_quantity >= 0),
+  CONSTRAINT receipt_vouchers_order_gst_rate_range
+    CHECK (order_gst_rate IS NULL OR (order_gst_rate >= 0 AND order_gst_rate <= 100)),
+
   created_at TIMESTAMPTZ DEFAULT NOW(),
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );

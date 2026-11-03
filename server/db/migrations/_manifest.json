@@ -56,6 +56,7 @@
     "migration_proforma_transport_charge.sql",
     "migration_invoice_export_currency.sql",
     "migration_proforma_advance.sql",
-    "migration_receipt_voucher_payment.sql"
+    "migration_receipt_voucher_payment.sql",
+    "migration_receipt_voucher_order.sql"
   ]
 }

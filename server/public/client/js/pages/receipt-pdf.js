@@ -48,16 +48,72 @@ function receiptMethodLabel(method) {
 // receipt then simply acknowledges the amount, and says nothing it cannot
 // support.
 function receiptFigures(voucher, quotation, previousReceived) {
+  // Deliberately NOT aliased to a shorter name: AR5 checks by name that the
+  // money received is read only from the VOUCHER and never from a quotation,
+  // whose own advance figure is a payment TERM rather than money received.
+  // An alias would keep the fact true while defeating the check.
   const now = round2(Number(voucher && voucher.advance_amount) || 0);
   const linked = !!(quotation && quotation.id);
-  const total = linked ? round2(Number(quotation.total_amount) || 0) : null;
-  const previous = linked ? round2(Number(previousReceived) || 0) : null;
+
+  // The order this advance belongs to. A linked quotation is the order and is
+  // read as saved; otherwise the voucher's own order columns carry it
+  // (migration_receipt_voucher_order.sql). The taxable value, the GST and the
+  // total are DERIVED here exactly as the form derives them, so the receipt
+  // and the screen cannot show two different orders.
+  let order = null;
+  if (linked) {
+    const packing = round2(Number(quotation.transport_charge) || 0);
+    const taxable = round2(Number(quotation.taxable_amount) || 0);
+    order = {
+      source: 'quotation',
+      amount: round2(taxable - packing),
+      packing,
+      taxable,
+      gstRate: round2(Number(quotation.gst_percentage) || 0),
+      gstAmount: round2(Number(quotation.gst_amount) || 0),
+      total: round2(Number(quotation.total_amount) || 0)
+    };
+  } else if (Number(voucher && voucher.order_amount) || Number(voucher && voucher.packing_charge)) {
+    const amount = round2(Number(voucher.order_amount) || 0);
+    const packing = round2(Number(voucher.packing_charge) || 0);
+    const taxable = round2(amount + packing);
+    const gstRate = round2(Number(voucher.order_gst_rate) || 0);
+    const gstAmount = round2(taxable * gstRate / 100);
+    order = {
+      source: 'voucher',
+      amount, packing, taxable, gstRate, gstAmount,
+      total: round2(taxable + gstAmount)
+    };
+  }
+
+  // Received earlier only means something against a quotation: a typed order
+  // has no earlier receipts to find.
+  const previous = linked ? round2(Number(previousReceived) || 0) : 0;
+  const total = order ? order.total : null;
   return {
     linked,
+    order,
+    quantity: (voucher && voucher.order_quantity != null) ? Number(voucher.order_quantity) : null,
+    // Kept for every existing caller and assertion: the order total.
     total,
-    previous,
+    previous: linked ? previous : null,
     now,
-    balance: linked ? round2(total - previous - now) : null
+    paid: round2(previous + now),
+    balance: total != null ? round2(total - previous - now) : null,
+    // Which rule was applied to the advance itself. A voucher issued before
+    // the column existed has none recorded, so it is inferred from the tax it
+    // actually carries rather than assumed.
+    supplyNature: (voucher && voucher.supply_nature)
+      || ((Number(voucher && voucher.gst_percentage) || 0) > 0 ? 'services' : 'goods'),
+    // The rate that APPLIES to the supply, which is not the same as the rate
+    // charged on this advance: a goods advance carries no tax but the supply
+    // still has a rate, and Rule 50(f) asks for it. The voucher's own rate
+    // when it has one, otherwise the order's.
+    applicableRate: round2(Number(voucher && voucher.gst_percentage) > 0
+      ? Number(voucher.gst_percentage)
+      : (order ? order.gstRate : 0)),
+    advanceTax: round2((Number(voucher && voucher.igst) || 0) + (Number(voucher && voucher.cgst) || 0)
+      + (Number(voucher && voucher.sgst) || 0) + (Number(voucher && voucher.cess) || 0))
   };
 }
 
@@ -119,6 +175,13 @@ async function buildReceiptPDFDoc(voucher, quotation, items, previousReceived) {
 
   let py = y + 10;
   doc.setFontSize(8.5); doc.setTextColor(70, 70, 70);
+  // Rule 50(d) asks for the recipient's address as well as the name and
+  // GSTIN. Wrapped, because an address is longer than one line more often
+  // than not.
+  if (voucher.party_address) {
+    const lines = doc.splitTextToSize(String(voucher.party_address), 110);
+    doc.text(lines, L, py); py += 4 * lines.length;
+  }
   if (voucher.party_gstin) { doc.text('GSTIN: ' + voucher.party_gstin, L, py, { maxWidth: 110 }); py += 4; }
   if (voucher.place_of_supply) { doc.text('Place of Supply: ' + voucher.place_of_supply, L, py, { maxWidth: 110 }); py += 4; }
   if (fig.linked && quotation.document_number) {
@@ -138,6 +201,12 @@ async function buildReceiptPDFDoc(voucher, quotation, items, previousReceived) {
   }
   if (voucher.reference_number) {
     doc.text('Reference: ' + voucher.reference_number, 130, my, { maxWidth: R - 130 }); my += 4.5;
+  }
+  // When the money actually arrived, which is not always the day the voucher
+  // was raised.
+  if (voucher.payment_date) {
+    doc.text('Paid on: ' + formatDate(String(voucher.payment_date).slice(0, 10)), 130, my,
+      { maxWidth: R - 130 }); my += 4.5;
   }
 
   y = Math.max(py, my) + 3;
@@ -181,13 +250,27 @@ async function buildReceiptPDFDoc(voucher, quotation, items, previousReceived) {
 
   const boxX = 112;
   const summary = [];
-  if (fig.linked) summary.push(['Quotation Total', formatNum(fig.total)]);
-  if (fig.linked && fig.previous > 0) summary.push(['Advance Received Earlier', formatNum(fig.previous)]);
-  summary.push(['Advance Received Now', formatNum(fig.now)]);
-  // Worth a line only where it says something the two figures above do not.
-  if (fig.linked && fig.previous > 0) {
-    summary.push(['Total Advance Paid', formatNum(round2(fig.previous + fig.now))]);
+  // The order first - what was agreed - broken down so the GST on it is
+  // visible and is not mistaken for tax on this receipt.
+  if (fig.order) {
+    if (fig.order.amount) summary.push(['Product Amount', formatNum(fig.order.amount)]);
+    if (fig.order.packing) summary.push(['Packing / Other Charges', formatNum(fig.order.packing)]);
+    summary.push(['Taxable Amount', formatNum(fig.order.taxable)]);
+    summary.push([`GST on Order @ ${formatNum(fig.order.gstRate)}%`, formatNum(fig.order.gstAmount)]);
+    summary.push([fig.linked ? 'Quotation Total' : 'Total Order Value', formatNum(fig.order.total)]);
   }
+  // Then the money. Previous is shown whenever there is any, and the total
+  // only where it says something the two figures above do not.
+  if (fig.previous > 0) summary.push(['Advance Received Earlier', formatNum(fig.previous)]);
+  summary.push(['Advance Received Now', formatNum(fig.now)]);
+  if (fig.previous > 0) summary.push(['Total Advance Paid', formatNum(fig.paid)]);
+
+  // Rule 50(f) and (g) ask for the RATE of tax and the AMOUNT of tax, and
+  // they are not the same question - an advance for goods has a rate that
+  // will apply and no tax charged yet. Both are printed, always, because
+  // "Nil" is an answer the receipt has to give rather than omit.
+  summary.push(['Applicable GST Rate', formatNum(fig.applicableRate) + '%']);
+  summary.push(['GST on this Advance', fig.advanceTax > 0 ? formatNum(fig.advanceTax) : 'Nil']);
 
   doc.setFontSize(9); doc.setFont('helvetica', 'normal'); doc.setTextColor(60, 60, 60);
   summary.forEach((r, i) => {
@@ -198,12 +281,30 @@ async function buildReceiptPDFDoc(voucher, quotation, items, previousReceived) {
   doc.setDrawColor(60, 60, 60); doc.setLineWidth(0.2);
   doc.line(boxX, sy, R, sy);
 
-  if (fig.linked) {
+  if (fig.balance != null) {
     doc.setFont('helvetica', 'bold'); doc.setFontSize(11); doc.setTextColor(...accent);
-    doc.text('Balance Due', boxX, sy + 6.5);
+    doc.text('Balance Payable', boxX, sy + 6.5);
     doc.text('Rs.' + formatNum(fig.balance), R, sy + 6.5, { align: 'right' });
     sy += 6.5;
   }
+
+  // Rule 50(h): whether the tax is payable on reverse charge. An advance a
+  // customer pays US is a forward-charge supply - a reverse-charge liability
+  // is the recipient's and is documented by a self invoice and a payment
+  // voucher, not by this. Printed as "No" rather than omitted, because the
+  // rule asks for the indication and a missing one is not an answer.
+  doc.setFont('helvetica', 'normal'); doc.setFontSize(7.5); doc.setTextColor(110, 110, 110);
+  doc.text('Tax payable on reverse charge: No', boxX, sy + 6, { maxWidth: R - boxX });
+
+  // Which rule was applied to the advance, in words, so the customer and a
+  // later reader can both see why this receipt carries the tax it does - or
+  // why it carries none. A receipt voucher is not a tax invoice either way.
+  doc.setFont('helvetica', 'normal'); doc.setFontSize(7.5); doc.setTextColor(110, 110, 110);
+  doc.text(fig.supplyNature === 'services'
+    ? 'Advance for services: GST is due on receipt (Section 13(2)) and is included above.'
+    : 'Advance for goods: no GST is charged on this advance. Notification 66/2017-Central Tax '
+      + 'defers tax to the invoice.',
+  boxX, sy + 10.5, { maxWidth: R - boxX });
 
   // Amount in words, of the money actually received - never of the balance.
   doc.setFont('helvetica', 'normal'); doc.setFontSize(8.5); doc.setTextColor(30, 30, 30);

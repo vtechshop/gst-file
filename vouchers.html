@@ -18,8 +18,8 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.31/jspdf.plugin.autotable.min.js"></script>
   <script src="client/js/pages/invoice-pdf.js?v=52"></script>
-  <script src="client/js/pages/receipt-pdf.js?v=3"></script>
-  <script src="client/js/pages/vouchers.js?v=33"></script>
+  <script src="client/js/pages/receipt-pdf.js?v=4"></script>
+  <script src="client/js/pages/vouchers.js?v=34"></script>
 
 </head>
 <body>
@@ -121,6 +121,9 @@
                be cancelled or amended. -->
           <div id="vRegistryNote" class="calc-box mb-16"></div>
 
+          <!-- A. Voucher Information. Document Type is the selector in the
+               card header above - one picker for all four voucher types. -->
+          <div class="section-title mb-14">Voucher Information</div>
           <div class="form-grid cols-3 mb-16">
             <div class="form-group">
               <div class="d-flex align-center gap-10">
@@ -170,6 +173,17 @@
             </div>
           </div>
 
+          <!-- Rule 50 lists the recipient's address among a receipt
+               voucher's particulars. Shown for a receipt only; the other
+               three voucher types are not governed by Rule 50. -->
+          <div class="form-grid cols-1 mb-16 d-none" id="vPartyAddressGroup">
+            <div class="form-group">
+              <label for="vPartyAddress">Customer Address</label>
+              <input type="text" id="vPartyAddress" class="form-control"
+                     placeholder="Address as it should read on the receipt">
+            </div>
+          </div>
+
           <!-- The document a refund or payment voucher relates to. A
                refund voucher with no advance behind it reverses nothing,
                so it is required there. -->
@@ -189,6 +203,28 @@
                 <label for="vOriginalDate">Date</label>
                 <input type="date" id="vOriginalDate" class="form-control" readonly>
               </div>
+            </div>
+          </div>
+
+          <!-- Whether this advance carries GST at all.
+               Section 31(3)(d) requires a receipt voucher for every advance,
+               but Notification 66/2017-Central Tax relieved every registered
+               person other than a composition taxpayer from PAYING tax on an
+               advance for a supply of GOODS - tax falls due when the invoice
+               is issued. For services it is due on receipt (Section 13(2)).
+               Goods is the default because it is the common case and the
+               safe one: it charges no tax that is not yet payable. -->
+          <div class="form-grid cols-2 mb-16 d-none" id="vSupplyNatureGroup">
+            <div class="form-group">
+              <label for="vSupplyNature">This advance is for</label>
+              <select id="vSupplyNature" class="form-control" onchange="onVoucherSupplyNaturePicked()">
+                <option value="goods">Goods &mdash; no GST on the advance</option>
+                <option value="services">Services &mdash; GST due on receipt</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label>&nbsp;</label>
+              <div class="fs-11 text-muted-sm" id="vSupplyNatureNote"></div>
             </div>
           </div>
 
@@ -222,6 +258,72 @@
                received against. A Receipt Voucher only - a payment or refund
                voucher is a different document and vouchers.js hides this. -->
           <div id="vReceiptPayment" class="d-none">
+
+            <!-- C. Order / Proforma Details.
+                 The order the advance belongs to. Either it comes from a
+                 quotation - read from it, never written back - or it is
+                 typed here for an order that has no quotation. The taxable
+                 value, GST and total are DERIVED from these boxes by
+                 voucherOrderAmounts(); nothing computes them twice. -->
+              <!-- Shown only while this database is behind the application:
+                 the fields below cannot be stored until
+                 migration_receipt_voucher_order.sql is applied, and saying so
+                 is better than taking a value and dropping it. -->
+            <p class="fs-11 mb-10 d-none" id="vMigrationNotice"
+               style="color:var(--danger);"></p>
+            <div class="section-title mb-14">Order / Proforma Details</div>
+            <div class="form-grid cols-3 mb-16">
+              <div class="form-group">
+                <label for="vProforma">Against Quotation</label>
+                <select id="vProforma" class="form-control" onchange="onVoucherProformaChange()">
+                  <option value="">&mdash; no quotation &mdash;</option>
+                </select>
+                <div id="vProformaNote" class="fs-11 text-muted-sm d-none"></div>
+              </div>
+              <div class="form-group" id="vOrderDescGroup">
+                <label for="vOrderDesc">Product Description</label>
+                <input type="text" id="vOrderDesc" class="form-control"
+                       placeholder="e.g. Steamer 8 Tray with Idly Tray" oninput="recalcVoucher()">
+              </div>
+              <div class="form-group" id="vOrderQtyGroup">
+                <label for="vOrderQty">Quantity</label>
+                <input type="number" id="vOrderQty" class="form-control text-right"
+                       min="0" step="0.001" oninput="recalcVoucher()">
+              </div>
+            </div>
+            <div class="form-grid cols-3 mb-16" id="vOrderManualGrid">
+              <div class="form-group">
+                <label for="vOrderRate">Rate / Product Amount (&#8377;)</label>
+                <input type="number" id="vOrderRate" class="form-control text-right"
+                       min="0" step="0.01" oninput="recalcVoucher()">
+                <div class="form-error" id="vOrderRateError"></div>
+              </div>
+              <div class="form-group">
+                <label for="vPackingCharge">Packing / Additional Charges (&#8377;)</label>
+                <input type="number" id="vPackingCharge" class="form-control text-right"
+                       min="0" step="0.01" oninput="recalcVoucher()">
+                <div class="form-error" id="vPackingChargeError"></div>
+              </div>
+              <div class="form-group">
+                <label for="vOrderGstRate">Order GST Rate %</label>
+                <select id="vOrderGstRate" class="form-control" onchange="recalcVoucher()"></select>
+              </div>
+            </div>
+
+            <!-- Derived, never stored, so the figures on screen and the
+                 figures on the receipt cannot disagree. -->
+            <div class="calc-box mb-16" id="vOrderBox">
+              <div class="calc-row"><span class="label">Product Amount</span><span class="value" id="vOrderAmountOut">&#8377;0.00</span></div>
+              <div class="calc-row"><span class="label">Packing / Additional Charges</span><span class="value" id="vPackingOut">&#8377;0.00</span></div>
+              <div class="calc-row"><span class="label">Taxable Amount</span><span class="value" id="vOrderTaxable">&#8377;0.00</span></div>
+              <div class="calc-row"><span class="label">GST (<span id="vOrderGstRateOut">0</span>%)</span><span class="value" id="vOrderGstAmount">&#8377;0.00</span></div>
+              <div class="calc-row total"><span class="label">Total Order Value</span><span class="value" id="vOrderTotal">&#8377;0.00</span></div>
+            </div>
+
+            <!-- D. Advance Receipt Details: how the money arrived. The
+                 amount itself is the Advance Received box above - this is
+                 only how and when. -->
+            <div class="section-title mb-14">Advance Receipt Details</div>
             <div class="form-grid cols-3 mb-16">
               <div class="form-group">
                 <label for="vPaymentMethod">Payment Mode</label>
@@ -240,11 +342,9 @@
                 <input type="text" id="vReference" class="form-control" placeholder="UPI ref / cheque no.">
               </div>
               <div class="form-group">
-                <label for="vProforma">Against Quotation</label>
-                <select id="vProforma" class="form-control" onchange="onVoucherProformaChange()">
-                  <option value="">&mdash; no quotation &mdash;</option>
-                </select>
-                <div id="vProformaNote" class="fs-11 text-muted-sm d-none"></div>
+                <label for="vPaymentDate">Payment Date</label>
+                <input type="date" id="vPaymentDate" class="form-control" onchange="validateVoucherForm()">
+                <div class="form-error" id="vPaymentDateError"></div>
               </div>
             </div>
             <div id="vQuotePanel" class="d-none">
@@ -276,9 +376,14 @@
               </div>
             </div>
 
+            <!-- E. Summary. The distinction this box exists to make: the
+                 order is what was agreed, the advance is what was actually
+                 received, and only the advance is what this voucher
+                 records. -->
+            <div class="section-title mb-14">Summary</div>
             <div class="calc-box mb-16" id="vBalanceBox">
               <div class="calc-row">
-                <span class="label">Quotation Total</span>
+                <span class="label">Order Value</span>
                 <span class="value" id="vQuoteTotal">&#8377;0.00</span>
               </div>
               <div class="calc-row">
@@ -298,6 +403,7 @@
                 <span class="value" id="vQuoteBalance">&#8377;0.00</span>
               </div>
               <div id="vBalanceError" class="fs-11 text-danger d-none" style="margin-top:6px;"></div>
+              <div class="fs-11 text-muted-sm" style="margin-top:8px;" id="vReceivedNote"></div>
             </div>
           </div>
 

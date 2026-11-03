@@ -246,6 +246,50 @@ async function reserveDocumentNumberOn(client, userId, documentType) {
   return issued;
 }
 
+// ── What a table actually has, versus what the application expects ───
+//
+// A migration is applied deliberately, and the code that needs its columns
+// ships before it is run. Between those two moments the application is ahead
+// of the schema, and a write naming a column that does not exist yet fails
+// with SQLSTATE 42703 - which reaches the browser as an opaque 500 and takes
+// the whole save with it, including the fields that WOULD have worked.
+//
+// That is the hole this closes. The save writes the columns the table really
+// has, and REPORTS the ones it could not write rather than dropping them
+// quietly: a field the caller asked to store and that was not stored is
+// something the caller has to be told about, or the screen will claim a save
+// that did not happen.
+//
+// Cached briefly rather than per statement: information_schema is cheap but
+// not free, and the answer only changes when a migration is applied. The TTL
+// means a freshly applied migration is picked up without a restart.
+const TABLE_COLUMN_TTL_MS = 60000;
+const tableColumnCache = new Map();   // table -> { at, columns:Set }
+
+async function existingColumnsOn(db, table) {
+  const hit = tableColumnCache.get(table);
+  if (hit && (Date.now() - hit.at) < TABLE_COLUMN_TTL_MS) return hit.columns;
+  const { rows } = await db.query(
+    `SELECT column_name FROM information_schema.columns
+      WHERE table_schema = 'public' AND table_name = $1`, [table]);
+  const columns = new Set(rows.map(r => r.column_name));
+  // An empty answer means the question failed, not that the table has no
+  // columns - caching it would turn one bad lookup into a minute of refused
+  // writes, so it is not cached and the caller falls back to writing
+  // everything, which is the behaviour this helper replaced.
+  if (columns.size) tableColumnCache.set(table, { at: Date.now(), columns });
+  return columns;
+}
+
+// Which of a table's declared columns the database does not have yet. Empty
+// when the schema is up to date, which is the normal case.
+async function pendingColumnsOn(db, table) {
+  const present = await existingColumnsOn(db, table);
+  if (!present.size) return [];
+  const declared = (TABLES[table] && TABLES[table].columns) || [];
+  return declared.filter(c => !present.has(c));
+}
+
 // ── 1a) Preview the next number for a document type ──
 //
 // Consumes nothing: an abandoned draft, a reload or ten switches between
@@ -413,6 +457,18 @@ router.post('/:type/number-settings', asyncRoute(async (req, res) => {
   } finally {
     client.release();
   }
+}));
+
+// ── 1c) Which fields this database can actually store ──
+//
+// So a form can say "this needs a migration" BEFORE someone fills a box
+// whose value cannot be kept, rather than after. Read-only, and it names
+// columns the application already declares - nothing a caller did not
+// already know from the code it is running.
+router.get('/:type/field-support', asyncRoute(async (req, res) => {
+  const { table } = docSpec(String(req.params.type).trim().toLowerCase());
+  const missing = await pendingColumnsOn(pool, table);
+  res.json({ missing, migrationPending: missing.length > 0 });
 }));
 
 // ── 1) Reserve the next number for a document type ──
@@ -622,6 +678,32 @@ router.post('/:type/save', asyncRoute(async (req, res) => {
   if (!allowed.length) {
     const e = new Error('Nothing to save.'); e.status = 400; e.expose = true; throw e;
   }
+
+  // ── Columns the database does not have yet ──
+  //
+  // Dropped from the write so one pending migration cannot fail the whole
+  // save, and carried back in the response as `unsupported` so the caller
+  // can tell the user which fields were not kept. Falls back to writing
+  // everything if the lookup gave nothing, which is exactly the behaviour
+  // this replaced.
+  const presentColumns = await existingColumnsOn(pool, table);
+  const unsupported = presentColumns.size
+    ? allowed.filter(c => !presentColumns.has(c))
+    : [];
+  if (unsupported.length) {
+    for (const c of unsupported) {
+      const at = allowed.indexOf(c);
+      if (at >= 0) allowed.splice(at, 1);
+      delete document[c];
+    }
+    if (!allowed.length) {
+      // Everything the caller sent needs a migration that has not been run.
+      // Refused plainly rather than written as an empty row.
+      const e = new Error('These fields need a database migration that has not been applied yet: '
+        + unsupported.join(', ') + '.');
+      e.status = 400; e.expose = true; e.code = 'migration_pending'; throw e;
+    }
+  }
   // The derived tax joins the write HERE, past the immutable filter above. It
   // is immutable so that no caller can set it: this route is its one writer,
   // and it writes only the figure it derived.
@@ -789,7 +871,10 @@ router.post('/:type/save', asyncRoute(async (req, res) => {
     }
 
     await client.query('COMMIT');
-    res.json({ document: row, items: savedItems });
+    // `unsupported` names any field the caller sent that this database
+    // cannot store yet, so the screen can say so instead of implying it
+    // was saved. Empty on an up-to-date schema, which is the normal case.
+    res.json({ document: row, items: savedItems, unsupported });
   } catch (err) {
     await client.query('ROLLBACK');
     throw err;

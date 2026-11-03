@@ -140,15 +140,25 @@ test('AR6 the form records how the money arrived, for a receipt only', () => {
   assert.match(VOUCHERS_JS, /pay\.classList\.toggle\('d-none', !voucherIsReceipt\(\)\)/);
   assert.match(VOUCHERS_JS, /function voucherIsReceipt\(\) \{ return vType\(\) === 'receipt_voucher'; \}/);
   // The three facts travel only on a receipt voucher.
-  const save = VOUCHERS_JS.slice(VOUCHERS_JS.indexOf('if (voucherIsReceipt()) {'));
-  const block = save.slice(0, save.indexOf('\n  }'));
+  // Anchored on saveVoucher() rather than on the first `if
+  // (voucherIsReceipt())` in the file: the validator and editVoucher() have
+  // their own now, and the first one is no longer this one.
+  const saveFn = VOUCHERS_JS.slice(VOUCHERS_JS.indexOf('async function saveVoucher()'));
+  const save = saveFn.slice(saveFn.indexOf('if (voucherIsReceipt()) {'));
+  const block = save.slice(0, save.indexOf('\n  }\n  if (f.original)'));
   for (const f of ['payment_method', 'reference_number', 'proforma_invoice_id']) {
     assert.ok(block.includes('doc.' + f), f + ' is sent');
   }
 });
 
 test('AR7 the balance on screen follows the amount being typed', () => {
-  assert.match(VOUCHERS_JS, /function recalcVoucher\(\) \{\s*\n\s*\/\/[^\n]*\n\s*\/\/[^\n]*\n\s*renderVoucherBalance\(\);/);
+  // The order total and the balance are both functions of the boxes being
+  // typed in, so both are redrawn here. What matters is that the balance is
+  // among them, not that it is first.
+  const recalc = VOUCHERS_JS.slice(VOUCHERS_JS.indexOf('function recalcVoucher()'));
+  const recalcBody = recalc.slice(0, recalc.indexOf('\n}'));
+  assert.match(recalcBody, /renderVoucherBalance\(\);/, 'the balance follows the keystrokes');
+  assert.match(recalcBody, /renderVoucherOrderBox\(\);/, 'and so does the order total');
   // An overpayment is refused on screen before Save, and no balance is
   // implied for it.
   const fn = VOUCHERS_JS.slice(VOUCHERS_JS.indexOf('function renderVoucherBalance'));
@@ -701,7 +711,11 @@ test('AR22 the printed table shows the quoted rate and GST, and no false receipt
   // Money received is the voucher's own amount, and the only figure the words
   // are written from. The quotation total is labelled as the quotation's.
   assert.match(RECEIPT_PDF, /\['Advance Received Now', formatNum\(fig\.now\)\]/);
-  assert.match(RECEIPT_PDF, /\['Quotation Total', formatNum\(fig\.total\)\]/);
+  // The label is chosen now - a typed order has a total too - but the point
+  // is unchanged: the ORDER total is labelled as the order's, never as money
+  // received.
+  assert.match(RECEIPT_PDF,
+    /fig\.linked \? 'Quotation Total' : 'Total Order Value', formatNum\(fig\.order\.total\)/);
   assert.match(RECEIPT_PDF, /numberToWordsINR\(fig\.now\)/);
 
   // And the figures themselves, from the real function.
