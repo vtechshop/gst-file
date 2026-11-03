@@ -120,8 +120,8 @@ test('R9 the changed asset carries a new cache key on every page that loads it',
   const pages = ['proforma.html', 'proforma-list.html'];
   for (const p of pages) {
     const html = rd(p);
-    assert.ok(html.includes('client/js/pages/proforma-pdf.js?v=44'),
-      p + ' must reference proforma-pdf.js at v=44');
+    assert.ok(html.includes('client/js/pages/proforma-pdf.js?v=45'),
+      p + ' must reference proforma-pdf.js at v=45');
   }
   // and nothing unrelated moved with it
   // proforma-entry.js is checked as "still versioned", not pinned to a
@@ -130,5 +130,5 @@ test('R9 the changed asset carries a new cache key on every page that loads it',
   assert.match(rd('proforma.html'), /client\/js\/pages\/proforma-entry\.js\?v=\d+/);
   // utils.js is pinned at the version the editable proforma counter moved
   // it to (proforma-sequence-edit.test.js SEQ25), not by anything here.
-  assert.ok(rd('proforma.html').includes('client/js/utilities/utils.js?v=35'));
+  assert.ok(rd('proforma.html').includes('client/js/utilities/utils.js?v=36'));
 });

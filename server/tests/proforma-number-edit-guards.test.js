@@ -141,11 +141,24 @@ test('P9 auto-numbering is untouched', () => {
   assert.match(DOCS, /proforma_invoice: 'PI-#####'/);
 });
 
-test('P10 the PDF prints whatever number the record currently holds', () => {
-  assert.match(PDF, /invoice_number: row\.document_number \|\| ''/);
-  assert.match(PDF, /Proforma_\$\{row\.document_number \|\| row\.id\.slice\(0, 8\)\}\.pdf/);
+test('P10 the PDF prints the number the record holds, drawn under the saved format', () => {
+  // It used to assert the raw column was printed verbatim. The number is now
+  // DRAWN under the configured format, exactly as the list draws it, so a
+  // printed quotation and the list cannot disagree - see
+  // proforma-number-display.test.js. What has not changed, and is still the
+  // point of this test, is where the number comes FROM: the row, at render
+  // time, with no second copy anywhere to go stale, and no write back.
+  assert.match(PDF, /proformaDisplayNumber\(row\.document_number\)/,
+    'the number is drawn from the row through the shared display helper');
+  assert.match(PDF, /\(row\.document_number \|\| ''\)/,
+    'and falls back to the stored value when no format is available');
+  assert.match(PDF, /Proforma_\$\{shownNumber \|\| row\.id\.slice\(0, 8\)\}\.pdf/,
+    'the filename carries the same drawn number');
   // No cached or separately stored copy of the number to go stale.
   assert.equal(/proforma_number/.test(PDF), false);
+  // And the PDF never writes a number back.
+  assert.equal(/UPDATE|\.update\(|document_number:\s*shownNumber/.test(PDF), false,
+    'the PDF must not write the drawn number anywhere');
 });
 
 test('P11 the list renders the number straight from the row', () => {

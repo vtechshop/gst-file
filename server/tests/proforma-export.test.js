@@ -244,7 +244,7 @@ test('X10 the changed script carries a new cache key', () => {
   // utils.js is not this change's asset. It is pinned at the version the
   // editable proforma counter moved it to (proforma-sequence-edit.test.js
   // SEQ25), so an unrelated bump is still caught here.
-  assert.ok(PF_HTML.includes('client/js/utilities/utils.js?v=35'),
+  assert.ok(PF_HTML.includes('client/js/utilities/utils.js?v=36'),
     'utils.js must stay at the version its own change set');
   assert.ok(PF_HTML.includes('client/js/api/apiClient.js?v=29'),
     'apiClient.js did not change, so its key must not move');

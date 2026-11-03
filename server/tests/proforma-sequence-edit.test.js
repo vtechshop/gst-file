@@ -466,10 +466,10 @@ test('SEQ25 profile.js and utils.js move together, on every page', () => {
   assert.ok(withProfile.length >= 38, 'expected the shared pair on many pages');
   for (const f of withProfile) {
     const html = rd(f);
-    assert.ok(html.includes('client/js/pages/profile.js?v=42'), f + ' must load profile.js at v=42');
-    assert.ok(html.includes('client/js/utilities/utils.js?v=35'), f + ' must load utils.js at v=35');
-    assert.strictEqual(html.includes('profile.js?v=41'), false, f + ' still has the old profile key');
-    assert.strictEqual(html.includes('utils.js?v=34'), false, f + ' still has the old utils key');
+    assert.ok(html.includes('client/js/pages/profile.js?v=43'), f + ' must load profile.js at v=43');
+    assert.ok(html.includes('client/js/utilities/utils.js?v=36'), f + ' must load utils.js at v=36');
+    assert.strictEqual(html.includes('profile.js?v=42'), false, f + ' still has the old profile key');
+    assert.strictEqual(html.includes('utils.js?v=35'), false, f + ' still has the old utils key');
   }
   // sequenceProblem really is in the file those pages now load.
   assert.match(UTILS, /function sequenceProblem\(/);

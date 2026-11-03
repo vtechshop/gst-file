@@ -371,8 +371,8 @@ test('IL11 only this page\'s cache key moved', () => {
   // utils.js and profile.js are shared, and the editable proforma counter
   // moved both together (proforma-sequence-edit.test.js SEQ25). Pinned
   // rather than ignored so an accidental bump is still caught here.
-  assert.ok(HTML.includes('client/js/utilities/utils.js?v=35'));
-  assert.ok(HTML.includes('client/js/pages/profile.js?v=42'));
+  assert.ok(HTML.includes('client/js/utilities/utils.js?v=36'));
+  assert.ok(HTML.includes('client/js/pages/profile.js?v=43'));
 });
 
 test('IL12 the server/public mirrors are byte-identical', () => {

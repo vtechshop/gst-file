@@ -96,6 +96,29 @@ const PF_NUMBER_NOTE_EDIT_MANUAL = 'Change it if you need to \u2014 it must stay
 
 function proformaNumberingIsManual() { return proformaNumberMode === 'manual'; }
 
+// How this quotation's stored number reads under the format configured now,
+// shown beside the box when the two differ - a quotation saved as 165 while
+// the format is PI-##### reads as PI-00165 on the list and in its PDF, and
+// this is where the form says so.
+//
+// Display only, and deliberately separate from the box: the box round-trips
+// to the database in Manual mode, so it keeps the stored value untouched.
+async function showProformaNumberFormatted(stored) {
+  const el = document.getElementById('pfNumFormatted');
+  if (!el) return;
+  const raw = String(stored == null ? '' : stored).trim();
+  if (!raw) { el.style.display = 'none'; el.textContent = ''; return; }
+  let shown = raw;
+  try {
+    if (typeof ensureProformaDisplayFormat === 'function') await ensureProformaDisplayFormat();
+    if (typeof proformaDisplayNumber === 'function') shown = proformaDisplayNumber(raw);
+  } catch { /* leaves the stored value */ }
+  if (!shown || shown === raw) { el.style.display = 'none'; el.textContent = ''; return; }
+  el.textContent = 'Shown elsewhere as ' + shown + ', under your saved format. The number stored '
+    + 'for this quotation is unchanged.';
+  el.style.display = '';
+}
+
 function setProformaNumberMode(mode) {
   // Both modes are offered on an existing quotation too. What changes is what
   // Automatic MEANS: on a new proforma it is the next number from the server,
@@ -605,7 +628,12 @@ async function loadProformaForEdit(id) {
   if (!rec) { showToast('Proforma not found.', 'error'); return; }
   proformaEditId = rec.id;
 
+  // The box gets the number exactly as stored, and nothing else may write it:
+  // in Manual mode this box IS what the save sends (see the save payload), so
+  // putting a reformatted value here would rewrite a number already issued.
+  // The formatted reading goes in its own note instead.
   setProformaValue('pfNumber', rec.document_number);
+  showProformaNumberFormatted(rec.document_number);
   // The number it arrived with, recorded BEFORE the mode is applied below:
   // on an existing quotation Automatic means "keep this", and switching back
   // from Manual restores it, so a half-typed correction can be abandoned.

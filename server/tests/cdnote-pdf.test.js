@@ -361,9 +361,13 @@ test('C14 no other PDF module was modified', async () => {
   // Revised again for the proforma advance amount (91e529b): a quotation
   // can carry an advance TERM, and the PDF prints the Advance and Balance
   // rows that follow from it (proforma-advance.test.js).
+  // Re-approved: the Proforma PDF now draws its number under the format
+  // configured in Settings, the same way the list draws it, so a printed
+  // quotation and the list cannot disagree (proforma-number-display.test.js).
+  // The stored document_number is untouched - this is the rendering only.
   const pf = require('crypto').createHash('sha256')
     .update(rd('client', 'js', 'pages', 'proforma-pdf.js').replace(/\r\n/g, '\n')).digest('hex');
-  assert.strictEqual(pf, '96a577b46ca52860dc0aa61df861054014946a92a015b9af5378d56f9ab57f18',
+  assert.strictEqual(pf, 'd7744d123bf39164fccdb426121b50b2b66dc11e5234f977db7359979fe76801',
     'proforma-pdf.js is not the approved Proforma revision (transport, round-off, then advance)');
 });
 

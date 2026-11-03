@@ -53,7 +53,12 @@ function proformaToRenderable(row, items) {
   return {
     type: row.gst_number ? 'b2b' : 'b2c',
     id: row.id,
-    invoice_number: row.document_number || '',
+    // Drawn under the configured format, exactly as the list draws it, so a
+    // printed quotation and the list never disagree about its number. The
+    // stored value is untouched; this is the rendering only.
+    invoice_number: typeof proformaDisplayNumber === 'function'
+      ? proformaDisplayNumber(row.document_number)
+      : (row.document_number || ''),
     invoice_date: row.document_date,
     valid_until: row.valid_until || null,
     customer_name: row.customer_name || '',
@@ -451,7 +456,16 @@ async function buildProformaPDFDoc(row, items) {
 }
 
 async function downloadProformaDocument(row, items) {
+  // A PDF can be asked for from a page that has not drawn the list yet, so
+  // the format is made sure of here too rather than assumed.
+  if (typeof ensureProformaDisplayFormat === 'function') {
+    try { await ensureProformaDisplayFormat(); } catch { /* draws stored values */ }
+  }
   const doc = await buildProformaPDFDoc(row, items);
-  doc.save(`Proforma_${row.document_number || row.id.slice(0, 8)}.pdf`);
+  // The filename carries the number as shown, for the same reason.
+  const shownNumber = typeof proformaDisplayNumber === 'function'
+    ? proformaDisplayNumber(row.document_number)
+    : (row.document_number || '');
+  doc.save(`Proforma_${shownNumber || row.id.slice(0, 8)}.pdf`);
   if (typeof showToast === 'function') showToast('Proforma PDF downloaded!', 'success');
 }

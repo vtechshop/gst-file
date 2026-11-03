@@ -377,9 +377,9 @@ test('F20 the changed shared assets carry new cache keys, in lockstep', () => {
   assert.ok(withProfile.length >= 38, 'expected the shared pair on many pages');
   for (const f of withProfile) {
     const html = rd(f);
-    assert.ok(html.includes('client/js/utilities/utils.js?v=35'),
-      f + ' must load utils.js at v=35');
-    assert.ok(html.includes('client/js/pages/profile.js?v=42'),
-      f + ' must load profile.js at v=42');
+    assert.ok(html.includes('client/js/utilities/utils.js?v=36'),
+      f + ' must load utils.js at v=36');
+    assert.ok(html.includes('client/js/pages/profile.js?v=43'),
+      f + ' must load profile.js at v=43');
   }
 });

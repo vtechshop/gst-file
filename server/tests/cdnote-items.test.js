@@ -364,7 +364,11 @@ test('W5 Sales Return and the other PDF modules are untouched', () => {
   // And again for the advance amount: the quotation prints what it asks for up
   // front and the balance left, under the Quoted Total, and the signature band
   // now follows the bottom of that column (proforma-advance.test.js).
-  const APPROVED_PROFORMA_PDF_SHA256 = '96a577b46ca52860dc0aa61df861054014946a92a015b9af5378d56f9ab57f18';
+  // Re-approved: the Proforma PDF now draws its number under the format
+  // configured in Settings, the same way the list draws it, so a printed
+  // quotation and the list cannot disagree (proforma-number-display.test.js).
+  // The stored document_number is untouched - this is the rendering only.
+  const APPROVED_PROFORMA_PDF_SHA256 = 'd7744d123bf39164fccdb426121b50b2b66dc11e5234f977db7359979fe76801';
   const pfSrc = fs.readFileSync(path.join(ROOT, 'client', 'js', 'pages', 'proforma-pdf.js'), 'utf8');
   const pf = require('crypto').createHash('sha256').update(pfSrc.replace(/\r\n/g, '\n')).digest('hex');
   assert.strictEqual(pf, APPROVED_PROFORMA_PDF_SHA256,

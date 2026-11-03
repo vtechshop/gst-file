@@ -795,6 +795,48 @@ async function fetchProformaNumbering() {
   }
 }
 
+// ── The configured format, for DRAWING numbers already issued ─────────
+//
+// The Proforma list, its PDF and its print view all want to show stored
+// numbers under the format configured now, and all three need the same
+// answer. Read once per page from the same non-consuming endpoint the
+// Settings card reads, and kept here so a sync renderer can reach it.
+//
+// Nothing here writes. The format is never saved from this path and no stored
+// document_number is ever changed - see formatDocumentNumberForDisplay() in
+// utils.js, which is only ever asked how to DRAW a value.
+let _proformaDisplayFormat = null;
+let _proformaDisplayFormatLoaded = false;
+
+async function ensureProformaDisplayFormat(reload) {
+  if (_proformaDisplayFormatLoaded && !reload) return _proformaDisplayFormat;
+  const book = await fetchProformaNumbering();
+  // A format that could not be loaded stays null, and every caller then draws
+  // the stored value exactly as it is. Showing a default would show numbers
+  // this book never issued.
+  _proformaDisplayFormat = book.unavailable ? null : (book.format || null);
+  _proformaDisplayFormatLoaded = true;
+  return _proformaDisplayFormat;
+}
+
+function proformaDisplayFormat() { return _proformaDisplayFormat; }
+
+// The sentence to show when the saved format cannot draw a number, or null
+// when it can. Used by the list to say so once, rather than per row.
+function proformaDisplayFormatProblem() {
+  if (!_proformaDisplayFormatLoaded) return null;
+  if (_proformaDisplayFormat === null) return null;   // not loaded / not configured
+  return numberFormatProblem(_proformaDisplayFormat);
+}
+
+// How a stored proforma number should read. Falls back to the stored value
+// whenever the format is missing or unusable.
+function proformaDisplayNumber(stored) {
+  const fmt = _proformaDisplayFormat;
+  if (!fmt) return String(stored == null ? '' : stored).trim();
+  return formatDocumentNumberForDisplay(stored, fmt);
+}
+
 // The live example, recomputed from the box on every keystroke with the same
 // formatter the server uses to issue the real number.
 function updateSettingsProformaPreview() {
@@ -885,6 +927,10 @@ async function submitProformaNumberingSettings() {
 
   // And re-read the book, so Next Number and the example reflect what the
   // server now says rather than what this form assumed.
+  // The drawing format is cached per page; this save may have changed it, so
+  // the cache is refreshed before anything redraws with the old one.
+  await ensureProformaDisplayFormat(true);
+
   const fresh = await fetchProformaNumbering();
   if (!fresh.unavailable) {
     seqEl.value = String(fresh.seq);

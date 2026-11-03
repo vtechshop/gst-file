@@ -135,6 +135,110 @@ function sequenceProblem(value) {
   return null;
 }
 
+// Which sequence a given document number came from - the inverse of
+// applyInvoiceNumberFormat above.
+//
+// The browser copy of server/src/utils/invoiceNumberFormat.js's
+// sequenceFromInvoiceNumber(), same rule in two runtimes, exactly as
+// applyInvoiceNumberFormat and numberFormatProblem are. A test runs both over
+// the same cases so they cannot drift.
+//
+// null means "this number did not come out of this format" - a free-form
+// number like SPECIAL/2026 against PI-###. Every branch here answers one
+// branch of applyInvoiceNumberFormat.
+function sequenceFromInvoiceNumber(format, number) {
+  const fmt = (format || '').trim() || 'INV-###';
+  const value = String(number == null ? '' : number).trim();
+  if (!value) return null;
+
+  const esc = (t) => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const hashes = fmt.match(/#+/);
+
+  let re;
+  if (hashes) {
+    // The padded branch: PI-##### <- PI-00165. The digits may be LONGER than
+    // the run of #, because applyInvoiceNumberFormat only pads, never
+    // truncates - so PI-165 and PI-00165 both read as 165.
+    re = new RegExp('^' + esc(fmt.slice(0, hashes.index)) + '(\\d+)'
+      + esc(fmt.slice(hashes.index + hashes[0].length)) + '$', 'i');
+  } else if (/^\d+$/.test(fmt)) {
+    re = /^(\d+)$/;
+  } else {
+    re = new RegExp('^' + esc(fmt) + '-(\\d+)$', 'i');
+  }
+
+  const m = re.exec(value);
+  if (!m) return null;
+  const seq = parseInt(m[1], 10);
+  return Number.isFinite(seq) && seq > 0 ? seq : null;
+}
+
+// ── Showing a stored document number under the configured format ──────
+//
+// A document_number is free text in the database: it holds whatever was
+// issued or typed at the time. One book can therefore contain numbers of
+// several shapes - PI-00165 issued under today's format, a bare 165 typed by
+// hand or issued when the format was a plain number, and the occasional
+// free-form one. The list, the PDF and the print view want them to read
+// consistently under the format configured now.
+//
+// Nothing here writes anything. The stored value is never changed; this is
+// only how it is drawn.
+//
+// The sequence is extracted FIRST and the format applied to that, which is
+// what makes this idempotent and keeps a prefix from being added twice:
+// PI-00165 reads as 165 and renders as PI-00165, however many times it is
+// passed through. A value no rule can read a number out of is returned
+// exactly as stored - inventing one would be worse than showing it raw.
+function documentNumberSequence(stored, format) {
+  const raw = String(stored == null ? '' : stored).trim();
+  if (!raw) return null;
+  // In the configured format already (any padding): PI-00165, PI-165.
+  const fromFormat = numberFormatProblem(format) ? null : sequenceFromInvoiceNumber(format, raw);
+  if (fromFormat !== null) return fromFormat;
+  // A bare number: 165. Deliberately the ONLY legacy shape read, because it
+  // is the only one with no ambiguity about which digits are the sequence -
+  // PI/2026/165 could mean 2026 or 165, and guessing would mis-draw a real
+  // document's number.
+  if (/^\d+$/.test(raw)) {
+    const n = parseInt(raw, 10);
+    return Number.isFinite(n) && n > 0 ? n : null;
+  }
+  return null;
+}
+
+function formatDocumentNumberForDisplay(stored, format) {
+  const raw = String(stored == null ? '' : stored).trim();
+  if (!raw) return '';
+  // An unusable format draws nothing of its own: the stored numbers are shown
+  // as they are, and the screen says the format needs fixing. Substituting a
+  // default here would show numbers the book never issued.
+  if (numberFormatProblem(format)) return raw;
+  const seq = documentNumberSequence(raw, format);
+  return seq === null ? raw : applyInvoiceNumberFormat(format, seq);
+}
+
+// Highest number first, which is what a quotations list is read for: the
+// newest offer is the one being chased.
+//
+// Numeric, not lexicographic - 256 sorts above 99, where a string compare
+// would put "99" above "256". A row whose number no rule can read sorts after
+// every row that has one, newest first among themselves, so a legacy or
+// free-form number is never silently promoted to the top of the list.
+function compareDocumentNumberDesc(a, b, format) {
+  const sa = documentNumberSequence(a && a.document_number, format);
+  const sb = documentNumberSequence(b && b.document_number, format);
+  if (sa !== null && sb !== null && sa !== sb) return sb - sa;
+  if (sa !== null && sb === null) return -1;
+  if (sa === null && sb !== null) return 1;
+  // Same number, or neither has one: newest first, then by the stored text so
+  // the order is stable rather than dependent on the rows' arrival order.
+  const da = String((a && a.document_date) || '');
+  const db = String((b && b.document_date) || '');
+  if (da !== db) return db.localeCompare(da);
+  return String((b && b.document_number) || '').localeCompare(String((a && a.document_number) || ''));
+}
+
 // ── GST registration ────────────────────────────────────────
 // What kind of registration the business holds. This decides what it may
 // file and what documents it issues, so it is written down once here and

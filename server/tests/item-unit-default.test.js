@@ -239,5 +239,5 @@ test('U9 the changed asset carries a new cache key on every page that loads it',
   // and nothing unrelated moved with it
   // utils.js is shared; its key moved with the editable proforma counter
   // (proforma-sequence-edit.test.js SEQ25), not with anything here.
-  assert.ok(rd('invoice.html').includes('client/js/utilities/utils.js?v=35'));
+  assert.ok(rd('invoice.html').includes('client/js/utilities/utils.js?v=36'));
 });

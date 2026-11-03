@@ -26,6 +26,9 @@ async function initProformaList() {
       PROFORMA_STATUSES.concat(['expired']).map(s =>
         `<option value="${escHtmlAttr(s)}">${escItemHtml(PROFORMA_STATUS_LABELS[s])}</option>`).join('');
   }
+  // Before any row is drawn: the list shows stored numbers under the format
+  // configured now, and the sort reads the sequence out of them.
+  await ensureProformaDisplayFormat();
   await loadProformas(user.id);
 }
 
@@ -35,8 +38,13 @@ async function loadProformas(userId) {
     _supabase.from('proforma_invoice_items').select('*').eq('user_id', userId)
   ], 'Could not load proforma invoices');
   if (!read) return;
+  // Highest proforma number first - 256, 169, 168... - read numerically out
+  // of the stored number under the configured format, so 256 sorts above 99
+  // where a string compare would not. A number no rule can read sorts after
+  // every one that can, newest first among themselves; see
+  // compareDocumentNumberDesc() in utils.js.
   proformaRows = (read[0] || []).slice()
-    .sort((a, b) => String(b.document_date).localeCompare(String(a.document_date)));
+    .sort((a, b) => compareDocumentNumberDesc(a, b, proformaDisplayFormat()));
   proformaItemsByParent = {};
   (read[1] || []).forEach((it) => {
     (proformaItemsByParent[it.proforma_invoice_id] ||= []).push(it);
@@ -51,7 +59,11 @@ function proformaMatchesFilters(row) {
   const want = document.getElementById('pfStatusFilter')?.value || '';
   if (want && proformaEffectiveStatus(row) !== want) return false;
   if (!q) return true;
+  // Matched against both the stored number and the one on screen, so a
+  // search for PI-00165 finds a row stored as a bare 165, and a search for
+  // 165 still finds it too.
   return String(row.document_number || '').toLowerCase().includes(q)
+      || proformaDisplayNumber(row.document_number).toLowerCase().includes(q)
       || String(row.customer_name || '').toLowerCase().includes(q);
 }
 
@@ -67,6 +79,7 @@ function proformaStatusBadge(row) {
 function renderProformaList() {
   const body = document.getElementById('pfTableBody');
   if (!body) return;
+  renderProformaFormatNotice();
   const rows = proformaRows.filter(proformaMatchesFilters);
   const start = (proformaPage - 1) * PROFORMA_PAGE_SIZE;
   const page = rows.slice(start, start + PROFORMA_PAGE_SIZE);
@@ -87,7 +100,7 @@ function renderProformaList() {
       : '<span class="text-muted-sm">&mdash;</span>';
     return `<tr>
       <td>${start + i + 1}</td>
-      <td><b>${escItemHtml(r.document_number || '')}</b></td>
+      <td><b>${escItemHtml(proformaDisplayNumber(r.document_number))}</b></td>
       <td>${escItemHtml(formatDate(r.document_date))}</td>
       <td>${escItemHtml(r.customer_name || '')}</td>
       <td class="text-right">&#8377;${formatNum(r.total_amount)}</td>
@@ -105,6 +118,21 @@ function renderProformaList() {
     </tr>`;
   }).join('');
   renderProformaPagination(rows.length);
+}
+
+// Said once, above the list, rather than per row: the saved format cannot
+// draw a number, so the numbers below are the stored ones. The format itself
+// is left exactly as saved - this is a message, not a correction.
+function renderProformaFormatNotice() {
+  const el = document.getElementById('pfFormatNotice');
+  if (!el) return;
+  const problem = typeof proformaDisplayFormatProblem === 'function'
+    ? proformaDisplayFormatProblem() : null;
+  if (!problem) { el.style.display = 'none'; el.textContent = ''; return; }
+  el.textContent = 'Your saved Proforma number format cannot be used: ' + problem
+    + ' The numbers below are shown exactly as they are stored. Fix the format in '
+    + 'Settings \u2192 Proforma Numbering; nothing here has been changed.';
+  el.style.display = '';
 }
 
 function renderProformaPagination(total) {
@@ -176,7 +204,7 @@ function importProformaIntoInvoice(id) {
 async function cancelProforma(id) {
   const r = proformaById(id);
   if (!r) return;
-  if (!confirm(`Cancel proforma ${r.document_number}? It stays on this list as a record.`)) return;
+  if (!confirm(`Cancel proforma ${proformaDisplayNumber(r.document_number)}? It stays on this list as a record.`)) return;
   try {
     await apiFetch(`/documents/proforma_invoice/${id}/cancel`, {
       method: 'POST',
