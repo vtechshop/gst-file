@@ -166,7 +166,7 @@ function refuseImmutable(body, immutable, table) {
   throw e;
 }
 
-function makeCrudRouter(table, { columns, immutable, insertable = true, readOnly = false, ownerColumn = 'user_id', validate, beforeWrite }) {
+function makeCrudRouter(table, { columns, immutable, insertable = true, deletable = true, readOnly = false, ownerColumn = 'user_id', validate, beforeWrite }) {
   const router = express.Router();
   router.use(requireAuth);
 
@@ -232,6 +232,30 @@ function makeCrudRouter(table, { columns, immutable, insertable = true, readOnly
 
   router.delete('/', asyncRoute(async (req, res) => {
     if (readOnly) refuseWrite();
+    // A table whose row anchors live state nothing else holds. `profiles`
+    // carries the GSTIN, the registration type, every numbering counter and
+    // the logo/seal/signature printed on issued documents: deleting it does
+    // not free anything up, it silently un-numbers the business. There is no
+    // UI for this today, which is exactly why it was reachable - the generic
+    // DELETE exists for every table in the registry whether a page uses it
+    // or not.
+    //
+    // 409 and not 403: classifyApiError() in js/apiClient.js passes a 409
+    // message through verbatim, where a 403 goes to the branch that can tear
+    // the session down - so a 403 would answer "please sign in again" to a
+    // problem that has nothing to do with signing in.
+    //
+    // Account removal is a separate operation and is deactivation, not
+    // deletion; it leaves this row and its settings in place.
+    if (!deletable) {
+      const e = new Error(
+        `${table} cannot be deleted. It holds your GST registration details, `
+        + 'document numbering counters and document branding, which issued '
+        + 'documents depend on. To stop using the account, deactivate it '
+        + 'instead - that keeps these settings.');
+      e.status = 409; e.expose = true; e.code = 'profile_delete_blocked';
+      throw e;
+    }
     const { where, params } = buildWhere(req.query, ownerColumn, req.userId, columns);
     const { rowCount } = await pool.query(`DELETE FROM ${table} ${where}`, params);
     res.json({ deletedCount: rowCount });
@@ -268,6 +292,9 @@ const TABLES = {
     // still reads normally; the server's own issue path writes it in SQL,
     // inside the transaction that writes the document.
     immutable: ['document_series_sequences'],
+    // The row cannot be removed through the generic DELETE - see the handler.
+    // GET and PATCH are unaffected: Settings still reads and saves normally.
+    deletable: false,
     validate: validateProfilePayload
   },
   customers: {

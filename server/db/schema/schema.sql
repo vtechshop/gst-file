@@ -30,9 +30,25 @@ CREATE TABLE IF NOT EXISTS users (
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
+-- ── Account-root foreign keys are RESTRICT, not CASCADE ───────
+-- Every reference to users(id) below that carries ownership is ON DELETE
+-- RESTRICT, so deleting a users row is refused while that account owns any
+-- business record. It used to be CASCADE, which meant one DELETE destroyed a
+-- company's customers, products, invoices, proforma invoices, vouchers,
+-- payments, purchases, stock and audit log, with no recovery short of a
+-- point-in-time restore. Nothing in the application deletes a user, so it
+-- never fired - but that is luck, not protection. Removing an account is
+-- deactivation, which leaves every row in place.
+--
+-- See db/migrations/migration_cascade_protection.sql, which converts an
+-- existing database; this file is what a fresh one is built from, so the two
+-- must agree. The `created_by` / `cancelled_by` references further down stay
+-- ON DELETE SET NULL: they are attribution, not ownership, and with ownership
+-- on RESTRICT they can no longer fire for a real account anyway.
+
 -- ── Profiles (business settings, one row per user) ──
 CREATE TABLE IF NOT EXISTS profiles (
-  id UUID REFERENCES users(id) ON DELETE CASCADE PRIMARY KEY,
+  id UUID REFERENCES users(id) ON DELETE RESTRICT PRIMARY KEY,
   name TEXT,
   email TEXT,
   gstin TEXT,
@@ -102,7 +118,7 @@ CREATE TABLE IF NOT EXISTS profiles (
 -- ── B2B Invoices ─────────────────────────────────────
 CREATE TABLE IF NOT EXISTS b2b_invoices (
   id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
-  user_id UUID REFERENCES users(id) ON DELETE CASCADE NOT NULL,
+  user_id UUID REFERENCES users(id) ON DELETE RESTRICT NOT NULL,
   gst_number TEXT NOT NULL,
   customer_name TEXT NOT NULL,
   phone TEXT,
@@ -225,7 +241,7 @@ CREATE TABLE IF NOT EXISTS b2b_invoices (
 -- ── B2C Invoices ─────────────────────────────────────
 CREATE TABLE IF NOT EXISTS b2c_invoices (
   id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
-  user_id UUID REFERENCES users(id) ON DELETE CASCADE NOT NULL,
+  user_id UUID REFERENCES users(id) ON DELETE RESTRICT NOT NULL,
   gst_number TEXT,
   customer_name TEXT,
   phone TEXT,
@@ -369,7 +385,7 @@ CREATE INDEX IF NOT EXISTS idx_b2c_invoices_gst_number ON b2c_invoices(user_id, 
 --    live from invoice_items. Kept for historical rows.) ──
 CREATE TABLE IF NOT EXISTS b2b_hsn (
   id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
-  user_id UUID REFERENCES users(id) ON DELETE CASCADE NOT NULL,
+  user_id UUID REFERENCES users(id) ON DELETE RESTRICT NOT NULL,
   hsn_code TEXT NOT NULL,
   product_name TEXT NOT NULL,
   type TEXT NOT NULL CHECK (type IN ('goods','service')),
@@ -392,7 +408,7 @@ CREATE TABLE IF NOT EXISTS b2b_hsn (
 
 CREATE TABLE IF NOT EXISTS b2c_hsn (
   id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
-  user_id UUID REFERENCES users(id) ON DELETE CASCADE NOT NULL,
+  user_id UUID REFERENCES users(id) ON DELETE RESTRICT NOT NULL,
   hsn_code TEXT NOT NULL,
   product_name TEXT NOT NULL,
   type TEXT NOT NULL CHECK (type IN ('goods','service')),
@@ -421,7 +437,7 @@ CREATE INDEX IF NOT EXISTS idx_b2c_hsn_code ON b2c_hsn(user_id, hsn_code);
 -- ── Customers (Customer Master) ──────────────────────
 CREATE TABLE IF NOT EXISTS customers (
   id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
-  user_id UUID REFERENCES users(id) ON DELETE CASCADE NOT NULL,
+  user_id UUID REFERENCES users(id) ON DELETE RESTRICT NOT NULL,
   name TEXT NOT NULL,
   gstin TEXT,
   phone TEXT,
@@ -451,7 +467,7 @@ CREATE INDEX IF NOT EXISTS idx_customers_gstin ON customers(user_id, gstin);
 -- ── Credit / Debit Notes ──────────────────────────────
 CREATE TABLE IF NOT EXISTS cdn_notes (
   id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
-  user_id UUID REFERENCES users(id) ON DELETE CASCADE NOT NULL,
+  user_id UUID REFERENCES users(id) ON DELETE RESTRICT NOT NULL,
   note_type TEXT NOT NULL CHECK (note_type IN ('credit','debit')),
   note_number TEXT NOT NULL,
   note_date DATE NOT NULL,
@@ -503,7 +519,7 @@ CREATE INDEX IF NOT EXISTS idx_cdn_notes_customer_name ON cdn_notes(user_id, cus
 -- ── Product Master ────────────────────────────────────
 CREATE TABLE IF NOT EXISTS products (
   id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
-  user_id UUID REFERENCES users(id) ON DELETE CASCADE NOT NULL,
+  user_id UUID REFERENCES users(id) ON DELETE RESTRICT NOT NULL,
   name TEXT NOT NULL,
   hsn_code TEXT,
   type TEXT NOT NULL DEFAULT 'goods' CHECK (type IN ('goods','service')),
@@ -546,7 +562,7 @@ CREATE INDEX IF NOT EXISTS idx_products_user_id ON products(user_id);
 -- ── Remembered Excel import column mappings ──────────
 CREATE TABLE IF NOT EXISTS import_mappings (
   id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
-  user_id UUID REFERENCES users(id) ON DELETE CASCADE NOT NULL,
+  user_id UUID REFERENCES users(id) ON DELETE RESTRICT NOT NULL,
   import_type TEXT NOT NULL DEFAULT 'invoice_excel',
   mapping JSONB NOT NULL,
   created_at TIMESTAMPTZ DEFAULT NOW(),
@@ -560,7 +576,7 @@ CREATE TABLE IF NOT EXISTS import_mappings (
 --    b2c_hsn) ──────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS invoice_items (
   id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
-  user_id UUID REFERENCES users(id) ON DELETE CASCADE NOT NULL,
+  user_id UUID REFERENCES users(id) ON DELETE RESTRICT NOT NULL,
   invoice_id UUID NOT NULL,
   invoice_type TEXT NOT NULL CHECK (invoice_type IN ('b2b','b2c')),
   product_id UUID REFERENCES products(id) ON DELETE SET NULL,
@@ -611,7 +627,7 @@ CREATE INDEX IF NOT EXISTS idx_invoice_items_hsn_code ON invoice_items(user_id, 
 --    b2b_invoices/b2c_invoices/purchases.amount_paid/payment_status) ───
 CREATE TABLE IF NOT EXISTS payments (
   id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
-  user_id UUID REFERENCES users(id) ON DELETE CASCADE NOT NULL,
+  user_id UUID REFERENCES users(id) ON DELETE RESTRICT NOT NULL,
   invoice_id UUID NOT NULL,
   invoice_type TEXT NOT NULL CHECK (invoice_type IN ('b2b','b2c','purchase')),
   amount DECIMAL(15,2) NOT NULL,
@@ -636,7 +652,7 @@ CREATE INDEX IF NOT EXISTS idx_payments_date ON payments(user_id, payment_date);
 --    explainable afterwards.
 CREATE TABLE IF NOT EXISTS invoice_series_migrations (
   id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
-  user_id UUID REFERENCES users(id) ON DELETE CASCADE NOT NULL,
+  user_id UUID REFERENCES users(id) ON DELETE RESTRICT NOT NULL,
   -- As typed, not derived from what was found: "4 to 25 matched nothing"
   -- is itself worth recording.
   range_from TEXT NOT NULL,
@@ -668,7 +684,7 @@ CREATE INDEX IF NOT EXISTS idx_invoice_series_migrations_user
 --    point the same row is updated in place rather than replaced.
 CREATE TABLE IF NOT EXISTS eway_bills (
   id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
-  user_id UUID REFERENCES users(id) ON DELETE CASCADE NOT NULL,
+  user_id UUID REFERENCES users(id) ON DELETE RESTRICT NOT NULL,
 
   -- Source invoice. Same (id, type) pair invoice_items and payments use;
   -- number/date are denormalised so the list renders without a join.
@@ -706,7 +722,7 @@ CREATE INDEX IF NOT EXISTS idx_eway_bills_user ON eway_bills(user_id, created_at
 -- ── Vendor Master ─────────────────────────────────────
 CREATE TABLE IF NOT EXISTS vendors (
   id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
-  user_id UUID REFERENCES users(id) ON DELETE CASCADE NOT NULL,
+  user_id UUID REFERENCES users(id) ON DELETE RESTRICT NOT NULL,
   name TEXT NOT NULL,
   gstin TEXT,
   phone TEXT,
@@ -728,7 +744,7 @@ CREATE INDEX IF NOT EXISTS idx_vendors_gstin ON vendors(user_id, gstin);
 -- ── Purchases (header) ────────────────────────────────
 CREATE TABLE IF NOT EXISTS purchases (
   id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
-  user_id UUID REFERENCES users(id) ON DELETE CASCADE NOT NULL,
+  user_id UUID REFERENCES users(id) ON DELETE RESTRICT NOT NULL,
   vendor_id UUID REFERENCES vendors(id) ON DELETE SET NULL,
   vendor_name TEXT NOT NULL,
   vendor_gstin TEXT,
@@ -763,7 +779,7 @@ CREATE INDEX IF NOT EXISTS idx_purchases_vendor_name ON purchases(user_id, vendo
 -- ── Purchase Line Items ────────────────────────────────
 CREATE TABLE IF NOT EXISTS purchase_items (
   id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
-  user_id UUID REFERENCES users(id) ON DELETE CASCADE NOT NULL,
+  user_id UUID REFERENCES users(id) ON DELETE RESTRICT NOT NULL,
   purchase_id UUID NOT NULL,
   product_id UUID REFERENCES products(id) ON DELETE SET NULL,
   product_name TEXT NOT NULL,
@@ -794,7 +810,7 @@ CREATE INDEX IF NOT EXISTS idx_purchase_items_purchase ON purchase_items(purchas
 -- ── Purchase Returns (header) ─────────────────────────
 CREATE TABLE IF NOT EXISTS purchase_returns (
   id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
-  user_id UUID REFERENCES users(id) ON DELETE CASCADE NOT NULL,
+  user_id UUID REFERENCES users(id) ON DELETE RESTRICT NOT NULL,
   vendor_id UUID REFERENCES vendors(id) ON DELETE SET NULL,
   vendor_name TEXT NOT NULL,
   vendor_gstin TEXT,
@@ -822,7 +838,7 @@ CREATE INDEX IF NOT EXISTS idx_purchase_returns_date ON purchase_returns(user_id
 -- ── Purchase Return Line Items ─────────────────────────
 CREATE TABLE IF NOT EXISTS purchase_return_items (
   id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
-  user_id UUID REFERENCES users(id) ON DELETE CASCADE NOT NULL,
+  user_id UUID REFERENCES users(id) ON DELETE RESTRICT NOT NULL,
   return_id UUID NOT NULL,
   product_id UUID REFERENCES products(id) ON DELETE SET NULL,
   product_name TEXT NOT NULL,
@@ -866,7 +882,7 @@ CREATE INDEX IF NOT EXISTS idx_purchase_return_items_return ON purchase_return_i
 -- from the document book (documents.js), unlike purchases which are typed.
 CREATE TABLE IF NOT EXISTS purchase_orders (
   id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
-  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  user_id UUID NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
   document_number TEXT NOT NULL,
   document_date DATE NOT NULL,
   document_series TEXT NOT NULL DEFAULT 'purchase_order',
@@ -921,7 +937,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_purchase_orders_user_series_number
 -- discouraged.
 CREATE TABLE IF NOT EXISTS purchase_order_items (
   id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
-  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  user_id UUID NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
   purchase_order_id UUID NOT NULL REFERENCES purchase_orders(id) ON DELETE CASCADE,
   product_id UUID REFERENCES products(id) ON DELETE SET NULL,
   product_name TEXT NOT NULL,
@@ -955,7 +971,7 @@ CREATE INDEX IF NOT EXISTS idx_purchase_order_items_parent
 -- referencing this table stay NULL.
 CREATE TABLE IF NOT EXISTS stock_locations (
   id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
-  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  user_id UUID NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
   name TEXT NOT NULL,
   code TEXT,
   is_default BOOLEAN NOT NULL DEFAULT FALSE,
@@ -973,7 +989,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_stock_locations_user_code
 -- ── Stock balances, per product per location ──────────
 CREATE TABLE IF NOT EXISTS stock_balances (
   id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
-  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  user_id UUID NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
   product_id UUID NOT NULL REFERENCES products(id) ON DELETE CASCADE,
   location_id UUID NOT NULL REFERENCES stock_locations(id) ON DELETE RESTRICT,
   quantity DECIMAL(15,3) NOT NULL DEFAULT 0 CHECK (quantity >= 0),
@@ -993,7 +1009,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_stock_balances_user_product_location
 -- header id - never a line id, because line rows are replaced on every save.
 CREATE TABLE IF NOT EXISTS stock_serials (
   id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
-  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  user_id UUID NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
   product_id UUID NOT NULL REFERENCES products(id) ON DELETE RESTRICT,
   serial_no TEXT NOT NULL CHECK (btrim(serial_no) <> ''),
   status TEXT NOT NULL DEFAULT 'AVAILABLE'
@@ -1037,7 +1053,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_stock_serials_user_serial
 -- keeps a transfer from being recorded with only one end.
 CREATE TABLE IF NOT EXISTS stock_movements (
   id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
-  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  user_id UUID NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
   product_id UUID NOT NULL REFERENCES products(id) ON DELETE CASCADE,
   movement_type TEXT NOT NULL
     CHECK (movement_type IN (
@@ -1091,7 +1107,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_stock_movements_transfer_half
 -- Nothing on the purchase side of the app reads these rows to change stock.
 CREATE TABLE IF NOT EXISTS purchase_notes (
   id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
-  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  user_id UUID NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
   note_type TEXT NOT NULL CHECK (note_type IN ('credit','debit')),
   note_number TEXT NOT NULL,
   note_date DATE NOT NULL,
@@ -1127,7 +1143,7 @@ CREATE INDEX IF NOT EXISTS idx_purchase_notes_source ON purchase_notes (original
 -- replaced whenever a purchase is saved, and never the Product Master.
 CREATE TABLE IF NOT EXISTS purchase_note_items (
   id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
-  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  user_id UUID NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
   note_id UUID NOT NULL,
   product_id UUID REFERENCES products(id) ON DELETE SET NULL,
   product_name TEXT NOT NULL,
@@ -1151,7 +1167,7 @@ CREATE INDEX IF NOT EXISTS idx_purchase_note_items_note ON purchase_note_items (
 -- ── Expense Categories ────────────────────────────────
 CREATE TABLE IF NOT EXISTS expense_categories (
   id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
-  user_id UUID REFERENCES users(id) ON DELETE CASCADE NOT NULL,
+  user_id UUID REFERENCES users(id) ON DELETE RESTRICT NOT NULL,
   name TEXT NOT NULL,
   description TEXT,
   created_at TIMESTAMPTZ DEFAULT NOW(),
@@ -1163,7 +1179,7 @@ CREATE INDEX IF NOT EXISTS idx_expense_categories_name ON expense_categories(use
 -- ── Expenses ───────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS expenses (
   id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
-  user_id UUID REFERENCES users(id) ON DELETE CASCADE NOT NULL,
+  user_id UUID REFERENCES users(id) ON DELETE RESTRICT NOT NULL,
   category_id UUID REFERENCES expense_categories(id) ON DELETE SET NULL,
   category_name TEXT,
   expense_date DATE NOT NULL,
@@ -1183,7 +1199,7 @@ CREATE INDEX IF NOT EXISTS idx_expenses_category ON expenses(user_id, category_i
 --    b2c_invoices themselves are never written to by this module ──
 CREATE TABLE IF NOT EXISTS sales_returns (
   id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
-  user_id UUID REFERENCES users(id) ON DELETE CASCADE NOT NULL,
+  user_id UUID REFERENCES users(id) ON DELETE RESTRICT NOT NULL,
   original_invoice_id UUID NOT NULL,
   original_invoice_type TEXT NOT NULL CHECK (original_invoice_type IN ('b2b','b2c')),
   original_invoice_number TEXT,
@@ -1216,7 +1232,7 @@ CREATE INDEX IF NOT EXISTS idx_sales_returns_original_invoice ON sales_returns(o
 -- ── Sales Return Line Items ────────────────────────────
 CREATE TABLE IF NOT EXISTS sales_return_items (
   id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
-  user_id UUID REFERENCES users(id) ON DELETE CASCADE NOT NULL,
+  user_id UUID REFERENCES users(id) ON DELETE RESTRICT NOT NULL,
   return_id UUID NOT NULL,
   product_id UUID REFERENCES products(id) ON DELETE SET NULL,
   product_name TEXT NOT NULL,
@@ -1250,7 +1266,7 @@ CREATE INDEX IF NOT EXISTS idx_sales_return_items_return ON sales_return_items(r
 -- these rows only name what it is for. See migration_cdn_note_items.sql.
 CREATE TABLE IF NOT EXISTS cdn_note_items (
   id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
-  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  user_id UUID NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
   note_id UUID NOT NULL,
   product_id UUID REFERENCES products(id) ON DELETE SET NULL,
   product_name TEXT NOT NULL,
@@ -1289,7 +1305,7 @@ $$ LANGUAGE plpgsql;
 -- address, state and optionally a PAN.
 CREATE TABLE IF NOT EXISTS unregistered_suppliers (
   id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
-  user_id UUID REFERENCES users(id) ON DELETE CASCADE NOT NULL,
+  user_id UUID REFERENCES users(id) ON DELETE RESTRICT NOT NULL,
   name TEXT NOT NULL,
   -- Present only where the supplier is registered but the supply is
   -- still under reverse charge (a GTA, for instance). Blank is the
@@ -1316,7 +1332,7 @@ CREATE INDEX IF NOT EXISTS idx_unreg_suppliers_user ON unregistered_suppliers(us
 -- table; the liability it creates is declared in GSTR-3B.
 CREATE TABLE IF NOT EXISTS self_invoices (
   id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
-  user_id UUID REFERENCES users(id) ON DELETE CASCADE NOT NULL,
+  user_id UUID REFERENCES users(id) ON DELETE RESTRICT NOT NULL,
   document_number TEXT NOT NULL,
   document_date DATE NOT NULL,
   -- The numbering book, from the registry's `series` field.
@@ -1348,7 +1364,7 @@ CREATE TABLE IF NOT EXISTS self_invoices (
 -- NOT count toward turnover — counting both would count the supply twice.
 CREATE TABLE IF NOT EXISTS receipt_vouchers (
   id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
-  user_id UUID REFERENCES users(id) ON DELETE CASCADE NOT NULL,
+  user_id UUID REFERENCES users(id) ON DELETE RESTRICT NOT NULL,
   document_number TEXT NOT NULL,
   document_date DATE NOT NULL,
   document_series TEXT NOT NULL DEFAULT 'receipt_voucher',
@@ -1435,7 +1451,7 @@ CREATE TABLE IF NOT EXISTS receipt_vouchers (
 -- it as a second liability would double-count the same tax.
 CREATE TABLE IF NOT EXISTS payment_vouchers (
   id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
-  user_id UUID REFERENCES users(id) ON DELETE CASCADE NOT NULL,
+  user_id UUID REFERENCES users(id) ON DELETE RESTRICT NOT NULL,
   document_number TEXT NOT NULL,
   document_date DATE NOT NULL,
   document_series TEXT NOT NULL DEFAULT 'payment_voucher',
@@ -1462,7 +1478,7 @@ CREATE TABLE IF NOT EXISTS payment_vouchers (
 -- a credit note, which reverses an invoice for a supply that WAS made.
 CREATE TABLE IF NOT EXISTS refund_vouchers (
   id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
-  user_id UUID REFERENCES users(id) ON DELETE CASCADE NOT NULL,
+  user_id UUID REFERENCES users(id) ON DELETE RESTRICT NOT NULL,
   document_number TEXT NOT NULL,
   document_date DATE NOT NULL,
   document_series TEXT NOT NULL DEFAULT 'refund_voucher',
@@ -1521,7 +1537,7 @@ CREATE INDEX IF NOT EXISTS idx_refund_vouchers_date ON refund_vouchers(user_id, 
 -- where the business data lives.
 CREATE TABLE IF NOT EXISTS document_audit_log (
   id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
-  user_id UUID REFERENCES users(id) ON DELETE CASCADE NOT NULL,
+  user_id UUID REFERENCES users(id) ON DELETE RESTRICT NOT NULL,
   document_type TEXT NOT NULL,        -- registry key
   document_table TEXT NOT NULL,       -- the domain table the row lives in
   document_id UUID NOT NULL,
@@ -1545,7 +1561,7 @@ CREATE INDEX IF NOT EXISTS idx_document_audit_doc ON document_audit_log(document
 -- that rather than copying the row.
 CREATE TABLE IF NOT EXISTS job_workers (
   id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
-  user_id UUID REFERENCES users(id) ON DELETE CASCADE NOT NULL,
+  user_id UUID REFERENCES users(id) ON DELETE RESTRICT NOT NULL,
   name TEXT NOT NULL,
   gstin TEXT,
   -- A job worker may be unregistered; Rule 45 still allows the challan,
@@ -1573,7 +1589,7 @@ CREATE INDEX IF NOT EXISTS idx_job_workers_user ON job_workers(user_id, name);
 -- ── Delivery challans ───────────────────────────────────────
 CREATE TABLE IF NOT EXISTS delivery_challans (
   id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
-  user_id UUID REFERENCES users(id) ON DELETE CASCADE NOT NULL,
+  user_id UUID REFERENCES users(id) ON DELETE RESTRICT NOT NULL,
   -- The registry key: 'dc_job_work' | 'dc_approval' | 'dc_liquid_gas' |
   -- 'dc_other'. Table 13 counts a row only for its own type, so the
   -- exporter never needs to know what the variants are called.
@@ -1656,7 +1672,7 @@ CREATE INDEX IF NOT EXISTS idx_delivery_challans_type
 
 CREATE TABLE IF NOT EXISTS delivery_challan_items (
   id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
-  user_id UUID REFERENCES users(id) ON DELETE CASCADE NOT NULL,
+  user_id UUID REFERENCES users(id) ON DELETE RESTRICT NOT NULL,
   challan_id UUID REFERENCES delivery_challans(id) ON DELETE CASCADE NOT NULL,
   product_id UUID REFERENCES products(id) ON DELETE SET NULL,
   product_name TEXT NOT NULL,
@@ -1687,7 +1703,7 @@ CREATE INDEX IF NOT EXISTS idx_delivery_challan_items_challan
 -- and not an edit of the original.
 CREATE TABLE IF NOT EXISTS revised_invoices (
   id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
-  user_id UUID REFERENCES users(id) ON DELETE CASCADE NOT NULL,
+  user_id UUID REFERENCES users(id) ON DELETE RESTRICT NOT NULL,
   document_number TEXT NOT NULL,
   document_date DATE NOT NULL,
   document_series TEXT NOT NULL DEFAULT 'revised_invoice',
@@ -1738,7 +1754,7 @@ CREATE INDEX IF NOT EXISTS idx_revised_invoices_date
 
 CREATE TABLE IF NOT EXISTS revised_invoice_items (
   id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
-  user_id UUID REFERENCES users(id) ON DELETE CASCADE NOT NULL,
+  user_id UUID REFERENCES users(id) ON DELETE RESTRICT NOT NULL,
   revised_invoice_id UUID REFERENCES revised_invoices(id) ON DELETE CASCADE NOT NULL,
   product_id UUID REFERENCES products(id) ON DELETE SET NULL,
   product_name TEXT NOT NULL,
@@ -1774,7 +1790,7 @@ CREATE INDEX IF NOT EXISTS idx_revised_invoice_items_doc
 -- row and the running total stays as a convenience.
 CREATE TABLE IF NOT EXISTS advance_adjustments (
   id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
-  user_id UUID REFERENCES users(id) ON DELETE CASCADE NOT NULL,
+  user_id UUID REFERENCES users(id) ON DELETE RESTRICT NOT NULL,
   receipt_voucher_id UUID REFERENCES receipt_vouchers(id) ON DELETE CASCADE NOT NULL,
   -- Which invoice the advance was applied to. Kept as text as well as an
   -- id because the invoice may be edited or removed later and the
@@ -1812,7 +1828,7 @@ CREATE INDEX IF NOT EXISTS idx_advance_adjustments_voucher
 -- because that table reports numbering series, not tax status.
 CREATE TABLE IF NOT EXISTS bill_of_supply (
   id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
-  user_id UUID REFERENCES users(id) ON DELETE CASCADE NOT NULL,
+  user_id UUID REFERENCES users(id) ON DELETE RESTRICT NOT NULL,
   document_number TEXT NOT NULL,
   document_date DATE NOT NULL,
   document_series TEXT NOT NULL,
@@ -1840,7 +1856,7 @@ CREATE INDEX IF NOT EXISTS idx_bill_of_supply_date
 
 CREATE TABLE IF NOT EXISTS bill_of_supply_items (
   id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
-  user_id UUID REFERENCES users(id) ON DELETE CASCADE NOT NULL,
+  user_id UUID REFERENCES users(id) ON DELETE RESTRICT NOT NULL,
   bill_of_supply_id UUID REFERENCES bill_of_supply(id) ON DELETE CASCADE NOT NULL,
   product_id UUID REFERENCES products(id) ON DELETE SET NULL,
   product_name TEXT NOT NULL,
@@ -1862,7 +1878,7 @@ CREATE INDEX IF NOT EXISTS idx_bill_of_supply_items_doc
 -- its own, never an edit of the document it amends.
 CREATE TABLE IF NOT EXISTS gst_amendments (
   id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
-  user_id UUID REFERENCES users(id) ON DELETE CASCADE NOT NULL,
+  user_id UUID REFERENCES users(id) ON DELETE RESTRICT NOT NULL,
 
   -- Which GSTR-1 section this amends: 'b2b' | 'b2cl' | 'b2cs' | 'cdnr'
   -- | 'cdnur' | 'at' | 'txpd'. Named rather than inferred, because the
@@ -1919,7 +1935,7 @@ CREATE INDEX IF NOT EXISTS idx_gst_amendments_section
 -- db/migrations/migration_proforma_invoices.sql for the full note.
 CREATE TABLE IF NOT EXISTS proforma_invoices (
   id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
-  user_id UUID REFERENCES users(id) ON DELETE CASCADE NOT NULL,
+  user_id UUID REFERENCES users(id) ON DELETE RESTRICT NOT NULL,
 
   -- Its own numbering book. document_series is what keeps it out of the tax
   -- invoice sequence: the two count separately and cannot interleave.
@@ -2010,7 +2026,7 @@ CREATE TABLE IF NOT EXISTS proforma_invoices (
 
 CREATE TABLE IF NOT EXISTS proforma_invoice_items (
   id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
-  user_id UUID REFERENCES users(id) ON DELETE CASCADE NOT NULL,
+  user_id UUID REFERENCES users(id) ON DELETE RESTRICT NOT NULL,
   proforma_invoice_id UUID REFERENCES proforma_invoices(id) ON DELETE CASCADE NOT NULL,
   product_id UUID REFERENCES products(id) ON DELETE SET NULL,
   product_name TEXT NOT NULL,
@@ -2080,7 +2096,7 @@ CREATE TRIGGER eway_bills_upd          BEFORE UPDATE ON eway_bills          FOR 
 
 CREATE TABLE IF NOT EXISTS warranties (
   id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
-  user_id UUID REFERENCES users(id) ON DELETE CASCADE NOT NULL,
+  user_id UUID REFERENCES users(id) ON DELETE RESTRICT NOT NULL,
 
   -- Its own numbering book (WAR-#####). Never the invoice series: a warranty
   -- must not consume a tax invoice number.
