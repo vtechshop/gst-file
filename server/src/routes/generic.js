@@ -23,6 +23,7 @@ const express = require('express');
 const pool = require('../config/pool');
 const { requireAuth } = require('../middleware/auth');
 const { asyncRoute } = require('../middleware/errorHandler');
+const { tableHasAuthorColumn } = require('../db/schema-probe');
 const {
   validateCustomerPayload, validateProductPayload, validateProfilePayload, makeDistrictValidator
 } = require('../utils/validation');
@@ -244,7 +245,16 @@ function makeCrudRouter(table, { columns, immutable, insertable = true, deletabl
     // to a colleague.
     const payload = { ...req.body, [ownerColumn]: ownerIdOf(req) };
     const cols = Object.keys(payload).filter(c => columns.includes(c));
-    if (authored) { payload[AUTHOR_COLUMN] = req.actorUserId || req.userId; cols.push(AUTHOR_COLUMN); }
+    // Authorship is recorded only where there is a column to record it in.
+    // created_by arrives with migration_employee_accounts.sql, and naming
+    // it before that ran made every create answer 500 - the row is simply
+    // written without an author, which is what every existing row already
+    // looks like. Ownership is unaffected: user_id is the original schema
+    // and is still forced from the session.
+    if (authored && await tableHasAuthorColumn(table)) {
+      payload[AUTHOR_COLUMN] = req.actorUserId || req.userId;
+      cols.push(AUTHOR_COLUMN);
+    }
     if (!cols.length) { const e = new Error('No valid fields to insert.'); e.status = 400; e.expose = true; throw e; }
     const placeholders = cols.map((_, i) => `$${i + 1}`).join(',');
     const values = cols.map(c => payload[c]);

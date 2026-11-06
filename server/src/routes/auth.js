@@ -9,9 +9,17 @@ const rateLimit = require('express-rate-limit');
 const { body, validationResult } = require('express-validator');
 const pool = require('../config/pool');
 const { requireAuth } = require('../middleware/auth');
-const { loadAccount, describeAccess } = require('../middleware/access');
+const { loadAccount, describeAccess, employeeTableExists } = require('../middleware/access');
 const { asyncRoute } = require('../middleware/errorHandler');
 const { isEmployeeId } = require('../utils/employeeId');
+const { userHasColumn, usersColumnsAmong } = require('../db/schema-probe');
+
+// The columns this file reads from `users` that only exist once
+// migration_employee_accounts.sql has run. Every statement below names
+// whichever of them the database actually has, so that signing in and
+// loading a page keep working on a database where the migration is still
+// pending - which is the state every deployment is in until it is applied.
+const EMPLOYEE_COLUMNS = ['employee_code', 'session_epoch', 'must_change_password'];
 
 const router = express.Router();
 const SALT_ROUNDS = 10;
@@ -131,13 +139,26 @@ router.post('/login',
     // lookup uses the index rather than scanning. Anything else is treated
     // as an email. A password is required either way: an Employee ID alone
     // authenticates nobody.
-    const { rows } = isEmployeeId(typed)
-      ? await pool.query(
-          `SELECT id, email, name, password_hash, employee_code, session_epoch, must_change_password
-             FROM users WHERE upper(employee_code) = upper($1)`, [typed])
+    // Only the columns this database has. Before the employee migration
+    // there are none of them, and the statement is the one this route ran
+    // before employees existed.
+    const extra = await usersColumnsAmong(EMPLOYEE_COLUMNS);
+    const select = ['id', 'email', 'name', 'password_hash'].concat(extra).join(', ');
+
+    // An Employee ID is matched on a column that does not exist yet, and
+    // no employee can exist without it either - so there is nothing to
+    // find. Answered with the ordinary wrong-credentials message rather
+    // than an error, because to the person typing it that is what it is.
+    const byEmployeeId = isEmployeeId(typed);
+    const canMatchEmployeeId = byEmployeeId && await userHasColumn('employee_code');
+
+    const { rows } = byEmployeeId
+      ? (canMatchEmployeeId
+          ? await pool.query(
+              `SELECT ${select} FROM users WHERE upper(employee_code) = upper($1)`, [typed])
+          : { rows: [] })
       : await pool.query(
-          `SELECT id, email, name, password_hash, employee_code, session_epoch, must_change_password
-             FROM users WHERE email = $1`, [typed.toLowerCase()]);
+          `SELECT ${select} FROM users WHERE email = $1`, [typed.toLowerCase()]);
     const user = rows[0];
     // Same generic message whether the email doesn't exist or the
     // password is wrong — never reveal which, to avoid account enumeration.
@@ -163,8 +184,13 @@ router.post('/login',
     // specific - unlike a wrong password, "your account is deactivated" is
     // not something an attacker learns anything from, and a employee who is
     // not told would simply keep retrying a password that is correct.
-    const { rows: emp } = await pool.query(
-      'SELECT status FROM employee_accounts WHERE user_id = $1', [user.id]);
+    // Asked only where there is an employee_accounts table to ask. Without
+    // one no account can be an employee, so there is no deactivation to
+    // honour and nothing is weakened by skipping it.
+    const employeesExist = await employeeTableExists();
+    const { rows: emp } = employeesExist
+      ? await pool.query('SELECT status FROM employee_accounts WHERE user_id = $1', [user.id])
+      : { rows: [] };
     if (emp[0] && emp[0].status !== 'active') {
       const e = new Error('This employee account has been deactivated. Contact your administrator.');
       e.status = 403; e.expose = true; e.code = 'account_inactive';
@@ -200,8 +226,13 @@ router.post('/forgot-password', authLimiter, body('email').isEmail(), (req, res)
 // material. loadAccount runs first, so a revoked session or a deactivated
 // employee is refused here too rather than being told who they are.
 router.get('/me', requireAuth, loadAccount, asyncRoute(async (req, res) => {
+  // employee_code only once the migration has run. This route fires on
+  // every authenticated page load, so naming a column the database has not
+  // got made the whole application unreachable, not just this endpoint.
+  const extra = await usersColumnsAmong(['employee_code']);
   const { rows } = await pool.query(
-    'SELECT id, email, name, employee_code FROM users WHERE id = $1', [req.userId]);
+    `SELECT ${['id', 'email', 'name'].concat(extra).join(', ')} FROM users WHERE id = $1`,
+    [req.userId]);
   if (!rows[0]) return res.status(401).json({ error: { message: 'This account no longer exists.', code: 'auth_required' } });
   res.json({ user: { ...publicUser(rows[0]), ...describeAccess(req) } });
 }));
@@ -220,8 +251,10 @@ router.post('/change-password',
     .withMessage('Your new password must be at least 8 characters.'),
   asyncRoute(async (req, res) => {
     checkValidation(req);
+    const epochCol = await userHasColumn('session_epoch');
     const { rows } = await pool.query(
-      'SELECT password_hash, session_epoch FROM users WHERE id = $1', [req.userId]);
+      `SELECT password_hash${epochCol ? ', session_epoch' : ''} FROM users WHERE id = $1`,
+      [req.userId]);
     if (!rows[0]) {
       const e = new Error('This account no longer exists.');
       e.status = 401; e.expose = true; e.code = 'auth_required'; throw e;
@@ -242,10 +275,21 @@ router.post('/change-password',
     // continues - changing your password should not log you out of the tab
     // you changed it in.
     const next = (rows[0].session_epoch || 0) + 1;
+    // Only the columns this database has. Without session_epoch there is
+    // no revocation to perform - and no employee to revoke, since the same
+    // migration creates both - so the password change itself still lands.
+    const sets = ['password_hash = $1'];
+    const values = [hash];
+    for (const [col, expr] of [
+      ['must_change_password', 'must_change_password = FALSE'],
+      ['password_changed_at', 'password_changed_at = NOW()']
+    ]) {
+      if (await userHasColumn(col)) sets.push(expr);
+    }
+    if (epochCol) { values.push(next); sets.push(`session_epoch = $${values.length}`); }
+    values.push(req.userId);
     await pool.query(
-      `UPDATE users SET password_hash = $1, must_change_password = FALSE,
-              password_changed_at = NOW(), session_epoch = $2
-        WHERE id = $3`, [hash, next, req.userId]);
+      `UPDATE users SET ${sets.join(', ')} WHERE id = $${values.length}`, values);
 
     if (!req.isAdmin) {
       await pool.query(
