@@ -109,9 +109,15 @@ test('L2 a correct password signs in and the token works', async () => {
   assert.ok(res.body.token, 'a token comes back');
   assert.strictEqual(res.body.user.email, USER.email);
   assert.strictEqual(res.body.user.id, USER.id);
-  // Whatever the route returns, the password must not be in it.
-  assert.equal(/password/i.test(JSON.stringify(res.body)), false,
-    'nothing about the password is echoed back');
+  // Whatever the route returns, no password VALUE and no hash may be in
+  // it. Checking for the word is no longer possible - the reply carries
+  // `must_change_password`, a boolean flag - so this checks the thing that
+  // actually matters: the password that was just submitted, and anything
+  // shaped like a bcrypt hash.
+  const echoed = JSON.stringify(res.body);
+  assert.equal(echoed.includes(TEST_PASSWORD), false, 'the submitted password is not echoed back');
+  assert.equal(/\$2[aby]\$\d{2}\$/.test(echoed), false, 'no password hash is echoed back');
+  assert.equal(/password_hash/.test(echoed), false, 'and no hash field either');
 
   // The token is the point of logging in, so it has to open a guarded route.
   const guarded = await api('GET', '/api/invoices', undefined, res.body.token);

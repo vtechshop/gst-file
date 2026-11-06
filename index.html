@@ -6,7 +6,7 @@
   <title>GST Invoice & GSTR-1 Management System â€“ Login</title>
   <link rel="stylesheet" href="client/css/style.css?v=35">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
-  <script src="client/js/api/apiClient.js?v=29"></script>
+  <script src="client/js/api/apiClient.js?v=30"></script>
   <script src="client/js/core/config.js?v=33"></script>
 </head>
 <body>
@@ -39,8 +39,15 @@
     <!-- Login Form -->
     <form class="auth-form active" id="loginForm" onsubmit="handleLogin(event)">
       <div class="form-group mb-14">
-        <label for="loginEmail">Email Address</label>
-        <input type="email" id="loginEmail" class="form-control" required>
+        <label for="loginEmail">Email Address / Employee ID</label>
+        <!-- type="text", not "email": an Employee ID (VT-EMP-K7M4Q9) is not
+             an email address, and the browser's own email validation would
+             refuse to submit the form before the server ever saw it.
+             autocapitalize is off because an Employee ID is upper-case and a
+             phone keyboard would otherwise capitalise an email address. -->
+        <input type="text" id="loginEmail" class="form-control" required
+               autocomplete="username" autocapitalize="off" spellcheck="false"
+               placeholder="you@example.com or VT-EMP-XXXXXX">
       </div>
       <div class="form-group mb-6">
         <label for="loginPassword">Password</label>
@@ -135,8 +142,11 @@ async function handleLogin(e) {
   btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Signing inâ€¦';
 
   try {
+    // Sent as `identifier`; the server decides by SHAPE which column to
+    // match, so there is one lookup and no way to learn which of the two
+    // existed from a difference in the reply.
     const { error } = await _supabase.auth.signInWithPassword({
-      email: document.getElementById('loginEmail').value.trim(),
+      identifier: document.getElementById('loginEmail').value.trim(),
       password: document.getElementById('loginPassword').value
     });
     if (error) {

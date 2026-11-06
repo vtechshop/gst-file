@@ -193,8 +193,12 @@ test('W19 the existing invoice verification route is untouched', () => {
 // ── tenant isolation ──
 test('W20 internal reads are scoped by the server, not the browser', () => {
   assert.match(GENERIC, /warranties: \{/);
-  // the generic layer scopes on req.userId from the verified JWT
-  assert.match(GENERIC, /buildWhere\(req\.query, ownerColumn, req\.userId, columns\)/);
+  // The generic layer scopes server-side, on an owner derived from the
+  // verified JWT. With employee logins that owner is the account owner
+  // rather than the caller, so the call reads ownerIdOf(req) - still
+  // resolved on the server, still never from the request.
+  assert.match(GENERIC, /buildWhere\(req\.query, ownerColumn, ownerIdOf\(req\), readable\)/);
+  assert.match(GENERIC, /const ownerIdOf = \(req\) => req\.accountOwnerId \|\| req\.userId;/);
   // nothing in the warranty pages sends a user id as a security argument
   for (const src of [LIST, DETAIL, CREATE]) {
     assert.equal(/workshopId|tenantId|role:/.test(src), false);

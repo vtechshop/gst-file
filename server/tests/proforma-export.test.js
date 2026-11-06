@@ -246,6 +246,14 @@ test('X10 the changed script carries a new cache key', () => {
   // SEQ25), so an unrelated bump is still caught here.
   assert.ok(PF_HTML.includes('client/js/utilities/utils.js?v=36'),
     'utils.js must stay at the version its own change set');
-  assert.ok(PF_HTML.includes('client/js/api/apiClient.js?v=29'),
-    'apiClient.js did not change, so its key must not move');
+  // apiClient.js was at v=29 when this test was written because that
+  // change did not touch it. Employee logins did - signInWithPassword now
+  // forwards an email address OR an Employee ID - so it moved to v=30. A
+  // floor rather than an exact number, for the same reason the
+  // proforma-entry.js assertion above is a floor: pinning it exactly makes
+  // every later edit of an unrelated file fail here.
+  const apiKey = PF_HTML.match(/client\/js\/api\/apiClient\.js\?v=(\d+)/);
+  assert.ok(apiKey, 'apiClient.js must be referenced with a cache key');
+  assert.ok(Number(apiKey[1]) >= 30,
+    `apiClient.js must be referenced at v=30 or later, found v=${apiKey[1]}`);
 });

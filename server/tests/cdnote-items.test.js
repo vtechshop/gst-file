@@ -694,8 +694,12 @@ test('D1 the migration is applied: table, composite key, cascade and index', asy
   const cols = (await db.query(`SELECT column_name, is_nullable FROM information_schema.columns
     WHERE table_schema='public' AND table_name='cdn_note_items'`)).rows;
   const nullable = Object.fromEntries(cols.map(c => [c.column_name, c.is_nullable === 'YES']));
-  assert.deepStrictEqual(Object.keys(nullable).sort(), ['created_at', 'hsn_code', 'id', 'note_id', 'product_id',
-    'product_name', 'quantity', 'rate', 'sort_order', 'taxable_value', 'unit', 'updated_at', 'user_id']);
+  // created_by arrived with employee logins: which employee raised the
+  // row. Nullable, because a row created before employee logins existed
+  // has no author to name.
+  assert.deepStrictEqual(Object.keys(nullable).sort(), ['created_at', 'created_by', 'hsn_code', 'id', 'note_id',
+    'product_id', 'product_name', 'quantity', 'rate', 'sort_order', 'taxable_value', 'unit', 'updated_at', 'user_id']);
+  assert.ok(nullable.created_by, 'created_by is nullable: a historical row has no author');
   for (const c of ['product_id', 'hsn_code', 'unit', 'quantity', 'rate', 'taxable_value']) assert.ok(nullable[c], c + ' nullable');
   for (const c of ['id', 'user_id', 'note_id', 'product_name', 'sort_order']) assert.ok(!nullable[c], c + ' required');
   const def = name => (db.query('SELECT pg_get_constraintdef(oid) AS d FROM pg_constraint WHERE conname = $1', [name]))

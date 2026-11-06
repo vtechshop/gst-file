@@ -67,6 +67,20 @@ function vForm() { return VOUCHER_FORMS[vType()]; }
 function vSpec() { return gstDocumentTypeSpec(vType()); }
 
 async function initVouchers() {
+  // Delegated, so rows added later need no rebinding: `input` for the
+  // boxes, `click` for the remove buttons.
+  const itemsBody = document.getElementById('vOrderItemsBody');
+  if (itemsBody) {
+    itemsBody.addEventListener('input', onVoucherOrderItemInput);
+    itemsBody.addEventListener('click', (ev) => {
+      const btn = ev.target.closest('[data-vi-del]');
+      if (btn) removeVoucherOrderItem(+btn.getAttribute('data-vi-del'));
+    });
+  }
+  const addBtn = document.getElementById('vOrderAddRow');
+  if (addBtn) addBtn.addEventListener('click', addVoucherOrderItem);
+  renderVoucherOrderItems();
+
   const user = await requireAuth();
   if (!user) return;
   vUserId = user.id;
@@ -127,6 +141,17 @@ let vProformas = [], vProformaItems = {}, vLastSaved = null;
 // that never carried one.
 let vSupplyNatureTouched = false;
 let vEditSupplyNature = null;
+// The products in a manually entered order. One row per product, because
+// an advance against an order of several is not one description - and the
+// receipt has to print what the total adds up from.
+//
+// A row carries an `amount` of its own rather than deriving it from
+// quantity x rate: an order line is often a lump sum ("55,000 for the
+// machine") with no meaningful quantity, and deriving it would make that
+// line zero. Typing a quantity and a rate fills the amount; typing the
+// amount directly leaves it alone.
+let vOrderItems = [];
+
 // Columns this database cannot store yet, from GET /documents/:type/field-support.
 let vPendingColumns = [];
 
@@ -173,9 +198,13 @@ const VOUCHER_FIELD_INPUTS = {
   supply_nature: 'vSupplyNature',
   party_address: 'vPartyAddress',
   payment_date: 'vPaymentDate',
-  order_quantity: 'vOrderQty',
-  order_rate: 'vOrderRate',
-  order_amount: 'vOrderRate',
+  // The order's products live in receipt_voucher_items now, so there is no
+  // single input to disable for these three. They are still listed - the
+  // notice must still name them while the migration is pending - with the
+  // table as the control that gets disabled.
+  order_quantity: 'vOrderItemsTable',
+  order_rate: 'vOrderItemsTable',
+  order_amount: 'vOrderItemsTable',
   packing_charge: 'vPackingCharge',
   order_gst_rate: 'vOrderGstRate'
 };
@@ -325,6 +354,113 @@ function onVoucherSupplyNatureChange() {
 // is read, never written back. With no quotation the boxes on the form supply
 // the order, and the taxable value, GST and total are derived from them
 // rather than stored, for the reason the balance is not stored.
+// One row's amount, in the order the person most likely meant it:
+//
+//   a typed Amount wins, because a lump sum is a lump sum
+//   else quantity x rate, when both are given
+//   else the Rate alone, because "55,000" for one machine and
+//     "1 x 55,000" are the same order - which is how the single-row
+//     version of this form behaved, and there is no reason for a table to
+//     be less forgiving than the box it replaced.
+function voucherItemAmount(it) {
+  const typed = +it.amount;
+  if (Number.isFinite(typed) && typed > 0) return round2(typed);
+  const q = +it.quantity, r = +it.rate;
+  if (!Number.isFinite(r) || r <= 0) return 0;
+  if (Number.isFinite(q) && q > 0) return round2(q * r);
+  return round2(r);
+}
+
+// Draws the rows. Rebuilt wholesale rather than patched, because a table
+// that is partly re-rendered is how a row's index stops matching its data.
+function renderVoucherOrderItems() {
+  const body = document.getElementById('vOrderItemsBody');
+  if (!body) return;
+  if (!vOrderItems.length) {
+    body.innerHTML = '<tr><td colspan="6" class="empty-state">'
+      + 'No products yet. Add the products this advance was received against.</td></tr>';
+  } else {
+    body.innerHTML = vOrderItems.map((it, i) => `
+      <tr>
+        <td>${i + 1}</td>
+        <td><input type="text" class="form-control" data-vi="name" data-i="${i}"
+                   value="${escItemHtml(it.name || '')}"
+                   placeholder="e.g. Steamer 8 Tray with Idly Tray"></td>
+        <td><input type="number" class="form-control text-right" data-vi="quantity" data-i="${i}"
+                   min="0" step="0.001" value="${it.quantity === '' || it.quantity == null ? '' : it.quantity}"></td>
+        <td><input type="number" class="form-control text-right" data-vi="rate" data-i="${i}"
+                   min="0" step="0.01" value="${it.rate === '' || it.rate == null ? '' : it.rate}"></td>
+        <td><input type="number" class="form-control text-right" data-vi="amount" data-i="${i}"
+                   min="0" step="0.01" value="${it.amount === '' || it.amount == null ? '' : it.amount}"></td>
+        <td><button type="button" class="btn btn-sm btn-danger" data-vi-del="${i}"
+                    title="Remove this product"><i class="fas fa-times"></i></button></td>
+      </tr>`).join('');
+  }
+  const total = document.getElementById('vOrderItemsTotal');
+  if (total) {
+    total.textContent = formatCurrency(
+      round2(vOrderItems.reduce((n, it) => n + voucherItemAmount(it), 0)));
+  }
+}
+
+function addVoucherOrderItem() {
+  vOrderItems.push({ name: '', quantity: '', rate: '', amount: '' });
+  renderVoucherOrderItems();
+  recalcVoucher();
+  // Focus the description of the row just added, so adding three products
+  // is three clicks and typing, not three clicks and three more.
+  const rows = document.querySelectorAll('#vOrderItemsBody input[data-vi="name"]');
+  if (rows.length) rows[rows.length - 1].focus();
+}
+
+function removeVoucherOrderItem(index) {
+  vOrderItems.splice(index, 1);
+  renderVoucherOrderItems();
+  recalcVoucher();
+}
+
+// Typing in a row updates the model and the totals, but does NOT redraw
+// the table: redrawing would take the caret out of the box being typed in.
+// The row's own Amount cell is refreshed only when quantity or rate moved
+// and no amount was typed, so a lump sum is never overwritten.
+function onVoucherOrderItemInput(ev) {
+  const el = ev.target;
+  const field = el.getAttribute('data-vi');
+  if (!field) return;
+  const i = +el.getAttribute('data-i');
+  if (!vOrderItems[i]) return;
+  vOrderItems[i][field] = field === 'name' ? el.value : el.value.trim();
+
+  if (field === 'quantity' || field === 'rate') {
+    const typedAmount = String(vOrderItems[i].amount || '').trim();
+    if (!typedAmount) {
+      const derived = voucherItemAmount(
+        Object.assign({}, vOrderItems[i], { amount: '' })) || '';
+      const cell = document.querySelector(`#vOrderItemsBody input[data-vi="amount"][data-i="${i}"]`);
+      if (cell && document.activeElement !== cell) cell.value = derived === '' ? '' : derived;
+    }
+  }
+  const total = document.getElementById('vOrderItemsTotal');
+  if (total) {
+    total.textContent = formatCurrency(
+      round2(vOrderItems.reduce((n, it) => n + voucherItemAmount(it), 0)));
+  }
+  recalcVoucher();
+}
+
+// The rows as the save route wants them, and as the PDF reads them.
+function voucherOrderItemsPayload() {
+  return vOrderItems
+    .filter((it) => (it.name || '').trim() || voucherItemAmount(it) > 0)
+    .map((it, i) => ({
+      product_name: (it.name || '').trim() || 'Item ' + (i + 1),
+      quantity: it.quantity === '' || it.quantity == null ? null : +it.quantity,
+      rate: it.rate === '' || it.rate == null ? null : +it.rate,
+      taxable_value: voucherItemAmount(it),
+      sort_order: i
+    }));
+}
+
 function voucherOrderAmounts() {
   const num = (id) => {
     const raw = (document.getElementById(id)?.value || '').trim();
@@ -354,12 +490,11 @@ function voucherOrderAmounts() {
     };
   }
 
-  const quantity = num('vOrderQty');
-  const rate = num('vOrderRate');
-  // Rate doubles as the product amount: one box, because a receipt for an
-  // order of one machine is the common case and "1 x 55,000" and "55,000"
-  // are the same order. A quantity above 1 multiplies it.
-  const amount = round2(quantity > 0 ? quantity * rate : rate);
+  const quantity = vOrderItems.reduce((n, it) => n + (+it.quantity || 0), 0);
+  const rate = 0;
+  // Summed from the rows. Each row's own amount is authoritative, for the
+  // lump-sum reason in the note on vOrderItems.
+  const amount = round2(vOrderItems.reduce((n, it) => n + voucherItemAmount(it), 0));
   const packing = round2(num('vPackingCharge'));
   const taxable = round2(amount + packing);
   const gstRate = round2(+(document.getElementById('vOrderGstRate')?.value) || 0);
@@ -387,7 +522,9 @@ function renderVoucherOrderBox() {
   // would only invite a contradiction, so they are put out of reach.
   const manual = document.getElementById('vOrderManualGrid');
   const fromQuote = o.source === 'quotation';
-  ['vOrderDesc', 'vOrderQty', 'vOrderRate', 'vPackingCharge', 'vOrderGstRate'].forEach((id) => {
+  vOrderItems = [];
+  renderVoucherOrderItems();
+  ['vPackingCharge', 'vOrderGstRate'].forEach((id) => {
     const el = document.getElementById(id);
     if (el) el.disabled = fromQuote;
   });
@@ -454,6 +591,20 @@ function voucherReceivedAgainst(proformaId, excludeId) {
 }
 
 // The quotation's own lines, read once per quotation and kept.
+// The voucher's own line items, for the manual path. Empty before the
+// migration that creates the table - a receipt that prints no item table
+// is a poorer receipt, not a broken one.
+async function voucherOwnItems(voucherId) {
+  if (!voucherId) return [];
+  try {
+    const { data } = await _supabase.from('receipt_voucher_items')
+      .select('*').eq('receipt_voucher_id', voucherId).order('sort_order');
+    return data || [];
+  } catch {
+    return [];
+  }
+}
+
 async function voucherProformaItems(proformaId) {
   if (!proformaId) return [];
   if (!vProformaItems[proformaId]) {
@@ -615,7 +766,12 @@ function showReceiptActions(voucher) {
 async function receiptPdfArgs() {
   if (!vLastSaved) return null;
   const quote = vLastSaved.proforma_invoice_id ? voucherProformaById(vLastSaved.proforma_invoice_id) : null;
-  const items = quote ? await voucherProformaItems(quote.id) : [];
+  // A voucher raised against a quotation prints that quotation's items; a
+  // manual one prints its own. Either way the receipt shows what the total
+  // adds up from, rather than one description.
+  const items = quote
+    ? await voucherProformaItems(quote.id)
+    : await voucherOwnItems(vLastSaved.id);
   // What was received BEFORE this voucher, which is what the receipt prints.
   const previous = quote ? voucherReceivedAgainst(quote.id, vLastSaved.id) : 0;
   return { voucher: vLastSaved, quote, items, previous };
@@ -847,13 +1003,24 @@ function voucherFormErrors() {
   // hands.
   if (voucherIsReceipt()) {
     const o = voucherOrderAmounts();
-    const rawRate = (document.getElementById('vOrderRate')?.value || '').trim();
+    const rawRate = '';
     const rawPack = (document.getElementById('vPackingCharge')?.value || '').trim();
     const neg = (s) => s !== '' && parseFloat(s) < 0;
-    if (neg(rawRate)) errors.order_rate = 'The product amount cannot be negative.';
-    if (neg(rawPack)) errors.packing_charge = 'A packing charge cannot be negative.';
     // Money is typed to two decimals here as everywhere else on this page.
     const overPrecise = (s) => s !== '' && /\.\d{3,}$/.test(s);
+    // Each row is checked, so the message names the row rather than
+    // leaving the person to find which of five is wrong.
+    vOrderItems.forEach((it, i) => {
+      for (const [field, label] of [['quantity', 'quantity'], ['rate', 'rate'], ['amount', 'amount']]) {
+        const raw = String(it[field] == null ? '' : it[field]).trim();
+        if (neg(raw)) errors.order_rate = `Row ${i + 1}: the ${label} cannot be negative.`;
+        else if (overPrecise(raw) && field !== 'quantity') {
+          errors.order_rate = `Row ${i + 1}: use at most two decimal places.`;
+        }
+      }
+    });
+    if (neg(rawRate)) errors.order_rate = 'The product amount cannot be negative.';
+    if (neg(rawPack)) errors.packing_charge = 'A packing charge cannot be negative.';
     if (overPrecise(rawRate)) errors.order_rate = 'Use at most two decimal places.';
     if (overPrecise(rawPack)) errors.packing_charge = 'Use at most two decimal places.';
 
@@ -926,7 +1093,7 @@ function validateVoucherForm() {
   show('place_of_supply', 'vPosError');
   show('amount', 'vAmountError');
   show('original', 'vOriginalRefError');
-  show('order_rate', 'vOrderRateError');
+  show('order_rate', 'vOrderItemsError');
   show('packing_charge', 'vPackingChargeError');
   show('payment_date', 'vPaymentDateError');
   const btn = document.getElementById('vSaveBtn');
@@ -1018,15 +1185,28 @@ async function saveVoucher() {
     // copy that could disagree with it.
     const o = voucherOrderAmounts();
     if (o.source === 'manual') {
+      // The summed figures stay on the voucher so a reader of the row -
+      // a report, an export - sees the order without having to join the
+      // items. The items are the detail; these are the totals they add to.
       doc.order_quantity = o.quantity || null;
-      doc.order_rate = +(document.getElementById('vOrderRate')?.value) || null;
+      doc.order_rate = null;
       doc.order_amount = o.amount || null;
       doc.packing_charge = o.packing || null;
       doc.order_gst_rate = o.rate || null;
       // The product description belongs with the order, and the receipt
       // already prints `description` as its line, so it is written there
       // rather than into a second column of its own.
-      if (!doc.description && val('vOrderDesc')) doc.description = val('vOrderDesc');
+      // The description still carries the order in one line, for the
+      // places that show a voucher as a single row. Built from the items
+      // rather than from a separate box nobody would keep in step.
+      if (!doc.description) {
+        const names = voucherOrderItemsPayload().map((it) => it.product_name);
+        if (names.length) {
+          doc.description = names.length === 1
+            ? names[0]
+            : names[0] + ' and ' + (names.length - 1) + ' more';
+        }
+      }
     }
   }
   if (f.original) {
@@ -1038,8 +1218,16 @@ async function saveVoucher() {
   }
 
   try {
+    // Items are sent only for a receipt voucher, and only on the manual
+    // path: a voucher raised against a quotation reads that quotation's
+    // items instead of copying them, so there is nothing of its own to
+    // store. Sending [] on that path is deliberate - it clears rows left
+    // behind by an edit that switched from manual to a quotation.
+    const orderItems = voucherIsReceipt() ? voucherOrderItemsPayload() : null;
     const saved = await apiFetch(`/documents/${vType()}/save`, {
-      method: 'POST', body: JSON.stringify({ editId: vEditId, document: doc })
+      method: 'POST',
+      body: JSON.stringify({ editId: vEditId, document: doc,
+        ...(orderItems ? { items: orderItems } : {}) })
     });
     const wasReceipt = voucherIsReceipt();
     // The server drops a column this database does not have yet and names
@@ -1074,7 +1262,7 @@ function resetVoucherForm(keepType) {
   const pos = document.getElementById('vPos'); if (pos) pos.value = getCachedProfile()?.state || '';
   const ref = document.getElementById('vOriginalRef'); if (ref) ref.value = '';
   for (const id of ['vPaymentMethod', 'vReference', 'vProforma', 'vPaymentDate',
-    'vPartyAddress', 'vOrderDesc', 'vOrderQty', 'vOrderRate', 'vPackingCharge']) {
+    'vPartyAddress', 'vPackingCharge']) {
     const el = document.getElementById(id);
     if (el) el.value = '';
   }
@@ -1159,7 +1347,7 @@ function renderVoucherList() {
   }).join('');
 }
 
-function editVoucher(id) {
+async function editVoucher(id) {
   const r = vDocs.find(x => x.id === id);
   if (!r) return;
   const f = vForm();
@@ -1179,9 +1367,34 @@ function editVoucher(id) {
     setVoucherValue('vReference', r.reference_number || '');
     setVoucherValue('vPaymentDate', r.payment_date ? String(r.payment_date).slice(0, 10) : '');
     setVoucherValue('vPartyAddress', r.party_address || '');
-    setVoucherValue('vOrderDesc', r.description || '');
-    setVoucherValue('vOrderQty', r.order_quantity != null ? +r.order_quantity : '');
-    setVoucherValue('vOrderRate', r.order_rate != null ? +r.order_rate : '');
+    // The order's products, as saved. A voucher from before line items
+    // existed has none; its single description and amount become one row,
+    // so an old voucher opens showing what it always showed rather than an
+    // empty table.
+    vOrderItems = [];
+    try {
+      const { data: rows } = await _supabase.from('receipt_voucher_items')
+        .select('*').eq('receipt_voucher_id', r.id).order('sort_order');
+      vOrderItems = (rows || []).map((it) => ({
+        name: it.product_name || '',
+        quantity: it.quantity == null ? '' : +it.quantity,
+        rate: it.rate == null ? '' : +it.rate,
+        amount: it.taxable_value == null ? '' : +it.taxable_value
+      }));
+    } catch {
+      // The table does not exist until its migration runs. An older
+      // voucher still opens; it simply has no rows to show.
+      vOrderItems = [];
+    }
+    if (!vOrderItems.length && (r.description || r.order_amount != null)) {
+      vOrderItems = [{
+        name: r.description || '',
+        quantity: r.order_quantity != null ? +r.order_quantity : '',
+        rate: r.order_rate != null ? +r.order_rate : '',
+        amount: r.order_amount != null ? +r.order_amount : ''
+      }];
+    }
+    renderVoucherOrderItems();
     setVoucherValue('vPackingCharge', r.packing_charge != null ? +r.packing_charge : '');
     if (r.order_gst_rate != null) setVoucherValue('vOrderGstRate', String(+r.order_gst_rate));
 

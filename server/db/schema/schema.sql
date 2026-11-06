@@ -24,11 +24,96 @@ CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 -- ── Users (replaces Supabase auth.users) ────────────
 CREATE TABLE IF NOT EXISTS users (
   id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
-  email TEXT UNIQUE NOT NULL,
+  -- Nullable since employee logins arrived: an employee signs in with their
+  -- Employee ID and an email address is optional for them. Still UNIQUE, and
+  -- PostgreSQL allows many NULLs under a UNIQUE index, so two employees
+  -- without an address do not collide. See
+  -- db/migrations/migration_employee_accounts.sql for why a synthesised
+  -- placeholder address was the worse option.
+  email TEXT UNIQUE,
   password_hash TEXT NOT NULL,
   name TEXT,
+  -- The login identifier for an EMPLOYEE (VT-EMP-K7M4Q9); NULL for an
+  -- Admin, who signs in with their email as they always have. Globally
+  -- unique because it is a credential: the login form gets one string and
+  -- must resolve it to exactly one account.
+  employee_code TEXT,
+  -- Forces a temporary password to be replaced before the account can reach
+  -- anything but the change-password route.
+  must_change_password BOOLEAN NOT NULL DEFAULT FALSE,
+  -- Session revocation for a stateless JWT. The token carries the epoch it
+  -- was minted under and every request compares it; bumping this stops every
+  -- outstanding token for the account on its next request, which is what
+  -- makes deactivation and password reset immediate.
+  session_epoch INTEGER NOT NULL DEFAULT 0,
+  password_changed_at TIMESTAMPTZ,
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
+
+-- Partial, so the many Admin rows with a NULL code do not collide. upper()
+-- because the login lookup upper-cases what was typed: an Employee ID read
+-- off a screen must not fail on case.
+CREATE UNIQUE INDEX IF NOT EXISTS uq_users_employee_code
+  ON users (upper(employee_code)) WHERE employee_code IS NOT NULL;
+
+-- ── Employee logins and their permissions ───────────────
+-- One row per employee. Its ABSENCE is what makes an account an Admin, so
+-- no existing account had to be updated to claim a role it already had.
+-- See db/migrations/migration_employee_accounts.sql.
+CREATE TABLE IF NOT EXISTS employee_accounts (
+  id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
+  -- The Admin whose business data this employee works in. This holds
+  -- exactly the UUID that company_id will hold when the approved
+  -- multi-company work lands, so it needs no remapping then.
+  -- NO ACTION, not RESTRICT: identical refusal for a non-deferrable
+  -- constraint, and it leaves migration_cascade_protection.sql's "exactly
+  -- 49 RESTRICT foreign keys to users(id)" assertion intact.
+  owner_user_id UUID NOT NULL REFERENCES users(id),
+  -- One login belongs to exactly one employer.
+  user_id UUID NOT NULL REFERENCES users(id) UNIQUE,
+  full_name TEXT,
+  mobile TEXT,
+  email TEXT,
+  status TEXT NOT NULL DEFAULT 'active',
+  -- {"customers":["view","create"], ...} - keys and actions from
+  -- shared/access-modules.js. '{}' is NO permissions, which is what a new
+  -- employee gets until an Admin grants something.
+  permissions JSONB NOT NULL DEFAULT '{}'::jsonb,
+  -- 'own' = only rows this employee created; 'all' = everything the
+  -- employer owns. Defaults to the narrower one.
+  record_scope TEXT NOT NULL DEFAULT 'own',
+  created_by UUID REFERENCES users(id) ON DELETE SET NULL,
+  updated_by UUID REFERENCES users(id) ON DELETE SET NULL,
+  deactivated_by UUID REFERENCES users(id) ON DELETE SET NULL,
+  deactivated_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CONSTRAINT employee_accounts_status_check CHECK (status IN ('active','suspended')),
+  CONSTRAINT employee_accounts_scope_check CHECK (record_scope IN ('own','all')),
+  -- An employee may not employ anyone.
+  CONSTRAINT employee_accounts_not_self_check CHECK (owner_user_id <> user_id)
+);
+CREATE INDEX IF NOT EXISTS idx_employee_accounts_owner ON employee_accounts (owner_user_id, status);
+CREATE INDEX IF NOT EXISTS idx_employee_accounts_user ON employee_accounts (user_id);
+
+-- Who created, edited, reset, deactivated or reactivated an employee
+-- account. Not in the generic CRUD registry, so the browser has no write
+-- path to it. No password material is ever recorded here.
+CREATE TABLE IF NOT EXISTS employee_account_audit (
+  id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
+  owner_user_id UUID NOT NULL REFERENCES users(id),
+  employee_user_id UUID REFERENCES users(id) ON DELETE SET NULL,
+  employee_code TEXT,
+  action TEXT NOT NULL,
+  details JSONB NOT NULL DEFAULT '{}'::jsonb,
+  actor_user_id UUID REFERENCES users(id) ON DELETE SET NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CONSTRAINT employee_account_audit_action_check CHECK (action IN
+    ('created','updated','permissions_changed','password_reset',
+     'deactivated','reactivated','password_changed'))
+);
+CREATE INDEX IF NOT EXISTS idx_employee_account_audit_owner
+  ON employee_account_audit (owner_user_id, created_at DESC);
 
 -- ── Account-root foreign keys are RESTRICT, not CASCADE ───────
 -- Every reference to users(id) below that carries ownership is ON DELETE
@@ -119,6 +204,7 @@ CREATE TABLE IF NOT EXISTS profiles (
 CREATE TABLE IF NOT EXISTS b2b_invoices (
   id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
   user_id UUID REFERENCES users(id) ON DELETE RESTRICT NOT NULL,
+  created_by UUID REFERENCES users(id) ON DELETE SET NULL,
   gst_number TEXT NOT NULL,
   customer_name TEXT NOT NULL,
   phone TEXT,
@@ -242,6 +328,7 @@ CREATE TABLE IF NOT EXISTS b2b_invoices (
 CREATE TABLE IF NOT EXISTS b2c_invoices (
   id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
   user_id UUID REFERENCES users(id) ON DELETE RESTRICT NOT NULL,
+  created_by UUID REFERENCES users(id) ON DELETE SET NULL,
   gst_number TEXT,
   customer_name TEXT,
   phone TEXT,
@@ -386,6 +473,7 @@ CREATE INDEX IF NOT EXISTS idx_b2c_invoices_gst_number ON b2c_invoices(user_id, 
 CREATE TABLE IF NOT EXISTS b2b_hsn (
   id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
   user_id UUID REFERENCES users(id) ON DELETE RESTRICT NOT NULL,
+  created_by UUID REFERENCES users(id) ON DELETE SET NULL,
   hsn_code TEXT NOT NULL,
   product_name TEXT NOT NULL,
   type TEXT NOT NULL CHECK (type IN ('goods','service')),
@@ -409,6 +497,7 @@ CREATE TABLE IF NOT EXISTS b2b_hsn (
 CREATE TABLE IF NOT EXISTS b2c_hsn (
   id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
   user_id UUID REFERENCES users(id) ON DELETE RESTRICT NOT NULL,
+  created_by UUID REFERENCES users(id) ON DELETE SET NULL,
   hsn_code TEXT NOT NULL,
   product_name TEXT NOT NULL,
   type TEXT NOT NULL CHECK (type IN ('goods','service')),
@@ -438,6 +527,7 @@ CREATE INDEX IF NOT EXISTS idx_b2c_hsn_code ON b2c_hsn(user_id, hsn_code);
 CREATE TABLE IF NOT EXISTS customers (
   id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
   user_id UUID REFERENCES users(id) ON DELETE RESTRICT NOT NULL,
+  created_by UUID REFERENCES users(id) ON DELETE SET NULL,
   name TEXT NOT NULL,
   gstin TEXT,
   phone TEXT,
@@ -468,6 +558,7 @@ CREATE INDEX IF NOT EXISTS idx_customers_gstin ON customers(user_id, gstin);
 CREATE TABLE IF NOT EXISTS cdn_notes (
   id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
   user_id UUID REFERENCES users(id) ON DELETE RESTRICT NOT NULL,
+  created_by UUID REFERENCES users(id) ON DELETE SET NULL,
   note_type TEXT NOT NULL CHECK (note_type IN ('credit','debit')),
   note_number TEXT NOT NULL,
   note_date DATE NOT NULL,
@@ -520,6 +611,7 @@ CREATE INDEX IF NOT EXISTS idx_cdn_notes_customer_name ON cdn_notes(user_id, cus
 CREATE TABLE IF NOT EXISTS products (
   id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
   user_id UUID REFERENCES users(id) ON DELETE RESTRICT NOT NULL,
+  created_by UUID REFERENCES users(id) ON DELETE SET NULL,
   name TEXT NOT NULL,
   hsn_code TEXT,
   type TEXT NOT NULL DEFAULT 'goods' CHECK (type IN ('goods','service')),
@@ -563,6 +655,7 @@ CREATE INDEX IF NOT EXISTS idx_products_user_id ON products(user_id);
 CREATE TABLE IF NOT EXISTS import_mappings (
   id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
   user_id UUID REFERENCES users(id) ON DELETE RESTRICT NOT NULL,
+  created_by UUID REFERENCES users(id) ON DELETE SET NULL,
   import_type TEXT NOT NULL DEFAULT 'invoice_excel',
   mapping JSONB NOT NULL,
   created_at TIMESTAMPTZ DEFAULT NOW(),
@@ -577,6 +670,7 @@ CREATE TABLE IF NOT EXISTS import_mappings (
 CREATE TABLE IF NOT EXISTS invoice_items (
   id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
   user_id UUID REFERENCES users(id) ON DELETE RESTRICT NOT NULL,
+  created_by UUID REFERENCES users(id) ON DELETE SET NULL,
   invoice_id UUID NOT NULL,
   invoice_type TEXT NOT NULL CHECK (invoice_type IN ('b2b','b2c')),
   product_id UUID REFERENCES products(id) ON DELETE SET NULL,
@@ -628,6 +722,7 @@ CREATE INDEX IF NOT EXISTS idx_invoice_items_hsn_code ON invoice_items(user_id, 
 CREATE TABLE IF NOT EXISTS payments (
   id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
   user_id UUID REFERENCES users(id) ON DELETE RESTRICT NOT NULL,
+  created_by UUID REFERENCES users(id) ON DELETE SET NULL,
   invoice_id UUID NOT NULL,
   invoice_type TEXT NOT NULL CHECK (invoice_type IN ('b2b','b2c','purchase')),
   amount DECIMAL(15,2) NOT NULL,
@@ -685,6 +780,7 @@ CREATE INDEX IF NOT EXISTS idx_invoice_series_migrations_user
 CREATE TABLE IF NOT EXISTS eway_bills (
   id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
   user_id UUID REFERENCES users(id) ON DELETE RESTRICT NOT NULL,
+  created_by UUID REFERENCES users(id) ON DELETE SET NULL,
 
   -- Source invoice. Same (id, type) pair invoice_items and payments use;
   -- number/date are denormalised so the list renders without a join.
@@ -723,6 +819,7 @@ CREATE INDEX IF NOT EXISTS idx_eway_bills_user ON eway_bills(user_id, created_at
 CREATE TABLE IF NOT EXISTS vendors (
   id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
   user_id UUID REFERENCES users(id) ON DELETE RESTRICT NOT NULL,
+  created_by UUID REFERENCES users(id) ON DELETE SET NULL,
   name TEXT NOT NULL,
   gstin TEXT,
   phone TEXT,
@@ -745,6 +842,7 @@ CREATE INDEX IF NOT EXISTS idx_vendors_gstin ON vendors(user_id, gstin);
 CREATE TABLE IF NOT EXISTS purchases (
   id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
   user_id UUID REFERENCES users(id) ON DELETE RESTRICT NOT NULL,
+  created_by UUID REFERENCES users(id) ON DELETE SET NULL,
   vendor_id UUID REFERENCES vendors(id) ON DELETE SET NULL,
   vendor_name TEXT NOT NULL,
   vendor_gstin TEXT,
@@ -780,6 +878,7 @@ CREATE INDEX IF NOT EXISTS idx_purchases_vendor_name ON purchases(user_id, vendo
 CREATE TABLE IF NOT EXISTS purchase_items (
   id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
   user_id UUID REFERENCES users(id) ON DELETE RESTRICT NOT NULL,
+  created_by UUID REFERENCES users(id) ON DELETE SET NULL,
   purchase_id UUID NOT NULL,
   product_id UUID REFERENCES products(id) ON DELETE SET NULL,
   product_name TEXT NOT NULL,
@@ -811,6 +910,7 @@ CREATE INDEX IF NOT EXISTS idx_purchase_items_purchase ON purchase_items(purchas
 CREATE TABLE IF NOT EXISTS purchase_returns (
   id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
   user_id UUID REFERENCES users(id) ON DELETE RESTRICT NOT NULL,
+  created_by UUID REFERENCES users(id) ON DELETE SET NULL,
   vendor_id UUID REFERENCES vendors(id) ON DELETE SET NULL,
   vendor_name TEXT NOT NULL,
   vendor_gstin TEXT,
@@ -839,6 +939,7 @@ CREATE INDEX IF NOT EXISTS idx_purchase_returns_date ON purchase_returns(user_id
 CREATE TABLE IF NOT EXISTS purchase_return_items (
   id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
   user_id UUID REFERENCES users(id) ON DELETE RESTRICT NOT NULL,
+  created_by UUID REFERENCES users(id) ON DELETE SET NULL,
   return_id UUID NOT NULL,
   product_id UUID REFERENCES products(id) ON DELETE SET NULL,
   product_name TEXT NOT NULL,
@@ -972,6 +1073,7 @@ CREATE INDEX IF NOT EXISTS idx_purchase_order_items_parent
 CREATE TABLE IF NOT EXISTS stock_locations (
   id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
   user_id UUID NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+  created_by UUID REFERENCES users(id) ON DELETE SET NULL,
   name TEXT NOT NULL,
   code TEXT,
   is_default BOOLEAN NOT NULL DEFAULT FALSE,
@@ -990,6 +1092,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_stock_locations_user_code
 CREATE TABLE IF NOT EXISTS stock_balances (
   id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
   user_id UUID NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+  created_by UUID REFERENCES users(id) ON DELETE SET NULL,
   product_id UUID NOT NULL REFERENCES products(id) ON DELETE CASCADE,
   location_id UUID NOT NULL REFERENCES stock_locations(id) ON DELETE RESTRICT,
   quantity DECIMAL(15,3) NOT NULL DEFAULT 0 CHECK (quantity >= 0),
@@ -1108,6 +1211,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_stock_movements_transfer_half
 CREATE TABLE IF NOT EXISTS purchase_notes (
   id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
   user_id UUID NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+  created_by UUID REFERENCES users(id) ON DELETE SET NULL,
   note_type TEXT NOT NULL CHECK (note_type IN ('credit','debit')),
   note_number TEXT NOT NULL,
   note_date DATE NOT NULL,
@@ -1144,6 +1248,7 @@ CREATE INDEX IF NOT EXISTS idx_purchase_notes_source ON purchase_notes (original
 CREATE TABLE IF NOT EXISTS purchase_note_items (
   id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
   user_id UUID NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+  created_by UUID REFERENCES users(id) ON DELETE SET NULL,
   note_id UUID NOT NULL,
   product_id UUID REFERENCES products(id) ON DELETE SET NULL,
   product_name TEXT NOT NULL,
@@ -1168,6 +1273,7 @@ CREATE INDEX IF NOT EXISTS idx_purchase_note_items_note ON purchase_note_items (
 CREATE TABLE IF NOT EXISTS expense_categories (
   id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
   user_id UUID REFERENCES users(id) ON DELETE RESTRICT NOT NULL,
+  created_by UUID REFERENCES users(id) ON DELETE SET NULL,
   name TEXT NOT NULL,
   description TEXT,
   created_at TIMESTAMPTZ DEFAULT NOW(),
@@ -1180,6 +1286,7 @@ CREATE INDEX IF NOT EXISTS idx_expense_categories_name ON expense_categories(use
 CREATE TABLE IF NOT EXISTS expenses (
   id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
   user_id UUID REFERENCES users(id) ON DELETE RESTRICT NOT NULL,
+  created_by UUID REFERENCES users(id) ON DELETE SET NULL,
   category_id UUID REFERENCES expense_categories(id) ON DELETE SET NULL,
   category_name TEXT,
   expense_date DATE NOT NULL,
@@ -1200,6 +1307,7 @@ CREATE INDEX IF NOT EXISTS idx_expenses_category ON expenses(user_id, category_i
 CREATE TABLE IF NOT EXISTS sales_returns (
   id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
   user_id UUID REFERENCES users(id) ON DELETE RESTRICT NOT NULL,
+  created_by UUID REFERENCES users(id) ON DELETE SET NULL,
   original_invoice_id UUID NOT NULL,
   original_invoice_type TEXT NOT NULL CHECK (original_invoice_type IN ('b2b','b2c')),
   original_invoice_number TEXT,
@@ -1233,6 +1341,7 @@ CREATE INDEX IF NOT EXISTS idx_sales_returns_original_invoice ON sales_returns(o
 CREATE TABLE IF NOT EXISTS sales_return_items (
   id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
   user_id UUID REFERENCES users(id) ON DELETE RESTRICT NOT NULL,
+  created_by UUID REFERENCES users(id) ON DELETE SET NULL,
   return_id UUID NOT NULL,
   product_id UUID REFERENCES products(id) ON DELETE SET NULL,
   product_name TEXT NOT NULL,
@@ -1267,6 +1376,7 @@ CREATE INDEX IF NOT EXISTS idx_sales_return_items_return ON sales_return_items(r
 CREATE TABLE IF NOT EXISTS cdn_note_items (
   id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
   user_id UUID NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+  created_by UUID REFERENCES users(id) ON DELETE SET NULL,
   note_id UUID NOT NULL,
   product_id UUID REFERENCES products(id) ON DELETE SET NULL,
   product_name TEXT NOT NULL,
@@ -1306,6 +1416,7 @@ $$ LANGUAGE plpgsql;
 CREATE TABLE IF NOT EXISTS unregistered_suppliers (
   id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
   user_id UUID REFERENCES users(id) ON DELETE RESTRICT NOT NULL,
+  created_by UUID REFERENCES users(id) ON DELETE SET NULL,
   name TEXT NOT NULL,
   -- Present only where the supplier is registered but the supply is
   -- still under reverse charge (a GTA, for instance). Blank is the
@@ -1333,6 +1444,7 @@ CREATE INDEX IF NOT EXISTS idx_unreg_suppliers_user ON unregistered_suppliers(us
 CREATE TABLE IF NOT EXISTS self_invoices (
   id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
   user_id UUID REFERENCES users(id) ON DELETE RESTRICT NOT NULL,
+  created_by UUID REFERENCES users(id) ON DELETE SET NULL,
   document_number TEXT NOT NULL,
   document_date DATE NOT NULL,
   -- The numbering book, from the registry's `series` field.
@@ -1365,6 +1477,7 @@ CREATE TABLE IF NOT EXISTS self_invoices (
 CREATE TABLE IF NOT EXISTS receipt_vouchers (
   id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
   user_id UUID REFERENCES users(id) ON DELETE RESTRICT NOT NULL,
+  created_by UUID REFERENCES users(id) ON DELETE SET NULL,
   document_number TEXT NOT NULL,
   document_date DATE NOT NULL,
   document_series TEXT NOT NULL DEFAULT 'receipt_voucher',
@@ -1449,9 +1562,44 @@ CREATE TABLE IF NOT EXISTS receipt_vouchers (
 -- Records paying a supplier under reverse charge. The liability was
 -- already created by the self invoice, so this creates none — treating
 -- it as a second liability would double-count the same tax.
+-- ── Receipt voucher line items ──────────────────────────
+-- What a manually entered advance was received against. A voucher raised
+-- from a proforma stores none of these and reads the quotation's items
+-- instead, so a corrected quotation and the receipt drawn from it cannot
+-- disagree. See db/migrations/migration_receipt_voucher_items.sql.
+CREATE TABLE IF NOT EXISTS receipt_voucher_items (
+  id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
+  -- NO ACTION, not RESTRICT: identical refusal for a non-deferrable
+  -- constraint, and it keeps migration_cascade_protection.sql's "exactly
+  -- 49 RESTRICT foreign keys to users(id)" assertion true.
+  user_id UUID NOT NULL REFERENCES users(id),
+  created_by UUID REFERENCES users(id) ON DELETE SET NULL,
+  receipt_voucher_id UUID NOT NULL REFERENCES receipt_vouchers(id) ON DELETE CASCADE,
+  product_name TEXT NOT NULL,
+  hsn_code TEXT,
+  unit TEXT,
+  quantity NUMERIC(14,3),
+  rate NUMERIC(14,2),
+  -- Stored, not derived: a line may be a lump sum with no quantity, where
+  -- quantity x rate would be 0.
+  taxable_value NUMERIC(14,2),
+  sort_order INTEGER NOT NULL DEFAULT 0,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CONSTRAINT receipt_voucher_items_nonneg_check
+    CHECK ((quantity IS NULL OR quantity >= 0)
+       AND (rate IS NULL OR rate >= 0)
+       AND (taxable_value IS NULL OR taxable_value >= 0))
+);
+CREATE INDEX IF NOT EXISTS idx_receipt_voucher_items_voucher
+  ON receipt_voucher_items (receipt_voucher_id, sort_order);
+CREATE INDEX IF NOT EXISTS idx_receipt_voucher_items_user
+  ON receipt_voucher_items (user_id);
+
 CREATE TABLE IF NOT EXISTS payment_vouchers (
   id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
   user_id UUID REFERENCES users(id) ON DELETE RESTRICT NOT NULL,
+  created_by UUID REFERENCES users(id) ON DELETE SET NULL,
   document_number TEXT NOT NULL,
   document_date DATE NOT NULL,
   document_series TEXT NOT NULL DEFAULT 'payment_voucher',
@@ -1479,6 +1627,7 @@ CREATE TABLE IF NOT EXISTS payment_vouchers (
 CREATE TABLE IF NOT EXISTS refund_vouchers (
   id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
   user_id UUID REFERENCES users(id) ON DELETE RESTRICT NOT NULL,
+  created_by UUID REFERENCES users(id) ON DELETE SET NULL,
   document_number TEXT NOT NULL,
   document_date DATE NOT NULL,
   document_series TEXT NOT NULL DEFAULT 'refund_voucher',
@@ -1562,6 +1711,7 @@ CREATE INDEX IF NOT EXISTS idx_document_audit_doc ON document_audit_log(document
 CREATE TABLE IF NOT EXISTS job_workers (
   id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
   user_id UUID REFERENCES users(id) ON DELETE RESTRICT NOT NULL,
+  created_by UUID REFERENCES users(id) ON DELETE SET NULL,
   name TEXT NOT NULL,
   gstin TEXT,
   -- A job worker may be unregistered; Rule 45 still allows the challan,
@@ -1590,6 +1740,7 @@ CREATE INDEX IF NOT EXISTS idx_job_workers_user ON job_workers(user_id, name);
 CREATE TABLE IF NOT EXISTS delivery_challans (
   id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
   user_id UUID REFERENCES users(id) ON DELETE RESTRICT NOT NULL,
+  created_by UUID REFERENCES users(id) ON DELETE SET NULL,
   -- The registry key: 'dc_job_work' | 'dc_approval' | 'dc_liquid_gas' |
   -- 'dc_other'. Table 13 counts a row only for its own type, so the
   -- exporter never needs to know what the variants are called.
@@ -1673,6 +1824,7 @@ CREATE INDEX IF NOT EXISTS idx_delivery_challans_type
 CREATE TABLE IF NOT EXISTS delivery_challan_items (
   id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
   user_id UUID REFERENCES users(id) ON DELETE RESTRICT NOT NULL,
+  created_by UUID REFERENCES users(id) ON DELETE SET NULL,
   challan_id UUID REFERENCES delivery_challans(id) ON DELETE CASCADE NOT NULL,
   product_id UUID REFERENCES products(id) ON DELETE SET NULL,
   product_name TEXT NOT NULL,
@@ -1704,6 +1856,7 @@ CREATE INDEX IF NOT EXISTS idx_delivery_challan_items_challan
 CREATE TABLE IF NOT EXISTS revised_invoices (
   id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
   user_id UUID REFERENCES users(id) ON DELETE RESTRICT NOT NULL,
+  created_by UUID REFERENCES users(id) ON DELETE SET NULL,
   document_number TEXT NOT NULL,
   document_date DATE NOT NULL,
   document_series TEXT NOT NULL DEFAULT 'revised_invoice',
@@ -1755,6 +1908,7 @@ CREATE INDEX IF NOT EXISTS idx_revised_invoices_date
 CREATE TABLE IF NOT EXISTS revised_invoice_items (
   id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
   user_id UUID REFERENCES users(id) ON DELETE RESTRICT NOT NULL,
+  created_by UUID REFERENCES users(id) ON DELETE SET NULL,
   revised_invoice_id UUID REFERENCES revised_invoices(id) ON DELETE CASCADE NOT NULL,
   product_id UUID REFERENCES products(id) ON DELETE SET NULL,
   product_name TEXT NOT NULL,
@@ -1791,6 +1945,10 @@ CREATE INDEX IF NOT EXISTS idx_revised_invoice_items_doc
 CREATE TABLE IF NOT EXISTS advance_adjustments (
   id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
   user_id UUID REFERENCES users(id) ON DELETE RESTRICT NOT NULL,
+  -- Which employee raised this. NULL on a row created before employee
+  -- logins existed: it has no author to name, and stamping one would be
+  -- inventing a fact about a historical document.
+  created_by UUID REFERENCES users(id) ON DELETE SET NULL,
   receipt_voucher_id UUID REFERENCES receipt_vouchers(id) ON DELETE CASCADE NOT NULL,
   -- Which invoice the advance was applied to. Kept as text as well as an
   -- id because the invoice may be edited or removed later and the
@@ -1829,6 +1987,7 @@ CREATE INDEX IF NOT EXISTS idx_advance_adjustments_voucher
 CREATE TABLE IF NOT EXISTS bill_of_supply (
   id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
   user_id UUID REFERENCES users(id) ON DELETE RESTRICT NOT NULL,
+  created_by UUID REFERENCES users(id) ON DELETE SET NULL,
   document_number TEXT NOT NULL,
   document_date DATE NOT NULL,
   document_series TEXT NOT NULL,
@@ -1857,6 +2016,7 @@ CREATE INDEX IF NOT EXISTS idx_bill_of_supply_date
 CREATE TABLE IF NOT EXISTS bill_of_supply_items (
   id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
   user_id UUID REFERENCES users(id) ON DELETE RESTRICT NOT NULL,
+  created_by UUID REFERENCES users(id) ON DELETE SET NULL,
   bill_of_supply_id UUID REFERENCES bill_of_supply(id) ON DELETE CASCADE NOT NULL,
   product_id UUID REFERENCES products(id) ON DELETE SET NULL,
   product_name TEXT NOT NULL,
@@ -1879,6 +2039,7 @@ CREATE INDEX IF NOT EXISTS idx_bill_of_supply_items_doc
 CREATE TABLE IF NOT EXISTS gst_amendments (
   id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
   user_id UUID REFERENCES users(id) ON DELETE RESTRICT NOT NULL,
+  created_by UUID REFERENCES users(id) ON DELETE SET NULL,
 
   -- Which GSTR-1 section this amends: 'b2b' | 'b2cl' | 'b2cs' | 'cdnr'
   -- | 'cdnur' | 'at' | 'txpd'. Named rather than inferred, because the
@@ -1936,6 +2097,7 @@ CREATE INDEX IF NOT EXISTS idx_gst_amendments_section
 CREATE TABLE IF NOT EXISTS proforma_invoices (
   id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
   user_id UUID REFERENCES users(id) ON DELETE RESTRICT NOT NULL,
+  created_by UUID REFERENCES users(id) ON DELETE SET NULL,
 
   -- Its own numbering book. document_series is what keeps it out of the tax
   -- invoice sequence: the two count separately and cannot interleave.
@@ -2027,6 +2189,7 @@ CREATE TABLE IF NOT EXISTS proforma_invoices (
 CREATE TABLE IF NOT EXISTS proforma_invoice_items (
   id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
   user_id UUID REFERENCES users(id) ON DELETE RESTRICT NOT NULL,
+  created_by UUID REFERENCES users(id) ON DELETE SET NULL,
   proforma_invoice_id UUID REFERENCES proforma_invoices(id) ON DELETE CASCADE NOT NULL,
   product_id UUID REFERENCES products(id) ON DELETE SET NULL,
   product_name TEXT NOT NULL,
@@ -2097,6 +2260,7 @@ CREATE TRIGGER eway_bills_upd          BEFORE UPDATE ON eway_bills          FOR 
 CREATE TABLE IF NOT EXISTS warranties (
   id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
   user_id UUID REFERENCES users(id) ON DELETE RESTRICT NOT NULL,
+  created_by UUID REFERENCES users(id) ON DELETE SET NULL,
 
   -- Its own numbering book (WAR-#####). Never the invoice series: a warranty
   -- must not consume a tax invoice number.

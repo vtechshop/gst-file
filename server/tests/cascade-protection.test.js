@@ -229,15 +229,18 @@ test('setup: connect and record the pre-migration state', async () => {
   BEFORE_FKS = await userFks();
   BEFORE_INDEXES = await indexSnapshot();
   BEFORE_NOTNULL = await notNullSnapshot();
-  // 53 single-column foreign keys point at users(id): the 49 that carry
-  // OWNERSHIP, plus 4 that carry ATTRIBUTION (purchase_orders.created_by and
-  // .cancelled_by, stock_serials.created_by, stock_movements.created_by).
-  // The attribution four are ON DELETE SET NULL and must come out of this
-  // migration untouched - erasing who raised a document is its own kind of
-  // data loss, and nothing here is entitled to do it.
-  assert.equal(BEFORE_FKS.length, 53, '53 single-column foreign keys to users(id)');
+  // Two kinds of foreign key point at users(id). OWNERSHIP keys - 49 of
+  // them, one per tenant table plus profiles.id - are what this migration
+  // converts. ATTRIBUTION keys are ON DELETE SET NULL and must come out
+  // untouched: erasing who raised a document is its own kind of data loss.
+  //
+  // The attribution count is deliberately NOT pinned. Employee logins added
+  // created_by to 42 more tables, and a later feature may add more; what
+  // matters is that the ORIGINAL four are still SET NULL (C10b) and that
+  // the 49 ownership keys are all still CASCADE here.
   assert.equal(BEFORE_FKS.filter(r => r.confdeltype === 'c').length, 49, '49 ownership, CASCADE');
-  assert.equal(BEFORE_FKS.filter(r => r.confdeltype === 'n').length, 4, '4 attribution, SET NULL');
+  assert.ok(BEFORE_FKS.filter(r => r.confdeltype === 'n').length >= 4, 'attribution keys are SET NULL');
+  assert.equal(BEFORE_FKS.filter(r => r.confdeltype === 'r').length, 0, 'none converted yet');
 });
 
 // ── C1-C3  the file is shaped for atomicity ─────────────────────────
@@ -263,8 +266,13 @@ test('C3 the migration is registered, the rollback is not', () => {
     path.join(__dirname, '..', 'db', 'migrations', '_manifest.json'), 'utf8'));
   assert.ok(manifest.order.includes('migration_cascade_protection.sql'),
     'listed in the manifest, or the runner would skip it forever');
-  assert.equal(manifest.order[manifest.order.length - 1], 'migration_cascade_protection.sql',
-    'last, so it runs after the receipt-voucher migration it follows');
+  // It must come AFTER the receipt-voucher migration it follows. It is no
+  // longer LAST - employee logins were registered after it - so the
+  // assertion is about order, which is what actually matters, rather than
+  // about being the final entry, which was only incidentally true.
+  assert.ok(manifest.order.indexOf('migration_cascade_protection.sql')
+    > manifest.order.indexOf('migration_receipt_voucher_order.sql'),
+    'cascade protection runs after the receipt-voucher migration');
   assert.equal(manifest.order.filter(f => /rollback/.test(f)).length, 0,
     'the rollback must never be picked up by the runner');
 });
@@ -287,9 +295,10 @@ test('C5 applying the migration converts exactly 49 to RESTRICT', async () => {
   const after = await userFks();
   assert.equal(after.filter(r => r.confdeltype === 'r').length, 49, 'exactly 49 RESTRICT');
   assert.equal(after.filter(r => r.confdeltype === 'c').length, 0, 'no CASCADE left');
-  assert.equal(after.length, 53, 'no constraint was added or lost');
-  assert.equal(after.filter(r => r.confdeltype === 'n').length, 4,
-    'the 4 attribution keys are still SET NULL - attribution was not touched');
+  assert.equal(after.length, BEFORE_FKS.length, 'no constraint was added or lost');
+  assert.equal(after.filter(r => r.confdeltype === 'n').length,
+    BEFORE_FKS.filter(r => r.confdeltype === 'n').length,
+    'every attribution key is still SET NULL - attribution was not touched');
   assert.ok(after.filter(r => r.confdeltype === 'r').every(r => r.convalidated),
     'every converted constraint is VALIDATED, not left NOT VALID');
 });
@@ -314,8 +323,15 @@ test('C8 indexes are untouched', async () => {
 
 test('C9 NOT NULL on user_id is untouched', async () => {
   assert.equal(await notNullSnapshot(), BEFORE_NOTNULL);
-  const nn = BEFORE_NOTNULL.split('\n').filter(l => l.endsWith('|true')).length;
-  assert.equal(nn, 48, 'all 48 user_id columns are still NOT NULL');
+  // employee_accounts.user_id is also called user_id and is also NOT NULL,
+  // so the raw count is 49. The 48 TENANT tables are what this asserts.
+  const tenant = BEFORE_NOTNULL.split('\n').filter(l => !['employee_accounts|', 'receipt_voucher_items|']
+      .some(p => l.startsWith(p)));
+  // The snapshot covers every pg_attribute row named user_id, index
+  // columns included, so NOT NULL is counted on the `|true` lines exactly
+  // as the original assertion did.
+  assert.equal(tenant.filter(l => l.endsWith('|true')).length, 48,
+    'all 48 tenant user_id columns are still NOT NULL');
 });
 
 test('C10 ON UPDATE behaviour is preserved', async () => {
@@ -326,12 +342,17 @@ test('C10 ON UPDATE behaviour is preserved', async () => {
   assert.deepEqual(after.map(r => r.conname + '=' + r.confupdtype).sort(), before);
 });
 
-test('C10b the 4 attribution foreign keys are still ON DELETE SET NULL', async () => {
-  const attribution = (await userFks()).filter(r => r.confdeltype === 'n');
-  assert.deepEqual(
-    attribution.map(r => r.tbl + '.' + r.col).sort(),
-    ['purchase_orders.cancelled_by', 'purchase_orders.created_by',
-      'stock_movements.created_by', 'stock_serials.created_by']);
+test('C10b the original attribution foreign keys are still ON DELETE SET NULL', async () => {
+  const attribution = new Set((await userFks())
+    .filter(r => r.confdeltype === 'n')
+    .map(r => r.tbl + '.' + r.col));
+  // The four that existed before employee logins. Employee logins added
+  // created_by to 42 more tables, all SET NULL; this asserts the original
+  // four specifically, so the set growing cannot hide one of them changing.
+  for (const key of ['purchase_orders.cancelled_by', 'purchase_orders.created_by',
+    'stock_movements.created_by', 'stock_serials.created_by']) {
+    assert.ok(attribution.has(key), key + ' must still be ON DELETE SET NULL');
+  }
 });
 
 // ── C11-C12  Group B and Group C unchanged ──────────────────────────

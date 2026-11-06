@@ -261,11 +261,21 @@ class ApiClient {
           return { data: { session: null }, error: null, reason: 'network' };
         }
       },
-      signInWithPassword: async ({ email, password }) => {
+      signInWithPassword: async ({ identifier, email, password }) => {
         try {
-          const { token, user } = await apiFetch('/auth/login', { method: 'POST', body: JSON.stringify({ email, password }) });
+          // `identifier` is an email address OR an Employee ID. `email` is
+          // still forwarded so an older cached login page keeps working,
+          // and the server accepts either field name.
+          const res = await apiFetch('/auth/login', {
+            method: 'POST',
+            body: JSON.stringify({ identifier: identifier || email, email, password })
+          });
+          const { token, user } = res;
           setToken(token);
-          return { data: { user, session: { user } }, error: null };
+          return {
+            data: { user, session: { user }, must_change_password: !!res.must_change_password },
+            error: null
+          };
         } catch (error) {
           return { data: { user: null, session: null }, error };
         }

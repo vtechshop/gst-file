@@ -58,6 +58,8 @@
     "migration_proforma_advance.sql",
     "migration_receipt_voucher_payment.sql",
     "migration_receipt_voucher_order.sql",
-    "migration_cascade_protection.sql"
+    "migration_cascade_protection.sql",
+    "migration_employee_accounts.sql",
+    "migration_receipt_voucher_items.sql"
   ]
 }

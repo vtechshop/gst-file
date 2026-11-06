@@ -27,6 +27,22 @@ const {
   validateCustomerPayload, validateProductPayload, validateProfilePayload, makeDistrictValidator
 } = require('../utils/validation');
 
+// The author column every tenant table now carries (see
+// migration_employee_accounts.sql). `profiles` is the one table in this
+// registry without one - it describes the account itself, so there is no
+// separate author to record.
+const AUTHOR_COLUMN = 'created_by';
+const hasAuthor = (table) => table !== 'profiles';
+
+// Whose data is this request operating in?
+//
+// req.accountOwnerId is set by middleware/access.js: the Admin themselves,
+// or an employee's employer. The fallback to req.userId keeps this correct
+// for any path where loadAccount has not run - the two are the same value
+// for an Admin, so the fallback never widens access, it only avoids an
+// undefined slipping into a WHERE clause.
+const ownerIdOf = (req) => req.accountOwnerId || req.userId;
+
 function buildWhere(query, ownerColumn, userId, columns) {
   const clauses = [`${ownerColumn} = $1`];
   const params = [userId];
@@ -167,6 +183,25 @@ function refuseImmutable(body, immutable, table) {
 }
 
 function makeCrudRouter(table, { columns, immutable, insertable = true, deletable = true, readOnly = false, ownerColumn = 'user_id', validate, beforeWrite }) {
+  const authored = hasAuthor(table);
+  // created_by is READABLE - "which employee raised this" is the point of
+  // recording it - but never writable from a request body: it is excluded
+  // from the patch set below and forced from the session on insert.
+  const readable = authored ? columns.concat([AUTHOR_COLUMN]) : columns;
+
+  // An employee limited to their own records only ever sees rows they
+  // created. Applied as an extra WHERE clause on top of the ownership one,
+  // never instead of it, so a narrower scope can never widen the tenant.
+  //
+  // A row created before employees existed has created_by NULL and is
+  // therefore invisible at 'own' scope. That is deliberate: it has no
+  // author to match, and showing it to whoever happens to be asking would
+  // be guessing. An Admin sees everything, as always.
+  const scopeOf = (req, params) => {
+    if (!authored || req.isAdmin || req.recordScope !== 'own') return '';
+    params.push(req.userId);
+    return ` AND ${AUTHOR_COLUMN} = $${params.length}`;
+  };
   const router = express.Router();
   router.use(requireAuth);
 
@@ -180,9 +215,10 @@ function makeCrudRouter(table, { columns, immutable, insertable = true, deletabl
   };
 
   router.get('/', asyncRoute(async (req, res) => {
-    const { where, params } = buildWhere(req.query, ownerColumn, req.userId, columns);
-    const orderClause = buildOrder(req.query.order, columns);
-    const selectCols = buildSelect(req.query.select, columns);
+    const { where: ownWhere, params } = buildWhere(req.query, ownerColumn, ownerIdOf(req), readable);
+    const where = ownWhere + scopeOf(req, params);
+    const orderClause = buildOrder(req.query.order, readable);
+    const selectCols = buildSelect(req.query.select, readable);
     const limitClause = buildLimit(req.query.limit, req.query.offset);
     // The page of rows and the aggregates over the whole filtered set are
     // independent, so they go together rather than one after the other.
@@ -202,8 +238,13 @@ function makeCrudRouter(table, { columns, immutable, insertable = true, deletabl
     // body — this also correctly handles `profiles`, where ownerColumn
     // is `id` itself: whatever `id` the client sent gets overwritten
     // with req.userId, which is the only value that could ever be valid.
-    const payload = { ...req.body, [ownerColumn]: req.userId };
+    // Ownership is forced from the session, and so is authorship: whatever
+    // the body claims for either is overwritten. An employee cannot post a
+    // row into someone else's account, and cannot attribute their own work
+    // to a colleague.
+    const payload = { ...req.body, [ownerColumn]: ownerIdOf(req) };
     const cols = Object.keys(payload).filter(c => columns.includes(c));
+    if (authored) { payload[AUTHOR_COLUMN] = req.actorUserId || req.userId; cols.push(AUTHOR_COLUMN); }
     if (!cols.length) { const e = new Error('No valid fields to insert.'); e.status = 400; e.expose = true; throw e; }
     const placeholders = cols.map((_, i) => `$${i + 1}`).join(',');
     const values = cols.map(c => payload[c]);
@@ -217,12 +258,13 @@ function makeCrudRouter(table, { columns, immutable, insertable = true, deletabl
     if (readOnly) refuseWrite();
     refuseImmutable(req.body, immutable, table);
     runValidate(validate, req.body, false);
-    const { where, params } = buildWhere(req.query, ownerColumn, req.userId, columns);
+    const { where: ownWhere, params } = buildWhere(req.query, ownerColumn, ownerIdOf(req), readable);
+    const where = ownWhere + scopeOf(req, params);
     // A rule that has to look at the DATABASE, not just the payload:
     // runValidate above is synchronous and sees only the body. Optional,
     // and only a table that genuinely needs one declares it.
     if (beforeWrite) await beforeWrite(pool, req.body, { userId: req.userId, where, params });
-    const patchCols = Object.keys(req.body).filter(c => columns.includes(c) && c !== ownerColumn); // ownership is never reassignable
+    const patchCols = Object.keys(req.body).filter(c => columns.includes(c) && c !== ownerColumn && c !== AUTHOR_COLUMN); // ownership and authorship are never reassignable
     if (!patchCols.length) { const e = new Error('No valid fields to update.'); e.status = 400; e.expose = true; throw e; }
     const setClause = patchCols.map((c, i) => `${c} = $${params.length + i + 1}`).join(',');
     const values = [...params, ...patchCols.map(c => req.body[c])];
@@ -256,7 +298,8 @@ function makeCrudRouter(table, { columns, immutable, insertable = true, deletabl
       e.status = 409; e.expose = true; e.code = 'profile_delete_blocked';
       throw e;
     }
-    const { where, params } = buildWhere(req.query, ownerColumn, req.userId, columns);
+    const { where: ownWhere, params } = buildWhere(req.query, ownerColumn, ownerIdOf(req), readable);
+    const where = ownWhere + scopeOf(req, params);
     const { rowCount } = await pool.query(`DELETE FROM ${table} ${where}`, params);
     res.json({ deletedCount: rowCount });
   }));
@@ -884,6 +927,18 @@ const TABLES = {
       'taxable_value','sort_order','created_at','updated_at'],
     readOnly: true
   },
+  // Written by POST /documents/receipt_voucher/save, in the transaction
+  // that writes the voucher. readOnly here for the same reason
+  // cdn_note_items is: the browser reads them to redraw a saved voucher,
+  // and a line item the browser can rewrite on its own is a total that
+  // can stop matching its document.
+  receipt_voucher_items: {
+    columns: ['id', 'user_id', 'created_by', 'receipt_voucher_id', 'product_name',
+      'hsn_code', 'unit', 'quantity', 'rate', 'taxable_value', 'sort_order',
+      'created_at', 'updated_at'],
+    readOnly: true
+  },
+
   cdn_note_items: {
     columns: ['id','user_id','note_id','product_id','product_name','hsn_code','unit',
       'quantity','rate','taxable_value','sort_order','created_at','updated_at'],

@@ -73,6 +73,18 @@ function sandbox(values, profile) {
   vm.runInContext(VJS, sb);
   sb.__el = el;
   sb.__set = (name, value) => { sb.__incoming = value; vm.runInContext(name + ' = globalThis.__incoming;', sb); };
+  // The order used to be one description, one quantity and one rate. It is
+  // a list of products now, so a fixture written as vOrderQty/vOrderRate is
+  // translated into the one row it describes - the same order, entered the
+  // way the form enters it. Every existing fixture therefore keeps meaning
+  // exactly what it meant.
+  const _q = String(values.vOrderQty == null ? '' : values.vOrderQty).trim();
+  const _r = String(values.vOrderRate == null ? '' : values.vOrderRate).trim();
+  if (_q || _r || values.vOrderDesc) {
+    sb.__set('vOrderItems', [{
+      name: values.vOrderDesc || 'Order', quantity: _q, rate: _r, amount: ''
+    }]);
+  }
   return sb;
 }
 

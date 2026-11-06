@@ -16,6 +16,17 @@ const compression = require('compression');
 const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
 const authRoutes = require('./routes/auth');
+const employeeRoutes = require('./routes/employees');
+const { requireAuth } = require('./middleware/auth');
+const { loadAccount, enforceModuleAccess } = require('./middleware/access');
+
+// See the chain below. Keeps the real caller available for authorship while
+// every existing ownership clause keeps reading req.userId.
+function actAsAccountOwner(req, res, next) {
+  req.actorUserId = req.userId;
+  if (req.accountOwnerId) req.userId = req.accountOwnerId;
+  next();
+}
 const backupRoutes = require('./routes/backup');
 const invoiceRoutes = require('./routes/invoices');
 const documentRoutes = require('./routes/documents');
@@ -110,7 +121,57 @@ app.use('/api', rateLimit({
   message: { error: { message: 'Too many requests — please wait a moment and try again.', code: 'rate_limited' } }
 }));
 
+// ── Authority, once, for every authenticated API route ──────────────
+//
+// Each router below already applies requireAuth itself. What it cannot do
+// is decide WHOSE data the request operates in or WHETHER the caller may,
+// because that has to happen before the router's own routes match. So it
+// happens here, in one place, for everything under /api except the two
+// surfaces that must not have it:
+//
+//   /api/auth    - signing in happens before there is an account to load,
+//                  and /auth/me and /auth/change-password load it
+//                  themselves so they can report and repair their own state.
+//   /api/verify  - deliberately public: a QR on a document handed to a
+//                  customer or a tax officer, neither of whom has a login.
+//
+// The four steps, in this order and for a reason:
+//
+//   requireAuth           is the token ours, and who does it claim to be
+//   loadAccount           who is that really, are they still allowed in,
+//                         has their session been revoked, whose data is it
+//   enforceModuleAccess   may this account use THIS endpoint, this way
+//   actAsAccountOwner     the substitution described below
+//
+// actAsAccountOwner sets req.userId to the account owner and keeps the real
+// caller in req.actorUserId. Every one of the ~300 ownership clauses in the
+// routers below reads req.userId as the tenant key, and they are correct
+// unchanged once it holds the employer's id - which is what an employee
+// working in their employer's books means. Rewriting them individually
+// would be three hundred chances to miss one, and a missed one is a
+// cross-account leak. One assignment, in the open, is the smaller risk.
+//
+// It is deliberately AFTER enforceModuleAccess: permission is decided on
+// the real caller, never on the account they are acting as.
+const PUBLIC_API = /^\/(auth|verify)(\/|$)/;
+app.use('/api', (req, res, next) => {
+  if (PUBLIC_API.test(req.path)) return next();
+  requireAuth(req, res, (err) => {
+    if (err) return next(err);
+    loadAccount(req, res, (err2) => {
+      if (err2) return next(err2);
+      enforceModuleAccess(req, res, (err3) => {
+        if (err3) return next(err3);
+        actAsAccountOwner(req, res, next);
+      });
+    });
+  });
+});
+
 app.use('/api/auth', authRoutes);
+// Admin-only inside the router as well as by the registry above, because
+// two independent gates on employee management is the right number.
+app.use('/api/employees', employeeRoutes);
 // Mounted at its own sub-path, not bare /api — backupRoutes applies
 // requireAuth to every path under wherever it's mounted (router.use with
 // no path arg), so mounting it at bare /api would gate every OTHER /api/*

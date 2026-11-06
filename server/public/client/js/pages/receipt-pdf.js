@@ -211,16 +211,23 @@ async function buildReceiptPDFDoc(voucher, quotation, items, previousReceived) {
 
   y = Math.max(py, my) + 3;
 
-  // ── What the quotation covers, when there is one ──
+  // ── The products the order covers ──
+  //
+  // Two shapes arrive here. A quotation's items carry total_amount and
+  // their own gst_percentage; a voucher's own items (the manual path)
+  // carry taxable_value and no per-line rate, because the order's GST
+  // rate applies to the order rather than to a line. Both are read, so
+  // the receipt shows the same table either way.
+  const orderRate = +voucher.order_gst_rate || 0;
   const rows = (items || []).map((it, i) => [
     String(i + 1),
     String(it.product_name || ''),
     String(it.hsn_code || ''),
-    String(+it.quantity || 0),
+    (+it.quantity > 0 ? String(+it.quantity) : ''),
     String(it.unit || ''),
-    formatNum(it.rate),
-    (+it.gst_percentage || 0) + '%',
-    formatNum(it.total_amount)
+    (+it.rate > 0 ? formatNum(it.rate) : ''),
+    (+it.gst_percentage || orderRate || 0) + '%',
+    formatNum(it.total_amount != null ? it.total_amount : it.taxable_value)
   ]);
   if (rows.length) {
     doc.autoTable({
@@ -254,8 +261,11 @@ async function buildReceiptPDFDoc(voucher, quotation, items, previousReceived) {
   // visible and is not mistaken for tax on this receipt.
   if (fig.order) {
     if (fig.order.amount) summary.push(['Product Amount', formatNum(fig.order.amount)]);
-    if (fig.order.packing) summary.push(['Packing / Other Charges', formatNum(fig.order.packing)]);
-    summary.push(['Taxable Amount', formatNum(fig.order.taxable)]);
+    // Named as the form names them, so the screen and the paper read the
+    // same: "Packing Charge" and "Total before GST", not two words for one
+    // figure.
+    if (fig.order.packing) summary.push(['Packing Charge', formatNum(fig.order.packing)]);
+    summary.push(['Total before GST', formatNum(fig.order.taxable)]);
     summary.push([`GST on Order @ ${formatNum(fig.order.gstRate)}%`, formatNum(fig.order.gstAmount)]);
     summary.push([fig.linked ? 'Quotation Total' : 'Total Order Value', formatNum(fig.order.total)]);
   }

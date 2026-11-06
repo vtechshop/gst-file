@@ -707,7 +707,13 @@ test('AR21 the payment facts do not outlive their receipt, and come back on edit
 test('AR22 the printed table shows the quoted rate and GST, and no false receipt', () => {
   // (required test 9) The quotation's figures are printed as the quotation's.
   assert.match(RECEIPT_PDF, /'#', 'Description', 'HSN', 'Qty', 'Unit', 'Rate', 'GST %', 'Amount'/);
-  assert.match(RECEIPT_PDF, /\(\+it\.gst_percentage \|\| 0\) \+ '%'/);
+  // A quotation's item carries its own gst_percentage; a voucher's own
+  // item does not, because the order's rate applies to the order rather
+  // than to a line - so the column falls back to the order rate. The
+  // quoted rate is still what is printed when there is one, which is what
+  // this test is about.
+  assert.match(RECEIPT_PDF, /\(\+it\.gst_percentage \|\| orderRate \|\| 0\) \+ '%'/);
+  assert.match(RECEIPT_PDF, /const orderRate = \+voucher\.order_gst_rate \|\| 0;/);
   // Money received is the voucher's own amount, and the only figure the words
   // are written from. The quotation total is labelled as the quotation's.
   assert.match(RECEIPT_PDF, /\['Advance Received Now', formatNum\(fig\.now\)\]/);

@@ -34,11 +34,21 @@ const PUBLIC_DIR = path.join(SERVER_DIR, 'public');
 // What the browser loads, and nothing else. Anchored so that "client/js/x"
 // matches but "server/client/js/x" cannot.
 const ALLOW = [
-  /^[^/]+\.html$/,        // the 28 root pages
+  /^[^/]+\.html$/,        // the root pages
   /^client\/css\/.+/,
   /^client\/js\/.+/,
   /^favicon\.ico$/
 ];
+
+// shared/*.js is loaded by BOTH sides: the browser gets it from /shared
+// (app.js maps that to server/shared) and the server requires it from
+// ../../shared, which from server/ is server/shared as well. So it is not
+// part of public/ - it has its own destination.
+//
+// It used to be copied by hand. Two copies of a file the authorisation
+// layer depends on, with nothing keeping them equal, is exactly the drift
+// this script exists to prevent for public/; it now prevents it here too.
+const SHARED_ALLOW = [/^shared\/.+\.js$/];
 
 // Checked even after ALLOW has passed. These must never reach public/,
 // whatever the allow-list thinks.
@@ -57,25 +67,38 @@ function fail(message) {
   process.exit(1);
 }
 
-// Only committed files are publishable — see the note above.
-function trackedFiles() {
-  const out = execFileSync('git', ['ls-files', '-z'], {
-    cwd: REPO_ROOT, encoding: 'utf8', maxBuffer: 32 * 1024 * 1024
-  });
-  return out.split('\0').filter(Boolean);
+// The list comes from git rather than from walking the tree, so nothing
+// outside the repository and nothing ignored can be published.
+//
+// --others --exclude-standard adds files that are NEW and not yet staged,
+// while still honouring .gitignore. Without it a new page could only be
+// mirrored after being committed, which made "build the mirror" and
+// "commit" the same step - and left the served copy referencing scripts it
+// did not contain. The DENY list below is still applied to every
+// candidate, tracked or not.
+function candidateFiles() {
+  const out = execFileSync('git',
+    ['ls-files', '-z', '--cached', '--others', '--exclude-standard'], {
+      cwd: REPO_ROOT, encoding: 'utf8', maxBuffer: 32 * 1024 * 1024
+    });
+  // --cached and --others can both list the same path, so a file is never
+  // copied, or counted, twice.
+  return [...new Set(out.split('\0').filter(Boolean))];
 }
 
-function selectFrontend(all) {
+function selectBy(all, allow) {
   const picked = [];
   for (const f of all) {
-    if (!ALLOW.some((re) => re.test(f))) continue;
+    if (!allow.some((re) => re.test(f))) continue;
     if (DENY.some((re) => re.test(f))) {
-      fail(`"${f}" matched the frontend allow-list but is denied by policy`);
+      fail(`"${f}" matched an allow-list but is denied by policy`);
     }
     picked.push(f);
   }
   return picked.sort();
 }
+const selectFrontend = (all) => selectBy(all, ALLOW);
+const selectShared = (all) => selectBy(all, SHARED_ALLOW);
 
 // Refuses to write anywhere but public/. A crafted path can otherwise walk
 // out of the destination with ".." and overwrite real source.
@@ -86,9 +109,38 @@ function destFor(rel) {
   return dest;
 }
 
+// shared/x.js -> server/shared/x.js, with the same refusal to write
+// anywhere but its own destination.
+function sharedDestFor(rel) {
+  const dest = path.resolve(SERVER_DIR, rel);
+  const root = path.join(SERVER_DIR, 'shared');
+  if (!dest.startsWith(root + path.sep)) fail(`"${rel}" resolves outside server/shared`);
+  return dest;
+}
+
+// Copy, then read both back and compare bytes: a truncated or re-encoded
+// file would serve a broken page rather than an obvious error.
+function copyAll(files, dest) {
+  for (const rel of files) {
+    const to = dest(rel);
+    fs.mkdirSync(path.dirname(to), { recursive: true });
+    fs.copyFileSync(path.join(REPO_ROOT, rel), to);
+  }
+  let mismatched = 0;
+  for (const rel of files) {
+    const a = fs.readFileSync(path.join(REPO_ROOT, rel));
+    const b = fs.readFileSync(dest(rel));
+    if (!a.equals(b)) { console.error(`  MISMATCH: ${rel}`); mismatched++; }
+  }
+  if (mismatched) fail(`${mismatched} file(s) did not copy byte-for-byte`);
+}
+
 function main() {
-  const files = selectFrontend(trackedFiles());
+  const all = candidateFiles();
+  const files = selectFrontend(all);
+  const shared = selectShared(all);
   if (!files.length) fail('no frontend files matched — refusing to write an empty public/');
+  if (!shared.length) fail('no shared/*.js matched — refusing to leave server/shared stale');
 
   const pages = files.filter((f) => /^[^/]+\.html$/.test(f)).length;
   if (!pages) fail('no root-level HTML pages matched — refusing to publish a site with no pages');
@@ -96,24 +148,12 @@ function main() {
   // Cleaned rather than merged, so a renamed or deleted page cannot survive
   // as a stale file that is still reachable over HTTP.
   fs.rmSync(PUBLIC_DIR, { recursive: true, force: true });
+  copyAll(files, destFor);
 
-  for (const rel of files) {
-    const src = path.join(REPO_ROOT, rel);
-    const dest = destFor(rel);
-    fs.mkdirSync(path.dirname(dest), { recursive: true });
-    fs.copyFileSync(src, dest);
-  }
-
-  // The copy is only useful if it is exact — a truncated or re-encoded file
-  // would serve a broken page rather than an obvious error, so every byte is
-  // compared back and a mismatch stops the build.
-  let mismatched = 0;
-  for (const rel of files) {
-    const a = fs.readFileSync(path.join(REPO_ROOT, rel));
-    const b = fs.readFileSync(destFor(rel));
-    if (!a.equals(b)) { console.error(`  MISMATCH: ${rel}`); mismatched++; }
-  }
-  if (mismatched) fail(`${mismatched} file(s) did not copy byte-for-byte`);
+  // server/shared is NOT emptied first: the server require()s these files
+  // at startup, and a window in which they are missing is a window in
+  // which the application cannot boot. Each is overwritten in place.
+  copyAll(shared, sharedDestFor);
 
   const css = files.filter((f) => f.startsWith('client/css/')).length;
   const js = files.filter((f) => f.startsWith('client/js/')).length;
@@ -124,8 +164,9 @@ function main() {
   console.log(`    client/css   : ${css}`);
   console.log(`    client/js    : ${js}`);
   console.log(`    favicon.ico  : ${ico}`);
-  console.log(`    total        : ${files.length} files, all byte-for-byte identical`);
-  console.log(`    output       : server/public`);
+  console.log(`    shared/js    : ${shared.length}  -> server/shared`);
+  console.log(`    total        : ${files.length + shared.length} files, all byte-for-byte identical`);
+  console.log(`    output       : server/public + server/shared`);
 }
 
 main();

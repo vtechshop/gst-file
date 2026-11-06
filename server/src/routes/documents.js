@@ -50,7 +50,16 @@ router.use(requireAuth);
 // it — a test asserts they do, so the two cannot drift.
 const DOCUMENT_TABLES = {
   self_invoice:    { table: 'self_invoices',    series: 'self_invoice' },
-  receipt_voucher: { table: 'receipt_vouchers', series: 'receipt_voucher' },
+  // Line items, so an advance against an order of several products can
+  // name all of them instead of collapsing to one description. The save
+  // route writes them generically from this entry.
+  //
+  // A voucher raised against a PROFORMA stores none: it reads the
+  // quotation's items, because copying them would let a corrected
+  // quotation and the receipt drawn from it disagree. These are for the
+  // manual path.
+  receipt_voucher: { table: 'receipt_vouchers', series: 'receipt_voucher',
+                     items: 'receipt_voucher_items', itemsFk: 'receipt_voucher_id' },
   payment_voucher: { table: 'payment_vouchers', series: 'payment_voucher' },
   refund_voucher:  { table: 'refund_vouchers',  series: 'refund_voucher' },
 

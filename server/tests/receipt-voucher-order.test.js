@@ -90,6 +90,18 @@ function voucherSandbox(values) {
     sb.__incoming = value;
     vm.runInContext(name + ' = globalThis.__incoming;', sb);
   };
+  // The order used to be one description, one quantity and one rate. It is
+  // a list of products now, so a fixture written as vOrderQty/vOrderRate is
+  // translated into the one row it describes - the same order, entered the
+  // way the form enters it. Every existing fixture therefore keeps meaning
+  // exactly what it meant.
+  const _q = String(values.vOrderQty == null ? '' : values.vOrderQty).trim();
+  const _r = String(values.vOrderRate == null ? '' : values.vOrderRate).trim();
+  if (_q || _r || values.vOrderDesc) {
+    sb.__set('vOrderItems', [{
+      name: values.vOrderDesc || 'Order', quantity: _q, rate: _r, amount: ''
+    }]);
+  }
   return sb;
 }
 
@@ -272,10 +284,13 @@ test('RV11 a typed order needs no quotation', () => {
   assert.strictEqual(o.total, 66670);
   // The manual boxes exist, and are put out of reach when a quotation is
   // linked rather than left to disagree with it.
-  for (const id of ['vOrderDesc', 'vOrderQty', 'vOrderRate', 'vPackingCharge', 'vOrderGstRate']) {
+  for (const id of ['vPackingCharge', 'vOrderGstRate']) {
     assert.ok(HTML.includes('id="' + id + '"'), id + ' must exist on the form');
   }
-  assert.match(nocomment(VJS), /\['vOrderDesc', 'vOrderQty', 'vOrderRate', 'vPackingCharge', 'vOrderGstRate'\]\.forEach/);
+  // The reset empties the product rows, then the two boxes that remain.
+  assert.match(nocomment(VJS), /vOrderItems = \[\];/);
+  assert.match(nocomment(VJS), /renderVoucherOrderItems\(\);/);
+  assert.match(nocomment(VJS), /\['vPackingCharge', 'vOrderGstRate'\]\.forEach/);
 });
 
 // ═══ 4. Advance aggregation and excess protection ═════════════════════
@@ -420,7 +435,8 @@ test('RV18 the receipt prints the order, the advances and the balance', () => {
   assert.strictEqual(g.balance, 16670);
 
   // The rows themselves.
-  for (const label of ['Product Amount', 'Packing / Other Charges', 'Taxable Amount',
+  // Renamed to match the form and the specification: one figure, one name.
+  for (const label of ['Product Amount', 'Packing Charge', 'Total before GST',
     'Advance Received Earlier', 'Advance Received Now', 'Total Advance Paid', 'Balance Payable']) {
     assert.ok(PDF.includes(label), 'the receipt must print ' + label);
   }
@@ -520,7 +536,9 @@ test('RV24 the form is in the five sections the receipt needs', () => {
   assert.match(VJS, /f\.party === 'supplier' \? 'Supplier Details' : 'Customer Details'/);
   for (const id of ['vDocNumber', 'vDocDate', 'vDocType', 'vStatusBadge',
     'vPartyName', 'vPartyGstin', 'vPartyAddress', 'vPos',
-    'vProforma', 'vOrderDesc', 'vOrderQty', 'vOrderRate', 'vPackingCharge', 'vOrderGstRate',
+    // The order is a table now: a row per product, with Add and Remove.
+    'vProforma', 'vOrderItemsTable', 'vOrderItemsBody', 'vOrderAddRow',
+    'vOrderItemsTotal', 'vPackingCharge', 'vOrderGstRate',
     'vOrderTaxable', 'vOrderGstAmount', 'vOrderTotal',
     'vQuotePrev', 'vQuoteNow', 'vQuotePaid', 'vQuoteBalance',
     'vPaymentMethod', 'vReference', 'vPaymentDate', 'vSupplyNature', 'vReceivedNote']) {
@@ -565,10 +583,17 @@ test('RV27 numbering and cancellation are untouched', () => {
 });
 
 test('RV28 the changed assets carry new cache keys, and the mirrors match', () => {
-  assert.match(HTML, /client\/js\/pages\/vouchers\.js\?v=34/);
-  assert.match(HTML, /client\/js\/pages\/receipt-pdf\.js\?v=4/);
-  assert.strictEqual(/vouchers\.js\?v=33/.test(HTML), false, 'the old voucher key must be gone');
-  assert.strictEqual(/receipt-pdf\.js\?v=3"/.test(HTML), false, 'and the old receipt key');
+  // Floors, not pins. Both files changed again when the order became a
+  // table of products, and pinning an exact number makes every later edit
+  // of an unrelated change fail here - which says nothing about whether
+  // THIS change bumped the key.
+  const vKey = HTML.match(/client\/js\/pages\/vouchers\.js\?v=(\d+)/);
+  const pKey = HTML.match(/client\/js\/pages\/receipt-pdf\.js\?v=(\d+)/);
+  assert.ok(vKey && pKey, 'both assets are referenced with a cache key');
+  assert.ok(Number(vKey[1]) >= 35, `vouchers.js must be v35 or later, found v${vKey[1]}`);
+  assert.ok(Number(pKey[1]) >= 5, `receipt-pdf.js must be v5 or later, found v${pKey[1]}`);
+  assert.strictEqual(/vouchers\.js\?v=33"/.test(HTML), false, 'the pre-feature voucher key is gone');
+  assert.strictEqual(/receipt-pdf\.js\?v=3"/.test(HTML), false, 'and the pre-feature receipt key');
   for (const rel of [['vouchers.html'], ['client', 'js', 'pages', 'vouchers.js'],
     ['client', 'js', 'pages', 'receipt-pdf.js']]) {
     const src = fs.readFileSync(path.join(ROOT, ...rel));

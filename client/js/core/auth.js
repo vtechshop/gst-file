@@ -23,6 +23,18 @@ async function requireAuth() {
       window.location.href = 'index.html';
       return null;
     }
+    // What this account may see, applied to the page before its own init
+    // runs. Optional on purpose - the same shape as syncProductsIfNeeded
+    // below - so a page that does not load core/access.js is unaffected.
+    //
+    // A false return means the page must NOT continue: the account has to
+    // change its password first, or has no permission for this page. The
+    // server refuses the same requests either way; this stops the page
+    // drawing a view it cannot fill.
+    if (typeof applyAccessControl === 'function') {
+      const allowed = await applyAccessControl(session.user);
+      if (!allowed) return null;
+    }
     if (typeof syncProductsIfNeeded === 'function') syncProductsIfNeeded(session.user.id);
     return session.user;
   } catch (err) {

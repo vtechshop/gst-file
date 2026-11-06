@@ -14,6 +14,14 @@ function requireAuth(req, res, next) {
   try {
     const payload = jwt.verify(token, process.env.JWT_SECRET);
     req.userId = payload.sub;
+    // The epoch the token was minted under. middleware/access.js compares
+    // it with the account's stored session_epoch and refuses the request if
+    // they differ, which is how a deactivation or a password reset takes
+    // effect at once instead of whenever a 7-day token happens to expire.
+    // Tokens issued before this existed carry no epoch; those read as 0,
+    // which is the default every account starts at, so no one is signed out
+    // by the upgrade itself.
+    req.tokenEpoch = Number.isInteger(payload.epoch) ? payload.epoch : 0;
     next();
   } catch (err) {
     // Expiry is called out with its own code because it is the ONLY

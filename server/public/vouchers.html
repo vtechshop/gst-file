@@ -7,19 +7,21 @@
   <link rel="stylesheet" href="client/css/style.css?v=42">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
   <script src="shared/india-districts.js?v=29"></script>
-  <script src="client/js/api/apiClient.js?v=29"></script>
+  <script src="client/js/api/apiClient.js?v=30"></script>
   <script src="client/js/api/backup.js?v=29"></script>
   <script src="client/js/core/config.js?v=33"></script>
   <script src="client/js/api/product-sync.js?v=39"></script>
-  <script src="client/js/core/auth.js?v=29"></script>
+  <script src="client/js/core/auth.js?v=30"></script>
+  <script src="shared/access-modules.js?v=1"></script>
+  <script src="client/js/core/access.js?v=1"></script>
   <script src="client/js/utilities/utils.js?v=36"></script>
   <script src="client/js/core/search.js?v=29"></script>
   <script src="client/js/pages/profile.js?v=43"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.31/jspdf.plugin.autotable.min.js"></script>
   <script src="client/js/pages/invoice-pdf.js?v=52"></script>
-  <script src="client/js/pages/receipt-pdf.js?v=4"></script>
-  <script src="client/js/pages/vouchers.js?v=34"></script>
+  <script src="client/js/pages/receipt-pdf.js?v=5"></script>
+  <script src="client/js/pages/vouchers.js?v=35"></script>
 
 </head>
 <body>
@@ -280,42 +282,68 @@
                 </select>
                 <div id="vProformaNote" class="fs-11 text-muted-sm d-none"></div>
               </div>
-              <div class="form-group" id="vOrderDescGroup">
-                <label for="vOrderDesc">Product Description</label>
-                <input type="text" id="vOrderDesc" class="form-control"
-                       placeholder="e.g. Steamer 8 Tray with Idly Tray" oninput="recalcVoucher()">
               </div>
-              <div class="form-group" id="vOrderQtyGroup">
-                <label for="vOrderQty">Quantity</label>
-                <input type="number" id="vOrderQty" class="form-control text-right"
-                       min="0" step="0.001" oninput="recalcVoucher()">
+
+              <!-- The order, as a table, because an order of several
+                   products is not one description. A row may be a lump sum
+                   with no quantity ("55,000 for the machine"): Amount is
+                   then typed directly and Qty x Rate does not overwrite it.
+                   When a quotation is linked this table is hidden and the
+                   quotation's own items are shown instead, so the same
+                   figures are never entered twice. -->
+              <div id="vOrderItemsWrap">
+                <div class="d-flex items-center mb-8" style="justify-content:space-between">
+                  <label class="mb-0">Products in this order</label>
+                  <button type="button" class="btn btn-secondary btn-sm" id="vOrderAddRow">
+                    <i class="fas fa-plus"></i> Add product
+                  </button>
+                </div>
+                <div class="table-responsive mb-8">
+                  <table class="data-table" id="vOrderItemsTable">
+                    <thead>
+                      <tr>
+                        <th style="width:34px">#</th>
+                        <th>Product Description</th>
+                        <th style="width:96px" class="text-right">Qty</th>
+                        <th style="width:120px" class="text-right">Rate (&#8377;)</th>
+                        <th style="width:130px" class="text-right">Amount (&#8377;)</th>
+                        <th style="width:38px"></th>
+                      </tr>
+                    </thead>
+                    <tbody id="vOrderItemsBody"></tbody>
+                    <tfoot>
+                      <tr>
+                        <td colspan="4" class="text-right"><b>Product Amount</b></td>
+                        <td class="text-right"><b id="vOrderItemsTotal">&#8377;0.00</b></td>
+                        <td></td>
+                      </tr>
+                    </tfoot>
+                  </table>
+                </div>
+                <div class="form-error mb-12" id="vOrderItemsError"></div>
               </div>
-            </div>
-            <div class="form-grid cols-3 mb-16" id="vOrderManualGrid">
-              <div class="form-group">
-                <label for="vOrderRate">Rate / Product Amount (&#8377;)</label>
-                <input type="number" id="vOrderRate" class="form-control text-right"
-                       min="0" step="0.01" oninput="recalcVoucher()">
-                <div class="form-error" id="vOrderRateError"></div>
+
+              <!-- Packing is charged on the order rather than on a product,
+                   so it sits below the table and is taxed with the rest. -->
+              <div class="form-grid cols-2 mb-16" id="vOrderManualGrid">
+                <div class="form-group">
+                  <label for="vPackingCharge">Packing Charge (&#8377;)</label>
+                  <input type="number" id="vPackingCharge" class="form-control text-right"
+                         min="0" step="0.01" oninput="recalcVoucher()">
+                  <div class="form-error" id="vPackingChargeError"></div>
+                </div>
+                <div class="form-group">
+                  <label for="vOrderGstRate">Order GST Rate %</label>
+                  <select id="vOrderGstRate" class="form-control" onchange="recalcVoucher()"></select>
+                </div>
               </div>
-              <div class="form-group">
-                <label for="vPackingCharge">Packing / Additional Charges (&#8377;)</label>
-                <input type="number" id="vPackingCharge" class="form-control text-right"
-                       min="0" step="0.01" oninput="recalcVoucher()">
-                <div class="form-error" id="vPackingChargeError"></div>
-              </div>
-              <div class="form-group">
-                <label for="vOrderGstRate">Order GST Rate %</label>
-                <select id="vOrderGstRate" class="form-control" onchange="recalcVoucher()"></select>
-              </div>
-            </div>
 
             <!-- Derived, never stored, so the figures on screen and the
                  figures on the receipt cannot disagree. -->
             <div class="calc-box mb-16" id="vOrderBox">
               <div class="calc-row"><span class="label">Product Amount</span><span class="value" id="vOrderAmountOut">&#8377;0.00</span></div>
-              <div class="calc-row"><span class="label">Packing / Additional Charges</span><span class="value" id="vPackingOut">&#8377;0.00</span></div>
-              <div class="calc-row"><span class="label">Taxable Amount</span><span class="value" id="vOrderTaxable">&#8377;0.00</span></div>
+              <div class="calc-row"><span class="label">Packing Charge</span><span class="value" id="vPackingOut">&#8377;0.00</span></div>
+              <div class="calc-row"><span class="label">Total before GST</span><span class="value" id="vOrderTaxable">&#8377;0.00</span></div>
               <div class="calc-row"><span class="label">GST (<span id="vOrderGstRateOut">0</span>%)</span><span class="value" id="vOrderGstAmount">&#8377;0.00</span></div>
               <div class="calc-row total"><span class="label">Total Order Value</span><span class="value" id="vOrderTotal">&#8377;0.00</span></div>
             </div>

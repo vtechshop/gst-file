@@ -504,10 +504,17 @@ test('H1 profiles is owned by its own id, forced from the JWT', () => {
   assert.ok(/ownerColumn: 'id'/.test(profiles), 'profiles must stay keyed on its own id');
   assert.ok(/validate: validateProfilePayload/.test(profiles), 'profiles must be wired to the profile validator');
 
-  // The two lines that make a forged id impossible.
-  assert.ok(src.includes('const payload = { ...req.body, [ownerColumn]: req.userId };'),
+  // The lines that make a forged id impossible. The owner is no longer
+  // req.userId directly - with employee logins it is the ACCOUNT OWNER,
+  // resolved by middleware/access.js - but it is still taken from the
+  // session and still overwrites whatever the body claimed, which is the
+  // property this test exists for.
+  assert.ok(src.includes('const payload = { ...req.body, [ownerColumn]: ownerIdOf(req) };'),
     'INSERT must overwrite whatever owner the body claimed');
+  assert.ok(src.includes('const ownerIdOf = (req) => req.accountOwnerId || req.userId;'),
+    'and the owner must come from the session, never from the request');
   assert.ok(src.includes("c !== ownerColumn"), 'PATCH must refuse to reassign ownership');
+  assert.ok(src.includes("c !== AUTHOR_COLUMN"), 'and must refuse to reassign authorship');
 });
 
 test('H2 the profile form writes only the signed-in user id, never a form value', () => {

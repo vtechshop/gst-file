@@ -1,0 +1,213 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Employee Management - GST Management System</title>
+  <link rel="stylesheet" href="client/css/style.css?v=35">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
+  <script src="shared/india-districts.js?v=29"></script>
+  <script src="client/js/api/apiClient.js?v=30"></script>
+  <script src="client/js/api/backup.js?v=29"></script>
+  <script src="client/js/core/config.js?v=33"></script>
+  <script src="client/js/api/product-sync.js?v=39"></script>
+  <script src="client/js/core/auth.js?v=30"></script>
+  <script src="shared/access-modules.js?v=1"></script>
+  <script src="client/js/core/access.js?v=1"></script>
+  <script src="client/js/utilities/utils.js?v=36"></script>
+  <script src="client/js/core/search.js?v=29"></script>
+  <script src="client/js/pages/profile.js?v=43"></script>
+  <script src="client/js/pages/employees.js?v=1"></script>
+</head>
+<body>
+<div class="app-layout">
+
+  <aside class="sidebar">
+    <a class="sidebar-brand" href="dashboard.html">
+      <div class="brand-icon"><i class="fas fa-file-invoice-dollar"></i></div>
+      <span>GST Invoice<br>Management</span>
+    </a>
+    <nav class="sidebar-menu">
+      <div class="menu-section">Main</div>
+      <a href="dashboard.html" class="menu-item"><i class="fas fa-tachometer-alt"></i> Dashboard</a>
+      <div class="menu-section">Invoices / Sales</div>
+      <a href="invoice.html" class="menu-item"><i class="fas fa-plus-circle"></i> New Invoice</a>
+      <a href="invoice-list.html" class="menu-item"><i class="fas fa-list-alt"></i> Invoice List</a>
+      <a href="proforma.html" class="menu-item"><i class="fas fa-file-contract"></i> New Proforma</a>
+      <a href="proforma-list.html" class="menu-item"><i class="fas fa-folder-open"></i> Proforma Invoices</a>
+      <a href="cdnotes.html" class="menu-item"><i class="fas fa-file-minus"></i> Credit / Debit Notes</a>
+      <a href="sales-returns.html" class="menu-item"><i class="fas fa-rotate-left"></i> Sales Returns</a>
+      <a href="bill-of-supply.html" class="menu-item"><i class="fas fa-file-invoice"></i> Bill of Supply</a>
+      <a href="revised-invoice.html" class="menu-item"><i class="fas fa-file-pen"></i> Revised Invoice</a>
+      <a href="advances.html" class="menu-item"><i class="fas fa-hand-holding-dollar"></i> Advances</a>
+      <a href="vouchers.html" class="menu-item"><i class="fas fa-receipt"></i> Vouchers</a>
+      <a href="challans.html" class="menu-item"><i class="fas fa-file-signature"></i> Delivery Challans</a>
+      <a href="amendments.html" class="menu-item"><i class="fas fa-pen-to-square"></i> Amendments</a>
+      <div class="menu-section">Warranty</div>
+      <a href="warranty-list.html" class="menu-item"><i class="fas fa-shield-halved"></i> Warranty List</a>
+      <div class="menu-section">Purchases</div>
+      <a href="vendors.html" class="menu-item"><i class="fas fa-truck"></i> Vendors</a>
+      <a href="vendor-ledger.html" class="menu-item"><i class="fas fa-book"></i> Vendor Ledger</a>
+      <a href="purchase-orders.html" class="menu-item"><i class="fas fa-file-signature"></i> Purchase Orders</a>
+      <a href="purchases.html" class="menu-item"><i class="fas fa-cart-plus"></i> New Purchase</a>
+      <a href="purchase-list.html" class="menu-item"><i class="fas fa-boxes"></i> Purchase List</a>
+      <a href="purchase-returns.html" class="menu-item"><i class="fas fa-undo"></i> Purchase Returns</a>
+      <a href="purchase-notes.html" class="menu-item"><i class="fas fa-file-invoice"></i> Purchase Credit / Debit Notes</a>
+      <div class="menu-section">Inventory</div>
+      <a href="stock.html" class="menu-item"><i class="fas fa-warehouse"></i> Stock Summary</a>
+      <a href="stock-ledger.html" class="menu-item"><i class="fas fa-clipboard-list"></i> Stock Ledger</a>
+      <a href="stock-locations.html" class="menu-item"><i class="fas fa-map-location-dot"></i> Locations</a>
+      <a href="stock-transfers.html" class="menu-item"><i class="fas fa-right-left"></i> Transfers</a>
+      <a href="stock-serials.html" class="menu-item"><i class="fas fa-barcode"></i> Serial Numbers</a>
+      <div class="menu-section">GST / Special</div>
+      <a href="eway-bills.html" class="menu-item"><i class="fas fa-truck-fast"></i> E-Way Bills</a>
+      <a href="challans.html#job-workers" class="menu-item"><i class="fas fa-industry"></i> Job Workers</a>
+      <div class="menu-section">HSN</div>
+      <a href="hsn.html#b2b" class="menu-item"><i class="fas fa-barcode"></i> B2B HSN</a>
+      <a href="hsn.html#b2c" class="menu-item"><i class="fas fa-tags"></i> B2C HSN</a>
+      <div class="menu-section">Masters</div>
+      <a href="customers.html" class="menu-item active"><i class="fas fa-address-book"></i> Customers</a>
+      <a href="customer-ledger.html" class="menu-item"><i class="fas fa-book"></i> Customer Ledger</a>
+      <a href="products.html" class="menu-item"><i class="fas fa-box"></i> Products</a>
+      <div class="menu-section">Expenses</div>
+      <a href="expenses.html" class="menu-item"><i class="fas fa-receipt"></i> Expenses</a>
+      <div class="menu-section">Reports</div>
+      <a href="reports.html" class="menu-item"><i class="fas fa-chart-bar"></i> Reports &amp; Export</a>
+      <a href="product-sales.html" class="menu-item"><i class="fas fa-ranking-star"></i> Product Sales</a>
+      <a href="gstr3b.html" class="menu-item"><i class="fas fa-calculator"></i> GSTR-3B Summary</a>
+      <a href="document-register.html" class="menu-item"><i class="fas fa-book-open"></i> Document Register</a>
+      <div class="menu-section">Settings</div>
+      <a href="#" class="menu-item" onclick="openProfileModal();return false;"><i class="fas fa-building"></i> Business Profile</a>
+    </nav>
+    <div class="sidebar-user">
+      <div class="user-avatar"><i class="fas fa-user"></i></div>
+      <div class="user-info" onclick="openSettingsModal()" title="Click to open settings">
+        <div class="user-name" id="navUserName">User</div>
+        <div class="user-role">GST Manager</div>
+      </div>
+      <button type="button" class="btn-logout btn-settings" onclick="openSettingsModal()" title="Settings"><i class="fas fa-cog"></i></button>
+      <button type="button" class="btn-logout" id="logoutBtn" title="Logout"><i class="fas fa-sign-out-alt"></i></button>
+    </div>
+  </aside>
+
+  <div class="main-content">
+    <div class="page-header">
+      <div>
+        <h1 class="page-title"><i class="fas fa-users-cog"></i> Employee Management</h1>
+        <p class="page-subtitle">Create employee logins and choose exactly what each one can use.</p>
+      </div>
+      <button class="btn btn-primary" id="empNewBtn"><i class="fas fa-user-plus"></i> Create Employee</button>
+    </div>
+
+    <!-- Shown once, after a create or a password reset. Not retrievable
+         afterwards - a second look means issuing a new password. -->
+    <div class="card" id="empCredentials" style="display:none;border:1px solid var(--warning,#c89a2b)">
+      <div class="card-header"><h3 class="card-title"><i class="fas fa-key"></i> New sign-in details</h3></div>
+      <div class="card-body">
+        <p id="empCredNotice" style="margin-top:0"></p>
+        <div class="form-row">
+          <div class="form-group">
+            <label>Employee ID</label>
+            <div style="display:flex;gap:8px">
+              <input type="text" id="empCredId" class="form-control" readonly>
+              <button class="btn btn-secondary" id="empCopyId" type="button" title="Copy"><i class="fas fa-copy"></i></button>
+            </div>
+          </div>
+          <div class="form-group">
+            <label>Temporary password</label>
+            <div style="display:flex;gap:8px">
+              <input type="text" id="empCredPw" class="form-control" readonly>
+              <button class="btn btn-secondary" id="empCopyPw" type="button" title="Copy"><i class="fas fa-copy"></i></button>
+            </div>
+          </div>
+        </div>
+        <button class="btn btn-secondary" id="empCopyBoth" type="button"><i class="fas fa-clipboard"></i> Copy both</button>
+        <button class="btn btn-outline" id="empCredDone" type="button">Done</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-body">
+        <div class="table-responsive">
+          <table class="data-table" id="empTable">
+            <thead>
+              <tr>
+                <th>Employee ID</th><th>Name</th><th>Mobile</th><th>Email</th>
+                <th>Records</th><th>Sections</th><th>Status</th><th></th>
+              </tr>
+            </thead>
+            <tbody id="empTableBody">
+              <tr><td colspan="8" class="text-muted">Loading&hellip;</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Create / edit -->
+  <div class="modal-overlay" id="empModal" style="display:none">
+    <div class="modal" style="max-width:860px">
+      <div class="modal-header">
+        <h3 id="empModalTitle">Create Employee</h3>
+        <button class="modal-close" id="empModalClose" type="button">&times;</button>
+      </div>
+      <div class="modal-body">
+        <input type="hidden" id="empId">
+        <div class="form-row">
+          <div class="form-group">
+            <label for="empName">Employee Name <span class="text-danger">*</span></label>
+            <input type="text" id="empName" class="form-control" maxlength="120">
+          </div>
+          <div class="form-group">
+            <label for="empMobile">Mobile Number</label>
+            <input type="text" id="empMobile" class="form-control" maxlength="20">
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label for="empEmail">Email Address <span class="text-muted">(optional)</span></label>
+            <input type="email" id="empEmail" class="form-control">
+          </div>
+          <div class="form-group" id="empCodeGroup" style="display:none">
+            <label for="empCode">Employee ID</label>
+            <!-- Generated by the server and fixed for the life of the
+                 account, so the documents it raised keep meaning what they
+                 meant. Read-only here and refused by the API. -->
+            <input type="text" id="empCode" class="form-control" readonly>
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label for="empScope">Which records may they see?</label>
+          <select id="empScope" class="form-control">
+            <option value="own">Only the records they create themselves</option>
+            <option value="all">All of the company&rsquo;s records</option>
+          </select>
+        </div>
+
+        <h4 style="margin:22px 0 6px">Permissions</h4>
+        <p class="text-muted" style="margin:0 0 12px">
+          A new employee starts with nothing. Tick only what they need.
+          <b>View</b> is required for the rest of a row to apply.
+          Company settings and employee management are never granted &mdash; those stay with administrators.
+        </p>
+        <div class="table-responsive">
+          <table class="data-table" id="empPermTable">
+            <thead>
+              <tr><th>Section</th><th>View</th><th>Create</th><th>Edit</th><th>Cancel / Delete</th><th>Export</th></tr>
+            </thead>
+            <tbody id="empPermBody"></tbody>
+          </table>
+        </div>
+        <div id="empError" class="status-msg text-danger" style="display:none"></div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" id="empCancel" type="button">Cancel</button>
+        <button class="btn btn-primary" id="empSave" type="button">Save</button>
+      </div>
+    </div>
+  </div>
+
+</body>
+</html>
