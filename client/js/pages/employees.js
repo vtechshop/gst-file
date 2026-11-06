@@ -188,6 +188,13 @@ function empOpenModal(row) {
 
 function empCloseModal() {
   document.getElementById('empModal').style.display = 'none';
+  // The sidebar's "Create Emp" asks for the form with #new. Clearing it on
+  // close means clicking that link again opens the form again - without
+  // this, the hash would already be #new, no hashchange would fire, and
+  // the second click would appear to do nothing.
+  if ((window.location.hash || '').toLowerCase() === '#new') {
+    history.replaceState(null, '', window.location.pathname + window.location.search);
+  }
 }
 
 async function empSave() {
@@ -288,6 +295,16 @@ async function initEmployeesPage() {
 
   document.getElementById('empNewBtn').addEventListener('click', () => empOpenModal(null));
   document.getElementById('empCancel').addEventListener('click', empCloseModal);
+
+  // Arriving from the sidebar's "Create Emp" opens the Create Employee
+  // form straight away - the same form the button opens, not a second one.
+  // Done here, after the permission grid is built and the list is loaded,
+  // so the form opens populated rather than empty.
+  const openCreateIfRequested = () => {
+    if ((window.location.hash || '').toLowerCase() === '#new') empOpenModal(null);
+  };
+  window.addEventListener('hashchange', openCreateIfRequested);
+  openCreateIfRequested();
   document.getElementById('empModalClose').addEventListener('click', empCloseModal);
   document.getElementById('empSave').addEventListener('click', empSave);
   document.getElementById('empCredDone').addEventListener('click', () => {

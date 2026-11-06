@@ -81,23 +81,79 @@ function applySidebar() {
 // employee must never see is exactly the kind of thing that gets missed in
 // one file out of thirty-eight. An Admin gets it everywhere; an employee
 // gets it nowhere, because the element is never created.
+// The administrator's own entries in the sidebar.
+//
+// Injected rather than written into all 39 pages: the sidebar is copied
+// into every one of them, so a link added by hand is a link to keep in
+// step 39 times - and one that must never appear for an employee, which
+// static markup cannot decide.
+//
+// NOTE ON THE MARKUP. This sidebar is a flat run of <a class="menu-item">
+// siblings under a <div class="menu-section"> heading; there is no <li>
+// wrapper anywhere. The first version of this function looked for one
+// (closest('li, .nav-item, .sidebar-item')) and returned when it found
+// none, so these links never appeared on any page at all. Both shapes are
+// handled now - the flat anchor this sidebar uses, and a wrapped row if
+// one is ever introduced - so neither can silently produce nothing.
+//
+// Hiding a link is presentation, never protection: employees.html refuses
+// a non-Admin on its own, and every /api/employees route is behind
+// requireAdmin on the server. This only decides what is worth showing.
+const ADMIN_LINKS = [
+  { href: 'employees.html', icon: 'fas fa-users-cog', label: 'Employees' },
+  // Straight to the Create Employee form, for the common case: the hash
+  // is what employees.html reads to open it.
+  { href: 'employees.html#new', icon: 'fas fa-user-plus', label: 'Create Emp' }
+];
+
+function adminMenuAnchor() {
+  // Deliberately in preference order rather than one querySelector with a
+  // comma: that returns the first match in DOCUMENT order, which is
+  // Customers, and would drop these links into the middle of Masters.
+  // After Products puts them at the end of the section, where they read
+  // as additions rather than as something inserted between two masters.
+  return document.querySelector('a[href="products.html"]')
+    || document.querySelector('a[href="customers.html"]')
+    || document.querySelector('a[href="dashboard.html"]');
+}
+
 function addAdminLinks() {
   if (!isAdminUser()) return;
-  if (document.querySelector('a[href="employees.html"]')) return;
-  const anchor = document.querySelector('a[href="products.html"], a[href="customers.html"], a[href="dashboard.html"]');
+  const anchor = adminMenuAnchor();
   if (!anchor) return;
-  const row = anchor.closest('li, .nav-item, .sidebar-item');
-  if (!row || !row.parentNode) return;
+  const row = anchor.closest('li, .nav-item, .sidebar-item') || anchor;
+  if (!row.parentNode) return;
+  const wrapped = row !== anchor;
 
-  const li = document.createElement(row.tagName);
-  li.className = row.className;
-  const a = document.createElement('a');
-  a.href = 'employees.html';
-  a.className = anchor.className;
-  a.innerHTML = '<i class="fas fa-users-cog"></i><span>Employees</span>';
-  if (currentPageName() === 'employees.html') a.classList.add('active');
-  li.appendChild(a);
-  row.parentNode.insertBefore(li, row.nextSibling);
+  const here = currentPageName();
+  const onEmployees = here === 'employees.html';
+  const creating = (window.location.hash || '').toLowerCase() === '#new';
+
+  let after = row;
+  for (const spec of ADMIN_LINKS) {
+    // Idempotent: applyAccessControl can run more than once on a page, and
+    // a page that already carries the link in its own markup keeps it.
+    if (document.querySelector('a[href="' + spec.href + '"]')) continue;
+
+    const a = document.createElement('a');
+    a.href = spec.href;
+    // The neighbouring link's own classes, minus its active state - so
+    // this matches whatever the sidebar's styling happens to be.
+    a.className = (anchor.className || 'menu-item').replace(/\bactive\b/g, '').replace(/\s+/g, ' ').trim();
+    a.innerHTML = '<i class="' + spec.icon + '"></i> ' + spec.label;
+    // Only one of the two is the page you are on, and which one depends on
+    // whether the form is open.
+    if (onEmployees && (spec.href === 'employees.html#new') === creating) a.classList.add('active');
+
+    let node = a;
+    if (wrapped) {
+      node = document.createElement(row.tagName);
+      node.className = row.className;
+      node.appendChild(a);
+    }
+    after.parentNode.insertBefore(node, after.nextSibling);
+    after = node;
+  }
 }
 
 // ── A page this account may not open ─────────────────────────────────
