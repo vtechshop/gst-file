@@ -154,6 +154,10 @@ let vOrderItems = [];
 
 // Columns this database cannot store yet, from GET /documents/:type/field-support.
 let vPendingColumns = [];
+// Whether the order's products can be stored at all. False until the
+// receipt_voucher_items migration runs, which is a missing TABLE rather than
+// a missing column - so it is tracked separately from vPendingColumns.
+let vItemsSupported = true;
 
 function voucherIsReceipt() { return vType() === 'receipt_voucher'; }
 
@@ -170,19 +174,32 @@ async function loadVoucherFieldSupport() {
   try {
     const res = await apiFetch('/documents/' + vType() + '/field-support');
     vPendingColumns = (res && Array.isArray(res.missing)) ? res.missing : [];
+    vItemsSupported = !res || res.itemsSupported !== false;
   } catch {
     // A failed probe must not block the form. The server still refuses to
-    // write a column it does not have, so nothing is risked by assuming the
-    // schema is current here.
+    // write a column it does not have, and now also refuses to write to a
+    // table it does not have, so nothing is risked by assuming the schema is
+    // current here.
     vPendingColumns = [];
+    vItemsSupported = true;
   }
   applyVoucherFieldSupport();
   if (el) {
-    if (!vPendingColumns.length || !voucherIsReceipt()) {
+    if ((!vPendingColumns.length && vItemsSupported) || !voucherIsReceipt()) {
       el.classList.add('d-none'); el.textContent = '';
+    } else if (!vPendingColumns.length && !vItemsSupported) {
+      // Only the products cannot be stored. Said plainly, because the rest
+      // of the voucher saves normally and a notice that implied otherwise
+      // would stop people using a form that works.
+      el.innerHTML = 'The products in an order cannot be saved yet: they need the '
+        + 'database migration <code>migration_receipt_voucher_items.sql</code>, which has '
+        + 'not been applied. Everything else on this voucher saves normally, and the '
+        + 'order totals below still print on the receipt.';
+      el.classList.remove('d-none');
     } else {
       el.innerHTML = 'These fields cannot be saved yet: <b>'
         + vPendingColumns.map(c => escItemHtml(c.replace(/_/g, ' '))).join(', ')
+        + (vItemsSupported ? '' : ', the products in the order')
         + '</b>. They need the database migration '
         + '<code>migration_receipt_voucher_order.sql</code>, which has not been applied. '
         + 'Everything else on this voucher saves normally; the boxes below are disabled until '
@@ -214,6 +231,18 @@ function voucherFieldUnsupported(column) {
 }
 
 function applyVoucherFieldSupport() {
+  // The product table is disabled when there is nowhere to store its rows,
+  // so nothing is typed that cannot be kept. The Add button goes with it -
+  // an enabled Add over a disabled table would be an invitation.
+  const addBtn = document.getElementById('vOrderAddRow');
+  if (addBtn) {
+    addBtn.disabled = !vItemsSupported;
+    addBtn.title = vItemsSupported ? '' : 'Needs migration_receipt_voucher_items.sql';
+  }
+  const itemsBody = document.getElementById('vOrderItemsBody');
+  if (itemsBody) {
+    itemsBody.querySelectorAll('input').forEach((el) => { el.disabled = !vItemsSupported; });
+  }
   for (const [column, id] of Object.entries(VOUCHER_FIELD_INPUTS)) {
     const el = document.getElementById(id);
     if (!el) continue;
@@ -401,6 +430,12 @@ function renderVoucherOrderItems() {
     total.textContent = formatCurrency(
       round2(vOrderItems.reduce((n, it) => n + voucherItemAmount(it), 0)));
   }
+  // The rows were just redrawn, so the disabled state has to be put back:
+  // without this, a voucher opened for edit while the items migration is
+  // pending would present editable boxes for rows that cannot be stored.
+  if (!vItemsSupported) {
+    body.querySelectorAll('input').forEach((el) => { el.disabled = true; });
+  }
 }
 
 function addVoucherOrderItem() {
@@ -522,8 +557,17 @@ function renderVoucherOrderBox() {
   // would only invite a contradiction, so they are put out of reach.
   const manual = document.getElementById('vOrderManualGrid');
   const fromQuote = o.source === 'quotation';
-  vOrderItems = [];
-  renderVoucherOrderItems();
+  // NOTE: the product rows are deliberately NOT touched here. This function
+  // runs on every recalculation - recalcVoucher() calls it on each keystroke
+  // - so clearing vOrderItems in it wiped the table as the person typed.
+  // Rows are cleared in resetVoucherForm(), which is the only place that
+  // means "a different voucher now".
+  //
+  // With a quotation linked the order is the quotation's, so the typed rows
+  // are hidden rather than deleted: unlinking the quotation brings them
+  // back, and nothing the person entered is thrown away behind their back.
+  const itemsWrap = document.getElementById('vOrderItemsWrap');
+  if (itemsWrap) itemsWrap.classList.toggle('d-none', fromQuote);
   ['vPackingCharge', 'vOrderGstRate'].forEach((id) => {
     const el = document.getElementById(id);
     if (el) el.disabled = fromQuote;
@@ -1223,7 +1267,15 @@ async function saveVoucher() {
     // items instead of copying them, so there is nothing of its own to
     // store. Sending [] on that path is deliberate - it clears rows left
     // behind by an edit that switched from manual to a quotation.
-    const orderItems = voucherIsReceipt() ? voucherOrderItemsPayload() : null;
+    let orderItems = voucherIsReceipt() ? voucherOrderItemsPayload() : null;
+    // With no items table yet, an empty array would ask the server to clear
+    // rows that cannot exist. The property is dropped entirely so the save
+    // is the save this page always made, and the voucher goes through.
+    // Rows that DO carry data are still sent, and the server refuses the
+    // whole save (409 migration_pending) rather than keeping a voucher that
+    // silently lost its products - the table is disabled precisely so this
+    // cannot be reached by typing.
+    if (!vItemsSupported && orderItems && !orderItems.length) orderItems = null;
     const saved = await apiFetch(`/documents/${vType()}/save`, {
       method: 'POST',
       body: JSON.stringify({ editId: vEditId, document: doc,
@@ -1248,7 +1300,20 @@ async function saveVoucher() {
     // whatever the cleared form holds.
     if (wasReceipt && saved && saved.document) showReceiptActions(saved.document);
   } catch (e) {
+    // The server refused the whole save because the products have nowhere
+    // to go. Nothing was written, so the form is deliberately left exactly
+    // as it is - the rows are still there to be saved once the migration
+    // runs, and resetting would throw away what was typed.
+    //
+    // The only way to reach this is a stale support flag - the table is
+    // disabled whenever the browser knows the migration is pending - so the
+    // flag is refreshed here, which is what makes the notice and the
+    // disabled table appear instead of letting the save be tried again.
+    // apiFetch throws the server's { message, code, status } flattened, so
+    // the code is read off the error itself rather than a response body.
+    const refused = !!e && e.status === 409 && e.code === 'migration_pending';
     handleApiError(e, 'Could not save the document');
+    if (refused) await loadVoucherFieldSupport();
   }
 }
 
@@ -1268,6 +1333,14 @@ function resetVoucherForm(keepType) {
   }
   // Back to the default for this registration - the no-tax treatment only
   // where the relief is actually available.
+  // The order's products belong to the voucher being replaced, so a genuine
+  // reset clears them. Only three things call this - changing the document
+  // type, finishing a save, and deleting the voucher being edited - and all
+  // three mean "a different voucher now". Recalculation, loading a voucher
+  // for edit and linking a quotation do NOT come through here, so none of
+  // them can lose what was typed.
+  vOrderItems = [];
+  renderVoucherOrderItems();
   vSupplyNatureTouched = false;
   vEditSupplyNature = null;
   setVoucherValue('vSupplyNature', voucherSupplyNatureDefault());

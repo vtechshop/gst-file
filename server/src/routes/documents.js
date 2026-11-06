@@ -58,8 +58,13 @@ const DOCUMENT_TABLES = {
   // quotation's items, because copying them would let a corrected
   // quotation and the receipt drawn from it disagree. These are for the
   // manual path.
+  // itemsMigration names the file that creates the items table, so a
+  // refusal can tell the person which migration to apply rather than
+  // leaving them to find it. This route is generic over every type below,
+  // so the filename belongs with the spec and not in the message.
   receipt_voucher: { table: 'receipt_vouchers', series: 'receipt_voucher',
-                     items: 'receipt_voucher_items', itemsFk: 'receipt_voucher_id' },
+                     items: 'receipt_voucher_items', itemsFk: 'receipt_voucher_id',
+                     itemsMigration: 'migration_receipt_voucher_items.sql' },
   payment_voucher: { table: 'payment_vouchers', series: 'payment_voucher' },
   refund_voucher:  { table: 'refund_vouchers',  series: 'refund_voucher' },
 
@@ -290,6 +295,28 @@ async function existingColumnsOn(db, table) {
   return columns;
 }
 
+// Does a table exist at all?
+//
+// The column helper above cannot answer this: a missing table and a failed
+// lookup both come back as an empty column set, and it deliberately treats
+// that as "do not know" so one bad query cannot refuse a minute of writes.
+// For "may I write to this table" the difference matters, so to_regclass is
+// asked instead - it answers NULL for absent and cannot be confused with a
+// failure, because a failure throws.
+//
+// Cached the same way, and for the same reason: a positive answer is
+// permanent within the process, a negative one is short-lived so applying
+// the migration is picked up without a restart.
+const tableExistsCache = new Map();
+async function tableExistsOn(db, table) {
+  const hit = tableExistsCache.get(table);
+  if (hit && (hit.exists || (Date.now() - hit.at) < TABLE_COLUMN_TTL_MS)) return hit.exists;
+  const { rows } = await db.query('SELECT to_regclass($1) AS t', ['public.' + table]);
+  const exists = !!rows[0].t;
+  tableExistsCache.set(table, { at: Date.now(), exists });
+  return exists;
+}
+
 // Which of a table's declared columns the database does not have yet. Empty
 // when the schema is up to date, which is the normal case.
 async function pendingColumnsOn(db, table) {
@@ -475,9 +502,20 @@ router.post('/:type/number-settings', asyncRoute(async (req, res) => {
 // columns the application already declares - nothing a caller did not
 // already know from the code it is running.
 router.get('/:type/field-support', asyncRoute(async (req, res) => {
-  const { table } = docSpec(String(req.params.type).trim().toLowerCase());
-  const missing = await pendingColumnsOn(pool, table);
-  res.json({ missing, migrationPending: missing.length > 0 });
+  const spec = docSpec(String(req.params.type).trim().toLowerCase());
+  const missing = await pendingColumnsOn(pool, spec.table);
+  // A document type with line items needs its ITEMS table as well, and a
+  // missing table is a different question from a missing column - so it is
+  // reported separately rather than squeezed into `missing`, which names
+  // columns. The browser disables the product table on this, instead of
+  // inviting rows it cannot keep.
+  const itemsSupported = spec.items ? await tableExistsOn(pool, spec.items) : true;
+  res.json({
+    missing,
+    itemsTable: spec.items || null,
+    itemsSupported,
+    migrationPending: missing.length > 0 || !itemsSupported
+  });
 }));
 
 // ── 1) Reserve the next number for a document type ──
@@ -713,6 +751,49 @@ router.post('/:type/save', asyncRoute(async (req, res) => {
       e.status = 400; e.expose = true; e.code = 'migration_pending'; throw e;
     }
   }
+  // ── The line-items table, decided BEFORE anything is written ──
+  //
+  // `items` has three states and they mean different things:
+  //
+  //   omitted      leave the stored rows alone
+  //   []           clear them - an edit that removed every product
+  //   [ ... ]      replace them with these
+  //
+  // So an empty array is NOT the same as no array, and must not be
+  // discarded as "nothing to do": editing a voucher to remove its last
+  // product has to work.
+  //
+  // A document type with line items may be in use before its items table
+  // exists - receipt_voucher is, until migration_receipt_voucher_items.sql
+  // runs. Three different answers follow, and which one is right depends
+  // only on what the caller sent:
+  //
+  //   omitted      save the document; there were never any rows to keep
+  //   []           save the document; there is nothing to clear
+  //   [ ... ]      REFUSE. Products were submitted and cannot be stored,
+  //                and a document saved without them would be a document
+  //                claiming an order it does not carry.
+  //
+  // The refusal happens here, before the transaction opens, so nothing is
+  // half-written and no DELETE or INSERT is ever aimed at a table that is
+  // not there. to_regclass answers this, not the column helper: a missing
+  // table and a failed lookup both leave that one empty, and for "may I
+  // write here" the difference matters.
+  const itemsRequested = !!(spec.items && Array.isArray(items));
+  const itemsStorable = itemsRequested ? await tableExistsOn(pool, spec.items) : false;
+  if (itemsRequested && !itemsStorable && items.length) {
+    const e = new Error(
+      `${numberLabel(type, true)} products cannot be saved yet: `
+      + `${items.length} product ${items.length === 1 ? 'row was' : 'rows were'} submitted, and `
+      + `the database migration that stores them (${spec.itemsMigration || spec.items})`
+      + ' has not been applied. NOTHING was saved - not the products and not the document.'
+      + ' Apply the migration and save again.');
+    // No structured payload beyond this: the error handler forwards only
+    // `message`, `code` and a field map, and the structured answer to
+    // "can items be stored" already has its own endpoint in /field-support.
+    e.status = 409; e.expose = true; e.code = 'migration_pending'; throw e;
+  }
+
   // The derived tax joins the write HERE, past the immutable filter above. It
   // is immutable so that no caller can set it: this route is its one writer,
   // and it writes only the figure it derived.
@@ -859,7 +940,12 @@ router.post('/:type/save', asyncRoute(async (req, res) => {
     // half-applied edit through if anything failed midway. Same
     // transaction as the document, so either both land or neither does.
     let savedItems = [];
-    if (spec.items && Array.isArray(items)) {
+    // Decided above, before this transaction opened: a non-empty payload
+    // with no table to put it in was refused outright, so the only case
+    // that reaches here with itemsStorable false is an empty array - which
+    // has nothing to clear. Either way no statement is aimed at a table
+    // that does not exist.
+    if (itemsRequested && itemsStorable) {
       await client.query(`DELETE FROM ${spec.items} WHERE ${spec.itemsFk} = $1 AND user_id = $2`,
         [row.id, req.userId]);
       const itemImmutable = new Set(TABLES[spec.items].immutable || []);
