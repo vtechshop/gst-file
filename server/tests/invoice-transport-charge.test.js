@@ -94,6 +94,11 @@ function machineLine(supply) {
   const inter = supply === 'interstate';
   return {
     rowId: 'r1', product_id: 'p1', product_name: 'Machine', hsn_code: '84388090', unit: 'PCS',
+    // A line whose unit was chosen - which is what every line on a real
+    // invoice is. Without this the grid's mandatory-UQC rule blocks the
+    // save first and these transport cases never get to run
+    // (item-unit-default.test.js U22-U30).
+    unit_touched: true, unit_confirmed: true,
     quantity: 1, rate: 2700, discount_percentage: 0, gst_percentage: 18,
     gst_treatment: 'taxable', cess_rate: 0, cess_amount: 0,
     taxable_value: 2700, gst_amount: 486,
@@ -959,4 +964,51 @@ test('T14c payments and the ledger see the transport in the balance', async () =
     `SELECT COUNT(*)::int n FROM information_schema.columns
       WHERE table_name='b2b_invoices' AND column_name LIKE '%transport%balance%'`);
   assert.strictEqual(cols[0].n, 0, 'there must be no separate transport balance');
+});
+
+// ── Unit (UQC) is required on every billed line ──────────────────────
+//
+// The browser makes the person choose one and refuses to save without it
+// (item-unit-default.test.js U22-U30). This is case I from that brief: the
+// same rule where it cannot be skipped. A caller posting straight to the
+// API gets the same answer as the form.
+test('T29 (I) the API refuses an invoice line with no unit', async () => {
+  const noUnit = line();
+  delete noUnit[0].unit;
+  const r = await save({ header: header(2700, 'intrastate', 0), items: noUnit });
+  assert.strictEqual(r.status, 400, 'refused: ' + JSON.stringify(r.body));
+  assert.strictEqual(r.body.error.code, 'item_unit_required');
+  assert.match(r.body.error.message, /unit/i);
+  assert.match(r.body.error.message, /Machine/, 'and it names the line');
+
+  // Blank and whitespace are the same thing as absent.
+  for (const bad of ['', '   ', null]) {
+    const items = line();
+    items[0].unit = bad;
+    const res = await save({ header: header(2700, 'intrastate', 0), items });
+    assert.strictEqual(res.status, 400, JSON.stringify(bad) + ' must be refused');
+    assert.strictEqual(res.body.error.code, 'item_unit_required');
+  }
+});
+
+test('T30 (I) nothing is written when the unit is missing', async () => {
+  const before = await db.query('SELECT count(*)::int n FROM b2b_invoices WHERE user_id = $1', [USER_A]);
+  const noUnit = line();
+  noUnit[0].unit = '';
+  const r = await save({ header: header(2700, 'intrastate', 0), items: noUnit });
+  assert.strictEqual(r.status, 400);
+  const after = await db.query('SELECT count(*)::int n FROM b2b_invoices WHERE user_id = $1', [USER_A]);
+  assert.strictEqual(after.rows[0].n, before.rows[0].n, 'the refusal left no invoice behind');
+});
+
+test('T31 a line that names its unit still saves exactly as before', async () => {
+  const r = await save({ header: header(2700, 'intrastate', 0), items: line() });
+  assert.strictEqual(r.status, 200, JSON.stringify(r.body));
+  const { rows } = await db.query(
+    'SELECT unit FROM invoice_items WHERE invoice_id = $1', [r.body.invoiceId]);
+  assert.strictEqual(rows[0].unit, 'PCS');
+  // And a blank SPARE row is ignored, not refused - the grid always carries one.
+  const withSpare = line().concat([{ product_name: '', quantity: 0, rate: 0 }]);
+  const r2 = await save({ header: header(2700, 'intrastate', 0), items: withSpare });
+  assert.strictEqual(r2.status, 200, 'an unused row does not block the API either');
 });

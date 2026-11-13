@@ -490,6 +490,34 @@ router.post('/:type/save-with-items', asyncRoute(async (req, res) => {
   const headerCols = TABLES[table].columns.filter(c => c !== 'id' && c !== 'user_id' && header && Object.prototype.hasOwnProperty.call(header, c));
   const itemCols = TABLES.invoice_items.columns.filter(c => !['id','user_id','invoice_id','invoice_type','sort_order','created_at','updated_at'].includes(c));
 
+  // ── Every billed line names a unit ──
+  //
+  // The browser makes the person choose one and refuses to save without it.
+  // This is the same rule where it cannot be skipped: a caller that posts
+  // straight to the API gets the same answer as the form does.
+  //
+  // Scoped to THIS route on purpose. invoice_items is also written by backup
+  // restore, sales returns, credit/debit notes and the generic CRUD, and a
+  // rule there would refuse to restore a backup of invoices raised before
+  // any of this existed. /invoices/:type/save-with-items is the New Invoice
+  // form and has exactly one caller.
+  //
+  // The browser's "confirmed" flag is deliberately NOT sent. It describes
+  // what happened on a screen, which a direct caller could simply assert, so
+  // it would protect nothing here. Requiring the unit itself is the part
+  // that holds. Nothing transient reaches the database, so nothing has to be
+  // stripped before the insert and no column is needed for any of this.
+  for (let i = 0; i < (items || []).length; i++) {
+    const it = items[i] || {};
+    const named = String(it.product_name == null ? '' : it.product_name).trim();
+    if (!named) continue;                      // a blank spare row, ignored as before
+    if (!String(it.unit == null ? '' : it.unit).trim()) {
+      const e = new Error('Line ' + (i + 1) + ' ("' + named + '") has no unit. Every invoice '
+        + 'line must name the unit its quantity is counted in (UQC).');
+      e.status = 400; e.expose = true; e.code = 'item_unit_required'; throw e;
+    }
+  }
+
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
