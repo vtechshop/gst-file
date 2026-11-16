@@ -359,7 +359,7 @@ function recorder() {
   let pages = 1;
   class FakeDoc {
     constructor() {
-      this.internal = { pageSize: { width: 297, height: 210 }, getNumberOfPages: () => pages };
+      this.internal = { pageSize: { width: 210, height: 297 }, getNumberOfPages: () => pages };
       this.lastAutoTable = { finalY: 0 };
     }
     text(s, x, y, o) {
@@ -390,8 +390,11 @@ async function printed(row, items) {
   await sb.buildProformaPDFDoc(row, items);
   return { sb, texts };
 }
-// Landscape A4: R = 297 - 14, and the totals box starts 80mm left of it.
-const R_X = 283, BOX_X = 203;
+// Portrait A4: R = 210 - 10, and the 68mm totals box starts left of it.
+// Portrait A4 geometry: L=10, R=200, and the 68mm totals box starts at 132.
+// Landscape (R=283, box at 203) bought width the twelve columns did not
+// need and spent the page's height on it.
+const R_X = 200, BOX_X = 132;
 function totalsBlock(texts) {
   return texts.filter(t => t.x === BOX_X).map(t => {
     const v = texts.find(u => u.x === R_X && u.y === t.y && u.page === t.page && /^Rs\./.test(u.s));
@@ -515,13 +518,13 @@ test('PT21 layout: rows never overlap, the signature sits below the total, pagin
       // reserve is not a rule: reserving 60mm when the close needs less is
       // exactly what pushed a one-page quotation onto two pages. The guard
       // now measures (PR14), so what is pinned here is the outcome.
-      assert.ok(body.at(-1).y < 210 - 12 - 10,
+      assert.ok(body.at(-1).y < 297 - 12 - 10,
         where + ': the last totals row clears the footer rule');
       assert.ok(quoted.y > body.at(-1).y, where + ': the total is below every row');
       const sig = texts.find(t => t.s === 'Authorized Signatory');
       assert.ok(sig && sig.page === quoted.page, where + ': the signature is on the page of the total');
       assert.ok(sig.y > quoted.y, where + ': the signature is below the total');
-      assert.ok(sig.y < 210 - 12 - 10, where + ': the signature clears the footer rule');
+      assert.ok(sig.y < 297 - 12 - 10, where + ': the signature clears the footer rule');
     }
   }
 });

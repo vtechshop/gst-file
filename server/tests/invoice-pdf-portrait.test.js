@@ -258,7 +258,7 @@ test('P11 the changed asset carries one new cache key on every page that loads i
   assert.ok(rd('invoice.html').includes('client/js/utilities/utils.js?v=36'));
   // Moved by the proforma advance amount, which prints two rows of its own
   // (proforma-advance.test.js) - not by anything in this change.
-  assert.ok(rd('proforma.html').includes('client/js/pages/proforma-pdf.js?v=47'));
+  assert.ok(rd('proforma.html').includes('client/js/pages/proforma-pdf.js?v=48'));
   // Checked as "still versioned" rather than pinned: proforma-entry.js is
   // not this change's asset, and later work on it moves the key.
   assert.match(rd('proforma.html'), /client\/js\/pages\/proforma-entry\.js\?v=\d+/);
@@ -422,13 +422,23 @@ test('P22b the row keeps its height and the QR its logic', () => {
   assert.match(PDF, /const qrIsCustom = !!qrCustomData;/);
 });
 
-test('P12 the Proforma PDF was not dragged into this', () => {
+test('P12 the Proforma PDF is still its own builder', () => {
   const PF = strip(rd('client', 'js', 'pages', 'proforma-pdf.js'));
-  // Proforma has its own page setup and is explicitly out of scope here, so
-  // it must STILL be landscape. The two documents therefore differ in
-  // orientation for now, deliberately: converting Proforma is a separate
-  // decision, not a side effect of this one.
-  assert.match(PF, /orientation: 'landscape'/,
-    'proforma-pdf.js must be left on its own orientation');
+  // This used to assert the proforma was STILL landscape, because when the
+  // tax invoice went portrait the proforma was out of scope and its
+  // orientation was not to change as a side effect. That separate decision
+  // has since been taken on its own terms, so the proforma is portrait too
+  // now (proforma-portrait.test.js) - and what this case is actually for
+  // survives it: the two documents are built by two builders, and invoice
+  // work must not absorb the quotation.
+  assert.match(PF, /orientation: 'portrait'/);
+  assert.match(PF, /async function buildProformaPDFDoc\(/,
+    'the proforma must keep its own builder');
+  assert.equal(/(?:await\s+|=\s*)buildInvoicePDFDoc\s*\(/.test(PF), false,
+    'it must not be rendered by the tax invoice builder');
+  // And it must carry no part of the tax invoice's identity.
+  for (const banned of ['Original for Recipient', 'Duplicate for File Copy', 'IRN']) {
+    assert.equal(PF.includes(banned), false, 'proforma must not carry: ' + banned);
+  }
   assert.match(PF, /round_off: round2\(rounded - calculated\)/, 'its round-off must survive');
 });

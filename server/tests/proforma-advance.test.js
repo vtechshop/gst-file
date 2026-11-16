@@ -350,7 +350,7 @@ function recorder() {
   let pages = 1;
   class FakeDoc {
     constructor() {
-      this.internal = { pageSize: { width: 297, height: 210 }, getNumberOfPages: () => pages };
+      this.internal = { pageSize: { width: 210, height: 297 }, getNumberOfPages: () => pages };
       this.lastAutoTable = { finalY: 0 };
     }
     text(s, x, y, o) {
@@ -381,14 +381,17 @@ async function printed(row, items) {
   await sb.buildProformaPDFDoc(row, items);
   return { sb, texts };
 }
-const R_X = 283, BOX_X = 203;
+// Portrait A4 geometry: L=10, R=200, and the 68mm totals box starts at 132.
+// Landscape (R=283, box at 203) bought width the twelve columns did not
+// need and spent the page's height on it.
+const R_X = 200, BOX_X = 132;
 const labelled = (texts, label) => {
   const l = texts.find(t => t.x === BOX_X && t.s === label);
   if (!l) return null;
   const v = texts.find(u => u.x === R_X && u.y === l.y && u.page === l.page && /^Rs\./.test(u.s));
   return { y: l.y, value: v ? v.s : null };
 };
-const PAY_LABEL_X = 14, PAY_VALUE_X = 14 + 78;
+const PAY_LABEL_X = 10, PAY_VALUE_X = 10 + 78;
 const payLabelled = (texts, label) => {
   const l = texts.find(t => t.x === PAY_LABEL_X && t.s === label);
   if (!l) return null;

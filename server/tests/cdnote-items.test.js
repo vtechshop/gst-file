@@ -384,7 +384,18 @@ test('W5 Sales Return and the other PDF modules are untouched', () => {
   // column, under the account the money goes to - the totals column has the
   // stamp stacked beneath it, so rows added there pushed a one-page quotation
   // onto two. One floor now serves both the close and the terms schedule.
-  const APPROVED_PROFORMA_PDF_SHA256 = 'f9e31804b588ffe864b2cf5af7e8427593968573d6c63df7dc65539e1d4a6d70';
+  // Re-approved for the portrait page (proforma-portrait.test.js): the quotation
+  // is A4 portrait now, as the tax invoice is, with one continuous twelve-column
+  // item table at 7pt and a two-band party header. Landscape bought width the
+  // columns did not need and spent the page's height on it, which is the
+  // dimension the close needs - ten products and the whole close now fit on one
+  // sheet, and a long quotation continues the SAME table with its heading
+  // repeated and keeps the close together on the final page.
+  // Re-approved: the PDF now heads its sections the way the HTML preview does -
+  // a filled accent chip with white uppercase text, and a light box around each
+  // address - because the preview is the approved look and the downloaded file
+  // has to be the same document, not a plainer relation of it.
+  const APPROVED_PROFORMA_PDF_SHA256 = 'd99aa88d60c2cc4447433e9e344f5e82664efd0a707f52016a96d7077a224e8b';
   const pfSrc = fs.readFileSync(path.join(ROOT, 'client', 'js', 'pages', 'proforma-pdf.js'), 'utf8');
   const pf = require('crypto').createHash('sha256').update(pfSrc.replace(/\r\n/g, '\n')).digest('hex');
   assert.strictEqual(pf, APPROVED_PROFORMA_PDF_SHA256,

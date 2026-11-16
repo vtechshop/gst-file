@@ -28,27 +28,27 @@
 // column of dashes down a quotation that gave no discount is noise, and the
 // room landscape A4 has is worth spending on the product name instead.
 const PROFORMA_ITEM_COLUMNS = [
-  { head: '#',            w: 9,  align: 'center', val: (it, i) => String(i + 1) },
+  { head: '#',            w: 7,  align: 'center', val: (it, i) => String(i + 1) },
   // The only column that wraps, so it takes the slack the others leave.
-  { head: 'Product Name', w: 88, align: 'left', bold: true,
+  { head: 'Product Name', w: 46, align: 'left', bold: true, slack: 11,
     val: (it) => it.product_name || '' },
-  { head: 'HSN',          w: 22, align: 'center', val: (it) => it.hsn_code || '' },
-  { head: 'Qty',          w: 16, align: 'right',  val: (it) => formatNum(it.quantity) },
+  { head: 'HSN',          w: 15, align: 'center', val: (it) => it.hsn_code || '' },
+  { head: 'Qty',          w: 10, align: 'right',  val: (it) => formatNum(it.quantity) },
   // Printed as stored and never defaulted here: a quotation saved without a
   // unit shows that it has none rather than claiming PCS on the company's
   // behalf. The Invoice grid's mandatory-unit rule is deliberately NOT
   // applied to quotations (itemsUnitMustBeConfirmed() in invoice-items.js),
   // so blank is a state this column has to be able to print.
-  { head: 'Unit',         w: 16, align: 'center', val: (it) => it.unit || '-' },
-  { head: 'Rate',         w: 24, align: 'right',  val: (it) => formatNum(it.rate) },
-  { head: 'Disc %',       w: 17, align: 'right', optional: true,
+  { head: 'Unit',         w: 10, align: 'center', val: (it) => it.unit || '-' },
+  { head: 'Rate',         w: 18, align: 'right',  val: (it) => formatNum(it.rate) },
+  { head: 'Disc %',       w: 11, align: 'right', optional: true,
     val: (it) => (+it.discount_percentage || 0) ? formatNum(it.discount_percentage) + '%' : '-' },
-  { head: 'GST%',         w: 16, align: 'right',
+  { head: 'GST %',        w: 10, align: 'right',
     val: (it) => (+it.gst_percentage || 0) + '%' },
-  { head: 'CGST',         w: 22, align: 'right',  val: (it) => +it.cgst ? formatNum(it.cgst) : '-' },
-  { head: 'SGST',         w: 22, align: 'right',  val: (it) => +it.sgst ? formatNum(it.sgst) : '-' },
-  { head: 'IGST',         w: 22, align: 'right',  val: (it) => +it.igst ? formatNum(it.igst) : '-' },
-  { head: 'Total',        w: 24, align: 'right', bold: true,
+  { head: 'CGST',         w: 15, align: 'right',  val: (it) => +it.cgst ? formatNum(it.cgst) : '-' },
+  { head: 'SGST',         w: 15, align: 'right',  val: (it) => +it.sgst ? formatNum(it.sgst) : '-' },
+  { head: 'IGST',         w: 15, align: 'right',  val: (it) => +it.igst ? formatNum(it.igst) : '-' },
+  { head: 'Total',        w: 18, align: 'right', bold: true,
     val: (it) => formatNum(it.total_amount) }
 ];
 
@@ -59,7 +59,12 @@ function proformaHasDiscount(items) {
 }
 
 function proformaItemColumns(showDiscount) {
-  return PROFORMA_ITEM_COLUMNS.filter(c => !c.optional || showDiscount);
+  const cols = PROFORMA_ITEM_COLUMNS.filter(c => !c.optional || showDiscount);
+  if (showDiscount) return cols;
+  // Hand the dropped column's width to the only column that wraps, instead
+  // of spreading it thin across eleven. A figure column gains nothing from
+  // another millimetre; a product name gains a word.
+  return cols.map(c => c.slack ? Object.assign({}, c, { w: c.w + c.slack }) : c);
 }
 
 function PROFORMA_ITEM_COLUMN_STYLES(tableWidth, showDiscount) {
@@ -181,9 +186,21 @@ async function buildProformaPDFDoc(row, items) {
   const p = (typeof getCachedProfile === 'function') ? getCachedProfile() : null;
   const accent = hexToRgb(p?.header_color);
   const { jsPDF } = window.jspdf;
-  const doc = new jsPDF({ unit: 'mm', format: 'a4', orientation: 'landscape' });
+  // PORTRAIT A4, as the tax invoice is and as the design reference
+  // (Invoice_W-00017.pdf) is. Landscape gave the item table width it did not
+  // need and spent the page's HEIGHT buying it - and height is the dimension
+  // the close needs, so a quotation with a delivery charge and an advance ran
+  // onto a second page while half of the first stayed empty.
+  //
+  // 190mm of usable width still carries all twelve columns (see
+  // PROFORMA_ITEM_COLUMNS below), and 297mm of height carries roughly
+  // eighteen product rows AND the whole close on one sheet.
+  const doc = new jsPDF({ unit: 'mm', format: 'a4', orientation: 'portrait' });
   const pw = doc.internal.pageSize.width;
-  const L = 14, R = pw - 14;
+  const L = 10, R = pw - 10;   // 190mm of usable width on A4 portrait
+  // The height of a section-heading chip. Declared here because drawHeader
+  // draws them and the close's measurement block counts them.
+  const CHIP_H = 4.2;
 
   const [logoData, sealData, signatureData] = await Promise.all([
     imageUrlToDataUrl(p?.logo_base64),
@@ -229,28 +246,43 @@ async function buildProformaPDFDoc(row, items) {
     doc.text(BADGE, badgeX + badgeW / 2, badgeY + 3.8, { align: 'center' });
 
     doc.setFillColor(...accent);
-    doc.rect(L, 25, R - L, 1.3, 'F');
+    doc.rect(L, 24, R - L, 1.1, 'F');
 
-    let y = 34;
-    const PART_GAP = 6;
-    const partColW = (R - L - PART_GAP * 3) / 4;
-    const partX = [0, 1, 2, 3].map(i => L + i * (partColW + PART_GAP));
+    // Two bands of two blocks, the shape the design reference uses. Four
+    // columns across 190mm would give each party 45mm, and an address wraps
+    // to eight lines in 45mm - which is how a header ends up taller than the
+    // table it introduces.
+    const PART_GAP = 8;
+    const colW = (R - L - PART_GAP) / 2;
+    const colX = [L, L + colW + PART_GAP];
+    const LH = 3.9;                      // line height inside a party block
 
-    doc.setFontSize(9); doc.setFont('helvetica', 'bold'); doc.setTextColor(...accent);
-    doc.text('SOLD BY', partX[0], y);
-    doc.text('QUOTATION DETAILS', partX[1], y);
-    doc.text('BILL TO', partX[2], y);
-    doc.text('SHIP TO', partX[3], y);
-    doc.setDrawColor(...accent); doc.setLineWidth(0.3);
-    doc.line(L, y + 1.5, R, y + 1.5);
+    // A section heading, drawn as the preview draws it: a filled accent chip
+    // with white uppercase text. Plain accent text on white reads as another
+    // line of content; a chip reads as a heading, which is the point of one.
+    // CHIP_H is the chip's height and the measurement block below counts on
+    // it, so the two cannot disagree about how much room a heading takes.
+    const chip = (text, x, at, w) => {
+      doc.setFillColor(...accent);
+      doc.rect(x, at - CHIP_H + 1.1, w, CHIP_H, 'F');
+      doc.setFontSize(6.6); doc.setFont('helvetica', 'bold'); doc.setTextColor(255, 255, 255);
+      doc.text(String(text).toUpperCase(), x + 1.6, at - 0.7);
+      doc.setFont('helvetica', 'normal'); doc.setTextColor(60, 60, 60);
+    };
 
-    const partTop = y + 7;
-    doc.setFont('helvetica', 'normal'); doc.setFontSize(8.5); doc.setTextColor(60, 60, 60);
+    const band = (title1, title2, at) => {
+      chip(title1, colX[0], at, colW);
+      if (title2) chip(title2, colX[1], at, colW);
+      doc.setFont('helvetica', 'normal'); doc.setFontSize(7.6); doc.setTextColor(60, 60, 60);
+      return at + 4.2;
+    };
 
+    // Band 1: who is quoting, and the quotation's own facts.
+    const top = band('Sold By', 'Quotation Details', 32);
     const soldBy = [p?.business_name, p?.address, p?.state,
       p?.gstin ? 'GSTIN: ' + p.gstin : ''].filter(Boolean);
-    const soldByWrapped = doc.splitTextToSize(soldBy.join('\n'), partColW);
-    soldByWrapped.forEach((l, i) => doc.text(l, partX[0], partTop + i * 4.5));
+    const soldByWrapped = doc.splitTextToSize(soldBy.join('\n'), colW);
+    soldByWrapped.forEach((l, i) => doc.text(l, colX[0], top + i * LH));
 
     const validityDays = proformaValidityDays(inv.invoice_date, inv.valid_until);
     const meta = [
@@ -261,27 +293,35 @@ async function buildProformaPDFDoc(row, items) {
       'Place of Supply: ' + (inv.state || ''),
       'Type: ' + (inv.type === 'b2b' ? 'B2B (Registered)' : 'B2C (Unregistered)')
     ].filter(Boolean);
-    const metaWrapped = doc.splitTextToSize(meta.join('\n'), partColW);
-    metaWrapped.forEach((l, i) => doc.text(l, partX[1], partTop + i * 4.5));
+    const metaWrapped = doc.splitTextToSize(meta.join('\n'), colW);
+    metaWrapped.forEach((l, i) => doc.text(l, colX[1], top + i * LH));
 
-    // The invoice's own party renderer, so BILL TO / SHIP TO read identically.
+    // Band 2: where it goes. The invoice's own party renderer, so BILL TO and
+    // SHIP TO read identically on the two documents.
     const parties = invoicePartyLines(inv);
+    let y2 = top + Math.max(soldByWrapped.length, metaWrapped.length) * LH + 2.2;
+    y2 = band('Bill To', 'Ship To', y2);
     doc.setFont('helvetica', 'bold');
-    doc.text(doc.splitTextToSize(inv.customer_name || '', partColW), partX[2], partTop);
-    doc.text(doc.splitTextToSize(inv.customer_name || '', partColW), partX[3], partTop);
+    doc.text(doc.splitTextToSize(inv.customer_name || '', colW), colX[0], y2);
+    doc.text(doc.splitTextToSize(inv.customer_name || '', colW), colX[1], y2);
     doc.setFont('helvetica', 'normal');
-    const nameH = 4.5;
-    const billWrapped = doc.splitTextToSize(parties.bill.join('\n'), partColW);
-    billWrapped.forEach((l, i) => doc.text(l, partX[2], partTop + nameH + i * 4.5));
-    const shipWrapped = doc.splitTextToSize(parties.ship.join('\n'), partColW);
-    shipWrapped.forEach((l, i) => doc.text(l, partX[3], partTop + nameH + i * 4.5));
+    const billWrapped = doc.splitTextToSize(parties.bill.join('\n'), colW);
+    billWrapped.forEach((l, i) => doc.text(l, colX[0], y2 + LH + i * LH));
+    const shipWrapped = doc.splitTextToSize(parties.ship.join('\n'), colW);
+    shipWrapped.forEach((l, i) => doc.text(l, colX[1], y2 + LH + i * LH));
     if (parties.sameAddress) {
       doc.setFont('helvetica', 'italic'); doc.setTextColor(120, 120, 120);
-      doc.text('Same as billing address', partX[3], partTop + nameH + shipWrapped.length * 4.5);
+      doc.text('Same as billing address', colX[1], y2 + LH + shipWrapped.length * LH);
       doc.setFont('helvetica', 'normal'); doc.setTextColor(60, 60, 60);
     }
     const partyRows = Math.max(billWrapped.length, shipWrapped.length) + 1;
-    return partTop + Math.max(soldByWrapped.length, metaWrapped.length, partyRows) * 4.5 + 3;
+    // The box the preview draws around each address, sized to the taller of
+    // the two so the pair reads as one band.
+    doc.setDrawColor(207, 207, 207); doc.setLineWidth(0.2);
+    const boxTop = y2 - 3.2, boxH = partyRows * LH + 3.4;
+    doc.rect(colX[0] - 1.6, boxTop, colW + 3.2, boxH);
+    doc.rect(colX[1] - 1.6, boxTop, colW + 3.2, boxH);
+    return y2 + LH + partyRows * LH + 2.2;
   };
 
   let y = drawHeader();
@@ -298,11 +338,12 @@ async function buildProformaPDFDoc(row, items) {
     head: [itemCols.map(c => c.head)],
     body: rows,
     theme: 'grid',
-    headStyles: { fillColor: accent, textColor: 255, fontSize: 8.5, fontStyle: 'bold' },
-    bodyStyles: { fontSize: 8.5, textColor: [40, 40, 40] },
+    headStyles: { fillColor: accent, textColor: 255, fontSize: 6.8, fontStyle: 'bold' },
+    bodyStyles: { fontSize: 7, textColor: [40, 40, 40] },
     columnStyles: PROFORMA_ITEM_COLUMN_STYLES(R - L, showDiscount),
     margin: { left: L, right: L, top: HEADER_BOTTOM },
-    styles: { cellPadding: 2.5, lineColor: [225, 225, 225] },
+    styles: { cellPadding: 1.3, lineColor: [215, 215, 215], lineWidth: 0.1,
+      overflow: 'linebreak' },
     showHead: 'everyPage',
     // A product row is never split down the middle by a page break: a line
     // whose name wraps to three lines moves to the next page whole, under a
@@ -314,7 +355,7 @@ async function buildProformaPDFDoc(row, items) {
   y = doc.lastAutoTable.finalY + 8;
 
   // ── Totals ──
-  const boxW = 80, boxX = R - boxW;
+  const boxW = 68, boxX = R - boxW;
   // The stored figures INCLUDE any quoted delivery, so the goods are recovered
   // by taking the stored transport figures back off - through the tax
   // invoice's own invoiceTransportParts() (invoice-pdf.js, which every page
@@ -384,6 +425,17 @@ async function buildProformaPDFDoc(row, items) {
   // on the right, the bank/words/notes/terms on the left. The close needs the
   // TALLER of the two, not their sum.
   const leftW = boxX - 6 - L;
+
+  // The same chip drawHeader uses, for the headings in the close. One shape
+  // for every heading on the page: anything else and the document looks like
+  // two documents stapled together.
+  const sectionChip = (text, at) => {
+    doc.setFillColor(...accent);
+    doc.rect(L, at - CHIP_H + 1.1, leftW, CHIP_H, 'F');
+    doc.setFontSize(6.6); doc.setFont('helvetica', 'bold'); doc.setTextColor(255, 255, 255);
+    doc.text(String(text).toUpperCase(), L + 1.6, at - 0.7);
+    doc.setFont('helvetica', 'normal'); doc.setTextColor(60, 60, 60);
+  };
 
   // Right column: the totals rows, then the rule and the Quoted Total under
   // them. The Quoted Total is the last thing in this column now - the advance
@@ -471,8 +523,7 @@ async function buildProformaPDFDoc(row, items) {
   // Set in the left column level with the totals, exactly as the invoice does.
   // bankLines was measured above, with the rest of this column.
   if (bankLines.length) {
-    doc.setFont('helvetica', 'bold'); doc.setFontSize(8.5); doc.setTextColor(...accent);
-    doc.text('Bank Details for Payment', L, ly);
+    sectionChip('Bank Details for Payment', ly);
     doc.setFont('helvetica', 'normal'); doc.setFontSize(8); doc.setTextColor(60, 60, 60);
     bankLines.forEach((l, i) => doc.text(l, L, ly + 4.5 + i * 4, { maxWidth: boxX - 6 - L }));
     ly += 4.5 + bankLines.length * 4 + LEFT_GAP;
@@ -496,8 +547,7 @@ async function buildProformaPDFDoc(row, items) {
   // advance is a TERM of the quotation, not a receipt, and is not described
   // as one - no money has been received and none is recorded here.
   if (paymentRows.length) {
-    doc.setFont('helvetica', 'bold'); doc.setFontSize(8.5); doc.setTextColor(...accent);
-    doc.text('Payment Terms', L, ly);
+    sectionChip('Payment Terms', ly);
     const payW = Math.min(78, leftW);
     doc.setFontSize(9); doc.setFont('helvetica', 'normal'); doc.setTextColor(60, 60, 60);
     doc.text(paymentRows[0][0], L, ly + 5);
@@ -818,14 +868,14 @@ async function buildProformaHTML(row, items, opts) {
   return `<!DOCTYPE html>
 <html><head><meta charset="UTF-8"><title>Proforma ${escHtml(inv.invoice_number)}</title>
 <style>
-  /* A4 landscape, the PDF's own orientation, so the preview, the print and
+  /* A4 PORTRAIT, the PDF's own orientation, so the preview, the print and
      the downloaded file are the same shape as well as the same data. */
-  @page { size: A4 landscape; margin: 10mm 10mm 8mm; }
+  @page { size: A4 portrait; margin: 10mm 10mm 8mm; }
   * { box-sizing: border-box; }
   html, body { margin: 0; padding: 0; }
   body { font-family: Arial, Helvetica, sans-serif; font-size: 9.5px; color: #1a1a1a;
          -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-  .sheet { width: 100%; max-width: 277mm; margin: 0 auto; }
+  .sheet { width: 100%; max-width: 190mm; margin: 0 auto; }
 
   .hdr { display: flex; justify-content: space-between; align-items: flex-start;
          border-bottom: 2.5px solid ${accentHex}; padding-bottom: 8px; }
@@ -841,8 +891,10 @@ async function buildProformaHTML(row, items, opts) {
        border: 1.5px solid ${accentHex}; color: ${accentHex};
        font-size: 9.5px; font-weight: 800; letter-spacing: 0.7px; border-radius: 2px; }
 
-  .cols { display: flex; gap: 10px; margin-top: 9px; }
+  .cols { display: flex; gap: 10px; margin-top: 8px; }
   .cols > * { flex: 1 1 0; min-width: 0; }
+  /* Two bands of two, as the PDF draws them - see the header comment there. */
+  .cols.two > * { flex: 1 1 50%; }
   .box { border: 1px solid #cfcfcf; border-radius: 3px; padding: 6px 8px; }
   h3 { margin: 0 0 4px; font-size: 8.5px; letter-spacing: 0.6px; text-transform: uppercase;
        color: #fff; background: ${accentHex}; padding: 3px 6px; border-radius: 2px; display: block; }
@@ -851,12 +903,12 @@ async function buildProformaHTML(row, items, opts) {
   .kv { display: flex; justify-content: space-between; gap: 8px; }
   .kv span:first-child { color: #555; }
 
-  table.items { width: 100%; border-collapse: collapse; margin-top: 9px;
-                table-layout: fixed; font-size: 8.2px; }
-  table.items th { background: ${accentHex}; color: #fff; padding: 5px 3px;
+  table.items { width: 100%; border-collapse: collapse; margin-top: 8px;
+                table-layout: fixed; font-size: 7px; }
+  table.items th { background: ${accentHex}; color: #fff; padding: 3px 2px;
                    border: 1px solid ${accentHex}; font-weight: 700;
-                   text-align: center; font-size: 7.8px; }
-  table.items td { padding: 4px 3px; border: 1px solid #d8d8d8; vertical-align: top; }
+                   text-align: center; font-size: 6.6px; }
+  table.items td { padding: 2.5px 2px; border: 1px solid #d7d7d7; vertical-align: top; }
   table.items td.desc { word-wrap: break-word; }
   .r { text-align: right; } .c { text-align: center; }
   /* Repeat the heading on every printed page, and never split a product row. */
@@ -865,7 +917,7 @@ async function buildProformaHTML(row, items, opts) {
 
   .totrow { display: flex; gap: 12px; margin-top: 9px; align-items: flex-start; }
   .totrow .left { flex: 1 1 0; min-width: 0; }
-  .totrow .right { flex: 0 0 38%; }
+  .totrow .right { flex: 0 0 36%; }
   .words { font-size: 9px; margin-top: 6px; }
   .words b { display: block; margin-top: 2px; }
   .notice { margin-top: 6px; font-size: 8px; color: #666; font-style: italic; line-height: 1.45; }
@@ -936,7 +988,7 @@ async function buildProformaHTML(row, items, opts) {
     </div>
   </div>
 
-  <div class="cols">
+  <div class="cols two">
     <div class="strip">
       <h3>Sold By</h3>
       <p><b>${escHtml(p?.business_name)}</b></p>
@@ -952,6 +1004,9 @@ async function buildProformaHTML(row, items, opts) {
       <p class="kv"><span>Type</span><b>${inv.type === 'b2b' ? 'B2B (Registered)' : 'B2C (Unregistered)'}</b></p>
       ${statusLabel ? `<p class="kv"><span>Status</span><b>${escHtml(statusLabel)}</b></p>` : ''}
     </div>
+  </div>
+
+  <div class="cols two">
     <div class="box">
       <h3>Bill To</h3>
       <p><b>${escHtml(inv.customer_name)}</b></p>

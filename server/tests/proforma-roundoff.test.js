@@ -126,8 +126,8 @@ test('R9 the changed asset carries a new cache key on every page that loads it',
   const pages = ['proforma.html', 'proforma-list.html'];
   for (const p of pages) {
     const html = rd(p);
-    assert.ok(html.includes('client/js/pages/proforma-pdf.js?v=47'),
-      p + ' must reference proforma-pdf.js at v=47');
+    assert.ok(html.includes('client/js/pages/proforma-pdf.js?v=48'),
+      p + ' must reference proforma-pdf.js at v=48');
   }
   // and nothing unrelated moved with it
   // proforma-entry.js is checked as "still versioned", not pinned to a

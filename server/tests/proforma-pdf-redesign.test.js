@@ -126,7 +126,7 @@ test('PR4 heading, width and value cannot drift apart', () => {
   for (const show of [false, true]) {
     const cols = ctx.proformaItemColumns(show);
     const row = rowOf(ctx, line(), 0, show);
-    const styles = ctx.PROFORMA_ITEM_COLUMN_STYLES(269, show);
+    const styles = ctx.PROFORMA_ITEM_COLUMN_STYLES(190, show);
 
     assert.strictEqual(row.length, cols.length,
       'every column must produce exactly one cell');
@@ -137,17 +137,17 @@ test('PR4 heading, width and value cannot drift apart', () => {
     for (const c of cols) assert.strictEqual(typeof c.val, 'function', c.head + ' has no value');
     // The widths are a share of the table, so they always add up to it.
     const sum = Object.values(styles).reduce((a, s) => a + s.cellWidth, 0);
-    assert.ok(Math.abs(sum - 269) < 0.01, 'widths must fill the table exactly, got ' + sum);
+    assert.ok(Math.abs(sum - 190) < 0.01, 'widths must fill the table exactly, got ' + sum);
   }
 });
 
 test('PR5 figures are right-aligned, the product name is not', () => {
   const ctx = loadColumns();
   const cols = ctx.proformaItemColumns(true);
-  const styles = ctx.PROFORMA_ITEM_COLUMN_STYLES(269, true);
+  const styles = ctx.PROFORMA_ITEM_COLUMN_STYLES(190, true);
   const alignOf = (head) => styles[cols.findIndex(c => c.head === head)].halign;
 
-  for (const money of ['Qty', 'Rate', 'Disc %', 'GST%', 'CGST', 'SGST', 'IGST', 'Total']) {
+  for (const money of ['Qty', 'Rate', 'Disc %', 'GST %', 'CGST', 'SGST', 'IGST', 'Total']) {
     assert.strictEqual(alignOf(money), 'right', money + ' must be right-aligned');
   }
   assert.strictEqual(alignOf('Product Name'), 'left');
@@ -283,10 +283,10 @@ test('PR14 the page-fit decision measures the close, in the two columns it occup
 
 test('PR13 both proforma pages ask for the redesigned script', () => {
   for (const page of ['proforma.html', 'proforma-list.html']) {
-    assert.ok(rd(page).includes('client/js/pages/proforma-pdf.js?v=47'),
-      page + ' must reference proforma-pdf.js at v=47');
+    assert.ok(rd(page).includes('client/js/pages/proforma-pdf.js?v=48'),
+      page + ' must reference proforma-pdf.js at v=48');
     // and the mirror the server actually serves must agree
-    assert.ok(rd('server', 'public', page).includes('client/js/pages/proforma-pdf.js?v=47'),
+    assert.ok(rd('server', 'public', page).includes('client/js/pages/proforma-pdf.js?v=48'),
       'server/public/' + page + ' must match');
   }
 });

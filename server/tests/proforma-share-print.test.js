@@ -276,8 +276,8 @@ test('SP13 a product row and the terms block are never split across printed page
   assert.match(h, /table\.tc \{[^}]*page-break-inside: avoid/);
   assert.match(h, /\.signrow \{[^}]*page-break-inside: avoid/);
   assert.match(h, /\.foot \{[^}]*page-break-inside: avoid/);
-  // Landscape, the same shape as the PDF.
-  assert.match(h, /@page \{ size: A4 landscape/);
+  // Portrait, the same shape as the PDF.
+  assert.match(h, /@page \{ size: A4 portrait/);
 });
 
 test('SP14 the seal and signature are the uploaded images, or nothing', async () => {
@@ -434,9 +434,9 @@ test('SP23 the preview opens in the list\'s own modal, as the invoice does', () 
 
 test('SP24 both pages load the new renderer, and the mirror agrees', () => {
   for (const page of ['proforma.html', 'proforma-list.html']) {
-    assert.ok(rd(page).includes('client/js/pages/proforma-pdf.js?v=47'),
-      page + ' must load proforma-pdf.js at v=47');
-    assert.ok(rd('server', 'public', page).includes('client/js/pages/proforma-pdf.js?v=47'),
+    assert.ok(rd(page).includes('client/js/pages/proforma-pdf.js?v=48'),
+      page + ' must load proforma-pdf.js at v=48');
+    assert.ok(rd('server', 'public', page).includes('client/js/pages/proforma-pdf.js?v=48'),
       'server/public/' + page + ' must match');
   }
   assert.ok(LIST_HTML.includes('client/js/pages/proforma-list.js?v=33'));

@@ -407,7 +407,7 @@ test('D20 every changed asset carries a new cache key', () => {
   }
   // The three proforma scripts, on the pages that load each.
   for (const [file, want] of [['client/js/pages/proforma-list.js', 33],
-                              ['client/js/pages/proforma-pdf.js', 47],
+                              ['client/js/pages/proforma-pdf.js', 48],
                               ['client/js/pages/proforma-entry.js', 46]]) {
     const loaders = pages.filter(f => rd(f).includes(file));
     assert.ok(loaders.length >= 1, file + ' must be loaded somewhere');

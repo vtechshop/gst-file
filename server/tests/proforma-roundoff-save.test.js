@@ -121,7 +121,7 @@ async function printed(row, items) {
   const sb = load();
   const texts = [];
   class FakeDoc {
-    constructor() { this.internal = { pageSize: { width: 297, height: 210 }, getNumberOfPages: () => 1 }; this.lastAutoTable = { finalY: 0 }; }
+    constructor() { this.internal = { pageSize: { width: 210, height: 297 }, getNumberOfPages: () => 1 }; this.lastAutoTable = { finalY: 0 }; }
     text(s, x, y) { texts.push({ s: Array.isArray(s) ? s.join('\n') : String(s), x, y }); return this; }
     splitTextToSize(s) { return String(s).split('\n'); }
     setFontSize() { return this; } setFont() { return this; } setTextColor() { return this; } setDrawColor() { return this; }
@@ -135,7 +135,7 @@ async function printed(row, items) {
   sb.__run(`getCachedProfile = function () { return { business_name: 'Scratch Co', header_color: '#00796b', state: 'Tamil Nadu' }; };
     imageUrlToDataUrl = async function () { return null; }; inkBoundsOf = async function () { return null; };`);
   await sb.buildProformaPDFDoc(row, items);
-  const R_X = 283, BOX_X = 203;
+  const R_X = 200, BOX_X = 132;
   const block = texts.filter(t => t.x === BOX_X).map(t => {
     const v = texts.find(u => u.x === R_X && u.y === t.y && /^Rs\./.test(u.s));
     return [t.s, v ? v.s.replace(/^Rs\./, '') : null];
@@ -317,8 +317,8 @@ test('RS11 only the proforma changed: the invoice rollup and the invoice PDF rul
   // again when existing numbers began being drawn under the saved format
   // (proforma-number-display.test.js) - entry gained the read-only note,
   // the PDF draws the number. Still pinned, so an unrelated bump is caught.
-  assert.ok(html.includes('client/js/pages/proforma-entry.js?v=46') && html.includes('client/js/pages/proforma-pdf.js?v=47'));
-  assert.ok(rd('proforma-list.html').includes('client/js/pages/proforma-pdf.js?v=47'));
+  assert.ok(html.includes('client/js/pages/proforma-entry.js?v=46') && html.includes('client/js/pages/proforma-pdf.js?v=48'));
+  assert.ok(rd('proforma-list.html').includes('client/js/pages/proforma-pdf.js?v=48'));
 });
 
 test('RS12 known and left alone: the saved gst_amount can sit a paisa off the split - the quote follows the invoice', async () => {
