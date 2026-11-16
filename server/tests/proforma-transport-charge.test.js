@@ -428,7 +428,11 @@ test('PT17 intra state prints goods, their total, then delivery, then the quoted
   const { sb, texts } = await printed(pfRow(1000), pfItems());
   const f = (n) => 'Rs.' + sb.formatNum(n);
   assert.deepStrictEqual(totalsBlock(texts).map(r => [r.label, r.value]), [
-    ['Subtotal', f(2700)], ['CGST', f(243)], ['SGST', f(243)],
+    // Taxable Amount is the GST base: goods 2700 + delivery 1000. It is
+    // printed only because it DIFFERS from the Subtotal here - PT19 pins
+    // that a quotation without delivery still prints no such row.
+    ['Subtotal', f(2700)], ['Taxable Amount', f(3700)],
+    ['CGST', f(243)], ['SGST', f(243)],
     ['Machine / Product Total', f(3186)],
     ['Transport Charge', f(1000)], ['Transport GST', f(180)],
     ['Quoted Total', f(4366)]
@@ -441,7 +445,7 @@ test('PT18 inter state prints the goods tax as IGST', async () => {
   const { sb, texts } = await printed(pfRow(1000, { supply: 'interstate' }), pfItems('interstate'));
   const f = (n) => 'Rs.' + sb.formatNum(n);
   assert.deepStrictEqual(totalsBlock(texts).map(r => [r.label, r.value]), [
-    ['Subtotal', f(2700)], ['IGST', f(486)],
+    ['Subtotal', f(2700)], ['Taxable Amount', f(3700)], ['IGST', f(486)],
     ['Machine / Product Total', f(3186)],
     ['Transport Charge', f(1000)], ['Transport GST', f(180)],
     ['Quoted Total', f(4366)]
@@ -480,7 +484,11 @@ test('PT20 the printed round off is the rounding in both directions, and the wor
     // subtotal of the lines above it, so it is left out of the first sum.
     const n = (s) => Number(s.replace(/^Rs\./, '').replace(/,/g, ''));
     const r2 = (x) => Math.round(x * 100) / 100;
-    const lines = rows.filter(r => r.label !== 'Quoted Total' && r.label !== 'Machine / Product Total');
+    const lines = rows.filter(r => r.label !== 'Quoted Total'
+      && r.label !== 'Machine / Product Total'
+      // Taxable Amount RESTATES the base the taxes are charged on
+      // (goods + delivery). Adding it in would count that money twice.
+      && r.label !== 'Taxable Amount');
     assert.strictEqual(r2(lines.reduce((a, r) => a + n(r.value), 0)), total,
       'the printed lines must add up to the total');
     const v = (label) => n(rows.find(r => r.label === label).value);
@@ -502,7 +510,13 @@ test('PT21 layout: rows never overlap, the signature sits below the total, pagin
       for (let i = 1; i < body.length; i++) {
         assert.strictEqual(Math.round((body[i].y - body[i - 1].y) * 100) / 100, 5.5, where + ': rows 5.5mm apart');
       }
-      assert.ok(body[0].y + body.length * 5.5 + 60 <= 210 - 12, where + ': the page-break guard held');
+      // The invariant is that the close finishes above the footer. This line
+      // used to restate the guard's old flat "+ 60" reserve instead, and a
+      // reserve is not a rule: reserving 60mm when the close needs less is
+      // exactly what pushed a one-page quotation onto two pages. The guard
+      // now measures (PR14), so what is pinned here is the outcome.
+      assert.ok(body.at(-1).y < 210 - 12 - 10,
+        where + ': the last totals row clears the footer rule');
       assert.ok(quoted.y > body.at(-1).y, where + ': the total is below every row');
       const sig = texts.find(t => t.s === 'Authorized Signatory');
       assert.ok(sig && sig.page === quoted.page, where + ': the signature is on the page of the total');

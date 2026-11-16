@@ -406,8 +406,8 @@ test('D20 every changed asset carries a new cache key', () => {
     assert.strictEqual(html.includes('profile.js?v=42'), false, f + ' still has the old profile key');
   }
   // The three proforma scripts, on the pages that load each.
-  for (const [file, want] of [['client/js/pages/proforma-list.js', 32],
-                              ['client/js/pages/proforma-pdf.js', 45],
+  for (const [file, want] of [['client/js/pages/proforma-list.js', 33],
+                              ['client/js/pages/proforma-pdf.js', 47],
                               ['client/js/pages/proforma-entry.js', 46]]) {
     const loaders = pages.filter(f => rd(f).includes(file));
     assert.ok(loaders.length >= 1, file + ' must be loaded somewhere');

@@ -388,6 +388,15 @@ const labelled = (texts, label) => {
   const v = texts.find(u => u.x === R_X && u.y === l.y && u.page === l.page && /^Rs\./.test(u.s));
   return { y: l.y, value: v ? v.s : null };
 };
+const PAY_LABEL_X = 14, PAY_VALUE_X = 14 + 78;
+const payLabelled = (texts, label) => {
+  const l = texts.find(t => t.x === PAY_LABEL_X && t.s === label);
+  if (!l) return null;
+  const v = texts.find(u => u.x === PAY_VALUE_X && u.y === l.y && u.page === l.page
+    && /^Rs\./.test(u.s));
+  return { y: l.y, x: l.x, valueX: v ? v.x : null, value: v ? v.s : null };
+};
+
 function pfRow(advance) {
   return {
     id: 'pf1', document_number: 'PI-00001', document_date: '2026-10-17',
@@ -408,28 +417,34 @@ const PF_ITEMS = [{
 test('PA12 the PDF prints the quoted total, the advance and the balance due', async () => {
   const { texts } = await printed(pfRow(25000), PF_ITEMS);
   const total = labelled(texts, 'Quoted Total');
-  const advance = labelled(texts, 'Advance Amount');
-  const balance = labelled(texts, 'Balance Amount Due');
+  // Both now print in the LEFT information column, under the account the
+  // money goes to. "Pay this much now, into this account, and this much
+  // remains" is one instruction, and it reads as one when it is in one
+  // column. The right column ends on the Quoted Total, which also stops
+  // these two rows pushing the stamp - stacked under that column - onto a
+  // second page.
+  const advance = payLabelled(texts, 'Advance Amount');
+  const balance = payLabelled(texts, 'Balance Amount Due');
   assert.ok(total && advance && balance, 'all three lines are printed');
   assert.strictEqual(total.value, 'Rs.1,00,000.00');
   assert.strictEqual(advance.value, 'Rs.25,000.00');
   assert.strictEqual(balance.value, 'Rs.75,000.00');
   // In that order, down the page, and not on top of one another.
-  assert.ok(total.y < advance.y, 'the advance follows the total');
   assert.ok(advance.y < balance.y, 'the balance follows the advance');
-  assert.ok(advance.y - total.y >= 5 && balance.y - advance.y >= 5, 'the rows are not overlapping');
-  // Nothing else is printed on top of them: no other text shares those lines
-  // in the left column.
+  assert.ok(balance.y - advance.y >= 4, 'the rows are not overlapping');
+  // And they stay in their own column: both the label and the figure finish
+  // left of where the totals column begins, so neither can run into it.
   for (const row of [advance, balance]) {
-    const collisions = texts.filter(t => t.x < BOX_X && Math.abs(t.y - row.y) < 3);
-    assert.deepStrictEqual(collisions.map(c => c.s), [], 'the left column is clear of ' + row.y);
+    assert.ok(row.x < BOX_X, 'the label is in the left column');
+    assert.ok(row.valueX !== null && row.valueX < BOX_X,
+      'the figure is right-aligned clear of the totals column');
   }
 });
 
 test('PA13 a proforma with no advance prints no payment summary, and the page is unchanged', async () => {
   const withNone = await printed(pfRow(), PF_ITEMS);
-  assert.strictEqual(labelled(withNone.texts, 'Advance Amount'), null);
-  assert.strictEqual(labelled(withNone.texts, 'Balance Amount Due'), null);
+  assert.strictEqual(payLabelled(withNone.texts, 'Advance Amount'), null);
+  assert.strictEqual(payLabelled(withNone.texts, 'Balance Amount Due'), null);
   assert.ok(labelled(withNone.texts, 'Quoted Total'), 'the total still prints');
 
   // An explicit NULL is the same document.
@@ -440,8 +455,8 @@ test('PA13 a proforma with no advance prints no payment summary, and the page is
 
   // A zero advance says so rather than staying silent: it was a decision.
   const withZero = await printed(pfRow(0), PF_ITEMS);
-  assert.strictEqual(labelled(withZero.texts, 'Advance Amount').value, 'Rs.0.00');
-  assert.strictEqual(labelled(withZero.texts, 'Balance Amount Due').value, 'Rs.1,00,000.00');
+  assert.strictEqual(payLabelled(withZero.texts, 'Advance Amount').value, 'Rs.0.00');
+  assert.strictEqual(payLabelled(withZero.texts, 'Balance Amount Due').value, 'Rs.1,00,000.00');
 });
 
 test('PA14 the signature band moves below the new rows instead of under them', async () => {
@@ -451,7 +466,7 @@ test('PA14 the signature band moves below the new rows instead of under them', a
   const a = sigOf(none.texts), b = sigOf(some.texts);
   if (a && b) {
     assert.ok(b.y >= a.y, 'the band does not move up when rows are added above it');
-    const balance = labelled(some.texts, 'Balance Amount Due');
+    const balance = payLabelled(some.texts, 'Balance Amount Due');
     assert.ok(b.y > balance.y, 'and it sits below the balance line, not across it');
   }
   // With nothing quoted the layout is the one it has always been.

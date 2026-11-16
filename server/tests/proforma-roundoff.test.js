@@ -98,16 +98,22 @@ test('R6 no tax, item or stored value was touched', () => {
 });
 
 test('R7 the Proforma layout is otherwise unchanged', () => {
-  for (const marker of ['PROFORMA INVOICE', 'Not a Tax Invoice', 'Bank Details for Payment',
+  // The identity is now an outlined badge in capitals - see PR7 in
+  // proforma-pdf-redesign.test.js. It must still be on the document.
+  for (const marker of ['PROFORMA INVOICE', 'NOT A TAX INVOICE', 'Bank Details for Payment',
                         'Quoted Total', 'Amount in Words:', 'Authorized Signatory']) {
     assert.ok(PDF.includes(marker), marker + ' must still be printed');
   }
-  // The page-break guard sizes itself from the row counts rather than from a
-  // constant, so no extra row can push the totals off the page silently. It
-  // counts the payment rows too since the advance amount landed (91e529b):
-  // those sit below the Quoted Total, so their height is part of the same
-  // question of whether the block still fits.
-  assert.match(PDF, /y \+ totalsRows\.length \* 5\.5 \+ paymentRows\.length \* 5\.5 \+ 60 > doc\.internal\.pageSize\.height - 12/);
+  // The page-break guard sizes itself from what the close actually prints
+  // rather than from a constant, so no extra row can push the totals off the
+  // page silently - and no constant can reserve room the close does not need.
+  // The flat "+ 60" this used to pin did both: see PR14 in
+  // proforma-pdf-redesign.test.js for the two-column measurement that
+  // replaced it, and why the stamp's height belongs to the totals column
+  // only.
+  assert.match(PDF, /const closeH = Math\.max\(rightH \+ signatureStackH, leftH\)/);
+  assert.match(PDF, /if \(y \+ closeH > CONTENT_FLOOR\)/);
+  assert.match(PDF, /const rightH = totalsRows\.length \* 5\.5 \+ 8;/);
 });
 
 test('R8 the tax invoice PDF is untouched', () => {
@@ -120,8 +126,8 @@ test('R9 the changed asset carries a new cache key on every page that loads it',
   const pages = ['proforma.html', 'proforma-list.html'];
   for (const p of pages) {
     const html = rd(p);
-    assert.ok(html.includes('client/js/pages/proforma-pdf.js?v=45'),
-      p + ' must reference proforma-pdf.js at v=45');
+    assert.ok(html.includes('client/js/pages/proforma-pdf.js?v=47'),
+      p + ' must reference proforma-pdf.js at v=47');
   }
   // and nothing unrelated moved with it
   // proforma-entry.js is checked as "still versioned", not pinned to a

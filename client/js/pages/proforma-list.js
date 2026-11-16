@@ -108,10 +108,14 @@ function renderProformaList() {
       <td>${proformaStatusBadge(r)}</td>
       <td>${converted}</td>
       <td>
-        <div class="d-flex gap-8">
-          <a class="btn btn-secondary btn-sm btn-icon" href="proforma.html?id=${encodeURIComponent(r.id)}" title="View / Edit"><i class="fas fa-pen"></i></a>
-          <button type="button" class="btn btn-secondary btn-sm btn-icon" onclick="downloadProformaPDF('${r.id}')" title="Download PDF"><i class="fas fa-file-pdf"></i></button>
-          ${canImport ? `<button type="button" class="btn btn-primary btn-sm" onclick="importProformaIntoInvoice('${r.id}')" title="Open Invoice Entry with this data"><i class="fas fa-file-import"></i> Import into Invoice</button>` : ''}
+        <div class="action-btns">
+          <button type="button" class="btn btn-secondary btn-sm btn-icon" onclick="viewProformaFromList('${r.id}')" title="View"><i class="fas fa-eye"></i></button>
+          <a class="btn btn-secondary btn-sm btn-icon" href="proforma.html?id=${encodeURIComponent(r.id)}" title="Edit"><i class="fas fa-edit"></i></a>
+          <button type="button" class="btn btn-danger btn-sm btn-icon" onclick="downloadProformaPDF('${r.id}')" title="Download PDF"><i class="fas fa-file-pdf"></i></button>
+          <button type="button" class="btn btn-secondary btn-sm btn-icon" onclick="printProformaFromList('${r.id}')" title="Print"><i class="fas fa-print"></i></button>
+          <button type="button" class="btn btn-success btn-sm btn-icon" onclick="shareProformaFromList('${r.id}')" title="Share via WhatsApp"><i class="fab fa-whatsapp"></i></button>
+          <button type="button" class="btn btn-info btn-sm btn-icon btn-info-alt" onclick="emailProformaFromList('${r.id}')" title="Email PDF"><i class="fas fa-envelope"></i></button>
+          ${canImport ? `<button type="button" class="btn btn-primary btn-sm" onclick="importProformaIntoInvoice('${r.id}')" title="Open Invoice Entry with this data"><i class="fas fa-file-import"></i> Convert to Invoice</button>` : ''}
           ${canImport ? `<button type="button" class="btn btn-danger btn-sm btn-icon" onclick="cancelProforma('${r.id}')" title="Cancel"><i class="fas fa-ban"></i></button>` : ''}
         </div>
       </td>
@@ -215,6 +219,62 @@ async function cancelProforma(id) {
     if (user) await loadProformas(user.id);
   } catch (err) {
     handleApiError(err, 'Could not cancel the proforma');
+  }
+}
+
+// Preview, in the modal on this page rather than a second tab - the same
+// place and the same iframe the Tax Invoice List reviews an invoice in. The
+// markup is buildProformaHTML()'s, which is what print and the PDF are built
+// from, so what is reviewed here is what gets sent.
+async function viewProformaFromList(id) {
+  const r = proformaById(id);
+  if (!r) { showToast('Proforma not found.', 'error'); return; }
+  try {
+    const html = await buildProformaHTML(r, proformaItemsByParent[id] || [], { autoPrint: false });
+    const frame = document.getElementById('viewProformaFrame');
+    if (frame) frame.srcdoc = html;
+    document.getElementById('viewProformaModal')?.classList.add('open');
+  } catch (err) {
+    handleApiError(err, 'Could not open the proforma preview');
+  }
+}
+
+function closeViewProformaModal() {
+  document.getElementById('viewProformaModal')?.classList.remove('open');
+}
+
+async function printProformaFromList(id) {
+  const r = proformaById(id);
+  if (!r) { showToast('Proforma not found.', 'error'); return; }
+  try {
+    await printProformaDocument(r, proformaItemsByParent[id] || []);
+  } catch (err) {
+    handleApiError(err, 'Could not print the proforma');
+  }
+}
+
+// Opens WhatsApp with the message prepared. Nothing is sent from here and no
+// customer number is dialled - the person reviews it and presses send.
+async function shareProformaFromList(id) {
+  const r = proformaById(id);
+  if (!r) { showToast('Proforma not found.', 'error'); return; }
+  try {
+    await shareProformaWhatsApp(r, proformaItemsByParent[id] || []);
+  } catch (err) {
+    handleApiError(err, 'Could not open WhatsApp for this proforma');
+  }
+}
+
+// Downloads the PDF and opens the mail client with the details filled in -
+// there is no mail server in this application, and a browser will not attach
+// a file from a mailto: link, so the file is downloaded for attaching.
+async function emailProformaFromList(id) {
+  const r = proformaById(id);
+  if (!r) { showToast('Proforma not found.', 'error'); return; }
+  try {
+    await emailProformaDocument(r, proformaItemsByParent[id] || []);
+  } catch (err) {
+    handleApiError(err, 'Could not prepare the proforma email');
   }
 }
 

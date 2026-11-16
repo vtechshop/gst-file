@@ -6,6 +6,21 @@
   <title>Proforma Invoices - GST Management System</title>
   <link rel="stylesheet" href="client/css/style.css?v=35">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
+<!-- Proforma Preview: the SAME markup print and the PDF are built from
+     (buildProformaHTML in client/js/pages/proforma-pdf.js), shown in an
+     iframe so what is reviewed here is what gets sent. -->
+<div class="modal-overlay" id="viewProformaModal">
+  <div class="modal modal-lg">
+    <div class="modal-header">
+      <span class="modal-title"><i class="fas fa-eye"></i> Proforma Preview</span>
+      <button type="button" class="modal-close" onclick="closeViewProformaModal()" aria-label="Close"><i class="fas fa-times"></i></button>
+    </div>
+    <div class="modal-body" style="padding:0;">
+      <iframe id="viewProformaFrame" style="width:100%;height:70vh;border:0;display:block;"></iframe>
+    </div>
+  </div>
+</div>
+
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.31/jspdf.plugin.autotable.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/qrcode@1.4.4/build/qrcode.min.js"></script>
@@ -23,8 +38,8 @@
   <script src="client/js/pages/products.js?v=31"></script>
   <script src="client/js/pages/invoice-items.js?v=49"></script>
   <script src="client/js/pages/invoice-pdf.js?v=52"></script>
-  <script src="client/js/pages/proforma-pdf.js?v=45"></script>
-  <script src="client/js/pages/proforma-list.js?v=32"></script>
+  <script src="client/js/pages/proforma-pdf.js?v=47"></script>
+  <script src="client/js/pages/proforma-list.js?v=33"></script>
 </head>
 <body>
 <div class="app-layout">

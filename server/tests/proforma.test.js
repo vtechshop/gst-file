@@ -175,7 +175,10 @@ test('P16 the proforma PDF carries no tax-invoice copy labels', () => {
   for (const label of ['Original for Recipient', 'Duplicate for File Copy', 'Duplicate for Transporter']) {
     assert.equal(PROFORMA_PDF.includes(label), false, 'proforma must not print: ' + label);
   }
-  assert.match(PROFORMA_PDF, /Not a Tax Invoice/);
+  // Case-insensitive on purpose: the identity is now drawn as an outlined
+  // badge reading "NOT A TAX INVOICE" (see PR7), and what this test is for is
+  // that the document says it at all - not which case it says it in.
+  assert.match(PROFORMA_PDF, /not a tax invoice/i);
 });
 
 // ── import / conversion ──

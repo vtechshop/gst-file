@@ -367,7 +367,23 @@ test('C14 no other PDF module was modified', async () => {
   // The stored document_number is untouched - this is the rendering only.
   const pf = require('crypto').createHash('sha256')
     .update(rd('client', 'js', 'pages', 'proforma-pdf.js').replace(/\r\n/g, '\n')).digest('hex');
-  assert.strictEqual(pf, 'd7744d123bf39164fccdb426121b50b2b66dc11e5234f977db7359979fe76801',
+  // Re-approved for the Proforma redesign (proforma-pdf-redesign.test.js):
+  // the item table gained Unit, and Disc % only when a line carries one;
+  // "NOT A TAX INVOICE" became a badge drawn on every page; Taxable Amount
+  // joins the tax summary when delivery makes it differ from the Subtotal;
+  // the company's standing terms now print as the schedule the tax invoice
+  // prints, from the same profile field and parser; and the footer carries
+  // the contact line. The page-fit guard MEASURES the close instead of
+  // reserving a flat 60mm - that reserve was pushing a one-page quotation
+  // onto a second page and leaving the first half empty.
+  // Re-approved again for Stage 2 (proforma-share-print.test.js): the quotation
+  // gained an HTML preview and a print layout built from these same column
+  // descriptors, totals and helpers, plus WhatsApp and email hand-offs. The
+  // advance and balance moved from the totals column to the left information
+  // column, under the account the money goes to - the totals column has the
+  // stamp stacked beneath it, so rows added there pushed a one-page quotation
+  // onto two. One floor now serves both the close and the terms schedule.
+  assert.strictEqual(pf, 'f9e31804b588ffe864b2cf5af7e8427593968573d6c63df7dc65539e1d4a6d70',
     'proforma-pdf.js is not the approved Proforma revision (transport, round-off, then advance)');
 });
 
