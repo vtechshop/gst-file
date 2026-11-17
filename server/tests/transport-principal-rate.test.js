@@ -90,7 +90,7 @@ function line(taxable, rate, supply, o = {}) {
     // Chosen, as every line on a real invoice is. Without it the grid's
     // mandatory-UQC rule blocks the save before these transport cases
     // run (item-unit-default.test.js U22-U30).
-    unit_touched: true, unit_confirmed: true,
+    unit_touched: true,
     quantity: 1, rate: taxable, discount_percentage: 0, gst_percentage: rate,
     gst_treatment: o.treatment || 'taxable', cess_rate: 0, cess_amount: 0,
     taxable_value: taxable, gst_amount: gst,

@@ -244,8 +244,8 @@ test('U15 a saved quotation reopens on the units it was saved with', () => {
 
 test('U9 the changed asset carries a new cache key on every page that loads it', () => {
   for (const p of PAGES) {
-    assert.ok(rd(p).includes('client/js/pages/invoice-items.js?v=49'),
-      p + ' must reference invoice-items.js at v=49');
+    assert.ok(rd(p).includes('client/js/pages/invoice-items.js?v=50'),
+      p + ' must reference invoice-items.js at v=50');
   }
   // and nothing unrelated moved with it
   // utils.js is shared; its key moved with the editable proforma counter
@@ -351,16 +351,20 @@ test('U21 a unit never reaches the server as a flag, and PCS still files', () =>
 });
 
 // ══════════════════════════════════════════════════════════════════════
-//  Mandatory Unit (UQC) confirmation on the invoice
+//  A billed invoice line must NAME a unit (UQC)
 // ══════════════════════════════════════════════════════════════════════
 //
-// The PCS fallback keeps the box from ever being empty. That is a
-// convenience, and on a tax invoice a convenience must not quietly decide
-// a UQC - the unit goes on a GSTR-1 line. So the row shows PCS and Save
-// refuses until somebody picks from the dropdown; picking PCS itself
-// counts, because then it was chosen.
+// The rule is the value in the dropdown, and only that: a non-empty unit is
+// a named unit, whether it got there from the PCS default, from the Product
+// Master or from the person's own hand. Empty - or the placeholder, which
+// carries value="" - is the one case the invoice refuses to save.
 //
-// U22-U30 are the acceptance cases A-I from the brief.
+// This replaces an earlier arrangement where the row also had to carry a
+// separate unit_confirmed flag, so a row showing PCS was still refused with
+// "Please select Unit (UQC)" until somebody re-picked the same value. The
+// box said PCS and the screen said it was unset; whatever the intent, that
+// is a bug from every seat in the room. U22-U30 are the acceptance cases
+// A-G from the brief, run against the real functions.
 
 // A row as the grid would hold it once a product has been picked.
 function billedRow(sb, product, overrides) {
@@ -378,117 +382,190 @@ function saveAllowed(sb, rows) {
 const MASTER_WITH_UNIT = { id: 'p1', name: 'Widget', hsn_code: '84388090', unit: 'NOS', gst_percentage: 18, default_rate: 100 };
 const MASTER_NO_UNIT   = { id: 'p2', name: 'Idli Steamer', hsn_code: '84198190', gst_percentage: 18, default_rate: 100 };
 
-test('U22 (A) a product whose master names a unit saves straight away', () => {
+test('U22 (A) a new row on the default PCS is not an error', () => {
+  const sb = load();
+  sb.__form('invoice');
+  // The row the reported bug was about: PCS in the box, nobody having
+  // touched it, a product named - and no complaint.
+  const row = sb.blankRow();
+  row.product_name = 'Steamer';
+  row.quantity = 1; row.rate = 100;
+  assert.strictEqual(row.unit, 'PCS');
+  assert.strictEqual(row.unit_touched, false, 'nobody has picked anything');
+  assert.strictEqual(sb.unitError(row), '', 'and that is not an error any more');
+  assert.strictEqual(saveAllowed(sb, [row]), true, 'the invoice saves');
+});
+
+test('U23 (B) a product whose master names NOS saves straight away', () => {
   const sb = load();
   sb.__form('invoice');
   const row = billedRow(sb, MASTER_WITH_UNIT);
   assert.strictEqual(row.unit, 'NOS', 'the master wins');
-  assert.strictEqual(row.unit_confirmed, true, 'and counts as already chosen');
-  assert.strictEqual(sb.unitError(row), '', 'so there is nothing to complain about');
+  assert.strictEqual(sb.unitError(row), '');
   assert.strictEqual(saveAllowed(sb, [row]), true);
 });
 
-test('U23 (B) a product with no master unit shows PCS and blocks the save', () => {
+test('U24 (C) a product with no master unit falls back to PCS and still saves', () => {
   const sb = load();
   sb.__form('invoice');
   const row = billedRow(sb, MASTER_NO_UNIT);
   assert.strictEqual(row.unit, 'PCS', 'the box is never empty');
-  assert.strictEqual(row.unit_confirmed, false, 'but nobody chose it');
-  assert.strictEqual(sb.unitError(row), 'Please select Unit (UQC)');
-  assert.strictEqual(saveAllowed(sb, [row]), false, 'Save is refused');
+  assert.strictEqual(sb.unitError(row), '', 'the fallback is a unit like any other');
+  assert.strictEqual(saveAllowed(sb, [row]), true, 'Save is allowed');
 });
 
-test('U24 (C) explicitly choosing PCS is a decision, and unblocks the save', () => {
-  const sb = load();
-  sb.__form('invoice');
-  const row = billedRow(sb, MASTER_NO_UNIT);
-  vm_run(sb, 'currentItems = ' + JSON.stringify([row]) + ';');
-  sb.onItemFieldChange(row.rowId, 'unit', 'PCS');       // the same value, now chosen
-  const live = sb.__get('currentItems')[0];
-  assert.strictEqual(live.unit, 'PCS');
-  assert.strictEqual(live.unit_confirmed, true, 'choosing PCS confirms it');
-  assert.strictEqual(sb.unitError(live), '');
-  assert.strictEqual(sb.__get('validateInvoiceItems()'), true);
-});
-
-test('U25 (D,E) a chosen BOX saves, and survives a later product change', () => {
+test('U25 (D) a hand-picked BOX saves, and survives a later product change', () => {
   const sb = load();
   sb.__form('invoice');
   const row = billedRow(sb, MASTER_NO_UNIT);
   vm_run(sb, 'currentItems = ' + JSON.stringify([row]) + ';');
   sb.onItemFieldChange(row.rowId, 'unit', 'BOX');
   const live = () => sb.__get('currentItems')[0];
+  assert.strictEqual(live().unit, 'BOX');
+  assert.strictEqual(sb.unitError(live()), '');
   assert.strictEqual(sb.__get('validateInvoiceItems()'), true, 'BOX saves');
 
-  // Switching product must not take the decision away again.
+  // Switching product must not take the hand-made choice away again.
   sb.applyProductToRow(live(), MASTER_WITH_UNIT);
   assert.strictEqual(live().unit, 'BOX', 'still BOX, not the new master NOS');
-  assert.strictEqual(live().unit_confirmed, true, 'and still confirmed');
+  assert.strictEqual(live().unit_touched, true, 'and still the person\'s own');
   assert.strictEqual(sb.__get('validateInvoiceItems()'), true);
 });
 
-test('U26 (F) one unconfirmed row among good ones still blocks', () => {
+test('U26 (E) clearing the unit back to the placeholder blocks the save', () => {
   const sb = load();
   sb.__form('invoice');
-  const ok1 = billedRow(sb, MASTER_WITH_UNIT);
-  const bad = billedRow(sb, MASTER_NO_UNIT);
-  const ok2 = billedRow(sb, MASTER_WITH_UNIT);
-  assert.strictEqual(saveAllowed(sb, [ok1, bad, ok2]), false, 'the middle row blocks it');
-  // ...and it is the offending row the person is sent to.
-  assert.strictEqual(sb.__get('currentItems').find(r => sb.unitError(r)).rowId, bad.rowId);
-  // With that one confirmed, the same three rows go through.
-  bad.unit_confirmed = true;
-  assert.strictEqual(saveAllowed(sb, [ok1, bad, ok2]), true);
+  const row = billedRow(sb, MASTER_WITH_UNIT);
+  vm_run(sb, 'currentItems = ' + JSON.stringify([row]) + ';');
+  // The placeholder option's VALUE, which is what the select reports.
+  sb.onItemFieldChange(row.rowId, 'unit', '');
+  const live = () => sb.__get('currentItems')[0];
+  assert.strictEqual(live().unit, '', 'the row really is empty now');
+  assert.strictEqual(sb.unitError(live()), 'Please select Unit (UQC)');
+  assert.strictEqual(sb.__get('validateInvoiceItems()'), false, 'Save is refused');
+
+  // The placeholder is recognised by its empty value, never by its label -
+  // and the label arriving AS a value is not a unit either.
+  assert.strictEqual(sb.itemsUnitIsChosen(''), false);
+  assert.strictEqual(sb.itemsUnitIsChosen('   '), false, 'nor is whitespace');
+  assert.strictEqual(sb.itemsUnitIsChosen('Select Unit'), false, 'nor the label itself');
+  assert.strictEqual(sb.itemsUnitIsChosen('PCS'), true);
+  assert.strictEqual(sb.itemsUnitIsChosen('BOX'), true);
+  // The dropdown really does give the placeholder an empty value.
+  assert.match(sb.unitSelectOptions(''), /<option value="">Select Unit<\/option>/);
 });
 
-test('U27 (G) a blank spare row never blocks anything', () => {
+test('U27 (F) picking PCS again clears the error and lets the save through', () => {
+  const sb = load();
+  sb.__form('invoice');
+  const row = billedRow(sb, MASTER_WITH_UNIT);
+  vm_run(sb, 'currentItems = ' + JSON.stringify([row]) + ';');
+  const live = () => sb.__get('currentItems')[0];
+  sb.onItemFieldChange(row.rowId, 'unit', '');
+  assert.strictEqual(sb.unitError(live()), 'Please select Unit (UQC)', 'blocked first');
+  sb.onItemFieldChange(row.rowId, 'unit', 'PCS');
+  assert.strictEqual(live().unit, 'PCS');
+  assert.strictEqual(sb.unitError(live()), '', 'the message is gone');
+  assert.strictEqual(sb.__get('validateInvoiceItems()'), true, 'and the save is allowed');
+  // Cleared in place, without a full re-render - the row keeps focus and
+  // whatever else the person was mid-way through typing.
+  assert.match(ITEMS, /updateItemFieldValidationUI\(rowId, 'unit', unitError\(row\)\);/);
+  // ...and the red border clears with it. Unit is a <select>, so the
+  // toggle has to look for one: an 'input'-only lookup found nothing and
+  // left the border on whatever the last full re-render had decided, which
+  // showed up in a browser as a box marked invalid while the message under
+  // it had already gone (and unmarked while it was showing).
+  assert.match(ITEMS, /wrap\.querySelector\('input, select, textarea'\)\?\.classList\.toggle\('error', !!errorMsg\)/);
+});
+
+test('U28 (G) only the rows with an empty unit are the ones complained about', () => {
+  const sb = load();
+  sb.__form('invoice');
+  const ok1 = billedRow(sb, MASTER_WITH_UNIT);            // NOS
+  const bad = billedRow(sb, MASTER_WITH_UNIT, { unit: '' });
+  const ok2 = billedRow(sb, MASTER_NO_UNIT);              // PCS by fallback
+  const ok3 = billedRow(sb, MASTER_NO_UNIT, { unit: 'BOX', unit_touched: true });
+  assert.strictEqual(saveAllowed(sb, [ok1, bad, ok2, ok3]), false, 'the empty row blocks it');
+
+  const flagged = sb.__get('currentItems').filter(r => sb.unitError(r));
+  assert.strictEqual(flagged.length, 1, 'exactly one row is flagged');
+  assert.strictEqual(flagged[0].rowId, bad.rowId, 'and it is the empty one');
+  // The first offending row is what the person is sent to.
+  assert.strictEqual(sb.focusFirstMissingUnit(), bad.rowId);
+
+  // Give that row a unit and the same four go through.
+  bad.unit = 'KGS';
+  assert.strictEqual(saveAllowed(sb, [ok1, bad, ok2, ok3]), true);
+});
+
+test('U29 a blank spare row never blocks anything', () => {
   const sb = load();
   sb.__form('invoice');
   const billed = billedRow(sb, MASTER_WITH_UNIT);
-  const spare = sb.blankRow();                 // PCS, unconfirmed, no product
-  assert.strictEqual(spare.unit_confirmed, false);
+  const spare = sb.blankRow();                 // no product on it at all
   assert.strictEqual(sb.unitError(spare), '', 'an unused row is not an error');
+  // Not even an empty one, which is the state a spare row can be left in.
+  spare.unit = '';
+  assert.strictEqual(sb.unitError(spare), '', 'still not, with no product named');
   assert.strictEqual(saveAllowed(sb, [billed, spare]), true, 'and does not block the save');
 });
 
-test('U28 (H) reopening a saved invoice does not ask again', () => {
+test('U30 reopening a saved invoice does not ask again, and a quotation never does', () => {
   const sb = load();
   sb.__form('invoice');
   // A line as it comes back from the server.
   const reopened = { ...sb.blankRow(), product_name: 'Widget', unit: 'NOS',
-    unit_touched: true, unit_confirmed: true, quantity: 2, rate: 100, gst_percentage: 18 };
-  assert.strictEqual(sb.unitError(reopened), '', 'a filed unit is already a decision');
+    unit_touched: true, quantity: 2, rate: 100, gst_percentage: 18 };
+  assert.strictEqual(sb.unitError(reopened), '');
   assert.strictEqual(saveAllowed(sb, [reopened]), true);
-  // The loader is what marks them, straight from the saved value.
-  assert.match(ITEMS, /unit_touched: !!r\.unit, unit_confirmed: !!r\.unit,/);
+  // The loader marks it hand-chosen straight from the saved value, so a
+  // later product change cannot overwrite what the invoice was filed with.
+  assert.match(ITEMS, /unit_touched: !!r\.unit,/);
+  assert.strictEqual(/unit_confirmed/.test(ITEMS.replace(/\/\/[^\n]*/g, '')), false,
+    'the confirmed flag is gone from the code, not just from the rule');
   // Nothing here rewrites a stored unit on load.
   assert.match(ITEMS, /unit: r\.unit \|\| '',/);
-});
 
-test('U29 a quotation is untouched: the fallback stays pure convenience', () => {
-  const sb = load();
+  // An old invoice line saved with NO unit is the one case re-saving asks
+  // about - the same single rule, not a second one.
+  const legacy = { ...reopened, unit: '', unit_touched: false };
+  assert.strictEqual(sb.unitError(legacy), 'Please select Unit (UQC)');
+
+  // A quotation is untouched: it reaches no GSTR-1 return, so an empty unit
+  // there is not an error and never was.
   sb.__form('proforma');
-  const row = billedRow(sb, MASTER_NO_UNIT);
-  assert.strictEqual(row.unit, 'PCS');
-  assert.strictEqual(row.unit_confirmed, false, 'the flag is still set honestly');
-  assert.strictEqual(sb.unitError(row), '', 'but a quotation does not block on it');
-  assert.strictEqual(sb.__get('itemsUnitMustBeConfirmed()'), false);
+  assert.strictEqual(sb.unitError(legacy), '', 'a quotation does not block on it');
+  assert.strictEqual(sb.__get('itemsUnitIsRequired()'), false);
   sb.__form('invoice');
-  assert.strictEqual(sb.__get('itemsUnitMustBeConfirmed()'), true);
+  assert.strictEqual(sb.__get('itemsUnitIsRequired()'), true);
 });
 
-test('U30 the first unconfirmed unit is what the person is sent to', () => {
+test('U31 a unit that is not a real UQC is a different complaint, still refused', () => {
   const sb = load();
   sb.__form('invoice');
-  const ok = billedRow(sb, MASTER_WITH_UNIT);
-  const bad1 = billedRow(sb, MASTER_NO_UNIT);
-  const bad2 = billedRow(sb, MASTER_NO_UNIT);
-  vm_run(sb, 'currentItems = ' + JSON.stringify([ok, bad1, bad2]) + ';');
-  assert.strictEqual(sb.focusFirstUnconfirmedUnit(), bad1.rowId, 'the FIRST one, not the last');
-  // The cell carries the same wrap and error element every other field uses,
-  // so the message lands beside the dropdown rather than only in a toast.
-  assert.match(ITEMS, /<div data-field-wrap="unit">/);
-  assert.match(ITEMS, /<div class="item-field-error">\$\{unitError\(row\)\}<\/div>/);
-  // Choosing a unit clears that message without a full re-render.
-  assert.match(ITEMS, /updateItemFieldValidationUI\(rowId, 'unit', unitError\(row\)\);/);
+  // Legacy free-typed units exist on old invoices. They are present, so the
+  // "please select" message does not apply - but they cannot be filed as a
+  // UQC either, and Save says which one it is.
+  const odd = billedRow(sb, MASTER_WITH_UNIT, { unit: 'pieces' });
+  assert.strictEqual(sb.unitError(odd), '', 'not the empty-unit message');
+  assert.strictEqual(saveAllowed(sb, [odd]), false, 'but Save still refuses it');
+  assert.strictEqual(sb.itemsUnitIsValidUqc('pieces'), false);
+  assert.strictEqual(sb.itemsUnitIsValidUqc('PCS'), true);
+  // Exact: a lower-case code is not quietly accepted as the upper-case one,
+  // because nothing normalises it on the way to the database.
+  assert.strictEqual(sb.itemsUnitIsValidUqc('pcs'), false);
+});
+
+test('U32 the server keeps the same rule, on the value alone', () => {
+  const route = rd('server', 'src', 'routes', 'invoices.js');
+  const block = route.slice(route.indexOf('Every billed line names a unit'));
+  assert.ok(block.length > 400, 'found the server-side check');
+  // Blank is the whole test there too - trimmed, and the browser's screen
+  // state is not consulted (it never was, and there is none left to send).
+  assert.match(block, /if \(!String\(it\.unit == null \? '' : it\.unit\)\.trim\(\)\) \{/);
+  assert.match(block, /item_unit_required/);
+  // A row with no product name is a spare row on the server as well.
+  assert.match(block, /if \(!named\) continue;/);
+  // Nothing about confirmation reaches or is required by the API.
+  assert.strictEqual(/unit_confirmed/.test(route), false);
 });

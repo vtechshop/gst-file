@@ -502,11 +502,13 @@ router.post('/:type/save-with-items', asyncRoute(async (req, res) => {
   // any of this existed. /invoices/:type/save-with-items is the New Invoice
   // form and has exactly one caller.
   //
-  // The browser's "confirmed" flag is deliberately NOT sent. It describes
-  // what happened on a screen, which a direct caller could simply assert, so
-  // it would protect nothing here. Requiring the unit itself is the part
-  // that holds. Nothing transient reaches the database, so nothing has to be
-  // stripped before the insert and no column is needed for any of this.
+  // The test is the VALUE and nothing else, which is exactly the rule the
+  // grid applies (itemsUnitIsRequired / unitError in invoice-items.js). The
+  // browser once also tracked whether a person had re-picked the unit by
+  // hand; that described what happened on a screen, which a direct caller
+  // could simply assert, so it never protected anything here and no longer
+  // exists anywhere. Nothing transient reaches the database, so nothing has
+  // to be stripped before the insert and no column is needed for any of this.
   for (let i = 0; i < (items || []).length; i++) {
     const it = items[i] || {};
     const named = String(it.product_name == null ? '' : it.product_name).trim();

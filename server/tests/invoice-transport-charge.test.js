@@ -98,7 +98,7 @@ function machineLine(supply) {
     // invoice is. Without this the grid's mandatory-UQC rule blocks the
     // save first and these transport cases never get to run
     // (item-unit-default.test.js U22-U30).
-    unit_touched: true, unit_confirmed: true,
+    unit_touched: true,
     quantity: 1, rate: 2700, discount_percentage: 0, gst_percentage: 18,
     gst_treatment: 'taxable', cess_rate: 0, cess_amount: 0,
     taxable_value: 2700, gst_amount: 486,

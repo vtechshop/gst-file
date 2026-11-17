@@ -82,13 +82,42 @@ app.set('trust proxy', 1);
 app.use(compression());
 
 app.use(helmet());
-app.use(cors({
-  origin: (origin, callback) => {
-    // Allow same-origin/non-browser requests (no Origin header) and
-    // anything explicitly listed in ALLOWED_ORIGIN.
-    if (!origin || ALLOWED_ORIGINS.includes(origin)) return callback(null, true);
-    callback(new Error('Origin not allowed: ' + origin));
+// Takes the REQUEST, not just the origin string, because one of the three
+// cases below is a fact about the pair: whether the Origin the browser sent
+// is this very server.
+app.use(cors((req, callback) => {
+  const origin = req.headers.origin;
+
+  // SAME ORIGIN. The page was served by this app (SERVE_CLIENT=1) and is
+  // calling this app's own API, so the browser's Origin is this request's
+  // own host. This is not a cross-origin request at all - CORS has nothing
+  // to decide - and it must not depend on the deployment remembering to
+  // list its own address in ALLOWED_ORIGIN.
+  //
+  // It needs checking explicitly because "no Origin header" is NOT the same
+  // question as "same origin": a browser omits Origin on a same-origin GET
+  // but SENDS it on every POST, same-origin included. Reading the first as
+  // the second is what broke signing in - POST /api/auth/login from the
+  // page this server had just served was refused as a foreign origin, and
+  // the thrown error surfaced as a 500.
+  //
+  // Host is client-supplied, which costs nothing here: a non-browser client
+  // can already reach the API by sending no Origin at all (the case below),
+  // so a forged Host/Origin pair buys no access it did not have. What CORS
+  // actually protects - a REAL browser carrying somebody's session to a
+  // third-party page - is unaffected, because a browser sets Origin itself
+  // and will not claim this host for a page served from another.
+  const host = req.headers.host;
+  const sameOrigin = !!origin && !!host
+    && (origin === 'http://' + host || origin === 'https://' + host);
+
+  // NO ORIGIN: curl, a server-to-server caller, a health check. Unchanged.
+  // ALLOWLISTED: a front end served from somewhere else (the 5500 dev
+  // server, or whatever ALLOWED_ORIGIN names in a deployment). Unchanged.
+  if (!origin || sameOrigin || ALLOWED_ORIGINS.includes(origin)) {
+    return callback(null, { origin: true });
   }
+  callback(new Error('Origin not allowed: ' + origin));
 }));
 // One route sends a whole workbook's rows up to be written as .xlsx, which
 // is legitimately larger than the 100kb express.json() allows by default.
@@ -388,6 +417,6 @@ function reportPendingMigrations() {
 app.listen(PORT, () => {
   console.log(`GST Billing backend listening on http://localhost:${PORT}`);
   console.log(`  Database: ${process.env.DATABASE_URL ? 'configured' : 'NOT CONFIGURED'}`);
-  console.log(`  Allowed origins: ${ALLOWED_ORIGINS.join(', ')}`);
+  console.log(`  Allowed origins: ${ALLOWED_ORIGINS.join(', ')} (plus this server's own origin)`);
   reportPendingMigrations();
 });

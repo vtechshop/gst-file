@@ -83,41 +83,66 @@ function itemsUnitFallsBackToDefault() {
   return itemsFormPrefix === 'invoice' || itemsFormPrefix === 'proforma';
 }
 
-// Where that default has to be CONFIRMED by a person before the document
-// can be saved.
+// Where a billed line has to NAME a unit before the document can be saved.
 //
-// The fallback above exists so the box is never empty; this exists so the
-// convenience cannot quietly decide a UQC. On a tax invoice the unit goes
-// on a GSTR-1 line, so PCS that nobody looked at is not good enough: the
-// row shows PCS, and Save refuses until someone picks from the dropdown -
-// picking PCS itself counts, because then it was chosen.
+// On a tax invoice the unit becomes the UQC on a GSTR-1 line, so a line
+// that names none cannot be filed - and the grid says so next to the box
+// rather than letting the save fail at the server.
 //
-// A unit the Product Master actually records is already a decision
-// someone made, so that arrives confirmed and nobody re-picks it.
+// What this does NOT do any more is demand a separate act of confirmation
+// on top of a unit that is already there. It used to: a row carried a
+// unit_confirmed flag, and PCS that arrived from the default was refused
+// until somebody re-picked the same value from the dropdown. That read as
+// a bug every time, because it is indistinguishable from one - the box
+// plainly said PCS and the screen plainly said "Please select Unit (UQC)".
+// The value in the dropdown is the decision; there is nothing else to ask.
 //
 // Invoice only. A quotation reaches no return, so the fallback stays pure
-// convenience there and Save does not block on it.
-function itemsUnitMustBeConfirmed() {
+// convenience there and Save does not block on it - proforma-pdf.js prints
+// a blank unit as '-' precisely because a quotation may have none.
+function itemsUnitIsRequired() {
   return itemsFormPrefix === 'invoice';
 }
 
-// Is this a unit the GST portal actually recognises?
+// Has a unit actually been named on this row?
+//
+// The placeholder at the top of the dropdown carries value="" - that empty
+// VALUE is the only thing the grid reads as "no unit", never the label next
+// to it. The label is checked for too, so that the words "Select Unit"
+// arriving as a value (a hand-built payload, a restored draft) cannot pass
+// itself off as a UQC. Trimmed, because a value of nothing but spaces is
+// not a unit either.
+function itemsUnitIsChosen(unit) {
+  const v = String(unit == null ? '' : unit).trim();
+  return !!v && v.toUpperCase() !== 'SELECT UNIT';
+}
+
+// Is this exactly a unit the GST portal recognises?
+//
+// Exact: the dropdown's option values are already upper-case codes, so
+// anything that differs in case or spacing came from somewhere else -
+// a legacy free-typed unit on an old invoice - and has to be re-picked
+// rather than quietly filed as a UQC the portal will reject.
 function itemsUnitIsValidUqc(unit) {
-  const code = String(unit == null ? '' : unit).trim().toUpperCase();
-  return !!code && typeof GST_UQC_MASTER !== 'undefined'
-    && GST_UQC_MASTER.some(u => u.code === code);
+  return typeof GST_UQC_MASTER !== 'undefined'
+    && GST_UQC_MASTER.some(u => u.code === unit);
 }
 
 // The inline message under a row's Unit dropdown — '' when the row is
 // fine, which is also what every other field's *Error() helper returns.
 // Only a row that is actually being billed is ever complained about: an
 // untouched spare row at the bottom of the grid is not an error.
+//
+// One condition, so the message cannot contradict the box: the dropdown is
+// empty. Whether the value got there from the PCS default, the Product
+// Master or the person's own hand makes no difference to whether the line
+// names a unit, which is the only thing a GSTR-1 line needs. A unit that
+// is present but not a real UQC is a different complaint with its own
+// message - see validateInvoiceItems().
 function unitError(row) {
   if (!row || !row.product_name) return '';
-  if (!itemsUnitMustBeConfirmed()) return '';
-  if (!row.unit) return 'Please select Unit (UQC)';
-  if (!row.unit_confirmed) return 'Please select Unit (UQC)';
-  return '';
+  if (!itemsUnitIsRequired()) return '';
+  return itemsUnitIsChosen(row.unit) ? '' : 'Please select Unit (UQC)';
 }
 
 // The rate a delivery charge is taxed at: the rate of the PRINCIPAL SUPPLY
@@ -441,11 +466,6 @@ function blankRow() {
     // the save payload names its columns explicitly, so this never reaches
     // the server.
     unit_touched: false,
-    // Whether the unit on this row is anybody's decision yet. A fresh row
-    // shows PCS, but nobody chose it - so on an invoice Save blocks until
-    // somebody does. Set by the dropdown, by a Product Master that records
-    // a real UQC, and by loading a saved invoice.
-    unit_confirmed: false,
     quantity: 1, rate: 0, discount_percentage: 0, gst_percentage: 0,
     // Nil-rated / exempt / non-GST lines are reported in GSTR-1 table 8,
     // not as taxable supplies. 'taxable' is every line raised before this.
@@ -506,11 +526,12 @@ function loadItemsIntoTable(rows) {
     return {
       rowId: 'row' + itemsRowSeq, product_id: r.product_id || null, product_name: r.product_name || '',
       hsn_code: r.hsn_code || '', unit: r.unit || '',
-        // Saved as it stands: whatever unit this line was filed with was
-        // chosen when the invoice was raised, so reopening it does not ask
-        // again. A line saved with NO unit (an old invoice) stays empty and
-        // is the one case re-saving will ask about.
-        unit_touched: !!r.unit, unit_confirmed: !!r.unit,
+        // Saved as it stands: whatever unit this line was filed with is the
+        // unit of that line, so reopening it does not ask again and picking
+        // a different product will not overwrite it. A line saved with NO
+        // unit (an old invoice) stays empty and is the one case re-saving
+        // will ask about.
+        unit_touched: !!r.unit,
         quantity: +r.quantity || 1,
       rate: billed(r, 'fx_rate', 'rate'),
       discount_percentage: +r.discount_percentage || 0, gst_percentage: +r.gst_percentage || 0,
@@ -669,7 +690,13 @@ function updateItemFieldValidationUI(rowId, field, errorMsg) {
   const tr = document.querySelector(`#itemsTableBody tr[data-row="${rowId}"]`);
   const wrap = tr?.querySelector(`[data-field-wrap="${field}"]`);
   if (!wrap) return;
-  wrap.querySelector('input')?.classList.toggle('error', !!errorMsg);
+  // input, select or textarea - whatever control this field is. Unit is a
+  // <select>, so an 'input'-only lookup found nothing and left its red
+  // border to whatever the last full re-render had decided: the message
+  // under the box updated on the keystroke while the box itself stayed
+  // one state behind, marked when it was now fine and unmarked when it
+  // was not. hsn and qty are inputs and are unaffected.
+  wrap.querySelector('input, select, textarea')?.classList.toggle('error', !!errorMsg);
   const errEl = wrap.querySelector('.item-field-error');
   if (errEl) errEl.textContent = errorMsg || '';
 }
@@ -973,13 +1000,6 @@ function applyProductToRow(row, product) {
   // product was picked, and the unit emptied itself.
   if (!row.unit_touched) {
     row.unit = p.unit || (itemsUnitFallsBackToDefault() ? DEFAULT_ITEM_UNIT : '');
-    // A real UQC on the master is already somebody's decision and arrives
-    // confirmed. Its SILENCE is not: the row falls back to PCS and still
-    // has to be confirmed by hand. A master carrying a non-UQC string
-    // (legacy free-typed units exist) is left unconfirmed too, so the
-    // person is sent to the dropdown rather than the save being refused
-    // later for a code they never typed.
-    row.unit_confirmed = itemsUnitIsValidUqc(p.unit);
   }
   row.gst_percentage = +p.gst_percentage || 0;
   row.cess_rate = +p.cess_rate || 0;
@@ -1000,10 +1020,9 @@ function onItemFieldChange(rowId, field, value) {
     // Chosen by hand from now on. Nothing else writes row.unit after this -
     // see applyProductToRow().
     row.unit_touched = true;
-    // Picking PCS deliberately counts: what was missing was the decision,
-    // not the value. Picking the blank "Select Unit" entry un-confirms it
-    // again, so Save keeps blocking rather than accepting an empty unit.
-    row.unit_confirmed = !!value;
+    // The message under the box is repainted on every change, so a unit
+    // that has just been picked clears the error there and then, and
+    // picking the blank placeholder back brings it straight back.
     updateItemFieldValidationUI(rowId, 'unit', unitError(row));
   } else if (field === 'warranty_period_months') {
     // Chosen by hand from now on: a later header change must not undo it.
@@ -1409,7 +1428,7 @@ function paintInvoiceFxSummary(figures, inrHeader) {
 // Scrolled into view as well as focused: on a long invoice the row that
 // blocked the save is usually off-screen, and a focus nobody can see reads
 // as the button having done nothing.
-function focusFirstUnconfirmedUnit() {
+function focusFirstMissingUnit() {
   const bad = currentItems.find(r => unitError(r));
   if (!bad) return null;
   const sel = document.querySelector(
@@ -1433,14 +1452,14 @@ function validateInvoiceItems() {
     if (!(+row.quantity > 0)) { showToast(`"${row.product_name}": quantity must be greater than zero.`, 'error'); return false; }
     if (+row.rate < 0) { showToast(`"${row.product_name}": rate cannot be negative.`, 'error'); return false; }
     if (row.hsn_code && !isValidHsnFormat(row.hsn_code)) { showToast(`"${row.product_name}": HSN code must be 4, 6, or 8 digits.`, 'error'); return false; }
-    if (row.unit && !GST_UQC_MASTER.some(u => u.code === row.unit)) { showToast(`"${row.product_name}": "${row.unit}" is not a valid GST unit — pick one from the Unit list.`, 'error'); return false; }
-    // The unit has to be somebody's decision, not the fallback nobody
-    // looked at. Invoice only - see itemsUnitMustBeConfirmed(). The row is
-    // shown the inline message and the first one is focused, because
-    // "pick a unit" is only useful next to the box it means.
+    if (row.unit && !itemsUnitIsValidUqc(row.unit)) { showToast(`"${row.product_name}": "${row.unit}" is not a valid GST unit — pick one from the Unit list.`, 'error'); return false; }
+    // A billed line must name a unit. Invoice only - see
+    // itemsUnitIsRequired(). The row is shown the inline message and the
+    // first one is focused, because "pick a unit" is only useful next to
+    // the box it means.
     if (unitError(row)) {
       renderItemsTable();
-      focusFirstUnconfirmedUnit();
+      focusFirstMissingUnit();
       showToast(`"${row.product_name}": please select Unit (UQC).`, 'error');
       return false;
     }

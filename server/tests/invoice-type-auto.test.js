@@ -352,8 +352,10 @@ test('A17 the page loads the changed script under a new cache key only', () => {
   // All three moved together for export invoices billed in a foreign
   // currency (invoice-export-currency.test.js): the entry page, the grid
   // that now shows the buyer's currency, and the PDF that prints it.
+  // invoice-items.js has moved on again since, on its own, for the unit
+  // rule (item-unit-default.test.js U22-U32).
   assert.match(HTML, /client\/js\/pages\/invoice-entry\.js\?v=43/);
-  assert.match(HTML, /client\/js\/pages\/invoice-items\.js\?v=49/);
+  assert.match(HTML, /client\/js\/pages\/invoice-items\.js\?v=50/);
   assert.match(HTML, /client\/js\/pages\/invoice-pdf\.js\?v=52/);
 });
 
