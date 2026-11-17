@@ -21,7 +21,7 @@
   <script src="client/js/pages/payments.js?v=29"></script>
   <script src="client/js/pages/purchase-items.js?v=32"></script>
   <script src="client/js/pages/serial-entry.js?v=1"></script>
-  <script src="client/js/pages/purchase-entry.js?v=32"></script>
+  <script src="client/js/pages/purchase-entry.js?v=33"></script>
   <!-- Bill scanner. Uploads to /api/bill-scan, which calls Gemini with a
        server-held key; no OCR library is loaded in the browser at all. -->
   <script src="client/js/pages/purchase-scan.js?v=30"></script>
@@ -215,8 +215,8 @@
             <div class="form-group">
               <label for="purchPaymentStatus">Payment Status</label>
               <select id="purchPaymentStatus" class="form-control" onchange="onPurchPaymentStatusChange()">
-                <option value="unpaid" selected>Unpaid</option>
-                <option value="paid">Paid in Full</option>
+                <option value="unpaid">Unpaid</option>
+                <option value="paid" selected>Paid in Full</option>
                 <option value="partial">Partially Paid</option>
               </select>
             </div>
@@ -278,7 +278,7 @@
               <span class="value" id="purchPreviewStatus" aria-live="polite"></span>
             </div>
           </div>
-          <p class="text-muted-sm fs-12 mb-16 d-none" id="purchPaymentEditNote">Payment status: <b id="purchPaymentEditStatusText">Unpaid</b>. Record further payments from <a href="purchase-list.html">Purchase List</a>.</p>
+          <p class="text-muted-sm fs-12 mb-16 d-none" id="purchPaymentEditNote">Payment status: <b id="purchPaymentEditStatusText">Unpaid</b>.<span id="purchPaymentEditAmounts"></span> Record further payments from <a href="purchase-list.html">Purchase List</a>.</p>
 
           <!-- Save -->
           <div class="btn-group">

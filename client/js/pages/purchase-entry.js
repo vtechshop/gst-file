@@ -44,6 +44,13 @@ async function initPurchaseEntry() {
       } catch {}
       sessionStorage.removeItem('prefill_vendor');
     }
+    // The opening Payment Status. The markup selects it too; doing it here
+    // as well means the page cannot open on one thing and Reset return to
+    // another, and it draws the preview (Amount Paid, Remaining Balance,
+    // status badge) straight away instead of leaving it blank until the
+    // first item is added.
+    setPurchValue('purchPaymentStatus', PURCHASE_NEW_PAYMENT_STATUS);
+    onPurchPaymentStatusChange();
     document.getElementById('purchVendorName')?.focus();
   }
 
@@ -269,6 +276,25 @@ async function saveVendorFromPurchaseForm() {
   return true;
 }
 
+// What Payment Status a NEW purchase opens on.
+//
+// Paid in Full, because a purchase from a supplier is usually settled when
+// it is entered - Unpaid meant changing this field on nearly every entry.
+//
+// Nothing downstream needed teaching: 'paid' already MEANS the whole Grand
+// Total, both in the preview (computePaymentPreview() in payments.js) and in
+// what Save records (savePurchase() below). The amount is derived from the
+// total every time it is read, never stored, so adding a product or editing
+// a quantity, rate, GST % or transport charge moves the Amount Paid with it
+// and the Remaining Balance stays 0.00 - there is no copy of the figure to
+// fall out of step. Typing a figure by hand only has meaning under
+// 'partial', which is the one status that reads the input.
+//
+// This applies to a new purchase ONLY. An existing purchase hides these
+// fields entirely and shows what it was saved with - see
+// loadPurchaseForEdit() and setPurchPaymentSectionMode(false, ...).
+const PURCHASE_NEW_PAYMENT_STATUS = 'paid';
+
 // ── Payment (to vendor) section — new-purchase only, mirrors Invoice
 // Entry's Payment section exactly; editing an existing purchase's
 // payments happens on Purchase List (see loadPurchaseForEdit() below) ──
@@ -315,7 +341,10 @@ function validatePurchPaymentAmount() {
   return validatePaymentPreviewAmount(PURCHASE_PAYMENT_PREVIEW);
 }
 
-function setPurchPaymentSectionMode(editable, statusLabel) {
+// `saved` is the purchase being edited, when there is one: its own payment
+// figures, so the note states what this purchase actually recorded rather
+// than only naming its status. Read from the record, never recomputed.
+function setPurchPaymentSectionMode(editable, statusLabel, saved) {
   document.getElementById('purchPaymentEditableFields')?.classList.toggle('d-none', !editable);
   document.getElementById('purchPaymentDetailGroup')?.classList.toggle('d-none', !editable);
   // Same reasoning as Invoice Entry's: the preview is a before-Save aid, and
@@ -328,6 +357,22 @@ function setPurchPaymentSectionMode(editable, statusLabel) {
     const label = { unpaid: 'Unpaid', partial: 'Partially Paid', paid: 'Paid in Full' }[statusLabel] || 'Unpaid';
     const el = document.getElementById('purchPaymentEditStatusText');
     if (el) el.textContent = label;
+    // What this purchase recorded: its stored amount_paid, and the balance
+    // that follows from its stored total. The new-purchase default never
+    // reaches an existing purchase - these fields are hidden here and
+    // savePurchase() leaves payment_status/amount_paid out of the update
+    // altogether, so editing one cannot rewrite its payment history.
+    const amtEl = document.getElementById('purchPaymentEditAmounts');
+    if (amtEl) {
+      if (saved) {
+        const paid = +saved.amount_paid || 0;
+        const total = +saved.total_amount || 0;
+        amtEl.textContent = ' Amount Paid \u20B9' + formatNum(paid)
+          + ', Remaining Balance \u20B9' + formatNum(round2(Math.max(0, total - paid))) + '.';
+      } else {
+        amtEl.textContent = '';
+      }
+    }
   }
 }
 
@@ -365,7 +410,7 @@ async function loadPurchaseForEdit(id) {
   setPurchValue('purchNum', rec.purchase_number || '');
   setPurchValue('purchDate', rec.purchase_date || '');
   setPurchValue('purchSupply', rec.supply_type || 'intrastate');
-  setPurchPaymentSectionMode(false, rec.payment_status);
+  setPurchPaymentSectionMode(false, rec.payment_status, rec);
 
   // Read at the top of this function — see the note there.
   const activeItems = items.slice().sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0));
@@ -496,7 +541,7 @@ function clearPurchaseFormFields() {
   populateGstCategorySelect('purchGstCategory');   // back to the default
   setPurchValue('purchDate', toISO(new Date()));
   setPurchValue('purchSupply', 'intrastate');
-  setPurchValue('purchPaymentStatus', 'unpaid');
+  setPurchValue('purchPaymentStatus', PURCHASE_NEW_PAYMENT_STATUS);
   ['purchPaymentAmount','purchPaymentDate','purchPaymentReference','purchPaymentNote'].forEach(id => setPurchValue(id, ''));
   setPurchValue('purchPaymentMode', 'cash');
   onPurchPaymentStatusChange();

@@ -269,7 +269,7 @@ test('ME10 the keyboard entry belongs to New Purchase alone', () => {
   assert.doesNotMatch(GRID, /addEventListener\('keydown'/);
   assert.match(ENTRY, /document\.addEventListener\('keydown'/);
   const html = rd('purchases.html');
-  for (const key of ['client/js/pages/purchase-items.js?v=32', 'client/js/pages/purchase-entry.js?v=32']) {
+  for (const key of ['client/js/pages/purchase-items.js?v=32', 'client/js/pages/purchase-entry.js?v=33']) {
     assert.ok(html.includes(key), 'purchases.html loads ' + key);
   }
   assert.ok(!rd('purchase-order.html').includes('purchase-entry.js'));
